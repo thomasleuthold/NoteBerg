@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A note-taking app supporting handwritten notes, text, and drawings"
+    />
+    <meta name="theme-color" content="#3b82f6" />
+
+    <title>oneJournal</title>
+
+    <!-- PWA manifest (to be added later) -->
+    <!-- <link rel="manifest" href="/manifest.json"> -->
+
+    <!-- Favicon (to be added later) -->
+    <!-- <link rel="icon" type="image/svg+xml" href="/favicon.svg"> -->
+  </head>
+  <body>
+    <div id="app">
+      <!-- Top Toolbar -->
+      <header id="toolbar" class="toolbar">
+        <div class="toolbar-left">
+          <button id="menu-btn" class="btn-icon" aria-label="Menu" title="Toggle sidebar">
+            ☰
+          </button>
+          <button id="nav-overview" class="btn-icon" aria-label="Home" title="Overview" data-mode="overview">
+            🏠
+          </button>
+          <h1 class="app-title">oneJournal</h1>
+        </div>
+        <div class="toolbar-center">
+        </div>
+        <div class="toolbar-right">
+          <button id="recycle-bin-btn" class="btn-icon" aria-label="Recycle Bin" title="Recycle Bin">
+            🗑️
+          </button>
+          <button id="nav-settings" class="btn-icon" aria-label="Settings" title="Settings" data-mode="settings">
+            ⚙️
+          </button>
+        </div>
+      </header>
+
+      <div class="app-container">
+        <!-- Sidebar for notes list -->
+        <aside id="sidebar" class="sidebar">
+          <div class="sidebar-header">
+            <button id="new-note-btn" class="btn-primary">+ New Note</button>
+            <input
+              type="search"
+              id="search-notes"
+              class="search-input"
+              placeholder="Search notes..."
+            />
+          </div>
+          <div id="notes-list" class="notes-list">
+            <div class="empty-state">
+              <div class="empty-state-icon">📝</div>
+              <div class="empty-state-text">No notes yet</div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Main content area -->
+        <main id="main-content" class="main-content">
+          <!-- Content will be rendered by router -->
+        </main>
+      </div>
+
+      <!-- Footer -->
+      <footer id="footer" class="footer">
+        <div class="footer-left">
+          <span class="sync-status" data-status="offline">
+            <span class="sync-indicator">○</span>
+            <span class="sync-text">Offline</span>
+          </span>
+        </div>
+        <div class="footer-right">
+          <span class="app-version">v0.1.0</span>
+        </div>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

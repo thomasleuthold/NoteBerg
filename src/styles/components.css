@@ -1,0 +1,88 @@
+/* Component-specific styles */
+
+/* Note Card */
+.note-card {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.note-card:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.note-card.active {
+  border-color: var(--color-primary);
+  background-color: var(--color-primary-light);
+}
+
+.note-card-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-card-preview {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-card-meta {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  margin-top: var(--spacing-xs);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.note-card-indicators {
+  display: flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+
+.note-indicator {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.note-indicator.has-text::before {
+  content: '📝';
+  margin-right: 2px;
+}
+
+.note-indicator.has-strokes::before {
+  content: '✏️';
+  margin-right: 2px;
+}
+
+/* Empty state */
+.empty-state {
+  padding: var(--spacing-2xl) var(--spacing-lg);
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.empty-state-icon {
+  font-size: 3rem;
+  margin-bottom: var(--spacing-md);
+  opacity: 0.5;
+}
+
+.empty-state-text {
+  font-size: 0.875rem;
+}

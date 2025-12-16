@@ -1,0 +1,33 @@
+{
+  "name": "onejournal",
+  "version": "0.1.0",
+  "description": "A note-taking app supporting handwritten notes, text, and drawings",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src/**/*.js",
+    "format": "prettier --write .",
+    "format-check": "prettier --check ."
+  },
+  "keywords": [
+    "notes",
+    "handwriting",
+    "stylus",
+    "webdav",
+    "pwa"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.5",
+    "vite": "^5.1.4",
+    "vite-plugin-singlefile": "^2.0.1"
+  },
+  "dependencies": {
+    "idb": "^8.0.0",
+    "webdav": "^5.3.2"
+  }
+}
