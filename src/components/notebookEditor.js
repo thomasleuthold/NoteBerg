@@ -11,6 +11,7 @@ import { getCurrentNoteId } from '../modules/router.js';
 let currentEditor = null;
 let currentNoteData = null;
 let isDrawMode = false;
+let isEraserMode = false; // Manual eraser toggle
 let canvas = null;
 let ctx = null;
 let isDrawing = false;
@@ -69,17 +70,14 @@ function renderEditor(container, noteData) {
     <div class="notebook-editor">
       <div class="editor-toolbar">
         <div class="toolbar-section">
-          <button class="toolbar-btn" id="mode-text-btn" title="Text mode">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 7V4h16v3M9 20h6M12 4v16"/>
-            </svg>
+          <button class="toolbar-btn toolbar-btn-text" id="mode-text-btn" title="Text mode">
+            T
           </button>
           <button class="toolbar-btn" id="mode-draw-btn" title="Draw mode">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 19l7-7 3 3-7 7-3-3z"/>
-              <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
-              <path d="M2 2l7.586 7.586"/>
-            </svg>
+            ✏️
+          </button>
+          <button class="toolbar-btn" id="mode-erase-btn" title="Eraser mode">
+            🧽
           </button>
           <div class="toolbar-divider"></div>
           <button class="toolbar-btn toolbar-btn-text" id="format-bold-btn" title="Bold">
@@ -92,21 +90,12 @@ function renderEditor(container, noteData) {
             H
           </button>
           <button class="toolbar-btn" id="format-list-btn" title="List">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="8" y1="6" x2="21" y2="6"/>
-              <line x1="8" y1="12" x2="21" y2="12"/>
-              <line x1="8" y1="18" x2="21" y2="18"/>
-              <line x1="3" y1="6" x2="3.01" y2="6"/>
-              <line x1="3" y1="12" x2="3.01" y2="12"/>
-              <line x1="3" y1="18" x2="3.01" y2="18"/>
-            </svg>
+            •
           </button>
         </div>
         <div class="toolbar-section">
           <button class="toolbar-btn" id="clear-canvas-btn" title="Clear drawings">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-            </svg>
+            🗑️
           </button>
         </div>
         <div class="toolbar-section mode-indicator">
@@ -446,13 +435,15 @@ function handleCanvasPointerDown(e) {
   console.log('Canvas pointer down:', {
     pointerType: e.pointerType,
     buttons: e.buttons,
+    button: e.button,
+    pointerTypeName: e.pointerType,
     isDrawMode: isDrawMode,
     autoSwitchedToDrawMode: autoSwitchedToDrawMode
   });
 
   // CRITICAL: Check for stylus/pen input and set auto-switch flag
   // This is needed because once in draw mode, the canvas captures events and text editor doesn't
-  if (e.pointerType === 'pen') {
+  if (e.pointerType === 'pen' || e.pointerType === 'eraser') {
     console.log('Stylus detected on canvas - ensuring auto-switch flag is set');
     if (!isDrawMode) {
       switchToDrawMode();
@@ -475,15 +466,25 @@ function handleCanvasPointerDown(e) {
   // If we're not in draw mode, don't proceed with drawing
   if (!isDrawMode) return true;
 
-  // Check if eraser button is pressed (button 5 or buttons 32)
-  // buttons is a bitmask: 1=primary, 2=secondary, 4=auxiliary, 8=4th button, 16=5th button, 32=eraser
-  const isEraserButton = e.buttons === 32 || e.button === 5;
+  // Check if eraser is active
+  // Method 1: Manual eraser mode (user clicked eraser button)
+  // Method 2: Automatic detection for devices that support it:
+  //   - Check if pointerType is 'eraser' (some devices report this)
+  //   - Check button state for various stylus types:
+  //     - Samsung S Pen: button === 2 (secondary button when pen button held) - NOTE: May not work on S Pen
+  //     - Other stylus: button === 5 or buttons === 32
+  const isEraserButton = e.pointerType === 'eraser' || e.button === 2 || e.button === 5 || e.buttons === 32;
+  const shouldErase = isEraserMode || isEraserButton;
 
-  if (isEraserButton) {
-    console.log('Eraser button detected - starting erase mode');
+  if (shouldErase) {
+    console.log('✓ ERASER ACTIVE - starting erase mode', {
+      isEraserMode: isEraserMode,
+      isEraserButton: isEraserButton
+    });
     isErasing = true;
     isDrawing = false; // Don't draw while erasing
   } else {
+    console.log('✗ Normal drawing mode');
     isErasing = false;
     isDrawing = true;
     currentStroke = [];
@@ -494,11 +495,21 @@ function handleCanvasPointerDown(e) {
   // More debug logging
   console.log('Starting stroke:', {
     pointerType: e.pointerType,
+    button: e.button,
+    buttons: e.buttons,
     isErasing: isErasing,
     x,
     y,
     canvasWidth: canvas.width,
     canvasHeight: canvas.height
+  });
+
+  // Update mode indicator with debug info
+  updateModeIndicator({
+    pointerType: e.pointerType,
+    button: e.button,
+    buttons: e.buttons,
+    isErasing: isErasing
   });
 
   if (isErasing) {
@@ -525,6 +536,14 @@ function handleCanvasPointerMove(e) {
   if ((!isDrawing && !isErasing) || !isDrawMode) return;
 
   const { x, y } = getCanvasCoordinates(e);
+
+  // Update mode indicator with debug info during move
+  updateModeIndicator({
+    pointerType: e.pointerType,
+    button: e.button,
+    buttons: e.buttons,
+    isErasing: isErasing
+  });
 
   if (isErasing) {
     // Erase strokes at current position
@@ -806,9 +825,7 @@ function switchToDrawMode() {
     currentEditor.style.pointerEvents = 'none';
   }
 
-  document.getElementById('mode-draw-btn')?.classList.add('active');
-  document.getElementById('mode-text-btn')?.classList.remove('active');
-
+  updateToolbarButtons();
   updateModeIndicator();
 }
 
@@ -825,9 +842,7 @@ function switchToTextMode() {
     currentEditor.style.pointerEvents = 'auto';
   }
 
-  document.getElementById('mode-text-btn')?.classList.add('active');
-  document.getElementById('mode-draw-btn')?.classList.remove('active');
-
+  updateToolbarButtons();
   updateModeIndicator();
 }
 
@@ -838,7 +853,11 @@ function updateModeIndicator() {
   const modeText = document.getElementById('current-mode-text');
   if (!modeText) return;
 
-  const mode = isDrawMode ? 'Draw' : 'Text';
+  let mode = 'Text';
+  if (isDrawMode) {
+    mode = isEraserMode ? 'Erase' : 'Draw';
+  }
+
   const switchType = autoSwitchedToDrawMode ? '(Auto)' : '(Manual)';
   modeText.textContent = `${mode} Mode ${switchType}`;
 }
@@ -848,7 +867,9 @@ function updateModeIndicator() {
  */
 function manualSwitchToTextMode() {
   autoSwitchedToDrawMode = false; // Clear auto-switch flag
+  isEraserMode = false; // Exit eraser mode when switching to text
   switchToTextMode();
+  updateToolbarButtons();
 }
 
 /**
@@ -856,7 +877,44 @@ function manualSwitchToTextMode() {
  */
 function manualSwitchToDrawMode() {
   autoSwitchedToDrawMode = false; // Clear auto-switch flag
+  isEraserMode = false; // Exit eraser mode when switching to draw
   switchToDrawMode();
+  updateToolbarButtons();
+}
+
+/**
+ * Toggle eraser mode (user clicked eraser button)
+ */
+function toggleEraserMode() {
+  isEraserMode = !isEraserMode;
+
+  // If enabling eraser mode, make sure we're in draw mode
+  if (isEraserMode && !isDrawMode) {
+    autoSwitchedToDrawMode = false; // Clear auto-switch flag
+    switchToDrawMode();
+  }
+
+  updateToolbarButtons();
+  updateModeIndicator();
+}
+
+/**
+ * Update toolbar button active states
+ */
+function updateToolbarButtons() {
+  const textBtn = document.getElementById('mode-text-btn');
+  const drawBtn = document.getElementById('mode-draw-btn');
+  const eraseBtn = document.getElementById('mode-erase-btn');
+
+  if (textBtn) {
+    textBtn.classList.toggle('active', !isDrawMode);
+  }
+  if (drawBtn) {
+    drawBtn.classList.toggle('active', isDrawMode && !isEraserMode);
+  }
+  if (eraseBtn) {
+    eraseBtn.classList.toggle('active', isEraserMode);
+  }
 }
 
 /**
@@ -866,6 +924,7 @@ function attachToolbarListeners() {
   // Mode switching - use manual switch functions to clear auto-switch flag
   document.getElementById('mode-text-btn')?.addEventListener('click', manualSwitchToTextMode);
   document.getElementById('mode-draw-btn')?.addEventListener('click', manualSwitchToDrawMode);
+  document.getElementById('mode-erase-btn')?.addEventListener('click', toggleEraserMode);
 
   // Text formatting
   document.getElementById('format-bold-btn')?.addEventListener('click', () => formatText('bold'));
