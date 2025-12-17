@@ -10,6 +10,7 @@ import './styles/themes/epaper.css';
 import './styles/layout.css';
 import './styles/components.css';
 import './styles/editor.css';
+import './styles/notebookEditor.css';
 
 // Import modules
 import { initTheme } from './modules/theme.js';
@@ -20,6 +21,7 @@ import { initOverview } from './components/overviewMode.js';
 import { initModals, showCreateNoteModal } from './components/modals.js';
 import { initSidebar } from './components/sidebar.js';
 import { initRecycleBin } from './components/recycleBinMode.js';
+import { initNotebookEditorComponent } from './components/notebookEditor.js';
 
 // Application state
 const app = {
@@ -49,6 +51,7 @@ async function init() {
   initModals();
   initSidebar();
   initRecycleBin();
+  initNotebookEditorComponent();
 
   // Set up event listeners
   setupEventListeners();

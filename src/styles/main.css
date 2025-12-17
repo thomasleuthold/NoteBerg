@@ -324,8 +324,6 @@ body {
   overflow: auto;
   background-color: var(--bg-secondary);
   display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .welcome-screen {

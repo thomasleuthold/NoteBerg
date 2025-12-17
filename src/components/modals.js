@@ -289,10 +289,9 @@ export async function showCreateNoteModal(notebookId = null) {
     console.log('Note created:', note.id);
     window.dispatchEvent(new CustomEvent('datachange', { detail: { type: 'note', action: 'create', data: note } }));
 
-    // TODO: Navigate to the note editor when implemented in Phase 3
-    // For now, stay on overview to see the created note
-    // const { navigateTo } = await import('../modules/router.js');
-    // navigateTo('notebook', { noteId: note.id });
+    // Navigate to the note editor
+    const { navigateTo } = await import('../modules/router.js');
+    navigateTo('notebook', { noteId: note.id, notebookId });
   });
 }
 

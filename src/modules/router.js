@@ -125,14 +125,16 @@ function renderNotebook(container, params) {
 
   container.innerHTML = `
     <div class="notebook-container">
-      <div class="editor-placeholder">
-        <h2>Notebook Editor</h2>
-        <p>Notebook ID: ${notebookId || 'none'}</p>
-        <p>Note ID: ${noteId || 'none'}</p>
-        <p>Text and canvas editor will be implemented in Phase 3 & 4</p>
-      </div>
+      <div id="notebook-editor-container"></div>
     </div>
   `;
+
+  // Dispatch event to initialize editor
+  window.dispatchEvent(
+    new CustomEvent('rendernotebook', {
+      detail: { noteId, notebookId },
+    })
+  );
 }
 
 /**

@@ -155,9 +155,8 @@ export async function createNote({ title, notebookId = null }) {
     id: generateId(),
     notebookId,
     title,
-    textContent: '',
-    strokes: [],
-    canvasData: null,
+    content: '', // Markdown content
+    strokes: [], // Array of drawing strokes
     created: Date.now(),
     modified: Date.now(),
     synced: false,

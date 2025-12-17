@@ -627,9 +627,9 @@
 /* Notebook placeholder */
 .notebook-container {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   height: 100%;
+  width: 100%;
 }
 
 .editor-placeholder {
