@@ -14,10 +14,13 @@ let isDrawMode = false;
 let canvas = null;
 let ctx = null;
 let isDrawing = false;
+let isErasing = false; // Track if currently erasing
 let currentStroke = [];
 let strokes = [];
 let lastExpansionTime = 0;
 let expansionCooldown = 500; // Minimum ms between expansions
+let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
+let eraserRadius = 20; // Eraser size in pixels
 
 /**
  * Initialize notebook editor for a note
@@ -181,7 +184,23 @@ function initCanvasLayer(noteData) {
 
   // Canvas drawing events with pointer capture for better performance
   canvas.addEventListener('pointerdown', (e) => {
-    handleCanvasPointerDown(e);
+    console.log('=== POINTERDOWN WRAPPER ===', {
+      pointerType: e.pointerType,
+      isDrawMode: isDrawMode,
+      autoSwitchedToDrawMode: autoSwitchedToDrawMode,
+      canvasHasActiveClass: canvas.classList.contains('active'),
+      canvasPointerEvents: canvas.style.pointerEvents
+    });
+
+    // Call handleCanvasPointerDown first - it will set autoSwitchedToDrawMode for pen
+    // and return early for touch if needed
+    const shouldContinue = handleCanvasPointerDown(e);
+
+    // If handleCanvasPointerDown returned false, it switched to text mode - don't prevent default
+    if (shouldContinue === false) {
+      return;
+    }
+
     if (isDrawMode) {
       e.preventDefault(); // Prevent scrolling and default touch behavior
       canvas.setPointerCapture(e.pointerId);
@@ -203,6 +222,15 @@ function initCanvasLayer(noteData) {
 
   // Prevent touch scrolling on canvas when in draw mode
   canvas.addEventListener('touchstart', (e) => {
+    // Check if we need to auto-switch to text/pan mode
+    // IMPORTANT: Only switch if we're NOT currently drawing (to avoid switching mid-stroke)
+    if (autoSwitchedToDrawMode && isDrawMode && !isDrawing) {
+      console.log('Touch start detected with auto-switched draw mode - switching to text mode');
+      switchToTextMode();
+      // Don't prevent default - allow scrolling/panning
+      return;
+    }
+
     if (isDrawMode) {
       e.preventDefault();
     }
@@ -335,10 +363,27 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
  * Handle pointer down for auto mode detection
  */
 function handlePointerDown(e) {
-  // Auto-detect stylus (pen) input
+  console.log('Text editor pointer down:', {
+    pointerType: e.pointerType,
+    isDrawMode: isDrawMode,
+    autoSwitchedToDrawMode: autoSwitchedToDrawMode
+  });
+
+  // Auto-detect stylus (pen) input - switch to draw mode
   if (e.pointerType === 'pen') {
-    switchToDrawMode();
+    if (!isDrawMode) {
+      console.log('Switching to draw mode (stylus detected)');
+      switchToDrawMode();
+      autoSwitchedToDrawMode = true; // Remember this was auto-switched
+    }
     e.preventDefault();
+  }
+  // Auto-detect touch input - switch to text/pan mode if we auto-switched to draw mode
+  else if (e.pointerType === 'touch' && autoSwitchedToDrawMode) {
+    console.log('Touch detected with auto-switched draw mode - switching to text mode');
+    if (isDrawMode) {
+      switchToTextMode();
+    }
   }
 }
 
@@ -347,7 +392,10 @@ function handlePointerDown(e) {
  */
 function handlePointerMove(e) {
   if (e.pointerType === 'pen' && !isDrawMode) {
+    console.log('Stylus hover detected on text editor - switching to draw mode');
     switchToDrawMode();
+    autoSwitchedToDrawMode = true; // Remember this was auto-switched
+    updateModeIndicator();
   }
 }
 
@@ -391,76 +439,164 @@ function getCanvasCoordinates(e) {
 
 /**
  * Handle canvas pointer down
+ * @returns {boolean} false if mode was switched to text (touch after auto-switch), true otherwise
  */
 function handleCanvasPointerDown(e) {
-  if (!isDrawMode) return;
+  // Debug logging - including pointer type and buttons
+  console.log('Canvas pointer down:', {
+    pointerType: e.pointerType,
+    buttons: e.buttons,
+    isDrawMode: isDrawMode,
+    autoSwitchedToDrawMode: autoSwitchedToDrawMode
+  });
 
-  isDrawing = true;
-  currentStroke = [];
+  // CRITICAL: Check for stylus/pen input and set auto-switch flag
+  // This is needed because once in draw mode, the canvas captures events and text editor doesn't
+  if (e.pointerType === 'pen') {
+    console.log('Stylus detected on canvas - ensuring auto-switch flag is set');
+    if (!isDrawMode) {
+      switchToDrawMode();
+    }
+    autoSwitchedToDrawMode = true; // Always set when stylus is used
+    updateModeIndicator(); // Update the indicator immediately
+  }
+
+  // CRITICAL: Check for auto-switch to text/pan mode when touch is detected
+  // This must happen AFTER checking for pen, so pen sets the flag first
+  // IMPORTANT: Only switch if we're NOT currently drawing (to avoid switching mid-stroke)
+  if (e.pointerType === 'touch' && autoSwitchedToDrawMode && !isDrawing) {
+    console.log('Touch on canvas detected with auto-switched draw mode - switching to text mode for panning');
+    switchToTextMode();
+    e.stopPropagation(); // Stop event propagation
+    e.preventDefault(); // Prevent default to avoid any drawing
+    return false; // Signal to wrapper that we switched to text mode
+  }
+
+  // If we're not in draw mode, don't proceed with drawing
+  if (!isDrawMode) return true;
+
+  // Check if eraser button is pressed (button 5 or buttons 32)
+  // buttons is a bitmask: 1=primary, 2=secondary, 4=auxiliary, 8=4th button, 16=5th button, 32=eraser
+  const isEraserButton = e.buttons === 32 || e.button === 5;
+
+  if (isEraserButton) {
+    console.log('Eraser button detected - starting erase mode');
+    isErasing = true;
+    isDrawing = false; // Don't draw while erasing
+  } else {
+    isErasing = false;
+    isDrawing = true;
+    currentStroke = [];
+  }
 
   const { x, y } = getCanvasCoordinates(e);
 
-  // Debug logging (can be removed later)
-  const rect = canvas.getBoundingClientRect();
-  console.log('Pointer down:', {
-    clientX: e.clientX,
-    clientY: e.clientY,
-    calculatedX: x,
-    calculatedY: y,
+  // More debug logging
+  console.log('Starting stroke:', {
+    pointerType: e.pointerType,
+    isErasing: isErasing,
+    x,
+    y,
     canvasWidth: canvas.width,
-    canvasHeight: canvas.height,
-    displayWidth: rect.width,
-    displayHeight: rect.height,
-    scaleX: canvas.width / rect.width,
-    scaleY: canvas.height / rect.height,
-    rectTop: rect.top,
-    rectLeft: rect.left
+    canvasHeight: canvas.height
   });
 
-  currentStroke.push({ x, y, pressure: e.pressure || 0.5, time: Date.now() });
+  if (isErasing) {
+    // Start erasing at this point
+    eraseStrokesAtPoint(x, y);
+  } else {
+    // Store pointer type with stroke for color differentiation
+    currentStroke.push({
+      x,
+      y,
+      pressure: e.pressure || 0.5,
+      time: Date.now(),
+      pointerType: e.pointerType // Store pointer type
+    });
+  }
+
+  return true; // Continue with normal drawing
 }
 
 /**
  * Handle canvas pointer move
  */
 function handleCanvasPointerMove(e) {
-  if (!isDrawing || !isDrawMode) return;
+  if ((!isDrawing && !isErasing) || !isDrawMode) return;
 
   const { x, y } = getCanvasCoordinates(e);
-  currentStroke.push({ x, y, pressure: e.pressure || 0.5, time: Date.now() });
 
-  // Check if drawing near bottom and expand if needed
-  const expansionThreshold = 300; // Trigger when within 300px of bottom
-  const distanceFromBottom = canvas.height - y;
+  if (isErasing) {
+    // Erase strokes at current position
+    eraseStrokesAtPoint(x, y);
 
-  if (distanceFromBottom < expansionThreshold) {
-    expandCanvas(800); // Add 800px more space
+    // Draw eraser cursor indicator
+    drawEraserCursor(x, y);
+  } else {
+    // Normal drawing
+    currentStroke.push({
+      x,
+      y,
+      pressure: e.pressure || 0.5,
+      time: Date.now(),
+      pointerType: e.pointerType
+    });
+
+    // Check if drawing near bottom and expand if needed
+    const expansionThreshold = 300; // Trigger when within 300px of bottom
+    const distanceFromBottom = canvas.height - y;
+
+    if (distanceFromBottom < expansionThreshold) {
+      expandCanvas(800); // Add 800px more space
+    }
+
+    // Draw incrementally for better performance
+    if (currentStroke.length > 1) {
+      const prevPoint = currentStroke[currentStroke.length - 2];
+      const currPoint = currentStroke[currentStroke.length - 1];
+
+      // Use different colors for different pointer types (debug feature)
+      const pointerType = currPoint.pointerType || 'unknown';
+      if (pointerType === 'pen') {
+        ctx.strokeStyle = '#000000'; // Black for stylus
+      } else if (pointerType === 'touch') {
+        ctx.strokeStyle = '#ff0000'; // Red for finger touch
+      } else if (pointerType === 'mouse') {
+        ctx.strokeStyle = '#0000ff'; // Blue for mouse
+      } else {
+        ctx.strokeStyle = '#888888'; // Gray for unknown
+      }
+
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      ctx.beginPath();
+      ctx.moveTo(prevPoint.x, prevPoint.y);
+      ctx.lineTo(currPoint.x, currPoint.y);
+      ctx.stroke();
+    }
+
+    // Update expansion zone indicator
+    updateExpansionZoneIndicator(y);
   }
-
-  // Draw incrementally for better performance
-  if (currentStroke.length > 1) {
-    const prevPoint = currentStroke[currentStroke.length - 2];
-    const currPoint = currentStroke[currentStroke.length - 1];
-
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    ctx.beginPath();
-    ctx.moveTo(prevPoint.x, prevPoint.y);
-    ctx.lineTo(currPoint.x, currPoint.y);
-    ctx.stroke();
-  }
-
-  // Update expansion zone indicator
-  updateExpansionZoneIndicator(y);
 }
 
 /**
  * Handle canvas pointer up
  */
 function handleCanvasPointerUp(e) {
+  if (isErasing) {
+    isErasing = false;
+    // Redraw canvas to remove eraser cursor
+    redrawCanvas();
+    // Auto-save after erasing
+    setTimeout(async () => {
+      await saveNoteContent();
+    }, 500);
+    return;
+  }
+
   if (!isDrawing) return;
 
   isDrawing = false;
@@ -486,7 +622,18 @@ function handleCanvasPointerUp(e) {
 function drawStroke(stroke) {
   if (!ctx || stroke.length < 2) return;
 
-  ctx.strokeStyle = '#000000';
+  // Determine color based on pointer type (debug feature)
+  const pointerType = stroke[0].pointerType || 'pen';
+  if (pointerType === 'pen') {
+    ctx.strokeStyle = '#000000'; // Black for stylus
+  } else if (pointerType === 'touch') {
+    ctx.strokeStyle = '#ff0000'; // Red for finger touch
+  } else if (pointerType === 'mouse') {
+    ctx.strokeStyle = '#0000ff'; // Blue for mouse
+  } else {
+    ctx.strokeStyle = '#888888'; // Gray for unknown
+  }
+
   ctx.lineWidth = 2;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -528,18 +675,141 @@ function redrawCanvas() {
 }
 
 /**
+ * Check if a point is near a line segment
+ * @param {number} px - Point x
+ * @param {number} py - Point y
+ * @param {number} x1 - Line start x
+ * @param {number} y1 - Line start y
+ * @param {number} x2 - Line end x
+ * @param {number} y2 - Line end y
+ * @param {number} threshold - Distance threshold
+ * @returns {boolean} True if point is within threshold distance
+ */
+function isPointNearLine(px, py, x1, y1, x2, y2, threshold) {
+  // Calculate distance from point to line segment
+  const A = px - x1;
+  const B = py - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+
+  const dot = A * C + B * D;
+  const lenSq = C * C + D * D;
+  let param = -1;
+
+  if (lenSq !== 0) {
+    param = dot / lenSq;
+  }
+
+  let xx, yy;
+
+  if (param < 0) {
+    xx = x1;
+    yy = y1;
+  } else if (param > 1) {
+    xx = x2;
+    yy = y2;
+  } else {
+    xx = x1 + param * C;
+    yy = y1 + param * D;
+  }
+
+  const dx = px - xx;
+  const dy = py - yy;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+
+  return distance <= threshold;
+}
+
+/**
+ * Check if a stroke intersects with eraser circle
+ * @param {Array} stroke - Stroke points
+ * @param {number} eraserX - Eraser center x
+ * @param {number} eraserY - Eraser center y
+ * @returns {boolean} True if stroke intersects with eraser
+ */
+function strokeIntersectsEraser(stroke, eraserX, eraserY) {
+  if (!stroke || stroke.length === 0) return false;
+
+  // Check each segment of the stroke
+  for (let i = 0; i < stroke.length - 1; i++) {
+    const p1 = stroke[i];
+    const p2 = stroke[i + 1];
+
+    if (isPointNearLine(eraserX, eraserY, p1.x, p1.y, p2.x, p2.y, eraserRadius)) {
+      return true;
+    }
+  }
+
+  // Also check if any point is within eraser radius
+  for (const point of stroke) {
+    const dx = point.x - eraserX;
+    const dy = point.y - eraserY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance <= eraserRadius) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Erase strokes at a given point
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ */
+function eraseStrokesAtPoint(x, y) {
+  // Filter out strokes that intersect with the eraser
+  const originalLength = strokes.length;
+  strokes = strokes.filter(stroke => !strokeIntersectsEraser(stroke, x, y));
+
+  // Only redraw if strokes were removed
+  if (strokes.length < originalLength) {
+    console.log(`Erased ${originalLength - strokes.length} stroke(s)`);
+    redrawCanvas();
+  }
+}
+
+/**
+ * Draw eraser cursor indicator
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ */
+function drawEraserCursor(x, y) {
+  if (!ctx) return;
+
+  // Save context state
+  ctx.save();
+
+  // Draw eraser circle outline
+  ctx.strokeStyle = '#ff0000';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]); // Dashed line
+  ctx.beginPath();
+  ctx.arc(x, y, eraserRadius, 0, 2 * Math.PI);
+  ctx.stroke();
+
+  // Restore context state
+  ctx.restore();
+}
+
+/**
  * Switch to draw mode
  */
 function switchToDrawMode() {
   isDrawMode = true;
-  canvas.style.pointerEvents = 'auto';
-  currentEditor.style.pointerEvents = 'none';
+  if (canvas) {
+    canvas.classList.add('active');
+    canvas.style.pointerEvents = 'auto';
+  }
+  if (currentEditor) {
+    currentEditor.style.pointerEvents = 'none';
+  }
 
   document.getElementById('mode-draw-btn')?.classList.add('active');
   document.getElementById('mode-text-btn')?.classList.remove('active');
 
-  const modeText = document.getElementById('current-mode-text');
-  if (modeText) modeText.textContent = 'Draw Mode';
+  updateModeIndicator();
 }
 
 /**
@@ -547,23 +817,55 @@ function switchToDrawMode() {
  */
 function switchToTextMode() {
   isDrawMode = false;
-  canvas.style.pointerEvents = 'none';
-  currentEditor.style.pointerEvents = 'auto';
+  if (canvas) {
+    canvas.classList.remove('active');
+    canvas.style.pointerEvents = 'none';
+  }
+  if (currentEditor) {
+    currentEditor.style.pointerEvents = 'auto';
+  }
 
   document.getElementById('mode-text-btn')?.classList.add('active');
   document.getElementById('mode-draw-btn')?.classList.remove('active');
 
+  updateModeIndicator();
+}
+
+/**
+ * Update mode indicator text with auto-switch status
+ */
+function updateModeIndicator() {
   const modeText = document.getElementById('current-mode-text');
-  if (modeText) modeText.textContent = 'Text Mode';
+  if (!modeText) return;
+
+  const mode = isDrawMode ? 'Draw' : 'Text';
+  const switchType = autoSwitchedToDrawMode ? '(Auto)' : '(Manual)';
+  modeText.textContent = `${mode} Mode ${switchType}`;
+}
+
+/**
+ * Manually switch to text mode (user clicked button)
+ */
+function manualSwitchToTextMode() {
+  autoSwitchedToDrawMode = false; // Clear auto-switch flag
+  switchToTextMode();
+}
+
+/**
+ * Manually switch to draw mode (user clicked button)
+ */
+function manualSwitchToDrawMode() {
+  autoSwitchedToDrawMode = false; // Clear auto-switch flag
+  switchToDrawMode();
 }
 
 /**
  * Attach toolbar event listeners
  */
 function attachToolbarListeners() {
-  // Mode switching
-  document.getElementById('mode-text-btn')?.addEventListener('click', switchToTextMode);
-  document.getElementById('mode-draw-btn')?.addEventListener('click', switchToDrawMode);
+  // Mode switching - use manual switch functions to clear auto-switch flag
+  document.getElementById('mode-text-btn')?.addEventListener('click', manualSwitchToTextMode);
+  document.getElementById('mode-draw-btn')?.addEventListener('click', manualSwitchToDrawMode);
 
   // Text formatting
   document.getElementById('format-bold-btn')?.addEventListener('click', () => formatText('bold'));
