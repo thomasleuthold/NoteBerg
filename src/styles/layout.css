@@ -543,6 +543,17 @@
   color: var(--text-tertiary);
   font-style: italic;
   margin: 0;
+  margin-left: var(--spacing-md);
+}
+
+/* Setting item with buttons */
+.setting-item button {
+  margin-right: var(--spacing-sm);
+}
+
+.setting-item button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Theme Toggle Group */

@@ -4,6 +4,15 @@
  */
 
 import { getTheme, setTheme } from '../modules/theme.js';
+import {
+  isAuthenticated,
+  getStoredCredentials,
+  startLoginFlow,
+  clearCredentials,
+  testConnection,
+  fullSync,
+} from '../modules/nextcloudSync.js';
+import { getAllNotebooks, getAllNotes, saveNotebook, saveNote } from '../modules/storage.js';
 
 /**
  * Render settings UI
@@ -11,6 +20,8 @@ import { getTheme, setTheme } from '../modules/theme.js';
  */
 export function renderSettings(container) {
   const currentTheme = getTheme();
+  const authenticated = isAuthenticated();
+  const credentials = getStoredCredentials();
 
   container.innerHTML = `
     <div class="settings-panel">
@@ -44,27 +55,70 @@ export function renderSettings(container) {
       </div>
 
       <div class="settings-section">
-        <h3>Sync</h3>
+        <h3>Nextcloud Sync</h3>
+
+        ${
+          !authenticated
+            ? `
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">Connect to Nextcloud</span>
+            <span class="setting-description">Use Nextcloud Login Flow to securely connect your account</span>
+          </div>
+        </div>
 
         <div class="setting-item">
-          <label for="webdav-url" class="setting-label">
-            <span class="setting-name">WebDAV Server URL</span>
-            <span class="setting-description">Nextcloud or other WebDAV-compatible server</span>
+          <label for="nextcloud-url" class="setting-label">
+            <span class="setting-name">Nextcloud Server URL</span>
+            <span class="setting-description">Enter your Nextcloud server address</span>
           </label>
           <input
             type="url"
-            id="webdav-url"
+            id="nextcloud-url"
             class="setting-control"
-            placeholder="https://cloud.example.com/remote.php/dav"
-            disabled
+            placeholder="https://cloud.example.com"
           />
         </div>
 
         <div class="setting-item">
-          <p class="setting-note">
-            <em>WebDAV sync will be available in Phase 5</em>
-          </p>
+          <button id="test-connection-btn" class="btn-secondary">Test Connection</button>
+          <button id="connect-nextcloud-btn" class="btn-primary">Connect to Nextcloud</button>
+          <span id="connection-status" class="setting-note"></span>
         </div>
+
+        <div class="setting-item" id="login-url-container" style="display: none;">
+          <label for="login-url" class="setting-label">
+            <span class="setting-name">Login URL</span>
+            <span class="setting-description">Copy and open this URL in your browser to complete login</span>
+          </label>
+          <input
+            type="text"
+            id="login-url"
+            class="setting-control"
+            readonly
+            style="user-select: all; -webkit-user-select: all;"
+          />
+          <button id="copy-login-url-btn" class="btn-secondary" style="margin-top: 8px;">Copy URL</button>
+        </div>
+        `
+            : `
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">Connected</span>
+            <span class="setting-description">Logged in as ${credentials?.loginName || 'Unknown'}</span>
+          </div>
+          <div class="setting-label">
+            <span class="setting-description">Server: ${credentials?.serverUrl || 'Unknown'}</span>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <button id="sync-now-btn" class="btn-primary">Sync Now</button>
+          <button id="disconnect-btn" class="btn-secondary">Disconnect</button>
+          <span id="sync-status" class="setting-note"></span>
+        </div>
+        `
+        }
       </div>
 
       <div class="settings-section">
@@ -93,6 +147,172 @@ export function renderSettings(container) {
       toggle.classList.add('active');
     });
   });
+
+  // Nextcloud sync event listeners
+  if (!authenticated) {
+    const testBtn = container.querySelector('#test-connection-btn');
+    const connectBtn = container.querySelector('#connect-nextcloud-btn');
+    const urlInput = container.querySelector('#nextcloud-url');
+    const statusSpan = container.querySelector('#connection-status');
+
+    testBtn?.addEventListener('click', async () => {
+      const serverUrl = urlInput.value.trim();
+
+      if (!serverUrl) {
+        statusSpan.textContent = 'Please enter a server URL';
+        statusSpan.style.color = 'var(--color-error)';
+        return;
+      }
+
+      testBtn.disabled = true;
+      testBtn.textContent = 'Testing...';
+      statusSpan.textContent = '';
+
+      try {
+        const result = await testConnection(serverUrl);
+        if (result.success) {
+          statusSpan.textContent = `✓ Connected to Nextcloud ${result.versionstring}`;
+          statusSpan.style.color = 'var(--color-success)';
+        } else {
+          statusSpan.textContent = `✗ ${result.error}`;
+          statusSpan.style.color = 'var(--color-error)';
+        }
+      } catch (error) {
+        statusSpan.textContent = `✗ ${error.message}`;
+        statusSpan.style.color = 'var(--color-error)';
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = 'Test Connection';
+      }
+    });
+
+    connectBtn?.addEventListener('click', async () => {
+      const serverUrl = urlInput.value.trim();
+
+      if (!serverUrl) {
+        statusSpan.textContent = 'Please enter a server URL';
+        statusSpan.style.color = 'var(--color-error)';
+        return;
+      }
+
+      connectBtn.disabled = true;
+      connectBtn.textContent = 'Initializing...';
+      statusSpan.textContent = 'Starting Nextcloud Login Flow...';
+      statusSpan.style.color = 'var(--color-text)';
+
+      const loginUrlContainer = container.querySelector('#login-url-container');
+      const loginUrlInput = container.querySelector('#login-url');
+      const copyLoginUrlBtn = container.querySelector('#copy-login-url-btn');
+
+      try {
+        await startLoginFlow(serverUrl, (loginUrl) => {
+          // Show the login URL field
+          loginUrlContainer.style.display = 'block';
+          loginUrlInput.value = loginUrl;
+
+          statusSpan.textContent = 'Waiting for login... Open the URL above in your browser';
+          statusSpan.style.color = 'var(--color-text)';
+
+          // Add copy button handler
+          copyLoginUrlBtn.onclick = async () => {
+            try {
+              loginUrlInput.select();
+              await navigator.clipboard.writeText(loginUrl);
+              copyLoginUrlBtn.textContent = '✓ Copied!';
+              setTimeout(() => {
+                copyLoginUrlBtn.textContent = 'Copy URL';
+              }, 2000);
+            } catch (err) {
+              // Fallback: select the text
+              loginUrlInput.select();
+              copyLoginUrlBtn.textContent = 'Selected - use Ctrl+C';
+              setTimeout(() => {
+                copyLoginUrlBtn.textContent = 'Copy URL';
+              }, 2000);
+            }
+          };
+        });
+
+        // Login successful
+        loginUrlContainer.style.display = 'none';
+        statusSpan.textContent = '✓ Connected successfully!';
+        statusSpan.style.color = 'var(--color-success)';
+
+        // Notify footer about auth change
+        window.dispatchEvent(new CustomEvent('nextcloud-auth-changed'));
+
+        // Reload settings to show authenticated state
+        setTimeout(() => renderSettings(container), 1000);
+      } catch (error) {
+        console.error('Login flow error caught in settings:', error);
+        const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
+        loginUrlContainer.style.display = 'none';
+        statusSpan.textContent = `✗ ${errorMessage}`;
+        statusSpan.style.color = 'var(--color-error)';
+        connectBtn.disabled = false;
+        connectBtn.textContent = 'Connect to Nextcloud';
+      }
+    });
+  } else {
+    const syncBtn = container.querySelector('#sync-now-btn');
+    const disconnectBtn = container.querySelector('#disconnect-btn');
+    const syncStatus = container.querySelector('#sync-status');
+
+    syncBtn?.addEventListener('click', async () => {
+      syncBtn.disabled = true;
+      syncBtn.textContent = 'Syncing...';
+      syncStatus.textContent = 'Syncing with Nextcloud...';
+      syncStatus.style.color = 'var(--color-text)';
+
+      try {
+        const notebooks = await getAllNotebooks();
+        const notes = await getAllNotes();
+
+        const result = await fullSync(notebooks, notes);
+
+        // Save downloaded notebooks to local storage
+        let downloadedNotebooks = 0;
+        let downloadedNotes = 0;
+
+        for (const notebook of result.downloaded.notebooks) {
+          await saveNotebook(notebook);
+          downloadedNotebooks++;
+        }
+
+        // Save downloaded notes to local storage
+        for (const note of result.downloaded.notes) {
+          await saveNote(note);
+          downloadedNotes++;
+        }
+
+        syncStatus.textContent = `✓ Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`;
+        syncStatus.style.color = 'var(--color-success)';
+
+        // Trigger a UI refresh if notes/notebooks were downloaded
+        if (downloadedNotebooks > 0 || downloadedNotes > 0) {
+          // Dispatch event to refresh sidebar
+          window.dispatchEvent(new CustomEvent('notes-updated'));
+        }
+      } catch (error) {
+        syncStatus.textContent = `✗ Sync failed: ${error.message}`;
+        syncStatus.style.color = 'var(--color-error)';
+      } finally {
+        syncBtn.disabled = false;
+        syncBtn.textContent = 'Sync Now';
+      }
+    });
+
+    disconnectBtn?.addEventListener('click', () => {
+      if (confirm('Are you sure you want to disconnect from Nextcloud?')) {
+        clearCredentials();
+
+        // Notify footer about auth change
+        window.dispatchEvent(new CustomEvent('nextcloud-auth-changed'));
+
+        renderSettings(container);
+      }
+    });
+  }
 }
 
 /**

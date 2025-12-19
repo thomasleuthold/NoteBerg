@@ -369,3 +369,19 @@ export async function clearAllData() {
   await db.clear('syncQueue');
   console.log('All data cleared');
 }
+
+/**
+ * Save or update a notebook from sync
+ * @param {Object} notebook - Notebook object to save
+ */
+export async function saveNotebook(notebook) {
+  await db.put('notebooks', notebook);
+}
+
+/**
+ * Save or update a note from sync
+ * @param {Object} note - Note object to save
+ */
+export async function saveNote(note) {
+  await db.put('notes', note);
+}

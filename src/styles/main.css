@@ -8,6 +8,7 @@
   --color-secondary-hover: #475569;
   --color-success: #10b981;
   --color-danger: #ef4444;
+  --color-error: #ef4444;
   --color-warning: #f59e0b;
 
   /* Background colors */
@@ -180,18 +181,43 @@ body {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
+}
+
+.sync-status:hover {
+  background-color: var(--bg-hover);
+}
+
+.sync-status[data-status='connected'] {
+  cursor: pointer;
+}
+
+.sync-status[data-status='syncing'] {
+  cursor: wait;
 }
 
 .sync-indicator {
   font-size: 0.875rem;
 }
 
-.sync-status[data-status='synced'] .sync-indicator {
+.sync-status[data-status='connected'] .sync-indicator {
   color: var(--color-success);
 }
 
 .sync-status[data-status='syncing'] .sync-indicator {
   color: var(--color-warning);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .sync-status[data-status='offline'] .sync-indicator {

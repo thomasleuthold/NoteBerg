@@ -1,22 +1,18 @@
 import { defineConfig } from 'vite';
-import { viteSingleFile } from 'vite-plugin-singlefile';
 
 export default defineConfig({
-  plugins: [viteSingleFile()],
   build: {
     target: 'esnext',
-    assetsInlineLimit: 100000000,
-    chunkSizeWarningLimit: 100000000,
-    cssCodeSplit: false,
     outDir: 'dist',
-    rollupOptions: {
-      output: {
-        inlineDynamicImports: true,
-      },
-    },
+    // Tauri uses Chromium, so we can use modern features
+    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+    sourcemap: !!process.env.TAURI_DEBUG,
   },
   server: {
     port: 3000,
-    open: true,
+    strictPort: true,
   },
+  // Prevent vite from obscuring rust errors
+  clearScreen: false,
+  envPrefix: ['VITE_', 'TAURI_'],
 });

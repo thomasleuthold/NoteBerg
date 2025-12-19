@@ -16,6 +16,7 @@ import './styles/notebookEditor.css';
 import { initTheme } from './modules/theme.js';
 import { initRouter, navigateTo, getCurrentNotebookId } from './modules/router.js';
 import { initStorage } from './modules/storage.js';
+import { initFooter } from './modules/footer.js';
 import { initSettings } from './components/settingsMode.js';
 import { initOverview } from './components/overviewMode.js';
 import { initModals, showCreateNoteModal } from './components/modals.js';
@@ -52,6 +53,7 @@ async function init() {
   initSidebar();
   initRecycleBin();
   initNotebookEditorComponent();
+  initFooter();
 
   // Set up event listeners
   setupEventListeners();

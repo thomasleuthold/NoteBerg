@@ -13,6 +13,12 @@ dev:
 build:
     npm run build
 
+build-w:
+    npm run tauri build
+
+build-a:
+    npm run tauri android build --release
+
 preview:
     npm run preview
 
