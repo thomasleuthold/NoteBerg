@@ -282,7 +282,13 @@ function expandCanvas(additionalHeight) {
 
   // Store current strokes AND the current stroke being drawn
   const currentStrokes = [...strokes];
-  const currentStrokeInProgress = [...currentStroke];
+  const currentStrokeInProgress = currentStroke.x ? {
+    pointerType: currentStroke.pointerType,
+    x: [...currentStroke.x],
+    y: [...currentStroke.y],
+    pressure: [...currentStroke.pressure],
+    time: [...currentStroke.time]
+  } : null;
 
   // Calculate new height
   const newHeight = canvas.height + additionalHeight;
@@ -301,7 +307,7 @@ function expandCanvas(additionalHeight) {
   redrawCanvas();
 
   // Restore the current stroke being drawn
-  if (currentStrokeInProgress.length > 0) {
+  if (currentStrokeInProgress && currentStrokeInProgress.x.length > 0) {
     currentStroke = currentStrokeInProgress;
     drawStroke(currentStroke);
   }
@@ -516,14 +522,22 @@ function handleCanvasPointerDown(e) {
     // Start erasing at this point
     eraseStrokesAtPoint(x, y);
   } else {
-    // Store pointer type with stroke for color differentiation
-    currentStroke.push({
-      x,
-      y,
-      pressure: e.pressure || 0.5,
-      time: Date.now(),
-      pointerType: e.pointerType // Store pointer type
-    });
+    // Initialize stroke structure if this is the first point
+    if (currentStroke.length === 0) {
+      currentStroke = {
+        pointerType: e.pointerType, // Store once per stroke
+        x: [],
+        y: [],
+        pressure: [],
+        time: []
+      };
+    }
+
+    // Add point data to arrays
+    currentStroke.x.push(x);
+    currentStroke.y.push(y);
+    currentStroke.pressure.push(e.pressure || 0.5);
+    currentStroke.time.push(Date.now());
   }
 
   return true; // Continue with normal drawing
@@ -552,14 +566,11 @@ function handleCanvasPointerMove(e) {
     // Draw eraser cursor indicator
     drawEraserCursor(x, y);
   } else {
-    // Normal drawing
-    currentStroke.push({
-      x,
-      y,
-      pressure: e.pressure || 0.5,
-      time: Date.now(),
-      pointerType: e.pointerType
-    });
+    // Normal drawing - add point to arrays
+    currentStroke.x.push(x);
+    currentStroke.y.push(y);
+    currentStroke.pressure.push(e.pressure || 0.5);
+    currentStroke.time.push(Date.now());
 
     // Check if drawing near bottom and expand if needed
     const expansionThreshold = 300; // Trigger when within 300px of bottom
@@ -570,12 +581,15 @@ function handleCanvasPointerMove(e) {
     }
 
     // Draw incrementally for better performance
-    if (currentStroke.length > 1) {
-      const prevPoint = currentStroke[currentStroke.length - 2];
-      const currPoint = currentStroke[currentStroke.length - 1];
+    const pointCount = currentStroke.x.length;
+    if (pointCount > 1) {
+      const prevX = currentStroke.x[pointCount - 2];
+      const prevY = currentStroke.y[pointCount - 2];
+      const currX = currentStroke.x[pointCount - 1];
+      const currY = currentStroke.y[pointCount - 1];
 
       // Use different colors for different pointer types (debug feature)
-      const pointerType = currPoint.pointerType || 'unknown';
+      const pointerType = currentStroke.pointerType || 'unknown';
       if (pointerType === 'pen') {
         ctx.strokeStyle = '#000000'; // Black for stylus
       } else if (pointerType === 'touch') {
@@ -591,8 +605,8 @@ function handleCanvasPointerMove(e) {
       ctx.lineJoin = 'round';
 
       ctx.beginPath();
-      ctx.moveTo(prevPoint.x, prevPoint.y);
-      ctx.lineTo(currPoint.x, currPoint.y);
+      ctx.moveTo(prevX, prevY);
+      ctx.lineTo(currX, currY);
       ctx.stroke();
     }
 
@@ -620,9 +634,15 @@ function handleCanvasPointerUp(e) {
 
   isDrawing = false;
 
-  if (currentStroke.length > 0) {
-    // Save stroke
-    strokes.push([...currentStroke]);
+  if (currentStroke.x && currentStroke.x.length > 0) {
+    // Save stroke (deep copy)
+    strokes.push({
+      pointerType: currentStroke.pointerType,
+      x: [...currentStroke.x],
+      y: [...currentStroke.y],
+      pressure: [...currentStroke.pressure],
+      time: [...currentStroke.time]
+    });
     currentStroke = [];
 
     // Hide expansion zone indicator
@@ -639,10 +659,12 @@ function handleCanvasPointerUp(e) {
  * Draw a single stroke with smooth curves
  */
 function drawStroke(stroke) {
-  if (!ctx || stroke.length < 2) return;
+  if (!ctx || !stroke.x || stroke.x.length < 2) return;
+
+  const pointCount = stroke.x.length;
 
   // Determine color based on pointer type (debug feature)
-  const pointerType = stroke[0].pointerType || 'pen';
+  const pointerType = stroke.pointerType || 'pen';
   if (pointerType === 'pen') {
     ctx.strokeStyle = '#000000'; // Black for stylus
   } else if (pointerType === 'touch') {
@@ -658,21 +680,21 @@ function drawStroke(stroke) {
   ctx.lineJoin = 'round';
 
   ctx.beginPath();
-  ctx.moveTo(stroke[0].x, stroke[0].y);
+  ctx.moveTo(stroke.x[0], stroke.y[0]);
 
   // Use quadratic curves for smoother lines
-  if (stroke.length === 2) {
-    ctx.lineTo(stroke[1].x, stroke[1].y);
+  if (pointCount === 2) {
+    ctx.lineTo(stroke.x[1], stroke.y[1]);
   } else {
-    for (let i = 1; i < stroke.length - 1; i++) {
-      const xc = (stroke[i].x + stroke[i + 1].x) / 2;
-      const yc = (stroke[i].y + stroke[i + 1].y) / 2;
-      ctx.quadraticCurveTo(stroke[i].x, stroke[i].y, xc, yc);
+    for (let i = 1; i < pointCount - 1; i++) {
+      const xc = (stroke.x[i] + stroke.x[i + 1]) / 2;
+      const yc = (stroke.y[i] + stroke.y[i + 1]) / 2;
+      ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], xc, yc);
     }
     // Draw last segment
-    const last = stroke[stroke.length - 1];
-    const secondLast = stroke[stroke.length - 2];
-    ctx.quadraticCurveTo(secondLast.x, secondLast.y, last.x, last.y);
+    const lastIdx = pointCount - 1;
+    const secondLastIdx = pointCount - 2;
+    ctx.quadraticCurveTo(stroke.x[secondLastIdx], stroke.y[secondLastIdx], stroke.x[lastIdx], stroke.y[lastIdx]);
   }
 
   ctx.stroke();
@@ -741,28 +763,32 @@ function isPointNearLine(px, py, x1, y1, x2, y2, threshold) {
 
 /**
  * Check if a stroke intersects with eraser circle
- * @param {Array} stroke - Stroke points
+ * @param {Object} stroke - Stroke object with x, y arrays
  * @param {number} eraserX - Eraser center x
  * @param {number} eraserY - Eraser center y
  * @returns {boolean} True if stroke intersects with eraser
  */
 function strokeIntersectsEraser(stroke, eraserX, eraserY) {
-  if (!stroke || stroke.length === 0) return false;
+  if (!stroke || !stroke.x || stroke.x.length === 0) return false;
+
+  const pointCount = stroke.x.length;
 
   // Check each segment of the stroke
-  for (let i = 0; i < stroke.length - 1; i++) {
-    const p1 = stroke[i];
-    const p2 = stroke[i + 1];
+  for (let i = 0; i < pointCount - 1; i++) {
+    const x1 = stroke.x[i];
+    const y1 = stroke.y[i];
+    const x2 = stroke.x[i + 1];
+    const y2 = stroke.y[i + 1];
 
-    if (isPointNearLine(eraserX, eraserY, p1.x, p1.y, p2.x, p2.y, eraserRadius)) {
+    if (isPointNearLine(eraserX, eraserY, x1, y1, x2, y2, eraserRadius)) {
       return true;
     }
   }
 
   // Also check if any point is within eraser radius
-  for (const point of stroke) {
-    const dx = point.x - eraserX;
-    const dy = point.y - eraserY;
+  for (let i = 0; i < pointCount; i++) {
+    const dx = stroke.x[i] - eraserX;
+    const dy = stroke.y[i] - eraserY;
     const distance = Math.sqrt(dx * dx + dy * dy);
     if (distance <= eraserRadius) {
       return true;

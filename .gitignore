@@ -50,3 +50,4 @@ Cargo.lock
 *.keystore
 *.jks
 key.properties
+*.apk

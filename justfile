@@ -15,9 +15,13 @@ build:
 
 build-w:
     npm run tauri build
+    New-Item -ItemType Directory -Force -Path dist | Out-Null
+    Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
 
 build-a:
     npm run tauri android build --release
+    New-Item -ItemType Directory -Force -Path dist | Out-Null
+    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\*.apk" -Destination "builds\" -Force
 
 preview:
     npm run preview

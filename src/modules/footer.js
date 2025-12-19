@@ -4,7 +4,7 @@
  */
 
 import { isAuthenticated, fullSync } from './nextcloudSync.js';
-import { getAllNotebooks, getAllNotes, saveNotebook, saveNote } from './storage.js';
+import { getAllNotebooksForSync, getAllNotesForSync, saveNotebook, saveNote, permanentlyDeleteNotebook, permanentlyDeleteNote } from './storage.js';
 
 let isSyncing = false;
 
@@ -48,23 +48,54 @@ async function performSync() {
   updateSyncStatus();
 
   try {
-    const notebooks = await getAllNotebooks();
-    const notes = await getAllNotes();
+    const notebooks = await getAllNotebooksForSync();
+    const notes = await getAllNotesForSync();
 
     const result = await fullSync(notebooks, notes);
+
+    // Mark uploaded items as synced in local storage
+    for (const id of result.uploaded.notebooks.uploadedIds || []) {
+      const notebook = notebooks.find(n => n.id === id);
+      if (notebook) {
+        await saveNotebook({ ...notebook, synced: true });
+      }
+    }
+
+    for (const id of result.uploaded.notes.uploadedIds || []) {
+      const note = notes.find(n => n.id === id);
+      if (note) {
+        await saveNote({ ...note, synced: true });
+      }
+    }
 
     // Save downloaded notebooks to local storage
     let downloadedNotebooks = 0;
     let downloadedNotes = 0;
 
     for (const notebook of result.downloaded.notebooks) {
-      await saveNotebook(notebook);
+      // Check if it's a tombstone (has minimal fields)
+      const isTombstone = notebook.deleted && !notebook.name;
+
+      if (isTombstone) {
+        // Permanently delete local copy if it exists
+        await permanentlyDeleteNotebook(notebook.id);
+      } else {
+        await saveNotebook(notebook);
+      }
       downloadedNotebooks++;
     }
 
     // Save downloaded notes to local storage
     for (const note of result.downloaded.notes) {
-      await saveNote(note);
+      // Check if it's a tombstone (has minimal fields)
+      const isTombstone = note.deleted && !note.title && !note.content;
+
+      if (isTombstone) {
+        // Permanently delete local copy if it exists
+        await permanentlyDeleteNote(note.id);
+      } else {
+        await saveNote(note);
+      }
       downloadedNotes++;
     }
 

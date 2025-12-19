@@ -288,23 +288,33 @@ async function createFolder(path) {
 
 /**
  * Upload a file to Nextcloud using WebDAV
+ * Uses X-OC-Mtime to set the modification time to match local file
  */
-async function uploadFile(path, content) {
+async function uploadFile(path, content, mtime = null) {
   const creds = getStoredCredentials();
   if (!creds) throw new Error('Not authenticated');
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
+  const headers = {
+    Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Set modification time if provided (Nextcloud-specific header)
+  if (mtime) {
+    headers['X-OC-Mtime'] = Math.floor(new Date(mtime).getTime() / 1000).toString();
+  }
+
   const response = await fetch(webdavUrl, {
     method: 'PUT',
-    headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: content,
   });
 
   if (!response.ok && response.status !== 201 && response.status !== 204) {
+    const errorText = await response.text();
+    console.error('Upload error:', errorText);
     throw new Error(`Failed to upload file: ${response.status} ${response.statusText}`);
   }
 
@@ -441,16 +451,21 @@ export async function syncNotebooks(notebooks) {
     uploaded: 0,
     failed: 0,
     errors: [],
+    uploadedIds: [], // Track successfully uploaded IDs
   };
 
   for (const notebook of notebooks) {
     try {
       const filename = `notebook_${notebook.id}.json`;
       const path = `${SYNC_FOLDER}/${filename}`;
-      const content = JSON.stringify(notebook, null, 2);
 
-      await uploadFile(path, content);
+      // Mark as synced before uploading
+      const syncedNotebook = { ...notebook, synced: true };
+      const content = JSON.stringify(syncedNotebook, null, 2);
+
+      await uploadFile(path, content, notebook.modified);
       results.uploaded++;
+      results.uploadedIds.push(notebook.id);
     } catch (error) {
       results.failed++;
       results.errors.push({ id: notebook.id, error: error.message });
@@ -476,16 +491,21 @@ export async function syncNotes(notes) {
     uploaded: 0,
     failed: 0,
     errors: [],
+    uploadedIds: [], // Track successfully uploaded IDs
   };
 
   for (const note of notes) {
     try {
       const filename = `note_${note.id}.json`;
       const path = `${SYNC_FOLDER}/${filename}`;
-      const content = JSON.stringify(note, null, 2);
 
-      await uploadFile(path, content);
+      // Mark as synced before uploading
+      const syncedNote = { ...note, synced: true };
+      const content = JSON.stringify(syncedNote, null, 2);
+
+      await uploadFile(path, content, note.modified);
       results.uploaded++;
+      results.uploadedIds.push(note.id);
     } catch (error) {
       results.failed++;
       results.errors.push({ id: note.id, error: error.message });
@@ -533,6 +553,7 @@ export async function downloadAllData() {
 
 /**
  * Full sync: upload local changes and download remote changes
+ * Uses timestamp-based conflict resolution (newer wins)
  */
 export async function fullSync(localNotebooks, localNotes) {
   if (!isAuthenticated()) {
@@ -541,26 +562,79 @@ export async function fullSync(localNotebooks, localNotes) {
 
   console.log('Starting full sync...');
 
-  // Upload local data
-  const uploadResults = {
-    notebooks: await syncNotebooks(localNotebooks),
-    notes: await syncNotes(localNotes),
-  };
-
-  // Download remote data
+  // Step 1: Download remote data first
   const remoteData = await downloadAllData();
 
+  // Step 2: Merge notebooks (newer wins)
+  const notebooksToUpload = [];
+  const notebooksToDownload = [];
+
+  // Create maps for quick lookup
+  const localNotebookMap = new Map(localNotebooks.map(n => [n.id, n]));
+  const remoteNotebookMap = new Map(remoteData.notebooks.map(n => [n.id, n]));
+
+  // Check which local notebooks should be uploaded
+  for (const local of localNotebooks) {
+    const remote = remoteNotebookMap.get(local.id);
+    if (!remote || new Date(local.modified) > new Date(remote.modified)) {
+      notebooksToUpload.push(local);
+    }
+  }
+
+  // Check which remote notebooks should be downloaded
+  for (const remote of remoteData.notebooks) {
+    const local = localNotebookMap.get(remote.id);
+    if (!local || new Date(remote.modified) > new Date(local.modified)) {
+      notebooksToDownload.push(remote);
+    }
+  }
+
+  // Step 3: Merge notes (newer wins)
+  const notesToUpload = [];
+  const notesToDownload = [];
+
+  const localNoteMap = new Map(localNotes.map(n => [n.id, n]));
+  const remoteNoteMap = new Map(remoteData.notes.map(n => [n.id, n]));
+
+  // Check which local notes should be uploaded
+  for (const local of localNotes) {
+    const remote = remoteNoteMap.get(local.id);
+    if (!remote || new Date(local.modified) > new Date(remote.modified)) {
+      notesToUpload.push(local);
+    }
+  }
+
+  // Check which remote notes should be downloaded
+  for (const remote of remoteData.notes) {
+    const local = localNoteMap.get(remote.id);
+    if (!local || new Date(remote.modified) > new Date(local.modified)) {
+      notesToDownload.push(remote);
+    }
+  }
+
+  // Step 4: Upload only what needs to be uploaded
+  const uploadResults = {
+    notebooks: await syncNotebooks(notebooksToUpload),
+    notes: await syncNotes(notesToUpload),
+  };
+
   console.log('Full sync completed:', {
-    uploaded: uploadResults,
+    uploaded: {
+      notebooks: uploadResults.notebooks.uploaded,
+      notes: uploadResults.notes.uploaded,
+    },
     downloaded: {
-      notebooks: remoteData.notebooks.length,
-      notes: remoteData.notes.length,
+      notebooks: notebooksToDownload.length,
+      notes: notesToDownload.length,
     },
   });
 
   return {
     uploaded: uploadResults,
-    downloaded: remoteData,
+    downloaded: {
+      notebooks: notebooksToDownload,
+      notes: notesToDownload,
+    },
   };
 }
 

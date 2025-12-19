@@ -89,6 +89,14 @@ export async function getAllNotebooks() {
 }
 
 /**
+ * Get all notebooks including deleted/tombstones (for sync)
+ */
+export async function getAllNotebooksForSync() {
+  const notebooks = await db.getAll('notebooks');
+  return notebooks.sort((a, b) => b.modified - a.modified);
+}
+
+/**
  * Get a notebook by ID
  */
 export async function getNotebook(id) {
@@ -157,6 +165,7 @@ export async function createNote({ title, notebookId = null }) {
     title,
     content: '', // Markdown content
     strokes: [], // Array of drawing strokes
+    formatVersion: 1, // Stroke format version
     created: Date.now(),
     modified: Date.now(),
     synced: false,
@@ -175,6 +184,14 @@ export async function createNote({ title, notebookId = null }) {
 export async function getAllNotes() {
   const notes = await db.getAll('notes');
   return notes.filter(n => !n.deleted).sort((a, b) => b.modified - a.modified);
+}
+
+/**
+ * Get all notes including deleted/tombstones (for sync)
+ */
+export async function getAllNotesForSync() {
+  const notes = await db.getAll('notes');
+  return notes.sort((a, b) => b.modified - a.modified);
 }
 
 /**
@@ -288,34 +305,65 @@ export async function restoreNote(id) {
 }
 
 /**
- * Permanently delete a notebook (hard delete)
+ * Permanently delete a notebook (convert to tombstone)
+ * Removes all user content but keeps sync metadata
  */
 export async function permanentlyDeleteNotebook(id) {
-  await db.delete('notebooks', id);
-  console.log('Notebook permanently deleted:', id);
+  const notebook = await db.get('notebooks', id);
+  if (!notebook) return;
+
+  // Create tombstone: keep only sync metadata, remove all user content
+  const tombstone = {
+    id: notebook.id,
+    deleted: true,
+    modified: Date.now(),
+    synced: false, // Needs to sync the tombstone
+    // All other fields (name, color, etc.) are removed for privacy
+  };
+
+  await db.put('notebooks', tombstone);
+  console.log('Notebook permanently deleted (tombstone created):', id);
+  return tombstone;
 }
 
 /**
- * Permanently delete a note (hard delete)
+ * Permanently delete a note (convert to tombstone)
+ * Removes all user content but keeps sync metadata
  */
 export async function permanentlyDeleteNote(id) {
-  await db.delete('notes', id);
-  console.log('Note permanently deleted:', id);
+  const note = await db.get('notes', id);
+  if (!note) return;
+
+  // Create tombstone: keep only sync metadata, remove all user content
+  const tombstone = {
+    id: note.id,
+    notebookId: note.notebookId, // Keep for filtering, but notebook may be deleted too
+    deleted: true,
+    modified: Date.now(),
+    synced: false, // Needs to sync the tombstone
+    formatVersion: 1,
+    // All other fields (title, content, strokes, etc.) are removed for privacy
+  };
+
+  await db.put('notes', tombstone);
+  console.log('Note permanently deleted (tombstone created):', id);
+  return tombstone;
 }
 
 /**
  * Empty recycle bin (permanently delete all deleted items)
+ * Converts all to tombstones for sync
  */
 export async function emptyRecycleBin() {
   const deletedNotebooks = await getDeletedNotebooks();
   const deletedNotes = await getDeletedNotes();
 
   for (const notebook of deletedNotebooks) {
-    await db.delete('notebooks', notebook.id);
+    await permanentlyDeleteNotebook(notebook.id);
   }
 
   for (const note of deletedNotes) {
-    await db.delete('notes', note.id);
+    await permanentlyDeleteNote(note.id);
   }
 
   console.log(`Recycle bin emptied: ${deletedNotebooks.length} notebooks, ${deletedNotes.length} notes`);
