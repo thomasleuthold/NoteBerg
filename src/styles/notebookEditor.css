@@ -75,6 +75,18 @@
   margin: 0 var(--spacing-xs);
 }
 
+.zoom-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 45px;
+  padding: 0 var(--spacing-xs);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
 /* Editor content wrapper - layered approach */
 .editor-content-wrapper {
   position: relative;

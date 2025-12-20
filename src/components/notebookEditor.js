@@ -24,6 +24,20 @@ const expansionCooldown = 500; // Minimum ms between expansions
 let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
 const eraserRadius = 20; // Eraser size in pixels
 
+// Canvas size tracking for overflow handling
+let minCanvasWidth = 0; // Minimum width needed to show all content
+let minCanvasHeight = 0; // Minimum height needed to show all content
+
+// Zoom state
+let zoomScale = 1.0; // Current zoom level (1.0 = 100%)
+const minZoom = 0.5; // Minimum zoom (50%)
+const maxZoom = 3.0; // Maximum zoom (300%)
+const zoomStep = 0.1; // Zoom increment per step
+
+// Gesture tracking for pinch-to-zoom
+let lastTouchDistance = null;
+let initialPinchZoom = null;
+
 /**
  * Initialize notebook editor for a note
  * @param {string} noteId - ID of note to edit
@@ -56,6 +70,9 @@ export async function initNotebookEditor(noteId) {
 
     // Initialize canvas layer
     initCanvasLayer(currentNoteData);
+
+    // Initialize zoom to ensure transforms are applied on load
+    setZoom(1.0);
 
     console.log("Notebook editor initialized for note:", noteId);
   } catch (error) {
@@ -95,6 +112,17 @@ function renderEditor(container, _noteData) {
           </button>
         </div>
         <div class="toolbar-section toolbar-section-right">
+          <button class="toolbar-btn" id="zoom-out-btn" title="Zoom out">
+            -
+          </button>
+          <span class="zoom-indicator" id="zoom-level">100%</span>
+          <button class="toolbar-btn" id="zoom-in-btn" title="Zoom in">
+            +
+          </button>
+          <button class="toolbar-btn" id="zoom-reset-btn" title="Reset zoom">
+            ⟲
+          </button>
+          <div class="toolbar-divider"></div>
           <button class="toolbar-btn" id="delete-note-btn" title="Delete note">
             🗑️
           </button>
@@ -163,9 +191,14 @@ function initCanvasLayer(noteData) {
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
 
+  // Add zoom event listeners
+  initZoomListeners();
+
   // Load existing strokes
   if (noteData.strokes && Array.isArray(noteData.strokes)) {
     strokes = noteData.strokes;
+    // Calculate content bounds from existing strokes
+    updateContentBounds();
     redrawCanvas();
   }
 
@@ -250,19 +283,44 @@ function resizeCanvas() {
   // Store current strokes
   const currentStrokes = [...strokes];
 
+  // Account for zoom when calculating base dimensions
+  // rect.width/height are the scaled sizes, we need the unscaled sizes
+  const baseWidth = rect.width / zoomScale;
+  const baseHeight = rect.height / zoomScale;
+
   // Get the actual scrollable content height from the text editor
-  // Add padding to ensure we have enough space
-  const textEditorHeight = currentEditor.scrollHeight + 200; // Extra padding for growth
+  // The scrollHeight already accounts for zoom via CSS transform
+  const textEditorHeight = (currentEditor.scrollHeight / zoomScale) + 200; // Extra padding for growth
 
   // Also check the wrapper's scroll height
-  const wrapperScrollHeight = wrapper.scrollHeight;
+  const wrapperScrollHeight = wrapper.scrollHeight / zoomScale;
 
   // Use the maximum of all measurements to ensure canvas is large enough
-  const requiredHeight = Math.max(textEditorHeight, wrapperScrollHeight, rect.height, 800);
+  const requiredHeight = Math.max(
+    textEditorHeight,
+    wrapperScrollHeight,
+    baseHeight,
+    minCanvasHeight,
+    800,
+  );
 
-  // Resize canvas to match text editor dimensions
-  canvas.width = rect.width;
+  // Calculate required width based on content bounds
+  // Don't let canvas shrink below current width to prevent squeezing
+  const requiredWidth = Math.max(baseWidth, minCanvasWidth, canvas.width, 800);
+
+  // Resize canvas to match text editor dimensions (unscaled)
+  canvas.width = requiredWidth;
   canvas.height = requiredHeight;
+
+  // Set canvas CSS size explicitly (in unscaled pixels)
+  // This prevents squeezing when window resizes
+  canvas.style.width = `${requiredWidth}px`;
+  canvas.style.height = `${requiredHeight}px`;
+
+  // Update text editor width to match canvas (important for horizontal scroll)
+  if (currentEditor) {
+    currentEditor.style.minWidth = `${requiredWidth}px`;
+  }
 
   // Restore strokes
   strokes = currentStrokes;
@@ -271,7 +329,7 @@ function resizeCanvas() {
 
 /**
  * Expand canvas height by a specified amount
- * @param {number} additionalHeight - Height to add in pixels
+ * @param {number} additionalHeight - Height to add in pixels (in unscaled space)
  */
 function expandCanvas(additionalHeight) {
   if (!canvas) return;
@@ -298,14 +356,21 @@ function expandCanvas(additionalHeight) {
       }
     : null;
 
-  // Calculate new height
+  // Calculate new height (additionalHeight is already in unscaled space)
   const newHeight = canvas.height + additionalHeight;
 
-  // Resize canvas
-  canvas.width = rect.width;
+  // Calculate base width accounting for zoom
+  const baseWidth = rect.width / zoomScale;
+
+  // Resize canvas (dimensions in unscaled space)
+  canvas.width = baseWidth;
   canvas.height = newHeight;
 
-  // Also expand the text editor to match
+  // Set canvas CSS size explicitly
+  canvas.style.width = `${baseWidth}px`;
+  canvas.style.height = `${newHeight}px`;
+
+  // Also expand the text editor to match (needs to be scaled for CSS transform)
   if (currentEditor) {
     currentEditor.style.minHeight = `${newHeight}px`;
   }
@@ -410,7 +475,7 @@ function handlePointerUp(_e) {
 }
 
 /**
- * Get correct canvas coordinates accounting for scroll
+ * Get correct canvas coordinates accounting for scroll and zoom
  */
 function getCanvasCoordinates(e) {
   // Get the actual pointer coordinates
@@ -430,7 +495,10 @@ function getCanvasCoordinates(e) {
   const x = clientX - rect.left;
   const y = clientY - rect.top;
 
-  // Scale coordinates if canvas internal size differs from display size
+  // Scale coordinates from display size to canvas internal size
+  // rect.width/height includes the CSS zoom transform effect
+  // canvas.width/height is the actual internal size (unzoomed)
+  // So scaleX/scaleY accounts for both the CSS sizing and zoom
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
 
@@ -659,6 +727,9 @@ function handleCanvasPointerUp(_e) {
     // Hide expansion zone indicator
     updateExpansionZoneIndicator(null);
 
+    // Update content bounds for overflow handling
+    updateContentBounds();
+
     // Auto-save
     setTimeout(async () => {
       await saveNoteContent();
@@ -726,6 +797,8 @@ function redrawCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   // Draw all strokes
+  // Note: Zoom is handled by CSS transform on the canvas element,
+  // so we don't apply ctx.scale() here
   strokes.forEach((stroke) => {
     drawStroke(stroke);
   });
@@ -828,6 +901,8 @@ function eraseStrokesAtPoint(x, y) {
   if (strokes.length < originalLength) {
     console.log(`Erased ${originalLength - strokes.length} stroke(s)`);
     redrawCanvas();
+    // Update content bounds after erasing
+    updateContentBounds();
   }
 }
 
@@ -978,6 +1053,11 @@ function attachToolbarListeners() {
     ?.addEventListener("click", () => formatText("heading"));
   document.getElementById("format-list-btn")?.addEventListener("click", () => formatText("list"));
 
+  // Zoom controls
+  document.getElementById("zoom-in-btn")?.addEventListener("click", () => adjustZoom(zoomStep));
+  document.getElementById("zoom-out-btn")?.addEventListener("click", () => adjustZoom(-zoomStep));
+  document.getElementById("zoom-reset-btn")?.addEventListener("click", () => setZoom(1.0));
+
   // Delete note
   document.getElementById("delete-note-btn")?.addEventListener("click", deleteCurrentNote);
 }
@@ -1026,6 +1106,188 @@ async function deleteCurrentNote() {
     // Trigger data change event to update sidebar
     window.dispatchEvent(new CustomEvent("datachange"));
   }
+}
+
+/**
+ * Set zoom level
+ * @param {number} newZoom - New zoom scale (e.g., 1.0 = 100%, 1.5 = 150%)
+ */
+function setZoom(newZoom) {
+  // Clamp zoom to valid range
+  zoomScale = Math.max(minZoom, Math.min(maxZoom, newZoom));
+
+  // Apply zoom to text editor using CSS transform
+  if (currentEditor) {
+    currentEditor.style.transformOrigin = "top left";
+    currentEditor.style.transform = `scale(${zoomScale})`;
+  }
+
+  // Apply same CSS transform to canvas to keep them aligned
+  // Don't set width/height here - let resizeCanvas() handle sizing
+  if (canvas) {
+    canvas.style.transformOrigin = "top left";
+    canvas.style.transform = `scale(${zoomScale})`;
+  }
+
+  // Redraw canvas with zoom applied via context transform
+  if (canvas && ctx) {
+    // Store current scroll position
+    const wrapper = document.querySelector(".editor-content-wrapper");
+    const scrollLeft = wrapper ? wrapper.scrollLeft : 0;
+    const scrollTop = wrapper ? wrapper.scrollTop : 0;
+
+    // Redraw canvas with zoom applied via context transform
+    redrawCanvas();
+
+    // Restore scroll position
+    if (wrapper) {
+      wrapper.scrollLeft = scrollLeft;
+      wrapper.scrollTop = scrollTop;
+    }
+  }
+
+  // Update zoom indicator
+  updateZoomIndicator();
+}
+
+/**
+ * Adjust zoom by a delta amount
+ * @param {number} delta - Amount to change zoom (e.g., 0.1 for +10%, -0.1 for -10%)
+ */
+function adjustZoom(delta) {
+  setZoom(zoomScale + delta);
+}
+
+/**
+ * Update zoom level indicator in toolbar
+ */
+function updateZoomIndicator() {
+  const indicator = document.getElementById("zoom-level");
+  if (indicator) {
+    indicator.textContent = `${Math.round(zoomScale * 100)}%`;
+  }
+}
+
+/**
+ * Update content bounds tracking for overflow handling
+ */
+function updateContentBounds() {
+  if (!canvas || !currentEditor) return;
+
+  // Calculate minimum canvas dimensions needed to show all content
+  let maxX = canvas.width;
+  let maxY = canvas.height;
+
+  // Check all strokes to find the extent
+  for (const stroke of strokes) {
+    if (stroke.x && stroke.y) {
+      for (let i = 0; i < stroke.x.length; i++) {
+        maxX = Math.max(maxX, stroke.x[i] + 50); // Add padding
+        maxY = Math.max(maxY, stroke.y[i] + 50);
+      }
+    }
+  }
+
+  // Update minimum dimensions
+  minCanvasWidth = maxX;
+  minCanvasHeight = maxY;
+
+  // Expand canvas if needed
+  if (canvas.width < minCanvasWidth) {
+    const wrapper = canvas.parentElement;
+    const rect = wrapper.getBoundingClientRect();
+    const currentStrokes = [...strokes];
+
+    canvas.width = Math.max(minCanvasWidth, rect.width);
+    strokes = currentStrokes;
+    redrawCanvas();
+  }
+}
+
+/**
+ * Initialize zoom event listeners (CTRL+wheel and pinch gestures)
+ */
+function initZoomListeners() {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) return;
+
+  // CTRL + Mouse wheel zoom (Windows/Desktop)
+  wrapper.addEventListener(
+    "wheel",
+    (e) => {
+      // Only zoom with CTRL key pressed
+      if (e.ctrlKey) {
+        e.preventDefault();
+
+        // wheelDelta is positive for zoom in, negative for zoom out
+        const delta = e.deltaY < 0 ? zoomStep : -zoomStep;
+        adjustZoom(delta);
+      }
+    },
+    { passive: false },
+  );
+
+  // Touch event listeners for pinch-to-zoom (Android/Mobile)
+  wrapper.addEventListener(
+    "touchstart",
+    (e) => {
+      // Only handle pinch gestures (2 fingers)
+      if (e.touches.length === 2) {
+        e.preventDefault();
+
+        // Calculate initial distance between fingers
+        const touch1 = e.touches[0];
+        const touch2 = e.touches[1];
+        const dx = touch2.clientX - touch1.clientX;
+        const dy = touch2.clientY - touch1.clientY;
+        lastTouchDistance = Math.sqrt(dx * dx + dy * dy);
+        initialPinchZoom = zoomScale;
+
+        console.log("Pinch zoom started:", { lastTouchDistance, initialPinchZoom });
+      }
+    },
+    { passive: false },
+  );
+
+  wrapper.addEventListener(
+    "touchmove",
+    (e) => {
+      // Handle pinch gesture
+      if (e.touches.length === 2 && lastTouchDistance !== null) {
+        e.preventDefault();
+
+        // Calculate current distance between fingers
+        const touch1 = e.touches[0];
+        const touch2 = e.touches[1];
+        const dx = touch2.clientX - touch1.clientX;
+        const dy = touch2.clientY - touch1.clientY;
+        const currentDistance = Math.sqrt(dx * dx + dy * dy);
+
+        // Calculate zoom based on pinch distance change
+        const pinchScale = currentDistance / lastTouchDistance;
+        const newZoom = initialPinchZoom * pinchScale;
+
+        setZoom(newZoom);
+      }
+      // Single finger scroll - allow default behavior (scrolling)
+      // This is handled by the browser automatically
+    },
+    { passive: false },
+  );
+
+  wrapper.addEventListener("touchend", (e) => {
+    // Reset pinch tracking when fingers are lifted
+    if (e.touches.length < 2) {
+      lastTouchDistance = null;
+      initialPinchZoom = null;
+    }
+  });
+
+  wrapper.addEventListener("touchcancel", () => {
+    // Reset pinch tracking on cancel
+    lastTouchDistance = null;
+    initialPinchZoom = null;
+  });
 }
 
 /**

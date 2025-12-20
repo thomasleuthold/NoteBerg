@@ -4,7 +4,10 @@
       "Bash(npm run format:*)",
       "Bash(npm run lint:*)",
       "Bash(npm run build:*)",
-      "Bash(npm run check:*)"
+      "Bash(npm run check:*)",
+      "Bash(npm run format:check:*)",
+      "Bash(npm run format-check:*)",
+      "Bash(npm run lint-check:*)"
     ]
   }
 }

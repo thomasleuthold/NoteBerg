@@ -68,7 +68,7 @@
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.6;
   transition: all var(--transition-fast);
   z-index: 10;
   color: var(--color-danger);
@@ -160,7 +160,7 @@
   font-size: 0.875rem;
   font-weight: 500;
   transition: all var(--transition-fast);
-  opacity: 0;
+  opacity: 0.6;
 }
 
 .card-new-note-btn:hover {
