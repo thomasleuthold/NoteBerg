@@ -1,7 +1,7 @@
 /* E-Paper Theme - High contrast for e-ink displays */
 /* Optimized for outdoor readability with grayscale palette */
 
-[data-theme='epaper'] {
+[data-theme="epaper"] {
   /* Colors - High contrast but allowing grayscale */
   --color-primary: #2c5282;
   --color-primary-hover: #1a365d;
@@ -35,20 +35,20 @@
 }
 
 /* Disable animations and transitions for e-paper */
-[data-theme='epaper'] * {
-  animation-duration: 0s !important;
-  animation-delay: 0s !important;
-  transition-duration: 0s !important;
-  transition-delay: 0s !important;
+[data-theme="epaper"] * {
+  animation-duration: 0s;
+  animation-delay: 0s;
+  transition-duration: 0s;
+  transition-delay: 0s;
 }
 
 /* Simplify UI elements for e-ink rendering */
-[data-theme='epaper'] button,
-[data-theme='epaper'] .note-card {
+[data-theme="epaper"] button,
+[data-theme="epaper"] .note-card {
   border-width: 2px;
 }
 
-[data-theme='epaper'] .note-card:hover {
+[data-theme="epaper"] .note-card:hover {
   background-color: var(--bg-tertiary);
   box-shadow: none;
 }

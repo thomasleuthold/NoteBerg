@@ -3,8 +3,15 @@
  * Handles sync status display and sync triggering
  */
 
-import { isAuthenticated, fullSync } from './nextcloudSync.js';
-import { getAllNotebooksForSync, getAllNotesForSync, saveNotebook, saveNote, permanentlyDeleteNotebook, permanentlyDeleteNote } from './storage.js';
+import { fullSync, isAuthenticated } from "./nextcloudSync.js";
+import {
+  getAllNotebooksForSync,
+  getAllNotesForSync,
+  permanentlyDeleteNote,
+  permanentlyDeleteNotebook,
+  saveNote,
+  saveNotebook,
+} from "./storage.js";
 
 let isSyncing = false;
 
@@ -12,29 +19,29 @@ let isSyncing = false;
  * Update sync status display
  */
 export function updateSyncStatus() {
-  const syncStatus = document.querySelector('.sync-status');
-  const syncIndicator = document.querySelector('.sync-indicator');
-  const syncText = document.querySelector('.sync-text');
+  const syncStatus = document.querySelector(".sync-status");
+  const syncIndicator = document.querySelector(".sync-indicator");
+  const syncText = document.querySelector(".sync-text");
 
   if (!syncStatus || !syncIndicator || !syncText) return;
 
   const authenticated = isAuthenticated();
 
   if (isSyncing) {
-    syncStatus.dataset.status = 'syncing';
-    syncIndicator.textContent = '↻';
-    syncText.textContent = 'Syncing...';
-    syncStatus.style.cursor = 'wait';
+    syncStatus.dataset.status = "syncing";
+    syncIndicator.textContent = "↻";
+    syncText.textContent = "Syncing...";
+    syncStatus.style.cursor = "wait";
   } else if (authenticated) {
-    syncStatus.dataset.status = 'connected';
-    syncIndicator.textContent = '●';
-    syncText.textContent = 'Connected - Click to sync';
-    syncStatus.style.cursor = 'pointer';
+    syncStatus.dataset.status = "connected";
+    syncIndicator.textContent = "●";
+    syncText.textContent = "Connected - Click to sync";
+    syncStatus.style.cursor = "pointer";
   } else {
-    syncStatus.dataset.status = 'offline';
-    syncIndicator.textContent = '○';
-    syncText.textContent = 'Not connected';
-    syncStatus.style.cursor = 'default';
+    syncStatus.dataset.status = "offline";
+    syncIndicator.textContent = "○";
+    syncText.textContent = "Not connected";
+    syncStatus.style.cursor = "default";
   }
 }
 
@@ -55,14 +62,14 @@ async function performSync() {
 
     // Mark uploaded items as synced in local storage
     for (const id of result.uploaded.notebooks.uploadedIds || []) {
-      const notebook = notebooks.find(n => n.id === id);
+      const notebook = notebooks.find((n) => n.id === id);
       if (notebook) {
         await saveNotebook({ ...notebook, synced: true });
       }
     }
 
     for (const id of result.uploaded.notes.uploadedIds || []) {
-      const note = notes.find(n => n.id === id);
+      const note = notes.find((n) => n.id === id);
       if (note) {
         await saveNote({ ...note, synced: true });
       }
@@ -100,13 +107,13 @@ async function performSync() {
     }
 
     console.log(
-      `Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`
+      `Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`,
     );
 
     // Show success briefly
-    const syncText = document.querySelector('.sync-text');
+    const syncText = document.querySelector(".sync-text");
     if (syncText) {
-      syncText.textContent = 'Sync successful!';
+      syncText.textContent = "Sync successful!";
       setTimeout(() => {
         isSyncing = false;
         updateSyncStatus();
@@ -115,15 +122,15 @@ async function performSync() {
 
     // Trigger a UI refresh if notes/notebooks were downloaded
     if (downloadedNotebooks > 0 || downloadedNotes > 0) {
-      window.dispatchEvent(new CustomEvent('notes-updated'));
+      window.dispatchEvent(new CustomEvent("notes-updated"));
     }
   } catch (error) {
-    console.error('Sync failed:', error);
+    console.error("Sync failed:", error);
 
     // Show error briefly
-    const syncText = document.querySelector('.sync-text');
+    const syncText = document.querySelector(".sync-text");
     if (syncText) {
-      syncText.textContent = 'Sync failed!';
+      syncText.textContent = "Sync failed!";
       setTimeout(() => {
         isSyncing = false;
         updateSyncStatus();
@@ -136,10 +143,10 @@ async function performSync() {
  * Initialize footer
  */
 export function initFooter() {
-  const syncStatus = document.querySelector('.sync-status');
+  const syncStatus = document.querySelector(".sync-status");
 
   if (syncStatus) {
-    syncStatus.addEventListener('click', () => {
+    syncStatus.addEventListener("click", () => {
       if (isAuthenticated() && !isSyncing) {
         performSync();
       }
@@ -150,7 +157,7 @@ export function initFooter() {
   updateSyncStatus();
 
   // Listen for auth changes
-  window.addEventListener('nextcloud-auth-changed', updateSyncStatus);
+  window.addEventListener("nextcloud-auth-changed", updateSyncStatus);
 
-  console.log('Footer initialized');
+  console.log("Footer initialized");
 }

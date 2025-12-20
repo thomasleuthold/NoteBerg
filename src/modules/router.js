@@ -3,8 +3,8 @@
  * Simple view mode routing (overview, notebook, settings, recyclebin)
  */
 
-const MODES = ['overview', 'notebook', 'settings', 'recyclebin'];
-const DEFAULT_MODE = 'overview';
+const MODES = ["overview", "notebook", "settings", "recyclebin"];
+const DEFAULT_MODE = "overview";
 
 let currentMode = DEFAULT_MODE;
 let currentNoteId = null;
@@ -16,7 +16,7 @@ let currentNotebookId = null;
 export function initRouter() {
   currentMode = DEFAULT_MODE;
   navigateTo(DEFAULT_MODE);
-  console.log('Router initialized');
+  console.log("Router initialized");
 }
 
 /**
@@ -34,7 +34,7 @@ export function navigateTo(mode, params = {}) {
   currentMode = mode;
 
   // Clear notebook/note context when navigating to overview, settings, or recycle bin
-  if (mode === 'overview' || mode === 'settings' || mode === 'recyclebin') {
+  if (mode === "overview" || mode === "settings" || mode === "recyclebin") {
     currentNotebookId = null;
     currentNoteId = null;
   } else {
@@ -52,9 +52,9 @@ export function navigateTo(mode, params = {}) {
 
   // Dispatch navigation event
   window.dispatchEvent(
-    new CustomEvent('navigate', {
+    new CustomEvent("navigate", {
       detail: { mode, params, previousMode },
-    })
+    }),
   );
 
   console.log(`Navigated to: ${mode}`, params);
@@ -66,13 +66,13 @@ export function navigateTo(mode, params = {}) {
  * @param {object} params - Navigation parameters
  */
 function updateView(mode, params) {
-  const mainContent = document.getElementById('main-content');
+  const mainContent = document.getElementById("main-content");
   if (!mainContent) return;
 
   // Hide all mode containers
-  const modeContainers = mainContent.querySelectorAll('[data-mode]');
-  modeContainers.forEach(container => {
-    container.classList.add('hidden');
+  const modeContainers = mainContent.querySelectorAll("[data-mode]");
+  modeContainers.forEach((container) => {
+    container.classList.add("hidden");
   });
 
   // Show current mode container
@@ -80,26 +80,26 @@ function updateView(mode, params) {
 
   if (!modeContainer) {
     // Create mode container if it doesn't exist
-    modeContainer = document.createElement('div');
-    modeContainer.setAttribute('data-mode', mode);
+    modeContainer = document.createElement("div");
+    modeContainer.setAttribute("data-mode", mode);
     modeContainer.className = `mode-container ${mode}-mode`;
     mainContent.appendChild(modeContainer);
   }
 
-  modeContainer.classList.remove('hidden');
+  modeContainer.classList.remove("hidden");
 
   // Update content based on mode
   switch (mode) {
-    case 'overview':
+    case "overview":
       renderOverview(modeContainer);
       break;
-    case 'notebook':
+    case "notebook":
       renderNotebook(modeContainer, params);
       break;
-    case 'settings':
+    case "settings":
       renderSettings(modeContainer);
       break;
-    case 'recyclebin':
+    case "recyclebin":
       renderRecycleBin(modeContainer);
       break;
   }
@@ -113,7 +113,7 @@ function renderOverview(container) {
   container.innerHTML = '<div id="overview-content" class="overview-content"></div>';
 
   // Dispatch event for overview component to render itself
-  window.dispatchEvent(new CustomEvent('renderoverview'));
+  window.dispatchEvent(new CustomEvent("renderoverview"));
 }
 
 /**
@@ -131,9 +131,9 @@ function renderNotebook(container, params) {
 
   // Dispatch event to initialize editor
   window.dispatchEvent(
-    new CustomEvent('rendernotebook', {
+    new CustomEvent("rendernotebook", {
       detail: { noteId, notebookId },
-    })
+    }),
   );
 }
 
@@ -149,7 +149,7 @@ function renderSettings(container) {
   `;
 
   // Trigger settings render event
-  window.dispatchEvent(new CustomEvent('rendersettings'));
+  window.dispatchEvent(new CustomEvent("rendersettings"));
 }
 
 /**
@@ -164,7 +164,7 @@ function renderRecycleBin(container) {
   `;
 
   // Trigger recycle bin render event
-  window.dispatchEvent(new CustomEvent('renderrecyclebin'));
+  window.dispatchEvent(new CustomEvent("renderrecyclebin"));
 }
 
 /**
@@ -195,5 +195,5 @@ export function getCurrentNotebookId() {
  * Go back to previous mode (typically overview)
  */
 export function goBack() {
-  navigateTo('overview');
+  navigateTo("overview");
 }

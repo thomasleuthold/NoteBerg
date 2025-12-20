@@ -49,8 +49,8 @@
 
   /* Typography */
   --font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Consolas", "Monaco", "Courier New", monospace;
 
   /* Transitions */
   --transition-fast: 150ms ease-in-out;
@@ -190,11 +190,11 @@ body {
   background-color: var(--bg-hover);
 }
 
-.sync-status[data-status='connected'] {
+.sync-status[data-status="connected"] {
   cursor: pointer;
 }
 
-.sync-status[data-status='syncing'] {
+.sync-status[data-status="syncing"] {
   cursor: wait;
 }
 
@@ -202,11 +202,11 @@ body {
   font-size: 0.875rem;
 }
 
-.sync-status[data-status='connected'] .sync-indicator {
+.sync-status[data-status="connected"] .sync-indicator {
   color: var(--color-success);
 }
 
-.sync-status[data-status='syncing'] .sync-indicator {
+.sync-status[data-status="syncing"] .sync-indicator {
   color: var(--color-warning);
   animation: spin 1s linear infinite;
 }
@@ -220,7 +220,7 @@ body {
   }
 }
 
-.sync-status[data-status='offline'] .sync-indicator {
+.sync-status[data-status="offline"] .sync-indicator {
   color: var(--text-tertiary);
 }
 
@@ -240,10 +240,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
-}
-
-.sidebar-header .btn-primary {
-  width: 100%;
 }
 
 .search-input {
@@ -388,6 +384,10 @@ button:focus-visible {
   width: auto;
 }
 
+.sidebar-header .btn-primary {
+  width: 100%;
+}
+
 .btn-primary:hover {
   background-color: var(--color-primary-hover);
 }
@@ -461,7 +461,7 @@ button:focus-visible {
 
 /* Utility classes */
 .hidden {
-  display: none !important;
+  display: none;
 }
 
 .sr-only {

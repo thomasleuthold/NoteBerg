@@ -1,6 +1,6 @@
 /* Light Theme - Default clean interface */
 
-[data-theme='light'] {
+[data-theme="light"] {
   /* Colors */
   --color-primary: #3b82f6;
   --color-primary-hover: #2563eb;

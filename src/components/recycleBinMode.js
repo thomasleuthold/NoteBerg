@@ -4,15 +4,15 @@
  */
 
 import {
+  emptyRecycleBin,
   getDeletedNotebooks,
   getDeletedNotes,
-  restoreNotebook,
-  restoreNote,
-  permanentlyDeleteNotebook,
   permanentlyDeleteNote,
-  emptyRecycleBin,
-} from '../modules/storage.js';
-import { showConfirmDialog } from './modals.js';
+  permanentlyDeleteNotebook,
+  restoreNote,
+  restoreNotebook,
+} from "../modules/storage.js";
+import { showConfirmDialog } from "./modals.js";
 
 /**
  * Render recycle bin UI
@@ -31,7 +31,7 @@ export async function renderRecycleBin(container) {
       deletedNotebooks.length > 0
         ? deletedNotebooks
             .map(
-              notebook => `
+              (notebook) => `
       <div class="recycle-item" data-type="notebook" data-id="${notebook.id}">
         <div class="recycle-item-icon">📓</div>
         <div class="recycle-item-content">
@@ -58,9 +58,9 @@ export async function renderRecycleBin(container) {
           </button>
         </div>
       </div>
-    `
+    `,
             )
-            .join('')
+            .join("")
         : '<p class="empty-state">No deleted notebooks</p>';
 
     // Build HTML for notes
@@ -68,11 +68,11 @@ export async function renderRecycleBin(container) {
       deletedNotes.length > 0
         ? deletedNotes
             .map(
-              note => `
+              (note) => `
       <div class="recycle-item" data-type="note" data-id="${note.id}">
         <div class="recycle-item-icon">📝</div>
         <div class="recycle-item-content">
-          <div class="recycle-item-title">${escapeHtml(note.title || 'Untitled')}</div>
+          <div class="recycle-item-title">${escapeHtml(note.title || "Untitled")}</div>
           <div class="recycle-item-meta">
             <span class="recycle-item-type">Note</span>
             <span class="recycle-item-date">Deleted ${formatDate(note.modified)}</span>
@@ -95,9 +95,9 @@ export async function renderRecycleBin(container) {
           </button>
         </div>
       </div>
-    `
+    `,
             )
-            .join('')
+            .join("")
         : '<p class="empty-state">No deleted notes</p>';
 
     container.innerHTML = `
@@ -107,7 +107,7 @@ export async function renderRecycleBin(container) {
           ${
             totalItems > 0
               ? `<button class="btn-danger" id="empty-recycle-bin-btn">Empty Recycle Bin (${totalItems})</button>`
-              : ''
+              : ""
           }
         </div>
 
@@ -142,7 +142,7 @@ export async function renderRecycleBin(container) {
     // Attach event listeners
     attachRecycleBinListeners(container);
   } catch (error) {
-    console.error('Error rendering recycle bin:', error);
+    console.error("Error rendering recycle bin:", error);
     container.innerHTML = `
       <div class="error-state">
         <p>Failed to load recycle bin. Please refresh the page.</p>
@@ -158,76 +158,76 @@ export async function renderRecycleBin(container) {
  */
 function attachRecycleBinListeners(container) {
   // Restore buttons
-  const restoreBtns = container.querySelectorAll('.btn-restore');
-  restoreBtns.forEach(btn => {
-    btn.addEventListener('click', async () => {
+  const restoreBtns = container.querySelectorAll(".btn-restore");
+  restoreBtns.forEach((btn) => {
+    btn.addEventListener("click", async () => {
       const type = btn.dataset.type;
       const id = btn.dataset.id;
 
       try {
-        if (type === 'notebook') {
+        if (type === "notebook") {
           await restoreNotebook(id);
         } else {
           await restoreNote(id);
         }
 
-        window.dispatchEvent(new CustomEvent('datachange'));
+        window.dispatchEvent(new CustomEvent("datachange"));
       } catch (error) {
-        console.error('Error restoring item:', error);
-        alert('Failed to restore item: ' + error.message);
+        console.error("Error restoring item:", error);
+        alert(`Failed to restore item: ${error.message}`);
       }
     });
   });
 
   // Delete permanently buttons
-  const deleteBtns = container.querySelectorAll('.btn-delete-permanent');
-  deleteBtns.forEach(btn => {
-    btn.addEventListener('click', async () => {
+  const deleteBtns = container.querySelectorAll(".btn-delete-permanent");
+  deleteBtns.forEach((btn) => {
+    btn.addEventListener("click", async () => {
       const type = btn.dataset.type;
       const id = btn.dataset.id;
 
       const confirmed = await showConfirmDialog(
-        'Delete Permanently',
+        "Delete Permanently",
         `Are you sure you want to permanently delete this ${type}? This action cannot be undone.`,
-        'Delete Forever',
-        'btn-danger'
+        "Delete Forever",
+        "btn-danger",
       );
 
       if (confirmed) {
         try {
-          if (type === 'notebook') {
+          if (type === "notebook") {
             await permanentlyDeleteNotebook(id);
           } else {
             await permanentlyDeleteNote(id);
           }
 
-          window.dispatchEvent(new CustomEvent('datachange'));
+          window.dispatchEvent(new CustomEvent("datachange"));
         } catch (error) {
-          console.error('Error deleting item:', error);
-          alert('Failed to delete item: ' + error.message);
+          console.error("Error deleting item:", error);
+          alert(`Failed to delete item: ${error.message}`);
         }
       }
     });
   });
 
   // Empty recycle bin button
-  const emptyBtn = container.querySelector('#empty-recycle-bin-btn');
+  const emptyBtn = container.querySelector("#empty-recycle-bin-btn");
   if (emptyBtn) {
-    emptyBtn.addEventListener('click', async () => {
+    emptyBtn.addEventListener("click", async () => {
       const confirmed = await showConfirmDialog(
-        'Empty Recycle Bin',
-        'Are you sure you want to permanently delete all items in the recycle bin? This action cannot be undone.',
-        'Empty Recycle Bin',
-        'btn-danger'
+        "Empty Recycle Bin",
+        "Are you sure you want to permanently delete all items in the recycle bin? This action cannot be undone.",
+        "Empty Recycle Bin",
+        "btn-danger",
       );
 
       if (confirmed) {
         try {
           await emptyRecycleBin();
-          window.dispatchEvent(new CustomEvent('datachange'));
+          window.dispatchEvent(new CustomEvent("datachange"));
         } catch (error) {
-          console.error('Error emptying recycle bin:', error);
-          alert('Failed to empty recycle bin: ' + error.message);
+          console.error("Error emptying recycle bin:", error);
+          alert(`Failed to empty recycle bin: ${error.message}`);
         }
       }
     });
@@ -247,12 +247,12 @@ function formatDate(timestamp) {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 1) return 'just now';
+  if (diffMins < 1) return "just now";
   if (diffMins < 60) return `${diffMins}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
 
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 /**
@@ -261,7 +261,7 @@ function formatDate(timestamp) {
  * @returns {string} Escaped text
  */
 function escapeHtml(text) {
-  const div = document.createElement('div');
+  const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
 }
@@ -271,21 +271,21 @@ function escapeHtml(text) {
  */
 export function initRecycleBin() {
   // Listen for render recycle bin event from router
-  window.addEventListener('renderrecyclebin', async () => {
-    const container = document.getElementById('recycle-bin-content');
+  window.addEventListener("renderrecyclebin", async () => {
+    const container = document.getElementById("recycle-bin-content");
     if (container) {
       await renderRecycleBin(container);
     }
   });
 
   // Listen for data changes to refresh recycle bin
-  window.addEventListener('datachange', async () => {
-    const container = document.getElementById('recycle-bin-content');
+  window.addEventListener("datachange", async () => {
+    const container = document.getElementById("recycle-bin-content");
     if (container && container.offsetParent !== null) {
       // Only refresh if recycle bin is currently visible
       await renderRecycleBin(container);
     }
   });
 
-  console.log('Recycle bin component initialized');
+  console.log("Recycle bin component initialized");
 }

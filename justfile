@@ -36,10 +36,9 @@ format:
 format-check:
     npm run format-check
 
-# Run all checks (lint + format-check)
+# Run Biome check (format + lint with auto-fix)
 check:
-    npm run lint
-    npm run format-check
+    npm run check
 
 # Utilities
 clean:

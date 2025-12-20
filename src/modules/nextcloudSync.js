@@ -4,11 +4,11 @@
  * Uses Tauri's HTTP client for native requests (no CORS issues!)
  */
 
-import { fetch } from '@tauri-apps/plugin-http';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { fetch } from "@tauri-apps/plugin-http";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
-const NEXTCLOUD_STORAGE_KEY = 'nextcloud_credentials';
-const SYNC_FOLDER = '/oneJournal';
+const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
+const SYNC_FOLDER = "/oneJournal";
 
 /**
  * Get stored Nextcloud credentials
@@ -37,14 +37,14 @@ export function clearCredentials() {
  */
 export function isAuthenticated() {
   const creds = getStoredCredentials();
-  return creds && creds.serverUrl && creds.loginName && creds.appPassword;
+  return creds?.serverUrl && creds.loginName && creds.appPassword;
 }
 
 /**
  * Test connection to Nextcloud server
  */
 export async function testConnection(serverUrl) {
-  serverUrl = serverUrl.replace(/\/$/, '');
+  serverUrl = serverUrl.replace(/\/$/, "");
 
   try {
     const response = await fetch(`${serverUrl}/status.php`);
@@ -58,7 +58,7 @@ export async function testConnection(serverUrl) {
       };
     }
 
-    return { success: false, error: 'Not a valid Nextcloud server' };
+    return { success: false, error: "Not a valid Nextcloud server" };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -70,62 +70,64 @@ export async function testConnection(serverUrl) {
  * Calls onLoginUrlReady callback with login URL when available
  */
 export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
-  serverUrl = serverUrl.replace(/\/$/, '');
+  serverUrl = serverUrl.replace(/\/$/, "");
 
   try {
     // Step 1: Initialize login flow
-    console.log('Initializing Login Flow v2 for:', serverUrl);
+    console.log("Initializing Login Flow v2 for:", serverUrl);
 
     let initResponse;
     try {
       initResponse = await fetch(`${serverUrl}/index.php/login/v2`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-          'OCS-APIRequest': 'true',
-          'User-Agent': 'oneJournal/1.0',
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+          "OCS-APIRequest": "true",
+          "User-Agent": "oneJournal/1.0",
         },
-        body: '',
+        body: "",
       });
     } catch (fetchError) {
-      console.error('Fetch error:', fetchError);
-      throw new Error(`Network error: ${fetchError.message || 'Failed to connect to server'}`);
+      console.error("Fetch error:", fetchError);
+      throw new Error(`Network error: ${fetchError.message || "Failed to connect to server"}`);
     }
 
-    console.log('Init response status:', initResponse.status);
-    console.log('Init response headers:', initResponse.headers);
+    console.log("Init response status:", initResponse.status);
+    console.log("Init response headers:", initResponse.headers);
 
     if (!initResponse.ok) {
       const errorText = await initResponse.text();
-      console.error('Init response error:', errorText);
-      throw new Error(`Failed to initialize login flow: ${initResponse.status} ${initResponse.statusText}`);
+      console.error("Init response error:", errorText);
+      throw new Error(
+        `Failed to initialize login flow: ${initResponse.status} ${initResponse.statusText}`,
+      );
     }
 
     const responseText = await initResponse.text();
-    console.log('Init response body:', responseText);
+    console.log("Init response body:", responseText);
 
-    if (!responseText || responseText.trim() === '') {
-      console.error('Empty response from server');
-      throw new Error('Empty response from server');
+    if (!responseText || responseText.trim() === "") {
+      console.error("Empty response from server");
+      throw new Error("Empty response from server");
     }
 
     let initData;
     try {
       initData = JSON.parse(responseText);
     } catch (e) {
-      console.error('Failed to parse init response as JSON:', e);
-      console.error('Response text was:', responseText);
+      console.error("Failed to parse init response as JSON:", e);
+      console.error("Response text was:", responseText);
       throw new Error(`Invalid JSON response from server: ${e.message}`);
     }
 
-    console.log('Parsed init data:', initData);
+    console.log("Parsed init data:", initData);
 
     const { poll, login } = initData;
 
     if (!poll || !login) {
-      console.error('Missing required fields in response:', { poll, login });
-      throw new Error('Invalid login flow response - missing poll or login');
+      console.error("Missing required fields in response:", { poll, login });
+      throw new Error("Invalid login flow response - missing poll or login");
     }
 
     // Extract token from poll object
@@ -133,11 +135,15 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     const endpoint = poll.endpoint;
 
     if (!token || !endpoint) {
-      console.error('Missing token or endpoint in poll object:', poll);
-      throw new Error('Invalid poll response - missing token or endpoint');
+      console.error("Missing token or endpoint in poll object:", poll);
+      throw new Error("Invalid poll response - missing token or endpoint");
     }
 
-    console.log('Login Flow initialized:', { endpoint, token: token.substring(0, 10) + '...', login });
+    console.log("Login Flow initialized:", {
+      endpoint,
+      token: `${token.substring(0, 10)}...`,
+      login,
+    });
 
     // Step 2: Provide login URL to callback (for UI display)
     if (onLoginUrlReady) {
@@ -145,12 +151,12 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     }
 
     // Step 3: Try to open login page in default browser
-    console.log('Opening login page in browser:', login);
+    console.log("Opening login page in browser:", login);
     try {
       await openUrl(login);
-      console.log('Browser opened successfully');
+      console.log("Browser opened successfully");
     } catch (openError) {
-      console.warn('Failed to open URL automatically:', openError);
+      console.warn("Failed to open URL automatically:", openError);
       // If automatic opening fails, user can still use the URL field
     }
 
@@ -165,11 +171,11 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     };
 
     saveCredentials(savedCreds);
-    console.log('Nextcloud authentication successful');
+    console.log("Nextcloud authentication successful");
 
     return savedCreds;
   } catch (error) {
-    console.error('Login flow error:', error);
+    console.error("Login flow error:", error);
     throw error;
   }
 }
@@ -182,15 +188,15 @@ async function pollForCredentials(endpoint, token, popup) {
   let attempts = 0;
 
   return new Promise((resolve, reject) => {
-    console.log('Starting to poll for credentials. Please complete login in your browser...');
+    console.log("Starting to poll for credentials. Please complete login in your browser...");
 
     const pollInterval = setInterval(async () => {
       attempts++;
 
       // Check if popup was closed (only if popup exists)
-      if (popup && popup.closed) {
+      if (popup?.closed) {
         clearInterval(pollInterval);
-        reject(new Error('Login cancelled by user'));
+        reject(new Error("Login cancelled by user"));
         return;
       }
 
@@ -198,7 +204,7 @@ async function pollForCredentials(endpoint, token, popup) {
       if (attempts > maxAttempts) {
         clearInterval(pollInterval);
         if (popup) popup.close();
-        reject(new Error('Login timeout - please try again'));
+        reject(new Error("Login timeout - please try again"));
         return;
       }
 
@@ -208,15 +214,15 @@ async function pollForCredentials(endpoint, token, popup) {
         console.log(`Polling attempt ${attempts}/${maxAttempts}...`);
 
         const response = await fetch(pollUrl, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
         });
 
         if (response.status === 404) {
           // Still waiting for user to complete login
-          console.log('Waiting for user to complete login...');
+          console.log("Waiting for user to complete login...");
           return;
         }
 
@@ -229,13 +235,13 @@ async function pollForCredentials(endpoint, token, popup) {
 
         // Success! We have credentials
         const data = await response.json();
-        console.log('Login successful! Credentials received.');
+        console.log("Login successful! Credentials received.");
         clearInterval(pollInterval);
         if (popup) popup.close();
         resolve(data);
       } catch (error) {
         // Continue polling on network errors
-        console.warn('Poll attempt failed:', error.message);
+        console.warn("Poll attempt failed:", error.message);
       }
     }, 5000); // Poll every 5 seconds
   });
@@ -246,9 +252,9 @@ async function pollForCredentials(endpoint, token, popup) {
  */
 async function createFolder(path) {
   const creds = getStoredCredentials();
-  if (!creds) throw new Error('Not authenticated');
+  if (!creds) throw new Error("Not authenticated");
 
-  console.log('Creating folder with credentials:', {
+  console.log("Creating folder with credentials:", {
     serverUrl: creds.serverUrl,
     loginName: creds.loginName,
     hasAppPassword: !!creds.appPassword,
@@ -257,21 +263,21 @@ async function createFolder(path) {
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
   const authHeader = `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`;
-  console.log('Auth header preview:', authHeader.substring(0, 20) + '...');
+  console.log("Auth header preview:", `${authHeader.substring(0, 20)}...`);
 
   const response = await fetch(webdavUrl, {
-    method: 'MKCOL',
+    method: "MKCOL",
     headers: {
       Authorization: authHeader,
-      'OCS-APIRequest': 'true',
+      "OCS-APIRequest": "true",
     },
   });
 
-  console.log('MKCOL response status:', response.status);
+  console.log("MKCOL response status:", response.status);
 
   if (!response.ok && response.status !== 201 && response.status !== 405) {
     const responseText = await response.text();
-    console.log('MKCOL error response:', responseText);
+    console.log("MKCOL error response:", responseText);
   }
 
   if (response.status === 405) {
@@ -292,29 +298,29 @@ async function createFolder(path) {
  */
 async function uploadFile(path, content, mtime = null) {
   const creds = getStoredCredentials();
-  if (!creds) throw new Error('Not authenticated');
+  if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
   const headers = {
     Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
   // Set modification time if provided (Nextcloud-specific header)
   if (mtime) {
-    headers['X-OC-Mtime'] = Math.floor(new Date(mtime).getTime() / 1000).toString();
+    headers["X-OC-Mtime"] = Math.floor(new Date(mtime).getTime() / 1000).toString();
   }
 
   const response = await fetch(webdavUrl, {
-    method: 'PUT',
+    method: "PUT",
     headers,
     body: content,
   });
 
   if (!response.ok && response.status !== 201 && response.status !== 204) {
     const errorText = await response.text();
-    console.error('Upload error:', errorText);
+    console.error("Upload error:", errorText);
     throw new Error(`Failed to upload file: ${response.status} ${response.statusText}`);
   }
 
@@ -326,12 +332,12 @@ async function uploadFile(path, content, mtime = null) {
  */
 async function downloadFile(path) {
   const creds = getStoredCredentials();
-  if (!creds) throw new Error('Not authenticated');
+  if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
   const response = await fetch(webdavUrl, {
-    method: 'GET',
+    method: "GET",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
     },
@@ -353,15 +359,15 @@ async function downloadFile(path) {
  */
 async function listFiles(path) {
   const creds = getStoredCredentials();
-  if (!creds) throw new Error('Not authenticated');
+  if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
   const response = await fetch(webdavUrl, {
-    method: 'PROPFIND',
+    method: "PROPFIND",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
-      Depth: '1',
+      Depth: "1",
     },
   });
 
@@ -382,26 +388,26 @@ async function listFiles(path) {
  */
 function parseWebDAVResponse(xmlText) {
   const parser = new DOMParser();
-  const doc = parser.parseFromString(xmlText, 'text/xml');
-  const responses = doc.getElementsByTagName('d:response');
+  const doc = parser.parseFromString(xmlText, "text/xml");
+  const responses = doc.getElementsByTagName("d:response");
 
   const files = [];
   for (let i = 0; i < responses.length; i++) {
     const response = responses[i];
-    const href = response.getElementsByTagName('d:href')[0]?.textContent;
-    const resourceType = response.getElementsByTagName('d:resourcetype')[0];
-    const isCollection = resourceType?.getElementsByTagName('d:collection').length > 0;
-    const lastModified = response.getElementsByTagName('d:getlastmodified')[0]?.textContent;
-    const etag = response.getElementsByTagName('d:getetag')[0]?.textContent;
+    const href = response.getElementsByTagName("d:href")[0]?.textContent;
+    const resourceType = response.getElementsByTagName("d:resourcetype")[0];
+    const isCollection = resourceType?.getElementsByTagName("d:collection").length > 0;
+    const lastModified = response.getElementsByTagName("d:getlastmodified")[0]?.textContent;
+    const etag = response.getElementsByTagName("d:getetag")[0]?.textContent;
 
     if (href && !isCollection) {
       // Extract filename from href
-      const filename = decodeURIComponent(href.split('/').pop());
+      const filename = decodeURIComponent(href.split("/").pop());
       files.push({
         name: filename,
         href,
         lastModified: lastModified ? new Date(lastModified).getTime() : null,
-        etag: etag?.replace(/"/g, ''),
+        etag: etag?.replace(/"/g, ""),
       });
     }
   }
@@ -414,12 +420,12 @@ function parseWebDAVResponse(xmlText) {
  */
 async function deleteFile(path) {
   const creds = getStoredCredentials();
-  if (!creds) throw new Error('Not authenticated');
+  if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
   const response = await fetch(webdavUrl, {
-    method: 'DELETE',
+    method: "DELETE",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
     },
@@ -441,7 +447,7 @@ async function deleteFile(path) {
  */
 export async function syncNotebooks(notebooks) {
   if (!isAuthenticated()) {
-    throw new Error('Not authenticated with Nextcloud');
+    throw new Error("Not authenticated with Nextcloud");
   }
 
   // Ensure sync folder exists
@@ -481,7 +487,7 @@ export async function syncNotebooks(notebooks) {
  */
 export async function syncNotes(notes) {
   if (!isAuthenticated()) {
-    throw new Error('Not authenticated with Nextcloud');
+    throw new Error("Not authenticated with Nextcloud");
   }
 
   // Ensure sync folder exists
@@ -521,7 +527,7 @@ export async function syncNotes(notes) {
  */
 export async function downloadAllData() {
   if (!isAuthenticated()) {
-    throw new Error('Not authenticated with Nextcloud');
+    throw new Error("Not authenticated with Nextcloud");
   }
 
   const files = await listFiles(SYNC_FOLDER);
@@ -538,9 +544,9 @@ export async function downloadAllData() {
 
       const data = JSON.parse(content);
 
-      if (file.name.startsWith('notebook_')) {
+      if (file.name.startsWith("notebook_")) {
         notebooks.push(data);
-      } else if (file.name.startsWith('note_')) {
+      } else if (file.name.startsWith("note_")) {
         notes.push(data);
       }
     } catch (error) {
@@ -557,10 +563,10 @@ export async function downloadAllData() {
  */
 export async function fullSync(localNotebooks, localNotes) {
   if (!isAuthenticated()) {
-    throw new Error('Not authenticated with Nextcloud');
+    throw new Error("Not authenticated with Nextcloud");
   }
 
-  console.log('Starting full sync...');
+  console.log("Starting full sync...");
 
   // Step 1: Download remote data first
   const remoteData = await downloadAllData();
@@ -570,8 +576,8 @@ export async function fullSync(localNotebooks, localNotes) {
   const notebooksToDownload = [];
 
   // Create maps for quick lookup
-  const localNotebookMap = new Map(localNotebooks.map(n => [n.id, n]));
-  const remoteNotebookMap = new Map(remoteData.notebooks.map(n => [n.id, n]));
+  const localNotebookMap = new Map(localNotebooks.map((n) => [n.id, n]));
+  const remoteNotebookMap = new Map(remoteData.notebooks.map((n) => [n.id, n]));
 
   // Check which local notebooks should be uploaded
   for (const local of localNotebooks) {
@@ -593,8 +599,8 @@ export async function fullSync(localNotebooks, localNotes) {
   const notesToUpload = [];
   const notesToDownload = [];
 
-  const localNoteMap = new Map(localNotes.map(n => [n.id, n]));
-  const remoteNoteMap = new Map(remoteData.notes.map(n => [n.id, n]));
+  const localNoteMap = new Map(localNotes.map((n) => [n.id, n]));
+  const remoteNoteMap = new Map(remoteData.notes.map((n) => [n.id, n]));
 
   // Check which local notes should be uploaded
   for (const local of localNotes) {
@@ -618,7 +624,7 @@ export async function fullSync(localNotebooks, localNotes) {
     notes: await syncNotes(notesToUpload),
   };
 
-  console.log('Full sync completed:', {
+  console.log("Full sync completed:", {
     uploaded: {
       notebooks: uploadResults.notebooks.uploaded,
       notes: uploadResults.notes.uploaded,
@@ -643,7 +649,7 @@ export async function fullSync(localNotebooks, localNotes) {
  */
 export async function deleteRemoteItem(id, type) {
   if (!isAuthenticated()) {
-    throw new Error('Not authenticated with Nextcloud');
+    throw new Error("Not authenticated with Nextcloud");
   }
 
   const filename = `${type}_${id}.json`;

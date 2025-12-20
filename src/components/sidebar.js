@@ -3,16 +3,21 @@
  * Manages the sidebar notes list based on current context
  */
 
-import { getAllNotes, getNotesByNotebook, getNote, deleteNote } from '../modules/storage.js';
-import { getCurrentMode, getCurrentNotebookId, getCurrentNoteId, navigateTo } from '../modules/router.js';
-import { showConfirmDialog } from './modals.js';
+import {
+  getCurrentMode,
+  getCurrentNotebookId,
+  getCurrentNoteId,
+  navigateTo,
+} from "../modules/router.js";
+import { deleteNote, getAllNotes, getNote, getNotesByNotebook } from "../modules/storage.js";
+import { showConfirmDialog } from "./modals.js";
 
 /**
  * Render notes list in sidebar
  * @param {string|null} notebookId - Optional notebook ID to filter notes
  */
 export async function renderSidebar(notebookId = null) {
-  const notesListContainer = document.getElementById('notes-list');
+  const notesListContainer = document.getElementById("notes-list");
   if (!notesListContainer) return;
 
   try {
@@ -38,10 +43,10 @@ export async function renderSidebar(notebookId = null) {
     // Render notes as simple list items with delete buttons
     const notesHtml = notes
       .map(
-        note => `
+        (note) => `
       <div class="sidebar-note-item" data-note-id="${note.id}">
         <div class="sidebar-note-content">
-          <div class="sidebar-note-title">${escapeHtml(note.title || 'Untitled')}</div>
+          <div class="sidebar-note-title">${escapeHtml(note.title || "Untitled")}</div>
           <div class="sidebar-note-date">${formatDate(note.modified)}</div>
         </div>
         <button class="sidebar-note-delete" data-note-id="${note.id}" title="Delete note" aria-label="Delete note">
@@ -50,9 +55,9 @@ export async function renderSidebar(notebookId = null) {
           </svg>
         </button>
       </div>
-    `
+    `,
       )
-      .join('');
+      .join("");
 
     notesListContainer.innerHTML = notesHtml;
 
@@ -61,46 +66,46 @@ export async function renderSidebar(notebookId = null) {
     if (currentNoteId) {
       const activeItem = notesListContainer.querySelector(`[data-note-id="${currentNoteId}"]`);
       if (activeItem) {
-        activeItem.classList.add('active');
+        activeItem.classList.add("active");
       }
     }
 
     // Attach click handlers for notes
-    const noteItems = notesListContainer.querySelectorAll('.sidebar-note-item');
-    noteItems.forEach(item => {
-      item.addEventListener('click', (e) => {
+    const noteItems = notesListContainer.querySelectorAll(".sidebar-note-item");
+    noteItems.forEach((item) => {
+      item.addEventListener("click", (e) => {
         // Don't navigate if clicking the delete button
-        if (e.target.closest('.sidebar-note-delete')) return;
+        if (e.target.closest(".sidebar-note-delete")) return;
 
         const noteId = item.dataset.noteId;
         const currentNotebookId = getCurrentNotebookId();
-        navigateTo('notebook', { noteId, notebookId: currentNotebookId });
+        navigateTo("notebook", { noteId, notebookId: currentNotebookId });
       });
     });
 
     // Attach delete handlers
-    const deleteButtons = notesListContainer.querySelectorAll('.sidebar-note-delete');
-    deleteButtons.forEach(btn => {
-      btn.addEventListener('click', async (e) => {
+    const deleteButtons = notesListContainer.querySelectorAll(".sidebar-note-delete");
+    deleteButtons.forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
         e.stopPropagation(); // Prevent note click
         const noteId = btn.dataset.noteId;
         const note = await getNote(noteId);
 
         const confirmed = await showConfirmDialog(
-          'Delete Note',
+          "Delete Note",
           `Are you sure you want to delete "${note.title}"?`,
-          'Delete',
-          'btn-danger'
+          "Delete",
+          "btn-danger",
         );
 
         if (confirmed) {
           await deleteNote(noteId);
-          window.dispatchEvent(new CustomEvent('datachange'));
+          window.dispatchEvent(new CustomEvent("datachange"));
         }
       });
     });
   } catch (error) {
-    console.error('Error rendering sidebar:', error);
+    console.error("Error rendering sidebar:", error);
     notesListContainer.innerHTML = `
       <div class="empty-state">
         <div class="empty-state-text">Error loading notes</div>
@@ -116,15 +121,15 @@ async function updateSidebarOnNavigate() {
   const mode = getCurrentMode();
   const notebookId = getCurrentNotebookId();
 
-  if (mode === 'notebook' && notebookId) {
+  if (mode === "notebook" && notebookId) {
     // Show notes for current notebook
     await renderSidebar(notebookId);
-  } else if (mode === 'overview' || mode === 'notebook') {
+  } else if (mode === "overview" || mode === "notebook") {
     // Show all notes in overview OR when viewing a quick note (notebook mode without notebookId)
     await renderSidebar(null);
   } else {
     // Clear sidebar for settings or other modes
-    const notesListContainer = document.getElementById('notes-list');
+    const notesListContainer = document.getElementById("notes-list");
     if (notesListContainer) {
       notesListContainer.innerHTML = `
         <div class="empty-state">
@@ -149,12 +154,12 @@ function formatDate(timestamp) {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 1) return 'Just now';
+  if (diffMins < 1) return "Just now";
   if (diffMins < 60) return `${diffMins}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
 
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /**
@@ -163,7 +168,7 @@ function formatDate(timestamp) {
  * @returns {string} Escaped text
  */
 function escapeHtml(text) {
-  const div = document.createElement('div');
+  const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
 }
@@ -173,14 +178,14 @@ function escapeHtml(text) {
  */
 export function initSidebar() {
   // Update sidebar on navigation
-  window.addEventListener('navigate', async () => {
+  window.addEventListener("navigate", async () => {
     await updateSidebarOnNavigate();
   });
 
   // Update sidebar when data changes
-  window.addEventListener('datachange', async () => {
+  window.addEventListener("datachange", async () => {
     await updateSidebarOnNavigate();
   });
 
-  console.log('Sidebar component initialized');
+  console.log("Sidebar component initialized");
 }

@@ -4,8 +4,8 @@
  * Auto-detects input type (stylus vs mouse) for mode switching
  */
 
-import { getNote, updateNote } from '../modules/storage.js';
-import { getCurrentNoteId } from '../modules/router.js';
+import { getCurrentNoteId } from "../modules/router.js";
+import { getNote, updateNote } from "../modules/storage.js";
 
 // Editor state
 let currentEditor = null;
@@ -19,9 +19,9 @@ let isErasing = false; // Track if currently erasing
 let currentStroke = [];
 let strokes = [];
 let lastExpansionTime = 0;
-let expansionCooldown = 500; // Minimum ms between expansions
+const expansionCooldown = 500; // Minimum ms between expansions
 let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
-let eraserRadius = 20; // Eraser size in pixels
+const eraserRadius = 20; // Eraser size in pixels
 
 /**
  * Initialize notebook editor for a note
@@ -29,7 +29,7 @@ let eraserRadius = 20; // Eraser size in pixels
  */
 export async function initNotebookEditor(noteId) {
   if (!noteId) {
-    console.warn('No note ID provided to editor');
+    console.warn("No note ID provided to editor");
     return;
   }
 
@@ -37,13 +37,13 @@ export async function initNotebookEditor(noteId) {
     // Load note data
     currentNoteData = await getNote(noteId);
     if (!currentNoteData) {
-      throw new Error('Note not found');
+      throw new Error("Note not found");
     }
 
     // Get or create editor container
-    const editorContainer = document.getElementById('notebook-editor-container');
+    const editorContainer = document.getElementById("notebook-editor-container");
     if (!editorContainer) {
-      console.error('Editor container not found');
+      console.error("Editor container not found");
       return;
     }
 
@@ -56,16 +56,16 @@ export async function initNotebookEditor(noteId) {
     // Initialize canvas layer
     initCanvasLayer(currentNoteData);
 
-    console.log('Notebook editor initialized for note:', noteId);
+    console.log("Notebook editor initialized for note:", noteId);
   } catch (error) {
-    console.error('Error initializing notebook editor:', error);
+    console.error("Error initializing notebook editor:", error);
   }
 }
 
 /**
  * Render editor structure
  */
-function renderEditor(container, noteData) {
+function renderEditor(container, _noteData) {
   container.innerHTML = `
     <div class="notebook-editor">
       <div class="editor-toolbar">
@@ -118,20 +118,20 @@ function renderEditor(container, noteData) {
  * Initialize text editor with Markdown WYSIWYG
  */
 function initTextEditor(noteData) {
-  const textEditor = document.getElementById('text-editor');
+  const textEditor = document.getElementById("text-editor");
   if (!textEditor) return;
 
   // Set initial content (convert markdown to HTML for WYSIWYG)
   if (noteData.content) {
     textEditor.innerHTML = markdownToHtml(noteData.content);
   } else {
-    textEditor.innerHTML = '<p><br></p>';
+    textEditor.innerHTML = "<p><br></p>";
   }
 
   // Auto-save on input with debounce
   let saveTimeout;
   let resizeTimeout;
-  textEditor.addEventListener('input', () => {
+  textEditor.addEventListener("input", () => {
     // Debounce canvas resize for better performance
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
@@ -145,9 +145,9 @@ function initTextEditor(noteData) {
   });
 
   // Handle input type detection for auto mode switching
-  textEditor.addEventListener('pointerdown', handlePointerDown);
-  textEditor.addEventListener('pointermove', handlePointerMove);
-  textEditor.addEventListener('pointerup', handlePointerUp);
+  textEditor.addEventListener("pointerdown", handlePointerDown);
+  textEditor.addEventListener("pointermove", handlePointerMove);
+  textEditor.addEventListener("pointerup", handlePointerUp);
 
   currentEditor = textEditor;
 }
@@ -156,14 +156,14 @@ function initTextEditor(noteData) {
  * Initialize canvas layer for drawing
  */
 function initCanvasLayer(noteData) {
-  canvas = document.getElementById('drawing-canvas');
+  canvas = document.getElementById("drawing-canvas");
   if (!canvas) return;
 
-  ctx = canvas.getContext('2d');
+  ctx = canvas.getContext("2d");
 
   // Size canvas to match editor
   resizeCanvas();
-  window.addEventListener('resize', resizeCanvas);
+  window.addEventListener("resize", resizeCanvas);
 
   // Load existing strokes
   if (noteData.strokes && Array.isArray(noteData.strokes)) {
@@ -172,13 +172,13 @@ function initCanvasLayer(noteData) {
   }
 
   // Canvas drawing events with pointer capture for better performance
-  canvas.addEventListener('pointerdown', (e) => {
-    console.log('=== POINTERDOWN WRAPPER ===', {
+  canvas.addEventListener("pointerdown", (e) => {
+    console.log("=== POINTERDOWN WRAPPER ===", {
       pointerType: e.pointerType,
       isDrawMode: isDrawMode,
       autoSwitchedToDrawMode: autoSwitchedToDrawMode,
-      canvasHasActiveClass: canvas.classList.contains('active'),
-      canvasPointerEvents: canvas.style.pointerEvents
+      canvasHasActiveClass: canvas.classList.contains("active"),
+      canvasPointerEvents: canvas.style.pointerEvents,
     });
 
     // Call handleCanvasPointerDown first - it will set autoSwitchedToDrawMode for pen
@@ -195,41 +195,49 @@ function initCanvasLayer(noteData) {
       canvas.setPointerCapture(e.pointerId);
     }
   });
-  canvas.addEventListener('pointermove', (e) => {
+  canvas.addEventListener("pointermove", (e) => {
     if (isDrawing && isDrawMode) {
       e.preventDefault(); // Prevent scrolling during drawing
     }
     handleCanvasPointerMove(e);
   });
-  canvas.addEventListener('pointerup', (e) => {
+  canvas.addEventListener("pointerup", (e) => {
     handleCanvasPointerUp(e);
     if (isDrawMode && canvas.hasPointerCapture(e.pointerId)) {
       canvas.releasePointerCapture(e.pointerId);
     }
   });
-  canvas.addEventListener('pointercancel', handleCanvasPointerUp);
+  canvas.addEventListener("pointercancel", handleCanvasPointerUp);
 
   // Prevent touch scrolling on canvas when in draw mode
-  canvas.addEventListener('touchstart', (e) => {
-    // Check if we need to auto-switch to text/pan mode
-    // IMPORTANT: Only switch if we're NOT currently drawing (to avoid switching mid-stroke)
-    if (autoSwitchedToDrawMode && isDrawMode && !isDrawing) {
-      console.log('Touch start detected with auto-switched draw mode - switching to text mode');
-      switchToTextMode();
-      // Don't prevent default - allow scrolling/panning
-      return;
-    }
+  canvas.addEventListener(
+    "touchstart",
+    (e) => {
+      // Check if we need to auto-switch to text/pan mode
+      // IMPORTANT: Only switch if we're NOT currently drawing (to avoid switching mid-stroke)
+      if (autoSwitchedToDrawMode && isDrawMode && !isDrawing) {
+        console.log("Touch start detected with auto-switched draw mode - switching to text mode");
+        switchToTextMode();
+        // Don't prevent default - allow scrolling/panning
+        return;
+      }
 
-    if (isDrawMode) {
-      e.preventDefault();
-    }
-  }, { passive: false });
+      if (isDrawMode) {
+        e.preventDefault();
+      }
+    },
+    { passive: false },
+  );
 
-  canvas.addEventListener('touchmove', (e) => {
-    if (isDrawMode) {
-      e.preventDefault();
-    }
-  }, { passive: false });
+  canvas.addEventListener(
+    "touchmove",
+    (e) => {
+      if (isDrawMode) {
+        e.preventDefault();
+      }
+    },
+    { passive: false },
+  );
 }
 
 /**
@@ -282,13 +290,15 @@ function expandCanvas(additionalHeight) {
 
   // Store current strokes AND the current stroke being drawn
   const currentStrokes = [...strokes];
-  const currentStrokeInProgress = currentStroke.x ? {
-    pointerType: currentStroke.pointerType,
-    x: [...currentStroke.x],
-    y: [...currentStroke.y],
-    pressure: [...currentStroke.pressure],
-    time: [...currentStroke.time]
-  } : null;
+  const currentStrokeInProgress = currentStroke.x
+    ? {
+        pointerType: currentStroke.pointerType,
+        x: [...currentStroke.x],
+        y: [...currentStroke.y],
+        pressure: [...currentStroke.pressure],
+        time: [...currentStroke.time],
+      }
+    : null;
 
   // Calculate new height
   const newHeight = canvas.height + additionalHeight;
@@ -324,13 +334,13 @@ function expandCanvas(additionalHeight) {
 function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
   if (!canvas) return;
 
-  let indicator = document.getElementById('expansion-zone-indicator');
+  let indicator = document.getElementById("expansion-zone-indicator");
 
   // Create indicator if it doesn't exist
   if (!indicator) {
-    indicator = document.createElement('div');
-    indicator.id = 'expansion-zone-indicator';
-    indicator.className = 'expansion-zone-indicator';
+    indicator = document.createElement("div");
+    indicator.id = "expansion-zone-indicator";
+    indicator.className = "expansion-zone-indicator";
     canvas.parentElement.appendChild(indicator);
   }
 
@@ -341,7 +351,7 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
   if ((currentY !== null && distanceFromBottom < expansionThreshold) || forceUpdate) {
     const triggerLine = canvas.height - expansionThreshold;
     indicator.style.top = `${triggerLine}px`;
-    indicator.style.display = 'block';
+    indicator.style.display = "block";
 
     // Fade in/out based on proximity
     if (currentY !== null) {
@@ -350,7 +360,7 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
     }
   } else if (currentY === null) {
     // Hide indicator when not drawing
-    indicator.style.display = 'none';
+    indicator.style.display = "none";
   }
 }
 
@@ -358,24 +368,24 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
  * Handle pointer down for auto mode detection
  */
 function handlePointerDown(e) {
-  console.log('Text editor pointer down:', {
+  console.log("Text editor pointer down:", {
     pointerType: e.pointerType,
     isDrawMode: isDrawMode,
-    autoSwitchedToDrawMode: autoSwitchedToDrawMode
+    autoSwitchedToDrawMode: autoSwitchedToDrawMode,
   });
 
   // Auto-detect stylus (pen) input - switch to draw mode
-  if (e.pointerType === 'pen') {
+  if (e.pointerType === "pen") {
     if (!isDrawMode) {
-      console.log('Switching to draw mode (stylus detected)');
+      console.log("Switching to draw mode (stylus detected)");
       switchToDrawMode();
       autoSwitchedToDrawMode = true; // Remember this was auto-switched
     }
     e.preventDefault();
   }
   // Auto-detect touch input - switch to text/pan mode if we auto-switched to draw mode
-  else if (e.pointerType === 'touch' && autoSwitchedToDrawMode) {
-    console.log('Touch detected with auto-switched draw mode - switching to text mode');
+  else if (e.pointerType === "touch" && autoSwitchedToDrawMode) {
+    console.log("Touch detected with auto-switched draw mode - switching to text mode");
     if (isDrawMode) {
       switchToTextMode();
     }
@@ -386,8 +396,8 @@ function handlePointerDown(e) {
  * Handle pointer move
  */
 function handlePointerMove(e) {
-  if (e.pointerType === 'pen' && !isDrawMode) {
-    console.log('Stylus hover detected on text editor - switching to draw mode');
+  if (e.pointerType === "pen" && !isDrawMode) {
+    console.log("Stylus hover detected on text editor - switching to draw mode");
     switchToDrawMode();
     autoSwitchedToDrawMode = true; // Remember this was auto-switched
     updateModeIndicator();
@@ -397,7 +407,7 @@ function handlePointerMove(e) {
 /**
  * Handle pointer up
  */
-function handlePointerUp(e) {
+function handlePointerUp(_e) {
   // Nothing to do here for text editor
 }
 
@@ -428,7 +438,7 @@ function getCanvasCoordinates(e) {
 
   return {
     x: x * scaleX,
-    y: y * scaleY
+    y: y * scaleY,
   };
 }
 
@@ -438,19 +448,19 @@ function getCanvasCoordinates(e) {
  */
 function handleCanvasPointerDown(e) {
   // Debug logging - including pointer type and buttons
-  console.log('Canvas pointer down:', {
+  console.log("Canvas pointer down:", {
     pointerType: e.pointerType,
     buttons: e.buttons,
     button: e.button,
     pointerTypeName: e.pointerType,
     isDrawMode: isDrawMode,
-    autoSwitchedToDrawMode: autoSwitchedToDrawMode
+    autoSwitchedToDrawMode: autoSwitchedToDrawMode,
   });
 
   // CRITICAL: Check for stylus/pen input and set auto-switch flag
   // This is needed because once in draw mode, the canvas captures events and text editor doesn't
-  if (e.pointerType === 'pen' || e.pointerType === 'eraser') {
-    console.log('Stylus detected on canvas - ensuring auto-switch flag is set');
+  if (e.pointerType === "pen" || e.pointerType === "eraser") {
+    console.log("Stylus detected on canvas - ensuring auto-switch flag is set");
     if (!isDrawMode) {
       switchToDrawMode();
     }
@@ -461,8 +471,10 @@ function handleCanvasPointerDown(e) {
   // CRITICAL: Check for auto-switch to text/pan mode when touch is detected
   // This must happen AFTER checking for pen, so pen sets the flag first
   // IMPORTANT: Only switch if we're NOT currently drawing (to avoid switching mid-stroke)
-  if (e.pointerType === 'touch' && autoSwitchedToDrawMode && !isDrawing) {
-    console.log('Touch on canvas detected with auto-switched draw mode - switching to text mode for panning');
+  if (e.pointerType === "touch" && autoSwitchedToDrawMode && !isDrawing) {
+    console.log(
+      "Touch on canvas detected with auto-switched draw mode - switching to text mode for panning",
+    );
     switchToTextMode();
     e.stopPropagation(); // Stop event propagation
     e.preventDefault(); // Prevent default to avoid any drawing
@@ -479,18 +491,19 @@ function handleCanvasPointerDown(e) {
   //   - Check button state for various stylus types:
   //     - Samsung S Pen: button === 2 (secondary button when pen button held) - NOTE: May not work on S Pen
   //     - Other stylus: button === 5 or buttons === 32
-  const isEraserButton = e.pointerType === 'eraser' || e.button === 2 || e.button === 5 || e.buttons === 32;
+  const isEraserButton =
+    e.pointerType === "eraser" || e.button === 2 || e.button === 5 || e.buttons === 32;
   const shouldErase = isEraserMode || isEraserButton;
 
   if (shouldErase) {
-    console.log('✓ ERASER ACTIVE - starting erase mode', {
+    console.log("✓ ERASER ACTIVE - starting erase mode", {
       isEraserMode: isEraserMode,
-      isEraserButton: isEraserButton
+      isEraserButton: isEraserButton,
     });
     isErasing = true;
     isDrawing = false; // Don't draw while erasing
   } else {
-    console.log('✗ Normal drawing mode');
+    console.log("✗ Normal drawing mode");
     isErasing = false;
     isDrawing = true;
     currentStroke = [];
@@ -499,7 +512,7 @@ function handleCanvasPointerDown(e) {
   const { x, y } = getCanvasCoordinates(e);
 
   // More debug logging
-  console.log('Starting stroke:', {
+  console.log("Starting stroke:", {
     pointerType: e.pointerType,
     button: e.button,
     buttons: e.buttons,
@@ -507,7 +520,7 @@ function handleCanvasPointerDown(e) {
     x,
     y,
     canvasWidth: canvas.width,
-    canvasHeight: canvas.height
+    canvasHeight: canvas.height,
   });
 
   // Update mode indicator with debug info
@@ -515,7 +528,7 @@ function handleCanvasPointerDown(e) {
     pointerType: e.pointerType,
     button: e.button,
     buttons: e.buttons,
-    isErasing: isErasing
+    isErasing: isErasing,
   });
 
   if (isErasing) {
@@ -529,7 +542,7 @@ function handleCanvasPointerDown(e) {
         x: [],
         y: [],
         pressure: [],
-        time: []
+        time: [],
       };
     }
 
@@ -556,7 +569,7 @@ function handleCanvasPointerMove(e) {
     pointerType: e.pointerType,
     button: e.button,
     buttons: e.buttons,
-    isErasing: isErasing
+    isErasing: isErasing,
   });
 
   if (isErasing) {
@@ -589,20 +602,20 @@ function handleCanvasPointerMove(e) {
       const currY = currentStroke.y[pointCount - 1];
 
       // Use different colors for different pointer types (debug feature)
-      const pointerType = currentStroke.pointerType || 'unknown';
-      if (pointerType === 'pen') {
-        ctx.strokeStyle = '#000000'; // Black for stylus
-      } else if (pointerType === 'touch') {
-        ctx.strokeStyle = '#ff0000'; // Red for finger touch
-      } else if (pointerType === 'mouse') {
-        ctx.strokeStyle = '#0000ff'; // Blue for mouse
+      const pointerType = currentStroke.pointerType || "unknown";
+      if (pointerType === "pen") {
+        ctx.strokeStyle = "#000000"; // Black for stylus
+      } else if (pointerType === "touch") {
+        ctx.strokeStyle = "#ff0000"; // Red for finger touch
+      } else if (pointerType === "mouse") {
+        ctx.strokeStyle = "#0000ff"; // Blue for mouse
       } else {
-        ctx.strokeStyle = '#888888'; // Gray for unknown
+        ctx.strokeStyle = "#888888"; // Gray for unknown
       }
 
       ctx.lineWidth = 2;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
 
       ctx.beginPath();
       ctx.moveTo(prevX, prevY);
@@ -618,7 +631,7 @@ function handleCanvasPointerMove(e) {
 /**
  * Handle canvas pointer up
  */
-function handleCanvasPointerUp(e) {
+function handleCanvasPointerUp(_e) {
   if (isErasing) {
     isErasing = false;
     // Redraw canvas to remove eraser cursor
@@ -641,7 +654,7 @@ function handleCanvasPointerUp(e) {
       x: [...currentStroke.x],
       y: [...currentStroke.y],
       pressure: [...currentStroke.pressure],
-      time: [...currentStroke.time]
+      time: [...currentStroke.time],
     });
     currentStroke = [];
 
@@ -664,20 +677,20 @@ function drawStroke(stroke) {
   const pointCount = stroke.x.length;
 
   // Determine color based on pointer type (debug feature)
-  const pointerType = stroke.pointerType || 'pen';
-  if (pointerType === 'pen') {
-    ctx.strokeStyle = '#000000'; // Black for stylus
-  } else if (pointerType === 'touch') {
-    ctx.strokeStyle = '#ff0000'; // Red for finger touch
-  } else if (pointerType === 'mouse') {
-    ctx.strokeStyle = '#0000ff'; // Blue for mouse
+  const pointerType = stroke.pointerType || "pen";
+  if (pointerType === "pen") {
+    ctx.strokeStyle = "#000000"; // Black for stylus
+  } else if (pointerType === "touch") {
+    ctx.strokeStyle = "#ff0000"; // Red for finger touch
+  } else if (pointerType === "mouse") {
+    ctx.strokeStyle = "#0000ff"; // Blue for mouse
   } else {
-    ctx.strokeStyle = '#888888'; // Gray for unknown
+    ctx.strokeStyle = "#888888"; // Gray for unknown
   }
 
   ctx.lineWidth = 2;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
 
   ctx.beginPath();
   ctx.moveTo(stroke.x[0], stroke.y[0]);
@@ -694,7 +707,12 @@ function drawStroke(stroke) {
     // Draw last segment
     const lastIdx = pointCount - 1;
     const secondLastIdx = pointCount - 2;
-    ctx.quadraticCurveTo(stroke.x[secondLastIdx], stroke.y[secondLastIdx], stroke.x[lastIdx], stroke.y[lastIdx]);
+    ctx.quadraticCurveTo(
+      stroke.x[secondLastIdx],
+      stroke.y[secondLastIdx],
+      stroke.x[lastIdx],
+      stroke.y[lastIdx],
+    );
   }
 
   ctx.stroke();
@@ -710,7 +728,7 @@ function redrawCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   // Draw all strokes
-  strokes.forEach(stroke => {
+  strokes.forEach((stroke) => {
     drawStroke(stroke);
   });
 }
@@ -806,7 +824,7 @@ function strokeIntersectsEraser(stroke, eraserX, eraserY) {
 function eraseStrokesAtPoint(x, y) {
   // Filter out strokes that intersect with the eraser
   const originalLength = strokes.length;
-  strokes = strokes.filter(stroke => !strokeIntersectsEraser(stroke, x, y));
+  strokes = strokes.filter((stroke) => !strokeIntersectsEraser(stroke, x, y));
 
   // Only redraw if strokes were removed
   if (strokes.length < originalLength) {
@@ -827,7 +845,7 @@ function drawEraserCursor(x, y) {
   ctx.save();
 
   // Draw eraser circle outline
-  ctx.strokeStyle = '#ff0000';
+  ctx.strokeStyle = "#ff0000";
   ctx.lineWidth = 2;
   ctx.setLineDash([5, 5]); // Dashed line
   ctx.beginPath();
@@ -844,11 +862,11 @@ function drawEraserCursor(x, y) {
 function switchToDrawMode() {
   isDrawMode = true;
   if (canvas) {
-    canvas.classList.add('active');
-    canvas.style.pointerEvents = 'auto';
+    canvas.classList.add("active");
+    canvas.style.pointerEvents = "auto";
   }
   if (currentEditor) {
-    currentEditor.style.pointerEvents = 'none';
+    currentEditor.style.pointerEvents = "none";
   }
 
   updateToolbarButtons();
@@ -861,11 +879,11 @@ function switchToDrawMode() {
 function switchToTextMode() {
   isDrawMode = false;
   if (canvas) {
-    canvas.classList.remove('active');
-    canvas.style.pointerEvents = 'none';
+    canvas.classList.remove("active");
+    canvas.style.pointerEvents = "none";
   }
   if (currentEditor) {
-    currentEditor.style.pointerEvents = 'auto';
+    currentEditor.style.pointerEvents = "auto";
   }
 
   updateToolbarButtons();
@@ -876,15 +894,15 @@ function switchToTextMode() {
  * Update mode indicator text with auto-switch status
  */
 function updateModeIndicator() {
-  const modeText = document.getElementById('current-mode-text');
+  const modeText = document.getElementById("current-mode-text");
   if (!modeText) return;
 
-  let mode = 'Text';
+  let mode = "Text";
   if (isDrawMode) {
-    mode = isEraserMode ? 'Erase' : 'Draw';
+    mode = isEraserMode ? "Erase" : "Draw";
   }
 
-  const switchType = autoSwitchedToDrawMode ? '(Auto)' : '(Manual)';
+  const switchType = autoSwitchedToDrawMode ? "(Auto)" : "(Manual)";
   modeText.textContent = `${mode} Mode ${switchType}`;
 }
 
@@ -928,18 +946,18 @@ function toggleEraserMode() {
  * Update toolbar button active states
  */
 function updateToolbarButtons() {
-  const textBtn = document.getElementById('mode-text-btn');
-  const drawBtn = document.getElementById('mode-draw-btn');
-  const eraseBtn = document.getElementById('mode-erase-btn');
+  const textBtn = document.getElementById("mode-text-btn");
+  const drawBtn = document.getElementById("mode-draw-btn");
+  const eraseBtn = document.getElementById("mode-erase-btn");
 
   if (textBtn) {
-    textBtn.classList.toggle('active', !isDrawMode);
+    textBtn.classList.toggle("active", !isDrawMode);
   }
   if (drawBtn) {
-    drawBtn.classList.toggle('active', isDrawMode && !isEraserMode);
+    drawBtn.classList.toggle("active", isDrawMode && !isEraserMode);
   }
   if (eraseBtn) {
-    eraseBtn.classList.toggle('active', isEraserMode);
+    eraseBtn.classList.toggle("active", isEraserMode);
   }
 }
 
@@ -948,18 +966,22 @@ function updateToolbarButtons() {
  */
 function attachToolbarListeners() {
   // Mode switching - use manual switch functions to clear auto-switch flag
-  document.getElementById('mode-text-btn')?.addEventListener('click', manualSwitchToTextMode);
-  document.getElementById('mode-draw-btn')?.addEventListener('click', manualSwitchToDrawMode);
-  document.getElementById('mode-erase-btn')?.addEventListener('click', toggleEraserMode);
+  document.getElementById("mode-text-btn")?.addEventListener("click", manualSwitchToTextMode);
+  document.getElementById("mode-draw-btn")?.addEventListener("click", manualSwitchToDrawMode);
+  document.getElementById("mode-erase-btn")?.addEventListener("click", toggleEraserMode);
 
   // Text formatting
-  document.getElementById('format-bold-btn')?.addEventListener('click', () => formatText('bold'));
-  document.getElementById('format-italic-btn')?.addEventListener('click', () => formatText('italic'));
-  document.getElementById('format-heading-btn')?.addEventListener('click', () => formatText('heading'));
-  document.getElementById('format-list-btn')?.addEventListener('click', () => formatText('list'));
+  document.getElementById("format-bold-btn")?.addEventListener("click", () => formatText("bold"));
+  document
+    .getElementById("format-italic-btn")
+    ?.addEventListener("click", () => formatText("italic"));
+  document
+    .getElementById("format-heading-btn")
+    ?.addEventListener("click", () => formatText("heading"));
+  document.getElementById("format-list-btn")?.addEventListener("click", () => formatText("list"));
 
   // Clear canvas
-  document.getElementById('clear-canvas-btn')?.addEventListener('click', clearCanvas);
+  document.getElementById("clear-canvas-btn")?.addEventListener("click", clearCanvas);
 }
 
 /**
@@ -971,17 +993,17 @@ function formatText(format) {
   currentEditor.focus();
 
   switch (format) {
-    case 'bold':
-      document.execCommand('bold');
+    case "bold":
+      document.execCommand("bold");
       break;
-    case 'italic':
-      document.execCommand('italic');
+    case "italic":
+      document.execCommand("italic");
       break;
-    case 'heading':
-      document.execCommand('formatBlock', false, 'h2');
+    case "heading":
+      document.execCommand("formatBlock", false, "h2");
       break;
-    case 'list':
-      document.execCommand('insertUnorderedList');
+    case "list":
+      document.execCommand("insertUnorderedList");
       break;
   }
 }
@@ -1014,9 +1036,9 @@ async function saveNoteContent() {
       modified: Date.now(),
     });
 
-    console.log('Note saved');
+    console.log("Note saved");
   } catch (error) {
-    console.error('Error saving note:', error);
+    console.error("Error saving note:", error);
   }
 }
 
@@ -1026,26 +1048,26 @@ async function saveNoteContent() {
 function markdownToHtml(markdown) {
   let html = markdown
     // Headers
-    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+    .replace(/^### (.*$)/gim, "<h3>$1</h3>")
+    .replace(/^## (.*$)/gim, "<h2>$1</h2>")
+    .replace(/^# (.*$)/gim, "<h1>$1</h1>")
     // Bold
-    .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
+    .replace(/\*\*(.*?)\*\*/gim, "<strong>$1</strong>")
     // Italic
-    .replace(/\*(.*?)\*/gim, '<em>$1</em>')
+    .replace(/\*(.*?)\*/gim, "<em>$1</em>")
     // Lists
-    .replace(/^\- (.*$)/gim, '<li>$1</li>')
+    .replace(/^- (.*$)/gim, "<li>$1</li>")
     // Paragraphs
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>');
+    .replace(/\n\n/g, "</p><p>")
+    .replace(/\n/g, "<br>");
 
   // Wrap in paragraph if not already wrapped
-  if (!html.startsWith('<')) {
+  if (!html.startsWith("<")) {
     html = `<p>${html}</p>`;
   }
 
   // Wrap lists in ul tags
-  html = html.replace(/(<li>.*<\/li>)/gim, '<ul>$1</ul>');
+  html = html.replace(/(<li>.*<\/li>)/gim, "<ul>$1</ul>");
 
   return html;
 }
@@ -1056,25 +1078,25 @@ function markdownToHtml(markdown) {
 function htmlToMarkdown(html) {
   let markdown = html
     // Headers
-    .replace(/<h1>(.*?)<\/h1>/gim, '# $1\n\n')
-    .replace(/<h2>(.*?)<\/h2>/gim, '## $1\n\n')
-    .replace(/<h3>(.*?)<\/h3>/gim, '### $1\n\n')
+    .replace(/<h1>(.*?)<\/h1>/gim, "# $1\n\n")
+    .replace(/<h2>(.*?)<\/h2>/gim, "## $1\n\n")
+    .replace(/<h3>(.*?)<\/h3>/gim, "### $1\n\n")
     // Bold
-    .replace(/<strong>(.*?)<\/strong>/gim, '**$1**')
-    .replace(/<b>(.*?)<\/b>/gim, '**$1**')
+    .replace(/<strong>(.*?)<\/strong>/gim, "**$1**")
+    .replace(/<b>(.*?)<\/b>/gim, "**$1**")
     // Italic
-    .replace(/<em>(.*?)<\/em>/gim, '*$1*')
-    .replace(/<i>(.*?)<\/i>/gim, '*$1*')
+    .replace(/<em>(.*?)<\/em>/gim, "*$1*")
+    .replace(/<i>(.*?)<\/i>/gim, "*$1*")
     // Lists
-    .replace(/<li>(.*?)<\/li>/gim, '- $1\n')
-    .replace(/<\/?ul>/gim, '')
+    .replace(/<li>(.*?)<\/li>/gim, "- $1\n")
+    .replace(/<\/?ul>/gim, "")
     // Line breaks and paragraphs
-    .replace(/<br\s*\/?>/gim, '\n')
-    .replace(/<\/p><p>/gim, '\n\n')
-    .replace(/<\/?p>/gim, '');
+    .replace(/<br\s*\/?>/gim, "\n")
+    .replace(/<\/p><p>/gim, "\n\n")
+    .replace(/<\/?p>/gim, "");
 
   // Clean up extra whitespace
-  markdown = markdown.replace(/\n{3,}/g, '\n\n').trim();
+  markdown = markdown.replace(/\n{3,}/g, "\n\n").trim();
 
   return markdown;
 }
@@ -1084,7 +1106,7 @@ function htmlToMarkdown(html) {
  */
 export function initNotebookEditorComponent() {
   // Listen for render notebook event from router
-  window.addEventListener('rendernotebook', async (e) => {
+  window.addEventListener("rendernotebook", async (e) => {
     const { noteId } = e.detail;
     if (noteId) {
       await initNotebookEditor(noteId);
@@ -1092,13 +1114,13 @@ export function initNotebookEditorComponent() {
   });
 
   // Listen for navigation changes to cleanup
-  window.addEventListener('navigate', (e) => {
-    if (e.detail.previousMode === 'notebook') {
+  window.addEventListener("navigate", (e) => {
+    if (e.detail.previousMode === "notebook") {
       cleanupNotebookEditor();
     }
   });
 
-  console.log('Notebook editor component initialized');
+  console.log("Notebook editor component initialized");
 }
 
 /**
@@ -1106,7 +1128,7 @@ export function initNotebookEditorComponent() {
  */
 export function cleanupNotebookEditor() {
   if (canvas) {
-    window.removeEventListener('resize', resizeCanvas);
+    window.removeEventListener("resize", resizeCanvas);
   }
 
   currentEditor = null;

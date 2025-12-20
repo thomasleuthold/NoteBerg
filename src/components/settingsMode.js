@@ -3,16 +3,23 @@
  * Renders the settings panel with theme selection and other preferences
  */
 
-import { getTheme, setTheme } from '../modules/theme.js';
 import {
-  isAuthenticated,
-  getStoredCredentials,
-  startLoginFlow,
   clearCredentials,
-  testConnection,
   fullSync,
-} from '../modules/nextcloudSync.js';
-import { getAllNotebooksForSync, getAllNotesForSync, saveNotebook, saveNote, permanentlyDeleteNotebook, permanentlyDeleteNote } from '../modules/storage.js';
+  getStoredCredentials,
+  isAuthenticated,
+  startLoginFlow,
+  testConnection,
+} from "../modules/nextcloudSync.js";
+import {
+  getAllNotebooksForSync,
+  getAllNotesForSync,
+  permanentlyDeleteNote,
+  permanentlyDeleteNotebook,
+  saveNote,
+  saveNotebook,
+} from "../modules/storage.js";
+import { getTheme, setTheme } from "../modules/theme.js";
 
 /**
  * Render settings UI
@@ -38,15 +45,15 @@ export function renderSettings(container) {
             <span class="setting-description">Choose your preferred color scheme</span>
           </div>
           <div class="theme-toggle-group">
-            <button class="theme-toggle ${currentTheme === 'light' ? 'active' : ''}" data-theme="light">
+            <button class="theme-toggle ${currentTheme === "light" ? "active" : ""}" data-theme="light">
               <div class="theme-toggle-swatch light"></div>
               <span class="theme-toggle-label">Light</span>
             </button>
-            <button class="theme-toggle ${currentTheme === 'dark' ? 'active' : ''}" data-theme="dark">
+            <button class="theme-toggle ${currentTheme === "dark" ? "active" : ""}" data-theme="dark">
               <div class="theme-toggle-swatch dark"></div>
               <span class="theme-toggle-label">Dark</span>
             </button>
-            <button class="theme-toggle ${currentTheme === 'epaper' ? 'active' : ''}" data-theme="epaper">
+            <button class="theme-toggle ${currentTheme === "epaper" ? "active" : ""}" data-theme="epaper">
               <div class="theme-toggle-swatch epaper"></div>
               <span class="theme-toggle-label">E-Paper</span>
             </button>
@@ -105,10 +112,10 @@ export function renderSettings(container) {
         <div class="setting-item">
           <div class="setting-label">
             <span class="setting-name">Connected</span>
-            <span class="setting-description">Logged in as ${credentials?.loginName || 'Unknown'}</span>
+            <span class="setting-description">Logged in as ${credentials?.loginName || "Unknown"}</span>
           </div>
           <div class="setting-label">
-            <span class="setting-description">Server: ${credentials?.serverUrl || 'Unknown'}</span>
+            <span class="setting-description">Server: ${credentials?.serverUrl || "Unknown"}</span>
           </div>
         </div>
 
@@ -136,133 +143,135 @@ export function renderSettings(container) {
   `;
 
   // Attach event listeners to theme toggle buttons
-  const themeToggles = container.querySelectorAll('.theme-toggle');
-  themeToggles.forEach(toggle => {
-    toggle.addEventListener('click', () => {
+  const themeToggles = container.querySelectorAll(".theme-toggle");
+  themeToggles.forEach((toggle) => {
+    toggle.addEventListener("click", () => {
       const theme = toggle.dataset.theme;
       setTheme(theme);
 
       // Update active state
-      themeToggles.forEach(t => t.classList.remove('active'));
-      toggle.classList.add('active');
+      for (const t of themeToggles) {
+        t.classList.remove("active");
+      }
+      toggle.classList.add("active");
     });
   });
 
   // Nextcloud sync event listeners
   if (!authenticated) {
-    const testBtn = container.querySelector('#test-connection-btn');
-    const connectBtn = container.querySelector('#connect-nextcloud-btn');
-    const urlInput = container.querySelector('#nextcloud-url');
-    const statusSpan = container.querySelector('#connection-status');
+    const testBtn = container.querySelector("#test-connection-btn");
+    const connectBtn = container.querySelector("#connect-nextcloud-btn");
+    const urlInput = container.querySelector("#nextcloud-url");
+    const statusSpan = container.querySelector("#connection-status");
 
-    testBtn?.addEventListener('click', async () => {
+    testBtn?.addEventListener("click", async () => {
       const serverUrl = urlInput.value.trim();
 
       if (!serverUrl) {
-        statusSpan.textContent = 'Please enter a server URL';
-        statusSpan.style.color = 'var(--color-error)';
+        statusSpan.textContent = "Please enter a server URL";
+        statusSpan.style.color = "var(--color-error)";
         return;
       }
 
       testBtn.disabled = true;
-      testBtn.textContent = 'Testing...';
-      statusSpan.textContent = '';
+      testBtn.textContent = "Testing...";
+      statusSpan.textContent = "";
 
       try {
         const result = await testConnection(serverUrl);
         if (result.success) {
           statusSpan.textContent = `✓ Connected to Nextcloud ${result.versionstring}`;
-          statusSpan.style.color = 'var(--color-success)';
+          statusSpan.style.color = "var(--color-success)";
         } else {
           statusSpan.textContent = `✗ ${result.error}`;
-          statusSpan.style.color = 'var(--color-error)';
+          statusSpan.style.color = "var(--color-error)";
         }
       } catch (error) {
         statusSpan.textContent = `✗ ${error.message}`;
-        statusSpan.style.color = 'var(--color-error)';
+        statusSpan.style.color = "var(--color-error)";
       } finally {
         testBtn.disabled = false;
-        testBtn.textContent = 'Test Connection';
+        testBtn.textContent = "Test Connection";
       }
     });
 
-    connectBtn?.addEventListener('click', async () => {
+    connectBtn?.addEventListener("click", async () => {
       const serverUrl = urlInput.value.trim();
 
       if (!serverUrl) {
-        statusSpan.textContent = 'Please enter a server URL';
-        statusSpan.style.color = 'var(--color-error)';
+        statusSpan.textContent = "Please enter a server URL";
+        statusSpan.style.color = "var(--color-error)";
         return;
       }
 
       connectBtn.disabled = true;
-      connectBtn.textContent = 'Initializing...';
-      statusSpan.textContent = 'Starting Nextcloud Login Flow...';
-      statusSpan.style.color = 'var(--color-text)';
+      connectBtn.textContent = "Initializing...";
+      statusSpan.textContent = "Starting Nextcloud Login Flow...";
+      statusSpan.style.color = "var(--color-text)";
 
-      const loginUrlContainer = container.querySelector('#login-url-container');
-      const loginUrlInput = container.querySelector('#login-url');
-      const copyLoginUrlBtn = container.querySelector('#copy-login-url-btn');
+      const loginUrlContainer = container.querySelector("#login-url-container");
+      const loginUrlInput = container.querySelector("#login-url");
+      const copyLoginUrlBtn = container.querySelector("#copy-login-url-btn");
 
       try {
         await startLoginFlow(serverUrl, (loginUrl) => {
           // Show the login URL field
-          loginUrlContainer.style.display = 'block';
+          loginUrlContainer.style.display = "block";
           loginUrlInput.value = loginUrl;
 
-          statusSpan.textContent = 'Waiting for login... Open the URL above in your browser';
-          statusSpan.style.color = 'var(--color-text)';
+          statusSpan.textContent = "Waiting for login... Open the URL above in your browser";
+          statusSpan.style.color = "var(--color-text)";
 
           // Add copy button handler
           copyLoginUrlBtn.onclick = async () => {
             try {
               loginUrlInput.select();
               await navigator.clipboard.writeText(loginUrl);
-              copyLoginUrlBtn.textContent = '✓ Copied!';
+              copyLoginUrlBtn.textContent = "✓ Copied!";
               setTimeout(() => {
-                copyLoginUrlBtn.textContent = 'Copy URL';
+                copyLoginUrlBtn.textContent = "Copy URL";
               }, 2000);
-            } catch (err) {
+            } catch (_err) {
               // Fallback: select the text
               loginUrlInput.select();
-              copyLoginUrlBtn.textContent = 'Selected - use Ctrl+C';
+              copyLoginUrlBtn.textContent = "Selected - use Ctrl+C";
               setTimeout(() => {
-                copyLoginUrlBtn.textContent = 'Copy URL';
+                copyLoginUrlBtn.textContent = "Copy URL";
               }, 2000);
             }
           };
         });
 
         // Login successful
-        loginUrlContainer.style.display = 'none';
-        statusSpan.textContent = '✓ Connected successfully!';
-        statusSpan.style.color = 'var(--color-success)';
+        loginUrlContainer.style.display = "none";
+        statusSpan.textContent = "✓ Connected successfully!";
+        statusSpan.style.color = "var(--color-success)";
 
         // Notify footer about auth change
-        window.dispatchEvent(new CustomEvent('nextcloud-auth-changed'));
+        window.dispatchEvent(new CustomEvent("nextcloud-auth-changed"));
 
         // Reload settings to show authenticated state
         setTimeout(() => renderSettings(container), 1000);
       } catch (error) {
-        console.error('Login flow error caught in settings:', error);
-        const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
-        loginUrlContainer.style.display = 'none';
+        console.error("Login flow error caught in settings:", error);
+        const errorMessage = error?.message || error?.toString() || "Unknown error occurred";
+        loginUrlContainer.style.display = "none";
         statusSpan.textContent = `✗ ${errorMessage}`;
-        statusSpan.style.color = 'var(--color-error)';
+        statusSpan.style.color = "var(--color-error)";
         connectBtn.disabled = false;
-        connectBtn.textContent = 'Connect to Nextcloud';
+        connectBtn.textContent = "Connect to Nextcloud";
       }
     });
   } else {
-    const syncBtn = container.querySelector('#sync-now-btn');
-    const disconnectBtn = container.querySelector('#disconnect-btn');
-    const syncStatus = container.querySelector('#sync-status');
+    const syncBtn = container.querySelector("#sync-now-btn");
+    const disconnectBtn = container.querySelector("#disconnect-btn");
+    const syncStatus = container.querySelector("#sync-status");
 
-    syncBtn?.addEventListener('click', async () => {
+    syncBtn?.addEventListener("click", async () => {
       syncBtn.disabled = true;
-      syncBtn.textContent = 'Syncing...';
-      syncStatus.textContent = 'Syncing with Nextcloud...';
-      syncStatus.style.color = 'var(--color-text)';
+      syncBtn.textContent = "Syncing...";
+      syncStatus.textContent = "Syncing with Nextcloud...";
+      syncStatus.style.color = "var(--color-text)";
 
       try {
         const notebooks = await getAllNotebooksForSync();
@@ -272,14 +281,14 @@ export function renderSettings(container) {
 
         // Mark uploaded items as synced in local storage
         for (const id of result.uploaded.notebooks.uploadedIds || []) {
-          const notebook = notebooks.find(n => n.id === id);
+          const notebook = notebooks.find((n) => n.id === id);
           if (notebook) {
             await saveNotebook({ ...notebook, synced: true });
           }
         }
 
         for (const id of result.uploaded.notes.uploadedIds || []) {
-          const note = notes.find(n => n.id === id);
+          const note = notes.find((n) => n.id === id);
           if (note) {
             await saveNote({ ...note, synced: true });
           }
@@ -317,28 +326,28 @@ export function renderSettings(container) {
         }
 
         syncStatus.textContent = `✓ Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`;
-        syncStatus.style.color = 'var(--color-success)';
+        syncStatus.style.color = "var(--color-success)";
 
         // Trigger a UI refresh if notes/notebooks were downloaded
         if (downloadedNotebooks > 0 || downloadedNotes > 0) {
           // Dispatch event to refresh sidebar
-          window.dispatchEvent(new CustomEvent('notes-updated'));
+          window.dispatchEvent(new CustomEvent("notes-updated"));
         }
       } catch (error) {
         syncStatus.textContent = `✗ Sync failed: ${error.message}`;
-        syncStatus.style.color = 'var(--color-error)';
+        syncStatus.style.color = "var(--color-error)";
       } finally {
         syncBtn.disabled = false;
-        syncBtn.textContent = 'Sync Now';
+        syncBtn.textContent = "Sync Now";
       }
     });
 
-    disconnectBtn?.addEventListener('click', () => {
-      if (confirm('Are you sure you want to disconnect from Nextcloud?')) {
+    disconnectBtn?.addEventListener("click", () => {
+      if (confirm("Are you sure you want to disconnect from Nextcloud?")) {
         clearCredentials();
 
         // Notify footer about auth change
-        window.dispatchEvent(new CustomEvent('nextcloud-auth-changed'));
+        window.dispatchEvent(new CustomEvent("nextcloud-auth-changed"));
 
         renderSettings(container);
       }
@@ -351,12 +360,12 @@ export function renderSettings(container) {
  */
 export function initSettings() {
   // Listen for render settings event from router
-  window.addEventListener('rendersettings', () => {
-    const container = document.getElementById('settings-content');
+  window.addEventListener("rendersettings", () => {
+    const container = document.getElementById("settings-content");
     if (container) {
       renderSettings(container);
     }
   });
 
-  console.log('Settings component initialized');
+  console.log("Settings component initialized");
 }

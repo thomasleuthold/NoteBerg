@@ -61,12 +61,12 @@
 }
 
 .note-indicator.has-text::before {
-  content: '📝';
+  content: "📝";
   margin-right: 2px;
 }
 
 .note-indicator.has-strokes::before {
-  content: '✏️';
+  content: "✏️";
   margin-right: 2px;
 }
 

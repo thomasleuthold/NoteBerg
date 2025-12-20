@@ -441,12 +441,14 @@
   background-color: var(--bg-secondary);
 }
 
-.color-option input[type='radio'] {
+.color-option input[type="radio"] {
   margin: 0;
 }
 
-.color-option input[type='radio']:checked + .color-swatch {
-  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--color-primary);
+.color-option input[type="radio"]:checked + .color-swatch {
+  box-shadow:
+    0 0 0 2px var(--bg-primary),
+    0 0 0 4px var(--color-primary);
 }
 
 .color-swatch {
