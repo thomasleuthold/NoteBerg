@@ -25,10 +25,11 @@
           <button id="menu-btn" class="btn-icon" aria-label="Menu" title="Toggle sidebar">
             ☰
           </button>
-          <button id="nav-overview" class="btn-icon" aria-label="Home" title="Overview" data-mode="overview">
-            🏠
-          </button>
-          <h1 class="app-title">oneJournal</h1>
+          <nav id="breadcrumb" class="breadcrumb" aria-label="Breadcrumb navigation">
+            <button id="nav-overview" class="breadcrumb-item" aria-label="Home" title="Home">
+              🏠
+            </button>
+          </nav>
         </div>
         <div class="toolbar-center">
         </div>
@@ -45,14 +46,8 @@
       <div class="app-container">
         <!-- Sidebar for notes list -->
         <aside id="sidebar" class="sidebar">
-          <div class="sidebar-header">
-            <button id="new-note-btn" class="btn-primary">+ New Note</button>
-            <input
-              type="search"
-              id="search-notes"
-              class="search-input"
-              placeholder="Search notes..."
-            />
+          <div class="sidebar-header" id="sidebar-header">
+            <!-- Dynamic header content -->
           </div>
           <div id="notes-list" class="notes-list">
             <div class="empty-state">

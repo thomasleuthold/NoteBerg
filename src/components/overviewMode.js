@@ -132,6 +132,16 @@ function attachOverviewListeners(container) {
     });
   });
 
+  // New note in notebook button clicks
+  const newNoteBtns = container.querySelectorAll(".notebook-card .card-new-note-btn");
+  newNoteBtns.forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation(); // Prevent card click
+      const notebookId = btn.dataset.notebookId;
+      window.dispatchEvent(new CustomEvent("createnote", { detail: { notebookId } }));
+    });
+  });
+
   // Delete note button clicks
   const noteDeleteBtns = container.querySelectorAll(".note-card .card-delete-btn");
   noteDeleteBtns.forEach((btn) => {

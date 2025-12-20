@@ -36,6 +36,9 @@ export function renderNotebookCard(notebook, noteCount = 0) {
         <span class="notebook-card-count">${noteCount} ${noteCount === 1 ? "note" : "notes"}</span>
         <span class="notebook-card-date">${lastModified}</span>
       </div>
+      <button class="card-new-note-btn" data-notebook-id="${notebook.id}" title="New note in this notebook">
+        + New Note
+      </button>
     </div>
   `;
 }

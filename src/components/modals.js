@@ -320,5 +320,11 @@ export function initModals() {
     showCreateNoteModal(null);
   });
 
+  // Listen for create note event (with optional notebookId)
+  window.addEventListener("createnote", (e) => {
+    const notebookId = e.detail?.notebookId || null;
+    showCreateNoteModal(notebookId);
+  });
+
   console.log("Modals initialized");
 }

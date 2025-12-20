@@ -4,8 +4,9 @@
  * Auto-detects input type (stylus vs mouse) for mode switching
  */
 
-import { getCurrentNoteId } from "../modules/router.js";
-import { getNote, updateNote } from "../modules/storage.js";
+import { getCurrentNoteId, navigateTo } from "../modules/router.js";
+import { deleteNote, getNote, updateNote } from "../modules/storage.js";
+import { showConfirmDialog } from "./modals.js";
 
 // Editor state
 let currentEditor = null;
@@ -93,13 +94,10 @@ function renderEditor(container, _noteData) {
             •
           </button>
         </div>
-        <div class="toolbar-section">
-          <button class="toolbar-btn" id="clear-canvas-btn" title="Clear drawings">
+        <div class="toolbar-section toolbar-section-right">
+          <button class="toolbar-btn" id="delete-note-btn" title="Delete note">
             🗑️
           </button>
-        </div>
-        <div class="toolbar-section mode-indicator">
-          <span id="current-mode-text">Text Mode</span>
         </div>
       </div>
 
@@ -980,8 +978,8 @@ function attachToolbarListeners() {
     ?.addEventListener("click", () => formatText("heading"));
   document.getElementById("format-list-btn")?.addEventListener("click", () => formatText("list"));
 
-  // Clear canvas
-  document.getElementById("clear-canvas-btn")?.addEventListener("click", clearCanvas);
+  // Delete note
+  document.getElementById("delete-note-btn")?.addEventListener("click", deleteCurrentNote);
 }
 
 /**
@@ -1009,12 +1007,25 @@ function formatText(format) {
 }
 
 /**
- * Clear canvas
+ * Delete current note
  */
-async function clearCanvas() {
-  strokes = [];
-  redrawCanvas();
-  await saveNoteContent();
+async function deleteCurrentNote() {
+  if (!currentNoteData) return;
+
+  const confirmed = await showConfirmDialog(
+    "Delete Note",
+    `Are you sure you want to delete "${currentNoteData.title}"?`,
+    "Delete",
+    "btn-danger",
+  );
+
+  if (confirmed) {
+    await deleteNote(currentNoteData.id);
+    // Navigate back to overview
+    navigateTo("overview");
+    // Trigger data change event to update sidebar
+    window.dispatchEvent(new CustomEvent("datachange"));
+  }
 }
 
 /**

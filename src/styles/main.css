@@ -132,10 +132,53 @@ body {
   justify-content: flex-end;
 }
 
-.app-title {
-  font-size: 1.25rem;
-  font-weight: 700;
+/* Breadcrumb navigation */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.breadcrumb-item {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background-color: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.breadcrumb-item:hover {
+  background-color: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.breadcrumb-item:first-child {
+  font-size: 1.25rem;
+  padding: var(--spacing-xs);
+}
+
+.breadcrumb-current {
+  color: var(--text-primary);
+  cursor: default;
+  font-weight: 600;
+}
+
+.breadcrumb-current:hover {
+  background-color: transparent;
+}
+
+.breadcrumb-separator {
+  color: var(--text-tertiary);
+  font-size: 0.875rem;
+  user-select: none;
 }
 
 .btn-icon {
@@ -269,6 +312,143 @@ body {
   padding: var(--spacing-sm);
 }
 
+/* Tree view styles */
+.tree-folder {
+  margin-bottom: var(--spacing-xs);
+}
+
+.tree-folder-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
+  user-select: none;
+}
+
+.tree-folder-header:hover {
+  background-color: var(--bg-hover);
+}
+
+.tree-folder-header.active {
+  background-color: var(--color-primary-light);
+  font-weight: 600;
+}
+
+.tree-folder-header.active .tree-folder-title {
+  color: var(--color-primary);
+}
+
+.tree-folder-icon {
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.tree-folder-title {
+  flex: 1;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-item-count {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.tree-folder-content {
+  padding-left: var(--spacing-md);
+}
+
+.tree-folder-content.collapsed {
+  display: none;
+}
+
+.tree-folder-content.expanded {
+  display: block;
+}
+
+.tree-note {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  margin-bottom: 1px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
+}
+
+.tree-note:hover {
+  background-color: var(--bg-hover);
+}
+
+.tree-note.active {
+  background-color: var(--color-primary-light);
+}
+
+.tree-note-icon {
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.tree-note-title {
+  flex: 1;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-note-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background-color: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all var(--transition-fast);
+  color: var(--color-danger);
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.tree-note:hover .tree-note-delete {
+  opacity: 1;
+}
+
+.tree-note-delete:hover {
+  background-color: var(--color-danger);
+  color: var(--text-inverse);
+}
+
+.tree-section {
+  margin-top: var(--spacing-md);
+}
+
+.tree-section-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+/* Legacy sidebar styles - kept for compatibility */
 .sidebar-note-item {
   position: relative;
   display: flex;

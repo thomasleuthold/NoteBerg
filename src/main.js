@@ -18,6 +18,7 @@ import { initOverview } from "./components/overviewMode.js";
 import { initRecycleBin } from "./components/recycleBinMode.js";
 import { initSettings } from "./components/settingsMode.js";
 import { initSidebar } from "./components/sidebar.js";
+import { initBreadcrumb } from "./modules/breadcrumb.js";
 import { initFooter } from "./modules/footer.js";
 import { getCurrentNotebookId, initRouter, navigateTo } from "./modules/router.js";
 import { initStorage } from "./modules/storage.js";
@@ -53,6 +54,7 @@ async function init() {
   initSidebar();
   initRecycleBin();
   initNotebookEditorComponent();
+  initBreadcrumb();
   initFooter();
 
   // Set up event listeners
