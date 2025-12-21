@@ -61,6 +61,12 @@
   --sidebar-width: 280px;
   --toolbar-height: 60px;
   --footer-height: 40px;
+
+  /* Safe area insets for mobile devices (Android notches, status bars, etc.) */
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
 }
 
 /* Reset and base styles */
@@ -100,13 +106,15 @@ body {
 
 /* Toolbar */
 .toolbar {
-  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
   background-color: var(--bg-primary);
   border-bottom: 1px solid var(--border-primary);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--spacing-lg);
+  padding: var(--safe-area-inset-top) var(--spacing-lg) 0;
+  padding-left: max(var(--spacing-lg), var(--safe-area-inset-left));
+  padding-right: max(var(--spacing-lg), var(--safe-area-inset-right));
   gap: var(--spacing-lg);
 }
 
@@ -202,13 +210,15 @@ body {
 
 /* Footer */
 .footer {
-  height: var(--footer-height);
+  min-height: var(--footer-height);
   background-color: var(--bg-primary);
   border-top: 1px solid var(--border-primary);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--spacing-lg);
+  padding: 0 var(--spacing-lg) var(--safe-area-inset-bottom);
+  padding-left: max(var(--spacing-lg), var(--safe-area-inset-left));
+  padding-right: max(var(--spacing-lg), var(--safe-area-inset-right));
   font-size: 0.75rem;
   color: var(--text-tertiary);
 }

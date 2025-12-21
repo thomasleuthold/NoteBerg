@@ -187,8 +187,7 @@ function initCanvasLayer(noteData) {
 
   ctx = canvas.getContext("2d");
 
-  // Size canvas to match editor
-  resizeCanvas();
+  // Initial canvas sizing
   window.addEventListener("resize", resizeCanvas);
 
   // Add zoom event listeners
@@ -199,8 +198,14 @@ function initCanvasLayer(noteData) {
     strokes = noteData.strokes;
     // Calculate content bounds from existing strokes
     updateContentBounds();
-    redrawCanvas();
   }
+
+  // Size canvas AFTER loading strokes and calculating bounds
+  // Use requestAnimationFrame to ensure DOM is fully laid out
+  requestAnimationFrame(() => {
+    resizeCanvas();
+    redrawCanvas();
+  });
 
   // Canvas drawing events with pointer capture for better performance
   canvas.addEventListener("pointerdown", (e) => {

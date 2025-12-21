@@ -2,13 +2,33 @@
  * Nextcloud Sync Module
  * Uses Nextcloud Login Flow v2 and WebDAV for syncing
  * Uses Tauri's HTTP client for native requests (no CORS issues!)
+ *
+ * Storage Version 2: Hierarchical folder structure
  */
 
 import { fetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  getAllRequiredFolders,
+  getLegacyNotebookPath,
+  getLegacyNotePath,
+  getNotebookFolder,
+  getNotebookNotesFolder,
+  getNotebookPath,
+  getNotebookTombstonePath,
+  getNotePath,
+  getQuickNotesTombstonePath,
+  ROOT_FOLDER,
+  STORAGE_VERSION,
+} from "./storagePaths.js";
+import {
+  addNoteTombstone,
+  cleanupOldTombstones,
+  createEmptyTombstone,
+  mergeTombstones,
+} from "./tombstones.js";
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
-const SYNC_FOLDER = "/oneJournal";
 
 /**
  * Get stored Nextcloud credentials
@@ -357,7 +377,7 @@ async function downloadFile(path) {
 /**
  * List files in a folder using WebDAV PROPFIND
  */
-async function listFiles(path) {
+export async function listFiles(path) {
   const creds = getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
@@ -380,13 +400,45 @@ async function listFiles(path) {
   }
 
   const text = await response.text();
-  return parseWebDAVResponse(text);
+  return parseWebDAVResponse(text, false); // false = don't include collections (folders)
+}
+
+/**
+ * List folders in a folder using WebDAV PROPFIND
+ */
+export async function listFolders(path) {
+  const creds = getStoredCredentials();
+  if (!creds) throw new Error("Not authenticated");
+
+  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
+
+  const response = await fetch(webdavUrl, {
+    method: "PROPFIND",
+    headers: {
+      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Depth: "1",
+    },
+  });
+
+  if (response.status === 404) {
+    return []; // Folder doesn't exist
+  }
+
+  if (!response.ok) {
+    throw new Error(`Failed to list folders: ${response.status} ${response.statusText}`);
+  }
+
+  const text = await response.text();
+  const allItems = parseWebDAVResponse(text, true); // true = include collections
+
+  // Filter to only return collections (folders)
+  return allItems.filter(item => item.isCollection);
 }
 
 /**
  * Parse WebDAV XML response
  */
-function parseWebDAVResponse(xmlText) {
+function parseWebDAVResponse(xmlText, includeCollections = false) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlText, "text/xml");
   const responses = doc.getElementsByTagName("d:response");
@@ -400,12 +452,24 @@ function parseWebDAVResponse(xmlText) {
     const lastModified = response.getElementsByTagName("d:getlastmodified")[0]?.textContent;
     const etag = response.getElementsByTagName("d:getetag")[0]?.textContent;
 
-    if (href && !isCollection) {
-      // Extract filename from href
-      const filename = decodeURIComponent(href.split("/").pop());
+    // Extract filename/foldername from href
+    const name = decodeURIComponent(href.split("/").filter(p => p).pop());
+
+    // Skip if it's a collection and we don't want collections
+    if (isCollection && !includeCollections) {
+      continue;
+    }
+
+    // Skip the parent directory (empty name or just the path itself)
+    if (!name || href.endsWith("/") && i === 0) {
+      continue;
+    }
+
+    if (href) {
       files.push({
-        name: filename,
+        name,
         href,
+        isCollection,
         lastModified: lastModified ? new Date(lastModified).getTime() : null,
         etag: etag?.replace(/"/g, ""),
       });
@@ -443,15 +507,25 @@ async function deleteFile(path) {
 }
 
 /**
- * Sync notebooks to Nextcloud
+ * Ensure all required folders for hierarchical structure exist
+ */
+async function ensureHierarchicalStructure() {
+  const folders = getAllRequiredFolders();
+  for (const folder of folders) {
+    await createFolder(folder);
+  }
+}
+
+/**
+ * Sync notebooks to Nextcloud (hierarchical structure)
  */
 export async function syncNotebooks(notebooks) {
   if (!isAuthenticated()) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
-  // Ensure sync folder exists
-  await createFolder(SYNC_FOLDER);
+  // Ensure hierarchical folder structure exists
+  await ensureHierarchicalStructure();
 
   const results = {
     uploaded: 0,
@@ -462,14 +536,26 @@ export async function syncNotebooks(notebooks) {
 
   for (const notebook of notebooks) {
     try {
-      const filename = `notebook_${notebook.id}.json`;
-      const path = `${SYNC_FOLDER}/${filename}`;
+      // Create notebook folder
+      const notebookFolder = getNotebookFolder(notebook.id);
+      await createFolder(notebookFolder);
 
-      // Mark as synced before uploading
-      const syncedNotebook = { ...notebook, synced: true };
+      // Create notes subfolder
+      const notesFolder = getNotebookNotesFolder(notebook.id);
+      await createFolder(notesFolder);
+
+      // Upload notebook metadata
+      const path = getNotebookPath(notebook.id);
+      // Only update timestamp if notebook was actually modified (unsynced)
+      const now = Date.now();
+      const syncedNotebook = {
+        ...notebook,
+        synced: true,
+        modified: notebook.synced === false ? now : notebook.modified,
+      };
       const content = JSON.stringify(syncedNotebook, null, 2);
 
-      await uploadFile(path, content, notebook.modified);
+      await uploadFile(path, content, syncedNotebook.modified);
       results.uploaded++;
       results.uploadedIds.push(notebook.id);
     } catch (error) {
@@ -483,15 +569,15 @@ export async function syncNotebooks(notebooks) {
 }
 
 /**
- * Sync notes to Nextcloud
+ * Sync notes to Nextcloud (hierarchical structure)
  */
 export async function syncNotes(notes) {
   if (!isAuthenticated()) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
-  // Ensure sync folder exists
-  await createFolder(SYNC_FOLDER);
+  // Ensure hierarchical folder structure exists
+  await ensureHierarchicalStructure();
 
   const results = {
     uploaded: 0,
@@ -502,20 +588,29 @@ export async function syncNotes(notes) {
 
   for (const note of notes) {
     try {
-      const filename = `note_${note.id}.json`;
-      const path = `${SYNC_FOLDER}/${filename}`;
+      // Get the correct path based on whether note is in a notebook or is a quick note
+      const path = getNotePath(note.id, note.notebookId);
 
-      // Mark as synced before uploading
-      const syncedNote = { ...note, synced: true };
+      console.log(`Uploading note ${note.id} (${note.title}) to ${path}`);
+
+      // Only update timestamp if note was actually modified (unsynced)
+      const now = Date.now();
+      const syncedNote = {
+        ...note,
+        synced: true,
+        modified: note.synced === false ? now : note.modified,
+      };
       const content = JSON.stringify(syncedNote, null, 2);
 
-      await uploadFile(path, content, note.modified);
+      await uploadFile(path, content, syncedNote.modified);
       results.uploaded++;
       results.uploadedIds.push(note.id);
+      console.log(`Successfully uploaded note ${note.id}`);
     } catch (error) {
       results.failed++;
       results.errors.push({ id: note.id, error: error.message });
       console.error(`Failed to sync note ${note.id}:`, error);
+      alert(`Failed to upload note ${note.id}: ${error.message}`);
     }
   }
 
@@ -523,38 +618,121 @@ export async function syncNotes(notes) {
 }
 
 /**
- * Download all data from Nextcloud
+ * Download all data from Nextcloud (hierarchical structure)
  */
 export async function downloadAllData() {
   if (!isAuthenticated()) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
-  const files = await listFiles(SYNC_FOLDER);
-
   const notebooks = [];
   const notes = [];
+  const tombstones = new Map(); // Map of notebookId -> tombstone data
 
-  for (const file of files) {
+  // Step 1: List all notebook folders (need to include collections/folders)
+  const notebookFolders = await listFolders(`${ROOT_FOLDER}/notebooks`);
+
+  // DEBUG: Show what folders were listed
+  const folderNames = notebookFolders.map(f => f.name || 'unnamed').join(', ');
+  alert(`DEBUG - listFolders returned ${notebookFolders.length} items:\n\n${folderNames}\n\nNow processing...`);
+
+  // Step 2: Download each notebook and its notes
+  for (const folder of notebookFolders) {
     try {
-      const path = `${SYNC_FOLDER}/${file.name}`;
-      const content = await downloadFile(path);
+      // Skip if not a folder (we only expect folders here, but WebDAV might include files)
+      if (!folder.name || folder.name.includes(".")) {
+        alert(`DEBUG - Skipping folder: "${folder.name}" (contains dot or empty)`);
+        continue;
+      }
 
-      if (!content) continue;
+      const notebookId = folder.name;
+      alert(`DEBUG - Processing notebook folder: ${notebookId}`);
 
-      const data = JSON.parse(content);
+      // Download notebook metadata
+      const notebookPath = getNotebookPath(notebookId);
+      const notebookContent = await downloadFile(notebookPath);
 
-      if (file.name.startsWith("notebook_")) {
-        notebooks.push(data);
-      } else if (file.name.startsWith("note_")) {
-        notes.push(data);
+      if (notebookContent) {
+        notebooks.push(JSON.parse(notebookContent));
+      }
+
+      // Download tombstones for this notebook
+      const tombstonePath = getNotebookTombstonePath(notebookId);
+      const tombstoneContent = await downloadFile(tombstonePath);
+
+      if (tombstoneContent) {
+        tombstones.set(notebookId, JSON.parse(tombstoneContent));
+      }
+
+      // Download notes in this notebook
+      const noteFiles = await listFiles(getNotebookNotesFolder(notebookId));
+
+      for (const noteFile of noteFiles) {
+        try {
+          // Skip media folders and tombstone files
+          if (
+            noteFile.name.includes("_media") ||
+            noteFile.name === "_tombstones.json" ||
+            !noteFile.name.endsWith(".json")
+          ) {
+            continue;
+          }
+
+          const noteId = noteFile.name.replace(".json", "");
+          const notePath = getNotePath(noteId, notebookId);
+          const noteContent = await downloadFile(notePath);
+
+          if (noteContent) {
+            notes.push(JSON.parse(noteContent));
+          }
+        } catch (error) {
+          console.error(`Failed to download note ${noteFile.name}:`, error);
+        }
       }
     } catch (error) {
-      console.error(`Failed to download ${file.name}:`, error);
+      console.error(`Failed to process notebook ${folder.name}:`, error);
     }
   }
 
-  return { notebooks, notes };
+  // Step 3: Download quick notes
+  try {
+    const quickNoteFiles = await listFiles(`${ROOT_FOLDER}/quickNotes`);
+
+    for (const noteFile of quickNoteFiles) {
+      try {
+        // Skip media folders and tombstone files
+        if (
+          noteFile.name.includes("_media") ||
+          noteFile.name === "_tombstones.json" ||
+          !noteFile.name.endsWith(".json")
+        ) {
+          continue;
+        }
+
+        const noteId = noteFile.name.replace(".json", "");
+        const notePath = getNotePath(noteId, null);
+        const noteContent = await downloadFile(notePath);
+
+        if (noteContent) {
+          notes.push(JSON.parse(noteContent));
+        }
+      } catch (error) {
+        console.error(`Failed to download quick note ${noteFile.name}:`, error);
+      }
+    }
+
+    // Download quick notes tombstones
+    const quickTombstonePath = getQuickNotesTombstonePath();
+    const quickTombstoneContent = await downloadFile(quickTombstonePath);
+
+    if (quickTombstoneContent) {
+      tombstones.set("quickNotes", JSON.parse(quickTombstoneContent));
+    }
+  } catch (error) {
+    console.error("Failed to process quick notes:", error);
+  }
+
+  return { notebooks, notes, tombstones };
 }
 
 /**
@@ -567,9 +745,16 @@ export async function fullSync(localNotebooks, localNotes) {
   }
 
   console.log("Starting full sync...");
+  console.log(`Local data: ${localNotebooks.length} notebooks, ${localNotes.length} notes`);
+  console.log(
+    `Unsynced notes: ${localNotes.filter((n) => n.synced === false).length}`,
+  );
 
   // Step 1: Download remote data first
   const remoteData = await downloadAllData();
+
+  // DEBUG: Show what was downloaded from server
+  alert(`SYNC DEBUG - Downloaded from server:\n\n${remoteData.notebooks.length} notebooks\n${remoteData.notes.length} notes\n\nLocal before sync:\n${localNotebooks.length} notebooks\n${localNotes.length} notes`);
 
   // Step 2: Merge notebooks (newer wins)
   const notebooksToUpload = [];
@@ -582,17 +767,37 @@ export async function fullSync(localNotebooks, localNotes) {
   // Check which local notebooks should be uploaded
   for (const local of localNotebooks) {
     const remote = remoteNotebookMap.get(local.id);
-    if (!remote || new Date(local.modified) > new Date(remote.modified)) {
+
+    // Upload if:
+    // 1. Notebook doesn't exist remotely, OR
+    // 2. Local is newer than remote, OR
+    // 3. Local is unsynced (even if timestamps match)
+    const shouldUpload =
+      !remote ||
+      new Date(local.modified) > new Date(remote.modified) ||
+      (local.synced === false && new Date(local.modified) >= new Date(remote.modified));
+
+    if (shouldUpload) {
       notebooksToUpload.push(local);
     }
   }
 
   // Check which remote notebooks should be downloaded
+  let notebookDebugInfo = '';
   for (const remote of remoteData.notebooks) {
     const local = localNotebookMap.get(remote.id);
-    if (!local || new Date(remote.modified) > new Date(local.modified)) {
+    const shouldDownload = !local || new Date(remote.modified) > new Date(local.modified);
+
+    notebookDebugInfo += `\n${remote.title}:\n  Local exists: ${!!local}\n  Should download: ${shouldDownload}`;
+
+    if (shouldDownload) {
       notebooksToDownload.push(remote);
     }
+  }
+
+  // DEBUG: Show notebook download decisions
+  if (remoteData.notebooks.length > 0) {
+    alert(`SYNC DEBUG - Notebook download decisions:${notebookDebugInfo}\n\nWill download: ${notebooksToDownload.length} notebooks`);
   }
 
   // Step 3: Merge notes (newer wins)
@@ -605,7 +810,27 @@ export async function fullSync(localNotebooks, localNotes) {
   // Check which local notes should be uploaded
   for (const local of localNotes) {
     const remote = remoteNoteMap.get(local.id);
-    if (!remote || new Date(local.modified) > new Date(remote.modified)) {
+
+    // Upload if:
+    // 1. Note doesn't exist remotely, OR
+    // 2. Local is newer than remote, OR
+    // 3. Local is unsynced (even if timestamps match)
+    const shouldUpload =
+      !remote ||
+      new Date(local.modified) > new Date(remote.modified) ||
+      (local.synced === false && new Date(local.modified) >= new Date(remote.modified));
+
+    // Debug logging
+    if (local.synced === false) {
+      console.log(`Note ${local.id} (${local.title}) needs sync:`, {
+        localModified: new Date(local.modified),
+        remoteModified: remote ? new Date(remote.modified) : null,
+        shouldUpload,
+        localSynced: local.synced,
+      });
+    }
+
+    if (shouldUpload) {
       notesToUpload.push(local);
     }
   }
@@ -613,7 +838,29 @@ export async function fullSync(localNotebooks, localNotes) {
   // Check which remote notes should be downloaded
   for (const remote of remoteData.notes) {
     const local = localNoteMap.get(remote.id);
-    if (!local || new Date(remote.modified) > new Date(local.modified)) {
+
+    // Download if:
+    // 1. Note doesn't exist locally, OR
+    // 2. Remote is newer than local, OR
+    // 3. Remote is synced but local is not (prefer synced version)
+    const shouldDownload =
+      !local ||
+      new Date(remote.modified) > new Date(local.modified) ||
+      (remote.synced === true && local.synced === false && new Date(remote.modified) >= new Date(local.modified));
+
+    // Debug logging for notes that should be downloaded
+    if (shouldDownload && local) {
+      console.log(`Note ${remote.id} (${remote.title}) will be downloaded:`, {
+        localModified: new Date(local.modified),
+        remoteModified: new Date(remote.modified),
+        localSynced: local.synced,
+        remoteSynced: remote.synced,
+        remoteNewer: new Date(remote.modified) > new Date(local.modified),
+        shouldDownload,
+      });
+    }
+
+    if (shouldDownload) {
       notesToDownload.push(remote);
     }
   }
@@ -645,21 +892,276 @@ export async function fullSync(localNotebooks, localNotes) {
 }
 
 /**
- * Delete remote file for a deleted item
+ * Delete remote notebook (marks in tombstone, doesn't actually delete folder yet)
  */
-export async function deleteRemoteItem(id, type) {
+export async function deleteRemoteNotebook(notebookId) {
   if (!isAuthenticated()) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
-  const filename = `${type}_${id}.json`;
-  const path = `${SYNC_FOLDER}/${filename}`;
-
   try {
-    await deleteFile(path);
+    // For now, we could either:
+    // 1. Actually delete the folder (lose data)
+    // 2. Just mark all notes as deleted in tombstone
+    // Let's implement option 2 for safety
+
+    // Download current tombstone
+    const tombstonePath = getNotebookTombstonePath(notebookId);
+    const tombstoneContent = await downloadFile(tombstonePath);
+
+    let tombstone = tombstoneContent
+      ? JSON.parse(tombstoneContent)
+      : createEmptyTombstone();
+
+    // Mark notebook itself as deleted
+    tombstone.notebookDeleted = true;
+    tombstone.notebookDeletedAt = new Date().toISOString();
+
+    // Upload updated tombstone
+    await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+
     return true;
   } catch (error) {
-    console.error(`Failed to delete remote ${type} ${id}:`, error);
+    console.error(`Failed to delete remote notebook ${notebookId}:`, error);
     return false;
+  }
+}
+
+/**
+ * Delete remote note (marks in tombstone and deletes file)
+ */
+export async function deleteRemoteNote(noteId, notebookId) {
+  if (!isAuthenticated()) {
+    throw new Error("Not authenticated with Nextcloud");
+  }
+
+  try {
+    // Get paths
+    const notePath = getNotePath(noteId, notebookId);
+    const tombstonePath = notebookId
+      ? getNotebookTombstonePath(notebookId)
+      : getQuickNotesTombstonePath();
+
+    // Download current tombstone
+    const tombstoneContent = await downloadFile(tombstonePath);
+    let tombstone = tombstoneContent
+      ? JSON.parse(tombstoneContent)
+      : createEmptyTombstone();
+
+    // Add to tombstone
+    tombstone = addNoteTombstone(tombstone, noteId);
+
+    // Upload updated tombstone
+    await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+
+    // Delete the actual note file
+    await deleteFile(notePath);
+
+    return true;
+  } catch (error) {
+    console.error(`Failed to delete remote note ${noteId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Upload tombstone file for a notebook
+ */
+export async function uploadTombstone(notebookId, tombstone) {
+  if (!isAuthenticated()) {
+    throw new Error("Not authenticated with Nextcloud");
+  }
+
+  const path = notebookId
+    ? getNotebookTombstonePath(notebookId)
+    : getQuickNotesTombstonePath();
+
+  // Clean up old tombstones before uploading
+  const cleaned = cleanupOldTombstones(tombstone);
+
+  const content = JSON.stringify(cleaned, null, 2);
+  await uploadFile(path, content);
+
+  return true;
+}
+
+/**
+ * Download tombstone file for a notebook
+ */
+export async function downloadTombstone(notebookId) {
+  if (!isAuthenticated()) {
+    throw new Error("Not authenticated with Nextcloud");
+  }
+
+  const path = notebookId
+    ? getNotebookTombstonePath(notebookId)
+    : getQuickNotesTombstonePath();
+
+  const content = await downloadFile(path);
+
+  if (!content) {
+    return createEmptyTombstone();
+  }
+
+  return JSON.parse(content);
+}
+
+/**
+ * Migrate from flat structure (v1) to hierarchical structure (v2)
+ * Downloads all files from flat structure and re-uploads in hierarchical structure
+ */
+export async function migrateToHierarchical() {
+  if (!isAuthenticated()) {
+    throw new Error("Not authenticated with Nextcloud");
+  }
+
+  console.log("Starting migration from flat to hierarchical structure...");
+
+  try {
+    // Step 1: Download all files from flat structure
+    const legacyFiles = await listFiles(ROOT_FOLDER);
+
+    const notebooks = [];
+    const notes = [];
+
+    for (const file of legacyFiles) {
+      try {
+        if (file.name.startsWith("notebook_") && file.name.endsWith(".json")) {
+          const notebookId = file.name.replace("notebook_", "").replace(".json", "");
+          const path = getLegacyNotebookPath(notebookId);
+          const content = await downloadFile(path);
+
+          if (content) {
+            notebooks.push(JSON.parse(content));
+          }
+        } else if (file.name.startsWith("note_") && file.name.endsWith(".json")) {
+          const noteId = file.name.replace("note_", "").replace(".json", "");
+          const path = getLegacyNotePath(noteId);
+          const content = await downloadFile(path);
+
+          if (content) {
+            notes.push(JSON.parse(content));
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to download legacy file ${file.name}:`, error);
+      }
+    }
+
+    console.log(`Found ${notebooks.length} notebooks and ${notes.length} notes in flat structure`);
+
+    // Step 2: Create hierarchical structure
+    await ensureHierarchicalStructure();
+
+    // Step 3: Upload notebooks to hierarchical structure
+    console.log("Uploading notebooks to hierarchical structure...");
+    await syncNotebooks(notebooks);
+
+    // Step 4: Upload notes to hierarchical structure
+    console.log("Uploading notes to hierarchical structure...");
+    await syncNotes(notes);
+
+    // Step 5: Optionally delete old flat files (commented out for safety)
+    // for (const file of legacyFiles) {
+    //   if (file.name.startsWith("notebook_") || file.name.startsWith("note_")) {
+    //     await deleteFile(`${ROOT_FOLDER}/${file.name}`);
+    //   }
+    // }
+
+    console.log("Migration completed successfully!");
+    console.log("Note: Old flat files have been kept for safety. You can manually delete them later.");
+
+    return {
+      success: true,
+      migratedNotebooks: notebooks.length,
+      migratedNotes: notes.length,
+    };
+  } catch (error) {
+    console.error("Migration failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Check if migration is needed by detecting flat structure files
+ * Also checks local storage version to avoid re-migration
+ */
+export async function needsMigration() {
+  if (!isAuthenticated()) {
+    return false;
+  }
+
+  try {
+    // Import here to avoid circular dependency
+    const { getStorageVersion } = await import("./storage.js");
+    const localVersion = await getStorageVersion();
+
+    // If local storage is already v2, no migration needed
+    if (localVersion >= STORAGE_VERSION) {
+      return false;
+    }
+
+    const files = await listFiles(ROOT_FOLDER);
+
+    // Check if any flat structure files exist
+    const hasLegacyFiles = files.some(
+      (f) =>
+        (f.name.startsWith("notebook_") || f.name.startsWith("note_")) &&
+        f.name.endsWith(".json"),
+    );
+
+    // Check if hierarchical structure exists
+    const hasHierarchical = files.some(
+      (f) => f.name === "notebooks" || f.name === "quickNotes",
+    );
+
+    // Migration needed if we have legacy files but no hierarchical structure
+    return hasLegacyFiles && !hasHierarchical;
+  } catch (error) {
+    console.error("Failed to check migration status:", error);
+    return false;
+  }
+}
+
+/**
+ * Clean up legacy flat structure files after successful migration
+ * Only call this after confirming migration was successful
+ */
+export async function cleanupLegacyFiles() {
+  if (!isAuthenticated()) {
+    throw new Error("Not authenticated with Nextcloud");
+  }
+
+  console.log("Cleaning up legacy flat structure files...");
+
+  try {
+    const files = await listFiles(ROOT_FOLDER);
+    let deletedCount = 0;
+
+    for (const file of files) {
+      try {
+        if (
+          (file.name.startsWith("notebook_") || file.name.startsWith("note_")) &&
+          file.name.endsWith(".json")
+        ) {
+          const path = `${ROOT_FOLDER}/${file.name}`;
+          await deleteFile(path);
+          deletedCount++;
+          console.log(`Deleted legacy file: ${file.name}`);
+        }
+      } catch (error) {
+        console.error(`Failed to delete legacy file ${file.name}:`, error);
+      }
+    }
+
+    console.log(`Cleanup complete! Deleted ${deletedCount} legacy files.`);
+
+    return {
+      success: true,
+      deletedCount,
+    };
+  } catch (error) {
+    console.error("Cleanup failed:", error);
+    throw error;
   }
 }

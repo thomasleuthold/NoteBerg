@@ -393,6 +393,23 @@ export async function setSetting(key, value) {
   console.log("Setting saved:", key);
 }
 
+/**
+ * Get storage version
+ * Returns 1 for flat structure, 2 for hierarchical
+ */
+export async function getStorageVersion() {
+  const version = await getSetting("storageVersion");
+  return version || 1; // Default to v1 if not set
+}
+
+/**
+ * Set storage version
+ */
+export async function setStorageVersion(version) {
+  await setSetting("storageVersion", version);
+  console.log("Storage version set to:", version);
+}
+
 // ========== Utility Functions ==========
 
 /**
@@ -418,6 +435,36 @@ export async function clearAllData() {
   await db.clear("settings");
   await db.clear("syncQueue");
   console.log("All data cleared");
+}
+
+/**
+ * Purge only user data (notebooks and notes), preserve settings
+ * Use this to reset local data before downloading from server
+ */
+export async function purgeLocalData() {
+  if (!db) {
+    throw new Error("Database not initialized. Call initStorage() first.");
+  }
+
+  const notebooksBeforePurge = await db.getAll("notebooks");
+  const notesBeforePurge = await db.getAll("notes");
+
+  // Show what we're about to purge
+  alert(`PURGE DEBUG:\n\nBefore purge:\n- ${notebooksBeforePurge.length} notebooks\n- ${notesBeforePurge.length} notes\n\nNow clearing...`);
+
+  await db.clear("notebooks");
+  await db.clear("notes");
+  await db.clear("syncQueue");
+
+  const notebooksAfterPurge = await db.getAll("notebooks");
+  const notesAfterPurge = await db.getAll("notes");
+
+  // Show verification
+  alert(`PURGE DEBUG:\n\nAfter purge:\n- ${notebooksAfterPurge.length} notebooks\n- ${notesAfterPurge.length} notes\n\n${notebooksAfterPurge.length === 0 && notesAfterPurge.length === 0 ? '✓ Purge successful!' : '✗ PURGE FAILED!'}`);
+
+  if (notebooksAfterPurge.length > 0 || notesAfterPurge.length > 0) {
+    throw new Error("Purge failed: Data still exists after clear operation!");
+  }
 }
 
 /**

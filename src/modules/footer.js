@@ -58,20 +58,35 @@ async function performSync() {
     const notebooks = await getAllNotebooksForSync();
     const notes = await getAllNotesForSync();
 
+    // Debug: Show unsynced items count
+    const unsyncedNotebooks = notebooks.filter((n) => n.synced === false);
+    const unsyncedNotes = notes.filter((n) => n.synced === false);
+    console.log(
+      `Before sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`,
+    );
+
     const result = await fullSync(notebooks, notes);
 
     // Mark uploaded items as synced in local storage
     for (const id of result.uploaded.notebooks.uploadedIds || []) {
       const notebook = notebooks.find((n) => n.id === id);
       if (notebook) {
-        await saveNotebook({ ...notebook, synced: true });
+        // Don't modify the 'modified' timestamp when marking as synced
+        console.log(`Marking notebook ${id} as synced (was: ${notebook.synced})`);
+        notebook.synced = true;
+        await saveNotebook(notebook);
+        console.log(`Saved notebook ${id} with synced=${notebook.synced}`);
       }
     }
 
     for (const id of result.uploaded.notes.uploadedIds || []) {
       const note = notes.find((n) => n.id === id);
       if (note) {
-        await saveNote({ ...note, synced: true });
+        // Don't modify the 'modified' timestamp when marking as synced
+        console.log(`Marking note ${id} as synced (was: ${note.synced})`);
+        note.synced = true;
+        await saveNote(note);
+        console.log(`Saved note ${id} with synced=${note.synced}`);
       }
     }
 
@@ -106,9 +121,11 @@ async function performSync() {
       downloadedNotes++;
     }
 
-    console.log(
-      `Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`,
-    );
+    const syncSummary = `Sync complete!\nUploaded: ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes\nDownloaded: ${downloadedNotebooks} notebooks, ${downloadedNotes} notes\n\nBefore sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`;
+    console.log(syncSummary);
+
+    // Temporary: Show alert for debugging
+    alert(syncSummary);
 
     // Show success briefly
     const syncText = document.querySelector(".sync-text");
