@@ -6,6 +6,7 @@
 
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, getNote, updateNote } from "../modules/storage.js";
+import { getTheme } from "../modules/theme.js";
 import { showConfirmDialog } from "./modals.js";
 
 // Editor state
@@ -23,6 +24,10 @@ let lastExpansionTime = 0;
 const expansionCooldown = 500; // Minimum ms between expansions
 let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
 const eraserRadius = 20; // Eraser size in pixels
+
+// Pen settings state
+let currentPenWidth = 2;
+let currentPenColorIndex = 0;
 
 // Canvas size tracking for overflow handling
 let minCanvasWidth = 0; // Minimum width needed to show all content
@@ -55,6 +60,9 @@ export async function initNotebookEditor(noteId) {
       throw new Error("Note not found");
     }
 
+    // Initialize default pen settings
+    currentPenColorIndex = 0;
+
     // Get or create editor container
     const editorContainer = document.getElementById("notebook-editor-container");
     if (!editorContainer) {
@@ -85,15 +93,80 @@ export async function initNotebookEditor(noteId) {
  */
 function renderEditor(container, _noteData) {
   container.innerHTML = `
+    <style>
+      .toolbar-btn-container {
+        position: relative;
+        display: inline-block;
+      }
+      .pen-settings-dialog {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        z-index: 100;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        width: 200px;
+        margin-top: 5px;
+      }
+      .pen-settings-section {
+        margin-bottom: 12px;
+      }
+      .pen-settings-label {
+        display: block;
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+      }
+      .pen-color-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+      }
+      .pen-color-option {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        cursor: pointer;
+        border: 2px solid transparent;
+      }
+      .pen-color-option.active {
+        border-color: var(--color-primary);
+        transform: scale(1.1);
+      }
+      .pen-width-control {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+    </style>
     <div class="notebook-editor">
       <div class="editor-toolbar">
         <div class="toolbar-section">
           <button class="toolbar-btn toolbar-btn-text" id="mode-text-btn" title="Text mode">
             T
           </button>
-          <button class="toolbar-btn" id="mode-draw-btn" title="Draw mode">
-            ✏️
-          </button>
+          <div class="toolbar-btn-container">
+            <button class="toolbar-btn" id="mode-draw-btn" title="Draw mode">
+              ✏️
+            </button>
+            <div id="pen-settings-dialog" class="pen-settings-dialog" style="display: none;">
+              <div class="pen-settings-section">
+                <span class="pen-settings-label">Pen Width: <span id="pen-width-value">2</span>px</span>
+                <div class="pen-width-control">
+                  <input type="range" id="pen-width-slider" min="1" max="15" step="1" value="2" style="width: 100%;">
+                </div>
+              </div>
+              <div class="pen-settings-section">
+                <span class="pen-settings-label">Pen Color</span>
+                <div id="pen-color-grid" class="pen-color-grid">
+                  <!-- Colors injected by JS -->
+                </div>
+              </div>
+            </div>
+          </div>
           <button class="toolbar-btn" id="mode-erase-btn" title="Eraser mode">
             🧽
           </button>
@@ -614,6 +687,8 @@ function handleCanvasPointerDown(e) {
         y: [],
         pressure: [],
         time: [],
+        colorIndex: currentPenColorIndex,
+        width: currentPenWidth,
       };
     }
 
@@ -672,19 +747,9 @@ function handleCanvasPointerMove(e) {
       const currX = currentStroke.x[pointCount - 1];
       const currY = currentStroke.y[pointCount - 1];
 
-      // Use different colors for different pointer types (debug feature)
-      const pointerType = currentStroke.pointerType || "unknown";
-      if (pointerType === "pen") {
-        ctx.strokeStyle = "#000000"; // Black for stylus
-      } else if (pointerType === "touch") {
-        ctx.strokeStyle = "#ff0000"; // Red for finger touch
-      } else if (pointerType === "mouse") {
-        ctx.strokeStyle = "#0000ff"; // Blue for mouse
-      } else {
-        ctx.strokeStyle = "#888888"; // Gray for unknown
-      }
-
-      ctx.lineWidth = 2;
+      const palette = getThemePalette();
+      ctx.strokeStyle = palette[currentStroke.colorIndex] || palette[0];
+      ctx.lineWidth = currentStroke.width || 2;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
 
@@ -726,6 +791,8 @@ function handleCanvasPointerUp(_e) {
       y: [...currentStroke.y],
       pressure: [...currentStroke.pressure],
       time: [...currentStroke.time],
+      colorIndex: currentStroke.colorIndex,
+      width: currentStroke.width,
     });
     currentStroke = [];
 
@@ -750,19 +817,12 @@ function drawStroke(stroke) {
 
   const pointCount = stroke.x.length;
 
-  // Determine color based on pointer type (debug feature)
-  const pointerType = stroke.pointerType || "pen";
-  if (pointerType === "pen") {
-    ctx.strokeStyle = "#000000"; // Black for stylus
-  } else if (pointerType === "touch") {
-    ctx.strokeStyle = "#ff0000"; // Red for finger touch
-  } else if (pointerType === "mouse") {
-    ctx.strokeStyle = "#0000ff"; // Blue for mouse
-  } else {
-    ctx.strokeStyle = "#888888"; // Gray for unknown
-  }
-
-  ctx.lineWidth = 2;
+  const palette = getThemePalette();
+  // Use colorIndex if available (theme-aware), fallback to hardcoded color (legacy)
+  ctx.strokeStyle = (stroke.colorIndex !== undefined) 
+    ? palette[stroke.colorIndex] 
+    : (stroke.color || palette[0]);
+  ctx.lineWidth = stroke.width || 2;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
@@ -960,6 +1020,11 @@ function switchToTextMode() {
     canvas.classList.remove("active");
     canvas.style.pointerEvents = "none";
   }
+  // Hide pen settings dialog
+  const dialog = document.getElementById("pen-settings-dialog");
+  if (dialog) {
+    dialog.style.display = "none";
+  }
   if (currentEditor) {
     currentEditor.style.pointerEvents = "auto";
   }
@@ -998,6 +1063,12 @@ function manualSwitchToTextMode() {
  * Manually switch to draw mode (user clicked button)
  */
 function manualSwitchToDrawMode() {
+  // If already in draw mode (and not erasing), toggle settings dialog
+  if (isDrawMode && !isEraserMode) {
+    togglePenSettingsDialog();
+    return;
+  }
+
   autoSwitchedToDrawMode = false; // Clear auto-switch flag
   isEraserMode = false; // Exit eraser mode when switching to draw
   switchToDrawMode();
@@ -1008,6 +1079,12 @@ function manualSwitchToDrawMode() {
  * Toggle eraser mode (user clicked eraser button)
  */
 function toggleEraserMode() {
+  // Hide pen settings dialog when switching to eraser
+  const dialog = document.getElementById("pen-settings-dialog");
+  if (dialog) {
+    dialog.style.display = "none";
+  }
+
   isEraserMode = !isEraserMode;
 
   // If enabling eraser mode, make sure we're in draw mode
@@ -1040,6 +1117,84 @@ function updateToolbarButtons() {
 }
 
 /**
+ * Get pen color palette based on current theme
+ */
+function getThemePalette() {
+  const theme = getTheme();
+  if (theme === "dark") {
+    return ["#ffffff", "#f87171", "#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#9ca3af", "#fde047"];
+  } else if (theme === "epaper") {
+    return ["#000000", "#800000", "#000080", "#006400", "#a52a2a", "#4b0082", "#2f4f4f", "#5d4037"];
+  }
+  // Default Light theme
+  return ["#000000", "#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#6b7280", "#78350f"];
+}
+
+/**
+ * Toggle pen settings dialog visibility
+ */
+function togglePenSettingsDialog() {
+  const dialog = document.getElementById("pen-settings-dialog");
+  if (!dialog) return;
+
+  const isVisible = dialog.style.display === "block";
+  if (isVisible) {
+    dialog.style.display = "none";
+  } else {
+    updatePenSettingsUI();
+    dialog.style.display = "block";
+  }
+}
+
+/**
+ * Update pen settings dialog UI
+ */
+function updatePenSettingsUI() {
+  const palette = getThemePalette();
+  const colorGrid = document.getElementById("pen-color-grid");
+  const widthSlider = document.getElementById("pen-width-slider");
+  const widthValue = document.getElementById("pen-width-value");
+
+  if (widthSlider) widthSlider.value = currentPenWidth;
+  if (widthValue) widthValue.textContent = currentPenWidth;
+
+  if (colorGrid) {
+    colorGrid.innerHTML = palette
+      .map(
+        (color, index) => `
+      <div class="pen-color-option ${index === currentPenColorIndex ? "active" : ""}" 
+           style="background-color: ${color}" 
+           data-index="${index}"></div>
+    `,
+      )
+      .join("");
+
+    // Add listeners to color options
+    colorGrid.querySelectorAll(".pen-color-option").forEach((opt) => {
+      opt.addEventListener("click", () => {
+        currentPenColorIndex = parseInt(opt.dataset.index, 10);
+        updatePenSettingsUI();
+      });
+    });
+  }
+}
+
+/**
+ * Handle clicks/touches outside the pen settings dialog to close it
+ */
+function handleOutsideClick(e) {
+  const dialog = document.getElementById("pen-settings-dialog");
+  const drawBtn = document.getElementById("mode-draw-btn");
+
+  if (dialog && dialog.style.display === "block") {
+    // Close if the target is not the dialog itself and not the button that toggles it
+    if (!dialog.contains(e.target) && !drawBtn?.contains(e.target)) {
+      dialog.style.display = "none";
+    }
+  }
+}
+
+/**
  * Attach toolbar event listeners
  */
 function attachToolbarListeners() {
@@ -1047,6 +1202,18 @@ function attachToolbarListeners() {
   document.getElementById("mode-text-btn")?.addEventListener("click", manualSwitchToTextMode);
   document.getElementById("mode-draw-btn")?.addEventListener("click", manualSwitchToDrawMode);
   document.getElementById("mode-erase-btn")?.addEventListener("click", toggleEraserMode);
+
+  // Add global listener to close pen settings when clicking outside
+  document.addEventListener("pointerdown", handleOutsideClick);
+
+  // Pen settings listeners
+  document.getElementById("pen-width-slider")?.addEventListener("input", (e) => {
+    currentPenWidth = parseInt(e.target.value, 10);
+    const widthValue = document.getElementById("pen-width-value");
+    if (widthValue) {
+      widthValue.textContent = currentPenWidth;
+    }
+  });
 
   // Text formatting
   document.getElementById("format-bold-btn")?.addEventListener("click", () => formatText("bold"));
@@ -1408,6 +1575,9 @@ export function cleanupNotebookEditor() {
   if (canvas) {
     window.removeEventListener("resize", resizeCanvas);
   }
+
+  // Remove global listener
+  document.removeEventListener("pointerdown", handleOutsideClick);
 
   currentEditor = null;
   currentNoteData = null;
