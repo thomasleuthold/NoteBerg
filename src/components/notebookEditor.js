@@ -295,7 +295,7 @@ function resizeCanvas() {
 
   // Get the actual scrollable content height from the text editor
   // The scrollHeight already accounts for zoom via CSS transform
-  const textEditorHeight = (currentEditor.scrollHeight / zoomScale) + 200; // Extra padding for growth
+  const textEditorHeight = currentEditor.scrollHeight / zoomScale + 200; // Extra padding for growth
 
   // Also check the wrapper's scroll height
   const wrapperScrollHeight = wrapper.scrollHeight / zoomScale;

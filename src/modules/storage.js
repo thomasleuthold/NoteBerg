@@ -304,77 +304,6 @@ export async function restoreNote(id) {
   return note;
 }
 
-/**
- * Permanently delete a notebook (convert to tombstone)
- * Removes all user content but keeps sync metadata
- */
-export async function permanentlyDeleteNotebook(id) {
-  const notebook = await db.get("notebooks", id);
-  if (!notebook) return;
-
-  // Create tombstone: keep only sync metadata, remove all user content
-  const tombstone = {
-    id: notebook.id,
-    deleted: true,
-    modified: Date.now(),
-    synced: false, // Needs to sync the tombstone
-    // All other fields (name, color, etc.) are removed for privacy
-  };
-
-  await db.put("notebooks", tombstone);
-  console.log("Notebook permanently deleted (tombstone created):", id);
-  return tombstone;
-}
-
-/**
- * Permanently delete a note (convert to tombstone)
- * Removes all user content but keeps sync metadata
- */
-export async function permanentlyDeleteNote(id) {
-  const note = await db.get("notes", id);
-  if (!note) return;
-
-  // Create tombstone: keep only sync metadata, remove all user content
-  const tombstone = {
-    id: note.id,
-    notebookId: note.notebookId, // Keep for filtering, but notebook may be deleted too
-    deleted: true,
-    modified: Date.now(),
-    synced: false, // Needs to sync the tombstone
-    formatVersion: 1,
-    // All other fields (title, content, strokes, etc.) are removed for privacy
-  };
-
-  await db.put("notes", tombstone);
-  console.log("Note permanently deleted (tombstone created):", id);
-  return tombstone;
-}
-
-/**
- * Empty recycle bin (permanently delete all deleted items)
- * Converts all to tombstones for sync
- */
-export async function emptyRecycleBin() {
-  const deletedNotebooks = await getDeletedNotebooks();
-  const deletedNotes = await getDeletedNotes();
-
-  for (const notebook of deletedNotebooks) {
-    await permanentlyDeleteNotebook(notebook.id);
-  }
-
-  for (const note of deletedNotes) {
-    await permanentlyDeleteNote(note.id);
-  }
-
-  console.log(
-    `Recycle bin emptied: ${deletedNotebooks.length} notebooks, ${deletedNotes.length} notes`,
-  );
-  return {
-    notebooksDeleted: deletedNotebooks.length,
-    notesDeleted: deletedNotes.length,
-  };
-}
-
 // ========== Settings Operations ==========
 
 /**
@@ -446,21 +375,12 @@ export async function purgeLocalData() {
     throw new Error("Database not initialized. Call initStorage() first.");
   }
 
-  const notebooksBeforePurge = await db.getAll("notebooks");
-  const notesBeforePurge = await db.getAll("notes");
-
-  // Show what we're about to purge
-  alert(`PURGE DEBUG:\n\nBefore purge:\n- ${notebooksBeforePurge.length} notebooks\n- ${notesBeforePurge.length} notes\n\nNow clearing...`);
-
   await db.clear("notebooks");
   await db.clear("notes");
   await db.clear("syncQueue");
 
   const notebooksAfterPurge = await db.getAll("notebooks");
   const notesAfterPurge = await db.getAll("notes");
-
-  // Show verification
-  alert(`PURGE DEBUG:\n\nAfter purge:\n- ${notebooksAfterPurge.length} notebooks\n- ${notesAfterPurge.length} notes\n\n${notebooksAfterPurge.length === 0 && notesAfterPurge.length === 0 ? '✓ Purge successful!' : '✗ PURGE FAILED!'}`);
 
   if (notebooksAfterPurge.length > 0 || notesAfterPurge.length > 0) {
     throw new Error("Purge failed: Data still exists after clear operation!");

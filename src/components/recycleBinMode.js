@@ -4,15 +4,11 @@
  */
 
 import {
-  emptyRecycleBin,
   getDeletedNotebooks,
   getDeletedNotes,
-  permanentlyDeleteNote,
-  permanentlyDeleteNotebook,
   restoreNote,
   restoreNotebook,
 } from "../modules/storage.js";
-import { showConfirmDialog } from "./modals.js";
 
 /**
  * Render recycle bin UI
@@ -50,12 +46,6 @@ export async function renderRecycleBin(container) {
             </svg>
             Restore
           </button>
-          <button class="btn-delete-permanent" data-type="notebook" data-id="${notebook.id}" title="Delete permanently">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-            </svg>
-            Delete Forever
-          </button>
         </div>
       </div>
     `,
@@ -87,12 +77,6 @@ export async function renderRecycleBin(container) {
             </svg>
             Restore
           </button>
-          <button class="btn-delete-permanent" data-type="note" data-id="${note.id}" title="Delete permanently">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-            </svg>
-            Delete Forever
-          </button>
         </div>
       </div>
     `,
@@ -104,11 +88,6 @@ export async function renderRecycleBin(container) {
       <div class="recycle-bin-container">
         <div class="recycle-bin-header">
           <h2>Recycle Bin</h2>
-          ${
-            totalItems > 0
-              ? `<button class="btn-danger" id="empty-recycle-bin-btn">Empty Recycle Bin (${totalItems})</button>`
-              : ""
-          }
         </div>
 
         ${
@@ -178,60 +157,6 @@ function attachRecycleBinListeners(container) {
       }
     });
   });
-
-  // Delete permanently buttons
-  const deleteBtns = container.querySelectorAll(".btn-delete-permanent");
-  deleteBtns.forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const type = btn.dataset.type;
-      const id = btn.dataset.id;
-
-      const confirmed = await showConfirmDialog(
-        "Delete Permanently",
-        `Are you sure you want to permanently delete this ${type}? This action cannot be undone.`,
-        "Delete Forever",
-        "btn-danger",
-      );
-
-      if (confirmed) {
-        try {
-          if (type === "notebook") {
-            await permanentlyDeleteNotebook(id);
-          } else {
-            await permanentlyDeleteNote(id);
-          }
-
-          window.dispatchEvent(new CustomEvent("datachange"));
-        } catch (error) {
-          console.error("Error deleting item:", error);
-          alert(`Failed to delete item: ${error.message}`);
-        }
-      }
-    });
-  });
-
-  // Empty recycle bin button
-  const emptyBtn = container.querySelector("#empty-recycle-bin-btn");
-  if (emptyBtn) {
-    emptyBtn.addEventListener("click", async () => {
-      const confirmed = await showConfirmDialog(
-        "Empty Recycle Bin",
-        "Are you sure you want to permanently delete all items in the recycle bin? This action cannot be undone.",
-        "Empty Recycle Bin",
-        "btn-danger",
-      );
-
-      if (confirmed) {
-        try {
-          await emptyRecycleBin();
-          window.dispatchEvent(new CustomEvent("datachange"));
-        } catch (error) {
-          console.error("Error emptying recycle bin:", error);
-          alert(`Failed to empty recycle bin: ${error.message}`);
-        }
-      }
-    });
-  }
 }
 
 /**

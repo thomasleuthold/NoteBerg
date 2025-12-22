@@ -19,8 +19,6 @@ import {
   getAllNotebooksForSync,
   getAllNotesForSync,
   getStorageVersion,
-  permanentlyDeleteNote,
-  permanentlyDeleteNotebook,
   purgeLocalData,
   saveNote,
   saveNotebook,
@@ -357,29 +355,13 @@ export function renderSettings(container) {
         let downloadedNotes = 0;
 
         for (const notebook of result.downloaded.notebooks) {
-          // Check if it's a tombstone (has minimal fields)
-          const isTombstone = notebook.deleted && !notebook.name;
-
-          if (isTombstone) {
-            // Permanently delete local copy if it exists
-            await permanentlyDeleteNotebook(notebook.id);
-          } else {
-            await saveNotebook(notebook);
-          }
+          await saveNotebook(notebook);
           downloadedNotebooks++;
         }
 
         // Save downloaded notes to local storage
         for (const note of result.downloaded.notes) {
-          // Check if it's a tombstone (has minimal fields)
-          const isTombstone = note.deleted && !note.title && !note.content;
-
-          if (isTombstone) {
-            // Permanently delete local copy if it exists
-            await permanentlyDeleteNote(note.id);
-          } else {
-            await saveNote(note);
-          }
+          await saveNote(note);
           downloadedNotes++;
         }
 
@@ -404,13 +386,13 @@ export function renderSettings(container) {
     purgeLocalBtn?.addEventListener("click", async () => {
       const confirmed = confirm(
         "⚠️ DANGER: This will DELETE ALL local notebooks and notes!\n\n" +
-        "This includes:\n" +
-        "• All notebooks and notes\n" +
-        "• All tombstones (deleted items)\n" +
-        "• Sync queue\n\n" +
-        "Your Nextcloud connection settings will be preserved.\n\n" +
-        "After purging, click 'Sync Now' to download everything from Nextcloud server.\n\n" +
-        "Are you ABSOLUTELY SURE you want to continue?"
+          "This includes:\n" +
+          "• All notebooks and notes\n" +
+          "• All tombstones (deleted items)\n" +
+          "• Sync queue\n\n" +
+          "Your Nextcloud connection settings will be preserved.\n\n" +
+          "After purging, click 'Sync Now' to download everything from Nextcloud server.\n\n" +
+          "Are you ABSOLUTELY SURE you want to continue?",
       );
 
       if (!confirmed) return;
@@ -418,9 +400,9 @@ export function renderSettings(container) {
       // Double confirmation for safety
       const doubleConfirm = confirm(
         "FINAL WARNING!\n\n" +
-        "This action cannot be undone.\n\n" +
-        "All local data will be permanently deleted.\n\n" +
-        "Click OK to proceed with purge."
+          "This action cannot be undone.\n\n" +
+          "All local data will be permanently deleted.\n\n" +
+          "Click OK to proceed with purge.",
       );
 
       if (!doubleConfirm) return;
@@ -442,10 +424,10 @@ export function renderSettings(container) {
         // Show success message with next steps
         alert(
           "Local data purged successfully!\n\n" +
-          "Next steps:\n" +
-          "1. Click 'Sync Now' to download all data from Nextcloud\n" +
-          "2. Wait for sync to complete\n" +
-          "3. Your notes will be restored from the server"
+            "Next steps:\n" +
+            "1. Click 'Sync Now' to download all data from Nextcloud\n" +
+            "2. Wait for sync to complete\n" +
+            "3. Your notes will be restored from the server",
         );
       } catch (error) {
         syncStatus.textContent = `✗ Purge failed: ${error.message}`;
@@ -511,8 +493,7 @@ export function renderSettings(container) {
             cleanupInfo.style.display = "none";
           }
         } else if (remoteMigrationNeeded) {
-          migrationStatus.textContent =
-            "Migration available - old flat files detected on server";
+          migrationStatus.textContent = "Migration available - old flat files detected on server";
           migrationStatus.style.color = "var(--color-warning)";
           migrationInfo.style.display = "block";
           runMigrationBtn.style.display = "inline-block";

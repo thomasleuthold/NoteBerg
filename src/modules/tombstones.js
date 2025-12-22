@@ -97,7 +97,9 @@ export function removeMediaTombstone(tombstone, noteId, filename) {
     return tombstone;
   }
 
-  tombstone.media = tombstone.media.filter((t) => !(t.noteId === noteId && t.filename === filename));
+  tombstone.media = tombstone.media.filter(
+    (t) => !(t.noteId === noteId && t.filename === filename),
+  );
   return tombstone;
 }
 

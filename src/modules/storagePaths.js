@@ -89,11 +89,7 @@ export function getQuickNotesTombstonePath() {
  * Get all required folders for the hierarchical structure
  */
 export function getAllRequiredFolders() {
-  return [
-    ROOT_FOLDER,
-    `${ROOT_FOLDER}/notebooks`,
-    `${ROOT_FOLDER}/quickNotes`,
-  ];
+  return [ROOT_FOLDER, `${ROOT_FOLDER}/notebooks`, `${ROOT_FOLDER}/quickNotes`];
 }
 
 /**
@@ -101,7 +97,7 @@ export function getAllRequiredFolders() {
  * Returns: { type: 'notebook' | 'note' | 'media' | 'tombstone', notebookId, noteId, filename }
  */
 export function parsePath(path) {
-  const parts = path.replace(ROOT_FOLDER + "/", "").split("/");
+  const parts = path.replace(`${ROOT_FOLDER}/`, "").split("/");
 
   if (parts[0] === "notebooks") {
     const notebookId = parts[1];

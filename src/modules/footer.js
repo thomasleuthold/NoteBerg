@@ -4,14 +4,7 @@
  */
 
 import { fullSync, isAuthenticated } from "./nextcloudSync.js";
-import {
-  getAllNotebooksForSync,
-  getAllNotesForSync,
-  permanentlyDeleteNote,
-  permanentlyDeleteNotebook,
-  saveNote,
-  saveNotebook,
-} from "./storage.js";
+import { getAllNotebooksForSync, getAllNotesForSync, saveNote, saveNotebook } from "./storage.js";
 
 let isSyncing = false;
 
@@ -95,37 +88,18 @@ async function performSync() {
     let downloadedNotes = 0;
 
     for (const notebook of result.downloaded.notebooks) {
-      // Check if it's a tombstone (has minimal fields)
-      const isTombstone = notebook.deleted && !notebook.name;
-
-      if (isTombstone) {
-        // Permanently delete local copy if it exists
-        await permanentlyDeleteNotebook(notebook.id);
-      } else {
-        await saveNotebook(notebook);
-      }
+      await saveNotebook(notebook);
       downloadedNotebooks++;
     }
 
     // Save downloaded notes to local storage
     for (const note of result.downloaded.notes) {
-      // Check if it's a tombstone (has minimal fields)
-      const isTombstone = note.deleted && !note.title && !note.content;
-
-      if (isTombstone) {
-        // Permanently delete local copy if it exists
-        await permanentlyDeleteNote(note.id);
-      } else {
-        await saveNote(note);
-      }
+      await saveNote(note);
       downloadedNotes++;
     }
 
     const syncSummary = `Sync complete!\nUploaded: ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes\nDownloaded: ${downloadedNotebooks} notebooks, ${downloadedNotes} notes\n\nBefore sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`;
     console.log(syncSummary);
-
-    // Temporary: Show alert for debugging
-    alert(syncSummary);
 
     // Show success briefly
     const syncText = document.querySelector(".sync-text");
