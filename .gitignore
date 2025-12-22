@@ -24,3 +24,30 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# Tauri
+src-tauri/target/
+src-tauri/WixTools/
+src-tauri/gen/
+
+# Tauri build artifacts (Windows)
+src-tauri/target/
+*.exe
+*.msi
+
+# Tauri build artifacts (macOS)
+*.dmg
+*.app
+
+# Tauri build artifacts (Linux)
+*.deb
+*.AppImage
+
+# Rust
+Cargo.lock
+
+# Android signing
+*.keystore
+*.jks
+key.properties
+*.apk

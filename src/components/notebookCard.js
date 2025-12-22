@@ -10,15 +10,15 @@
  * @returns {string} HTML string for the notebook card
  */
 export function renderNotebookCard(notebook, noteCount = 0) {
-  const lastModified = new Date(notebook.modified).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
+  const lastModified = new Date(notebook.modified).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
   });
 
   const description = notebook.description
     ? truncateText(notebook.description, 80)
-    : 'No description';
+    : "No description";
 
   return `
     <div class="notebook-card" data-notebook-id="${notebook.id}">
@@ -33,9 +33,12 @@ export function renderNotebookCard(notebook, noteCount = 0) {
       </div>
       <p class="notebook-card-description">${escapeHtml(description)}</p>
       <div class="notebook-card-footer">
-        <span class="notebook-card-count">${noteCount} ${noteCount === 1 ? 'note' : 'notes'}</span>
+        <span class="notebook-card-count">${noteCount} ${noteCount === 1 ? "note" : "notes"}</span>
         <span class="notebook-card-date">${lastModified}</span>
       </div>
+      <button class="card-new-note-btn" data-notebook-id="${notebook.id}" title="New note in this notebook">
+        + New Note
+      </button>
     </div>
   `;
 }
@@ -48,7 +51,7 @@ export function renderNotebookCard(notebook, noteCount = 0) {
  */
 function truncateText(text, maxLength) {
   if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength).trim() + '...';
+  return `${text.substring(0, maxLength).trim()}...`;
 }
 
 /**
@@ -57,7 +60,7 @@ function truncateText(text, maxLength) {
  * @returns {string} Escaped text
  */
 function escapeHtml(text) {
-  const div = document.createElement('div');
+  const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
 }

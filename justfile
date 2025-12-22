@@ -13,6 +13,16 @@ dev:
 build:
     npm run build
 
+build-w:
+    npm run tauri build
+    New-Item -ItemType Directory -Force -Path dist | Out-Null
+    Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
+
+build-a:
+    npm run tauri android build --release
+    New-Item -ItemType Directory -Force -Path dist | Out-Null
+    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\*.apk" -Destination "builds\" -Force
+
 preview:
     npm run preview
 
@@ -26,10 +36,9 @@ format:
 format-check:
     npm run format-check
 
-# Run all checks (lint + format-check)
+# Run Biome check (format + lint with auto-fix)
 check:
-    npm run lint
-    npm run format-check
+    npm run check --fix
 
 # Utilities
 clean:

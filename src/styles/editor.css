@@ -63,7 +63,7 @@
   outline: none;
 }
 
-.editor-body[contenteditable='true'] {
+.editor-body[contenteditable="true"] {
   cursor: text;
 }
 

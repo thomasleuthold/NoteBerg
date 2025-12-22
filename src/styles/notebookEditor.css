@@ -1,0 +1,253 @@
+/**
+ * Notebook Editor Styles
+ * Layered canvas editor with text and drawing layers
+ */
+
+/* Main editor container */
+.notebook-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  background: var(--bg-primary);
+}
+
+/* Editor toolbar */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  gap: var(--spacing-md);
+  flex-shrink: 0;
+}
+
+.toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.toolbar-section-right {
+  margin-left: auto;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.toolbar-btn-text {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.toolbar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-btn.active {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-color);
+  margin: 0 var(--spacing-xs);
+}
+
+.zoom-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 45px;
+  padding: 0 var(--spacing-xs);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+/* Editor content wrapper - layered approach */
+.editor-content-wrapper {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+  background: var(--bg-primary);
+  margin: 0 var(--spacing-md);
+}
+
+/* Text editor layer */
+.text-editor {
+  position: relative;
+  min-height: 100%;
+  padding: var(--spacing-xl);
+  font-family: var(--font-family);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  outline: none;
+  z-index: 1;
+  background: transparent;
+}
+
+.text-editor:focus {
+  outline: none;
+}
+
+/* Markdown WYSIWYG styling */
+.text-editor h1 {
+  font-size: 2em;
+  font-weight: 700;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.text-editor h2 {
+  font-size: 1.5em;
+  font-weight: 600;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.text-editor h3 {
+  font-size: 1.25em;
+  font-weight: 600;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.text-editor p {
+  margin: 0.5em 0;
+}
+
+.text-editor strong {
+  font-weight: 700;
+}
+
+.text-editor em {
+  font-style: italic;
+}
+
+.text-editor ul {
+  margin: 0.5em 0;
+  padding-left: 2em;
+}
+
+.text-editor li {
+  margin: 0.25em 0;
+}
+
+.text-editor br {
+  content: "";
+  display: block;
+  margin: 0.25em 0;
+}
+
+/* Canvas drawing layer */
+.drawing-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 2;
+  cursor: crosshair;
+  touch-action: none; /* Disable browser touch handling for better control */
+  display: block;
+}
+
+/* When in draw mode, canvas gets pointer events */
+.drawing-canvas.active {
+  pointer-events: auto;
+}
+
+/* Expansion zone indicator */
+.expansion-zone-indicator {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(to right, transparent, var(--color-primary), transparent);
+  pointer-events: none;
+  z-index: 3;
+  display: none;
+  opacity: 0.4;
+  transition: opacity 0.2s ease;
+}
+
+/* Notebook container */
+.notebook-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+#notebook-editor-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .editor-toolbar {
+    padding: var(--spacing-xs);
+    gap: var(--spacing-xs);
+  }
+
+  .toolbar-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+  }
+
+  .text-editor {
+    padding: var(--spacing-md);
+    font-size: 14px;
+  }
+
+  .editor-content-wrapper {
+    margin: 0 var(--spacing-xs);
+  }
+
+  .mode-indicator {
+    display: none;
+  }
+}
+
+/* Print styles */
+@media print {
+  .editor-toolbar {
+    display: none;
+  }
+
+  .text-editor {
+    padding: 0;
+  }
+
+  .drawing-canvas {
+    pointer-events: none;
+  }
+}

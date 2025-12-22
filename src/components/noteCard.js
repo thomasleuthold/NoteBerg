@@ -9,12 +9,12 @@
  * @returns {string} HTML string for the note card
  */
 export function renderNoteCard(note) {
-  const lastModified = new Date(note.modified).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+  const lastModified = new Date(note.modified).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 
   // Determine content indicators
@@ -26,8 +26,8 @@ export function renderNoteCard(note) {
   const previewText = hasText
     ? truncateText(note.textContent, 120)
     : hasStrokes || hasCanvas
-      ? '(Handwritten content)'
-      : '(Empty note)';
+      ? "(Handwritten content)"
+      : "(Empty note)";
 
   // Build content type indicators
   const indicators = [];
@@ -35,14 +35,14 @@ export function renderNoteCard(note) {
   if (hasStrokes) indicators.push('<span class="note-indicator handwriting">H</span>');
   if (hasCanvas) indicators.push('<span class="note-indicator drawing">D</span>');
 
-  const indicatorsHtml = indicators.length > 0
-    ? `<div class="note-indicators">${indicators.join('')}</div>`
-    : '';
+  const indicatorsHtml =
+    indicators.length > 0 ? `<div class="note-indicators">${indicators.join("")}</div>` : "";
 
   // Tags
-  const tagsHtml = note.tags && note.tags.length > 0
-    ? `<div class="note-tags">${note.tags.map(tag => `<span class="note-tag">${escapeHtml(tag)}</span>`).join('')}</div>`
-    : '';
+  const tagsHtml =
+    note.tags && note.tags.length > 0
+      ? `<div class="note-tags">${note.tags.map((tag) => `<span class="note-tag">${escapeHtml(tag)}</span>`).join("")}</div>`
+      : "";
 
   return `
     <div class="note-card" data-note-id="${note.id}">
@@ -52,7 +52,7 @@ export function renderNoteCard(note) {
         </svg>
       </button>
       <div class="note-card-header">
-        <h4 class="note-card-title">${escapeHtml(note.title || 'Untitled')}</h4>
+        <h4 class="note-card-title">${escapeHtml(note.title || "Untitled")}</h4>
         ${indicatorsHtml}
       </div>
       <p class="note-card-preview">${escapeHtml(previewText)}</p>
@@ -72,7 +72,7 @@ export function renderNoteCard(note) {
  */
 function truncateText(text, maxLength) {
   if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength).trim() + '...';
+  return `${text.substring(0, maxLength).trim()}...`;
 }
 
 /**
@@ -81,7 +81,7 @@ function truncateText(text, maxLength) {
  * @returns {string} Escaped text
  */
 function escapeHtml(text) {
-  const div = document.createElement('div');
+  const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
 }

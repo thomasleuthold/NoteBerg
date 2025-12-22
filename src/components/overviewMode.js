@@ -3,19 +3,19 @@
  * Displays notebooks and quick notes in grid/list layout
  */
 
+import { navigateTo } from "../modules/router.js";
 import {
-  getAllNotebooks,
-  getQuickNotes,
-  getNotesByNotebook,
-  getNotebook,
-  getNote,
-  deleteNotebook,
   deleteNote,
-} from '../modules/storage.js';
-import { renderNotebookCard } from './notebookCard.js';
-import { renderNoteCard } from './noteCard.js';
-import { navigateTo } from '../modules/router.js';
-import { showConfirmDialog } from './modals.js';
+  deleteNotebook,
+  getAllNotebooks,
+  getNote,
+  getNotebook,
+  getNotesByNotebook,
+  getQuickNotes,
+} from "../modules/storage.js";
+import { showConfirmDialog } from "./modals.js";
+import { renderNotebookCard } from "./notebookCard.js";
+import { renderNoteCard } from "./noteCard.js";
 
 /**
  * Render overview UI
@@ -29,20 +29,22 @@ export async function renderOverview(container) {
 
     // Get note counts for each notebook
     const notebookCounts = await Promise.all(
-      notebooks.map(async notebook => {
+      notebooks.map(async (notebook) => {
         const notes = await getNotesByNotebook(notebook.id);
         return { notebook, count: notes.length };
-      })
+      }),
     );
 
     // Build HTML
-    const notebooksHtml = notebookCounts.length > 0
-      ? notebookCounts.map(({ notebook, count }) => renderNotebookCard(notebook, count)).join('')
-      : '<p class="empty-state">No notebooks yet. Create your first notebook!</p>';
+    const notebooksHtml =
+      notebookCounts.length > 0
+        ? notebookCounts.map(({ notebook, count }) => renderNotebookCard(notebook, count)).join("")
+        : '<p class="empty-state">No notebooks yet. Create your first notebook!</p>';
 
-    const quickNotesHtml = quickNotes.length > 0
-      ? quickNotes.map(note => renderNoteCard(note)).join('')
-      : '<p class="empty-state">No quick notes yet. Create a note outside of any notebook.</p>';
+    const quickNotesHtml =
+      quickNotes.length > 0
+        ? quickNotes.map((note) => renderNoteCard(note)).join("")
+        : '<p class="empty-state">No quick notes yet. Create a note outside of any notebook.</p>';
 
     container.innerHTML = `
       <div class="overview-container">
@@ -75,7 +77,7 @@ export async function renderOverview(container) {
     // Attach event listeners
     attachOverviewListeners(container);
   } catch (error) {
-    console.error('Error rendering overview:', error);
+    console.error("Error rendering overview:", error);
     container.innerHTML = `
       <div class="error-state">
         <p>Failed to load overview. Please refresh the page.</p>
@@ -91,80 +93,90 @@ export async function renderOverview(container) {
  */
 function attachOverviewListeners(container) {
   // Notebook card clicks
-  const notebookCards = container.querySelectorAll('.notebook-card');
-  notebookCards.forEach(card => {
-    card.addEventListener('click', () => {
+  const notebookCards = container.querySelectorAll(".notebook-card");
+  notebookCards.forEach((card) => {
+    card.addEventListener("click", () => {
       const notebookId = card.dataset.notebookId;
-      navigateTo('notebook', { notebookId });
+      navigateTo("notebook", { notebookId });
     });
   });
 
   // Note card clicks
-  const noteCards = container.querySelectorAll('.note-card');
-  noteCards.forEach(card => {
-    card.addEventListener('click', () => {
+  const noteCards = container.querySelectorAll(".note-card");
+  noteCards.forEach((card) => {
+    card.addEventListener("click", () => {
       const noteId = card.dataset.noteId;
-      navigateTo('notebook', { noteId });
+      navigateTo("notebook", { noteId });
     });
   });
 
   // Delete notebook button clicks
-  const notebookDeleteBtns = container.querySelectorAll('.notebook-card .card-delete-btn');
-  notebookDeleteBtns.forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+  const notebookDeleteBtns = container.querySelectorAll(".notebook-card .card-delete-btn");
+  notebookDeleteBtns.forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
       e.stopPropagation(); // Prevent card click
       const notebookId = btn.dataset.notebookId;
       const notebook = await getNotebook(notebookId);
 
       const confirmed = await showConfirmDialog(
-        'Delete Notebook',
+        "Delete Notebook",
         `Are you sure you want to delete "${notebook.title}"? This will also delete all notes in this notebook.`,
-        'Delete',
-        'btn-danger'
+        "Delete",
+        "btn-danger",
       );
 
       if (confirmed) {
         await deleteNotebook(notebookId);
-        window.dispatchEvent(new CustomEvent('datachange'));
+        window.dispatchEvent(new CustomEvent("datachange"));
       }
     });
   });
 
+  // New note in notebook button clicks
+  const newNoteBtns = container.querySelectorAll(".notebook-card .card-new-note-btn");
+  newNoteBtns.forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation(); // Prevent card click
+      const notebookId = btn.dataset.notebookId;
+      window.dispatchEvent(new CustomEvent("createnote", { detail: { notebookId } }));
+    });
+  });
+
   // Delete note button clicks
-  const noteDeleteBtns = container.querySelectorAll('.note-card .card-delete-btn');
-  noteDeleteBtns.forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+  const noteDeleteBtns = container.querySelectorAll(".note-card .card-delete-btn");
+  noteDeleteBtns.forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
       e.stopPropagation(); // Prevent card click
       const noteId = btn.dataset.noteId;
       const note = await getNote(noteId);
 
       const confirmed = await showConfirmDialog(
-        'Delete Note',
+        "Delete Note",
         `Are you sure you want to delete "${note.title}"?`,
-        'Delete',
-        'btn-danger'
+        "Delete",
+        "btn-danger",
       );
 
       if (confirmed) {
         await deleteNote(noteId);
-        window.dispatchEvent(new CustomEvent('datachange'));
+        window.dispatchEvent(new CustomEvent("datachange"));
       }
     });
   });
 
   // New notebook button
-  const newNotebookBtn = container.querySelector('#new-notebook-btn');
+  const newNotebookBtn = container.querySelector("#new-notebook-btn");
   if (newNotebookBtn) {
-    newNotebookBtn.addEventListener('click', () => {
-      window.dispatchEvent(new CustomEvent('createnotebook'));
+    newNotebookBtn.addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent("createnotebook"));
     });
   }
 
   // New quick note button
-  const newQuickNoteBtn = container.querySelector('#new-quick-note-btn');
+  const newQuickNoteBtn = container.querySelector("#new-quick-note-btn");
   if (newQuickNoteBtn) {
-    newQuickNoteBtn.addEventListener('click', () => {
-      window.dispatchEvent(new CustomEvent('createquicknote'));
+    newQuickNoteBtn.addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent("createquicknote"));
     });
   }
 }
@@ -174,21 +186,21 @@ function attachOverviewListeners(container) {
  */
 export function initOverview() {
   // Listen for render overview event from router
-  window.addEventListener('renderoverview', async () => {
-    const container = document.getElementById('overview-content');
+  window.addEventListener("renderoverview", async () => {
+    const container = document.getElementById("overview-content");
     if (container) {
       await renderOverview(container);
     }
   });
 
   // Listen for data changes to refresh overview
-  window.addEventListener('datachange', async () => {
-    const container = document.getElementById('overview-content');
+  window.addEventListener("datachange", async () => {
+    const container = document.getElementById("overview-content");
     if (container && container.offsetParent !== null) {
       // Only refresh if overview is currently visible
       await renderOverview(container);
     }
   });
 
-  console.log('Overview component initialized');
+  console.log("Overview component initialized");
 }

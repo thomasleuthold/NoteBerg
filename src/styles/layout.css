@@ -68,7 +68,7 @@
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.6;
   transition: all var(--transition-fast);
   z-index: 10;
   color: var(--color-danger);
@@ -142,10 +142,33 @@
   color: var(--text-tertiary);
   padding-top: var(--spacing-sm);
   border-top: 1px solid var(--border-primary);
+  margin-bottom: var(--spacing-sm);
 }
 
 .notebook-card-count {
   font-weight: 500;
+}
+
+.card-new-note-btn {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background-color: var(--color-primary);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+  opacity: 0.6;
+}
+
+.card-new-note-btn:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.notebook-card:hover .card-new-note-btn {
+  opacity: 1;
 }
 
 /* Note Cards */
@@ -441,12 +464,14 @@
   background-color: var(--bg-secondary);
 }
 
-.color-option input[type='radio'] {
+.color-option input[type="radio"] {
   margin: 0;
 }
 
-.color-option input[type='radio']:checked + .color-swatch {
-  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--color-primary);
+.color-option input[type="radio"]:checked + .color-swatch {
+  box-shadow:
+    0 0 0 2px var(--bg-primary),
+    0 0 0 4px var(--color-primary);
 }
 
 .color-swatch {
@@ -543,6 +568,17 @@
   color: var(--text-tertiary);
   font-style: italic;
   margin: 0;
+  margin-left: var(--spacing-md);
+}
+
+/* Setting item with buttons */
+.setting-item button {
+  margin-right: var(--spacing-sm);
+}
+
+.setting-item button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Theme Toggle Group */
@@ -627,9 +663,9 @@
 /* Notebook placeholder */
 .notebook-container {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   height: 100%;
+  width: 100%;
 }
 
 .editor-placeholder {

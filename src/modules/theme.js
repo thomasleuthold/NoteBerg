@@ -3,9 +3,9 @@
  * Handles theme switching between light, dark, and e-paper modes
  */
 
-const THEMES = ['light', 'dark', 'epaper'];
-const DEFAULT_THEME = 'light';
-const THEME_STORAGE_KEY = 'theme';
+const THEMES = ["light", "dark", "epaper"];
+const DEFAULT_THEME = "light";
+const THEME_STORAGE_KEY = "theme";
 
 let currentTheme = DEFAULT_THEME;
 
@@ -21,17 +21,17 @@ export async function initTheme() {
     currentTheme = savedTheme;
   } else {
     // Detect system preference
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    currentTheme = prefersDark ? 'dark' : 'light';
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    currentTheme = prefersDark ? "dark" : "light";
   }
 
   await setTheme(currentTheme);
 
   // Listen for system theme changes
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
     // Only auto-switch if user hasn't manually set a theme
     if (!localStorage.getItem(THEME_STORAGE_KEY)) {
-      setTheme(e.matches ? 'dark' : 'light');
+      setTheme(e.matches ? "dark" : "light");
     }
   });
 
@@ -51,16 +51,16 @@ export async function setTheme(theme) {
   currentTheme = theme;
 
   // Set data-theme attribute on html element
-  document.documentElement.setAttribute('data-theme', theme);
+  document.documentElement.setAttribute("data-theme", theme);
 
   // Save to localStorage
   localStorage.setItem(THEME_STORAGE_KEY, theme);
 
   // Dispatch theme change event
   window.dispatchEvent(
-    new CustomEvent('themechange', {
+    new CustomEvent("themechange", {
       detail: { theme },
-    })
+    }),
   );
 
   console.log(`Theme set to: ${theme}`);
