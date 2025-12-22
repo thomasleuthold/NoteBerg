@@ -71,6 +71,7 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
     color,
     created: Date.now(),
     modified: Date.now(),
+    version: 1,
     synced: false,
     deleted: false,
   };
@@ -114,6 +115,7 @@ export async function updateNotebook(id, updates) {
     ...notebook,
     ...updates,
     modified: Date.now(),
+    version: (notebook.version || 0) + 1,
     synced: false,
   };
 
@@ -132,6 +134,7 @@ export async function deleteNotebook(id) {
   // Mark notebook as deleted
   notebook.deleted = true;
   notebook.modified = Date.now();
+  notebook.version = (notebook.version || 0) + 1;
   notebook.synced = false;
 
   await db.put("notebooks", notebook);
@@ -144,6 +147,7 @@ export async function deleteNotebook(id) {
     if (!note.deleted) {
       note.deleted = true;
       note.modified = timestamp;
+      note.version = (note.version || 0) + 1;
       note.synced = false;
       await db.put("notes", note);
     }
@@ -168,6 +172,7 @@ export async function createNote({ title, notebookId = null }) {
     formatVersion: 1, // Stroke format version
     created: Date.now(),
     modified: Date.now(),
+    version: 1,
     synced: false,
     deleted: false,
     tags: [],
@@ -230,6 +235,7 @@ export async function updateNote(id, updates) {
     ...note,
     ...updates,
     modified: Date.now(),
+    version: (note.version || 0) + 1,
     synced: false,
   };
 
@@ -247,6 +253,7 @@ export async function deleteNote(id) {
 
   note.deleted = true;
   note.modified = Date.now();
+  note.version = (note.version || 0) + 1;
   note.synced = false;
 
   await db.put("notes", note);
@@ -281,6 +288,7 @@ export async function restoreNotebook(id) {
 
   notebook.deleted = false;
   notebook.modified = Date.now();
+  notebook.version = (notebook.version || 0) + 1;
   notebook.synced = false;
 
   await db.put("notebooks", notebook);
@@ -297,6 +305,7 @@ export async function restoreNote(id) {
 
   note.deleted = false;
   note.modified = Date.now();
+  note.version = (note.version || 0) + 1;
   note.synced = false;
 
   await db.put("notes", note);

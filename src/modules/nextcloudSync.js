@@ -773,14 +773,10 @@ export async function fullSync(localNotebooks, localNotes) {
   for (const local of localNotebooks) {
     const remote = remoteNotebookMap.get(local.id);
 
-    // Upload if:
-    // 1. Notebook doesn't exist remotely, OR
-    // 2. Local is newer than remote, OR
-    // 3. Local is unsynced (even if timestamps match)
-    const shouldUpload =
-      !remote ||
-      new Date(local.modified) > new Date(remote.modified) ||
-      (local.synced === false && new Date(local.modified) >= new Date(remote.modified));
+    const remoteVersion = remote?.version || 0;
+    const localVersion = local?.version || 0;
+
+    const shouldUpload = local.synced === false && localVersion >= remoteVersion;
 
     if (shouldUpload) {
       if (remote?._etag) {
@@ -793,7 +789,10 @@ export async function fullSync(localNotebooks, localNotes) {
   // Check which remote notebooks should be downloaded
   for (const remote of remoteData.notebooks) {
     const local = localNotebookMap.get(remote.id);
-    const shouldDownload = !local || new Date(remote.modified) > new Date(local.modified);
+
+    const remoteVersion = remote.version || 0;
+    const localVersion = local?.version || 0;
+    const shouldDownload = !local || remoteVersion > localVersion;
 
     if (shouldDownload) {
       notebooksToDownload.push(remote);
@@ -811,24 +810,10 @@ export async function fullSync(localNotebooks, localNotes) {
   for (const local of localNotes) {
     const remote = remoteNoteMap.get(local.id);
 
-    // Upload if:
-    // 1. Note doesn't exist remotely, OR
-    // 2. Local is newer than remote, OR
-    // 3. Local is unsynced (even if timestamps match)
-    const shouldUpload =
-      !remote ||
-      new Date(local.modified) > new Date(remote.modified) ||
-      (local.synced === false && new Date(local.modified) >= new Date(remote.modified));
+    const remoteVersion = remote?.version || 0;
+    const localVersion = local?.version || 0;
 
-    // Debug logging
-    if (local.synced === false) {
-      console.log(`Note ${local.id} (${local.title}) needs sync:`, {
-        localModified: new Date(local.modified),
-        remoteModified: remote ? new Date(remote.modified) : null,
-        shouldUpload,
-        localSynced: local.synced,
-      });
-    }
+    const shouldUpload = local.synced === false && localVersion >= remoteVersion;
 
     if (shouldUpload) {
       notesToUpload.push(local);
@@ -839,28 +824,10 @@ export async function fullSync(localNotebooks, localNotes) {
   for (const remote of remoteData.notes) {
     const local = localNoteMap.get(remote.id);
 
-    // Download if:
-    // 1. Note doesn't exist locally, OR
-    // 2. Remote is newer than local, OR
-    // 3. Remote is synced but local is not (prefer synced version)
-    const shouldDownload =
-      !local ||
-      new Date(remote.modified) > new Date(local.modified) ||
-      (remote.synced === true &&
-        local.synced === false &&
-        new Date(remote.modified) >= new Date(local.modified));
+    const remoteVersion = remote.version || 0;
+    const localVersion = local?.version || 0;
 
-    // Debug logging for notes that should be downloaded
-    if (shouldDownload && local) {
-      console.log(`Note ${remote.id} (${remote.title}) will be downloaded:`, {
-        localModified: new Date(local.modified),
-        remoteModified: new Date(remote.modified),
-        localSynced: local.synced,
-        remoteSynced: remote.synced,
-        remoteNewer: new Date(remote.modified) > new Date(local.modified),
-        shouldDownload,
-      });
-    }
+    const shouldDownload = !local || remoteVersion > localVersion;
 
     if (shouldDownload) {
       notesToDownload.push(remote);
