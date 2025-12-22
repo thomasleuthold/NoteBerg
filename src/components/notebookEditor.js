@@ -819,9 +819,8 @@ function drawStroke(stroke) {
 
   const palette = getThemePalette();
   // Use colorIndex if available (theme-aware), fallback to hardcoded color (legacy)
-  ctx.strokeStyle = (stroke.colorIndex !== undefined) 
-    ? palette[stroke.colorIndex] 
-    : (stroke.color || palette[0]);
+  ctx.strokeStyle =
+    stroke.colorIndex !== undefined ? palette[stroke.colorIndex] : stroke.color || palette[0];
   ctx.lineWidth = stroke.width || 2;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
