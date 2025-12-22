@@ -26,7 +26,7 @@ import {
 } from "../modules/storage.js";
 import { STORAGE_VERSION } from "../modules/storagePaths.js";
 import { getTheme, setTheme } from "../modules/theme.js";
-import { showConfirmDialog, showAlertDialog } from "./modals.js";
+import { showAlertDialog, showConfirmDialog } from "./modals.js";
 
 /**
  * Render settings UI
@@ -586,7 +586,7 @@ export function renderSettings(container) {
             "Next steps:<ol>" +
             "<li>Click 'Sync Now' to download all data from Nextcloud</li>" +
             "<li>Wait for sync to complete</li>" +
-            "<li>Your notes will be restored from the server</li></ol>"
+            "<li>Your notes will be restored from the server</li></ol>",
         );
       } else {
         await showAlertDialog("Purge Successful", "Local data purged successfully!");
