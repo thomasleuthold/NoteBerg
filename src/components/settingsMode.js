@@ -26,6 +26,7 @@ import {
 } from "../modules/storage.js";
 import { STORAGE_VERSION } from "../modules/storagePaths.js";
 import { getTheme, setTheme } from "../modules/theme.js";
+import { showConfirmDialog, showAlertDialog } from "./modals.js";
 
 /**
  * Render settings UI
@@ -127,15 +128,8 @@ export function renderSettings(container) {
 
         <div class="setting-item">
           <button id="sync-now-btn" class="btn-primary">Sync Now</button>
-          <button id="purge-local-btn" class="btn-secondary" style="background-color: var(--color-danger); color: white;">Purge Local Data</button>
           <button id="disconnect-btn" class="btn-secondary">Disconnect</button>
           <span id="sync-status" class="setting-note"></span>
-        </div>
-
-        <div class="setting-item">
-          <div class="setting-description" style="color: var(--text-secondary); font-size: 0.875rem;">
-            <strong>Purge Local Data:</strong> Clears ALL local notebooks and notes (including tombstones), but preserves Nextcloud connection settings. Use this to recover from sync conflicts - after purging, click "Sync Now" to download everything from server. ⚠️ All local unsynced changes will be lost!
-          </div>
         </div>
         `
         }
@@ -183,6 +177,25 @@ export function renderSettings(container) {
       `
           : ""
       }
+
+      <div class="settings-section">
+        <h3 style="color: var(--color-danger);">Danger Zone</h3>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">Purge Local Data</span>
+            <span class="setting-description">Clears ALL local notebooks and notes from this device.</span>
+          </div>
+          <button id="purge-local-btn" class="btn-secondary" style="background-color: var(--color-danger); color: white;">Purge Local Data</button>
+          <span id="purge-status" class="setting-note"></span>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-description" style="color: var(--text-secondary); font-size: 0.875rem;">
+            ⚠️ <strong>Warning:</strong> This action will delete all local data including notebooks, notes, and sync history. If you are connected to Nextcloud, you can restore your data by syncing again. Unsynced changes will be permanently lost.
+          </div>
+        </div>
+      </div>
 
       <div class="settings-section">
         <h3>About</h3>
@@ -382,63 +395,6 @@ export function renderSettings(container) {
       }
     });
 
-    const purgeLocalBtn = container.querySelector("#purge-local-btn");
-    purgeLocalBtn?.addEventListener("click", async () => {
-      const confirmed = confirm(
-        "⚠️ DANGER: This will DELETE ALL local notebooks and notes!\n\n" +
-          "This includes:\n" +
-          "• All notebooks and notes\n" +
-          "• All tombstones (deleted items)\n" +
-          "• Sync queue\n\n" +
-          "Your Nextcloud connection settings will be preserved.\n\n" +
-          "After purging, click 'Sync Now' to download everything from Nextcloud server.\n\n" +
-          "Are you ABSOLUTELY SURE you want to continue?",
-      );
-
-      if (!confirmed) return;
-
-      // Double confirmation for safety
-      const doubleConfirm = confirm(
-        "FINAL WARNING!\n\n" +
-          "This action cannot be undone.\n\n" +
-          "All local data will be permanently deleted.\n\n" +
-          "Click OK to proceed with purge.",
-      );
-
-      if (!doubleConfirm) return;
-
-      purgeLocalBtn.disabled = true;
-      purgeLocalBtn.textContent = "Purging...";
-      syncStatus.textContent = "Purging local data...";
-      syncStatus.style.color = "var(--color-danger)";
-
-      try {
-        await purgeLocalData();
-
-        syncStatus.textContent = `✓ Local data purged successfully! Click "Sync Now" to download from server.`;
-        syncStatus.style.color = "var(--color-success)";
-
-        // Refresh UI to show empty state
-        window.dispatchEvent(new CustomEvent("notes-updated"));
-
-        // Show success message with next steps
-        alert(
-          "Local data purged successfully!\n\n" +
-            "Next steps:\n" +
-            "1. Click 'Sync Now' to download all data from Nextcloud\n" +
-            "2. Wait for sync to complete\n" +
-            "3. Your notes will be restored from the server",
-        );
-      } catch (error) {
-        syncStatus.textContent = `✗ Purge failed: ${error.message}`;
-        syncStatus.style.color = "var(--color-error)";
-        alert(`Purge failed: ${error.message}`);
-      } finally {
-        purgeLocalBtn.disabled = false;
-        purgeLocalBtn.textContent = "Purge Local Data";
-      }
-    });
-
     disconnectBtn?.addEventListener("click", () => {
       if (confirm("Are you sure you want to disconnect from Nextcloud?")) {
         clearCredentials();
@@ -582,6 +538,70 @@ export function renderSettings(container) {
       }
     });
   }
+
+  // Purge local data listener (available regardless of auth status)
+  const purgeLocalBtn = container.querySelector("#purge-local-btn");
+  const purgeStatus = container.querySelector("#purge-status");
+
+  purgeLocalBtn?.addEventListener("click", async () => {
+    const confirmed = await showConfirmDialog(
+      "Purge Local Data",
+      "⚠️ DANGER: This will DELETE ALL local notebooks and notes from this device!<br><br>" +
+        "This includes:<ul>" +
+        "<li>All notebooks and notes</li>" +
+        "<li>All deleted items (recycle bin)</li>" +
+        "<li>Local sync history</li></ul>" +
+        "This action cannot be undone. Are you absolutely sure you want to continue?",
+      "Purge Everything",
+      "btn-danger",
+    );
+
+    if (!confirmed) return;
+
+    purgeLocalBtn.disabled = true;
+    purgeLocalBtn.textContent = "Purging...";
+    if (purgeStatus) {
+      purgeStatus.textContent = "Purging local data...";
+      purgeStatus.style.color = "var(--color-danger)";
+    }
+
+    try {
+      await purgeLocalData();
+
+      const isAuth = isAuthenticated();
+      if (purgeStatus) {
+        purgeStatus.textContent = isAuth
+          ? `✓ Local data purged successfully! Click "Sync Now" to download from server.`
+          : `✓ Local data purged successfully!`;
+        purgeStatus.style.color = "var(--color-success)";
+      }
+
+      // Refresh UI to show empty state
+      window.dispatchEvent(new CustomEvent("notes-updated"));
+
+      if (isAuth) {
+        await showAlertDialog(
+          "Purge Successful",
+          "Local data purged successfully!<br><br>" +
+            "Next steps:<ol>" +
+            "<li>Click 'Sync Now' to download all data from Nextcloud</li>" +
+            "<li>Wait for sync to complete</li>" +
+            "<li>Your notes will be restored from the server</li></ol>"
+        );
+      } else {
+        await showAlertDialog("Purge Successful", "Local data purged successfully!");
+      }
+    } catch (error) {
+      if (purgeStatus) {
+        purgeStatus.textContent = `✗ Purge failed: ${error.message}`;
+        purgeStatus.style.color = "var(--color-error)";
+      }
+      await showAlertDialog("Purge Failed", `Purge failed: ${error.message}`);
+    } finally {
+      purgeLocalBtn.disabled = false;
+      purgeLocalBtn.textContent = "Purge Local Data";
+    }
+  });
 }
 
 /**

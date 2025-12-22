@@ -125,7 +125,7 @@ export function showConfirmDialog(
             <button class="modal-close" aria-label="Close">&times;</button>
           </div>
           <div class="modal-body">
-            <p class="confirm-message">${message}</p>
+            <div class="confirm-message">${message}</div>
           </div>
           <div class="modal-footer">
             <button class="btn-secondary modal-cancel">Cancel</button>
@@ -165,6 +165,67 @@ export function showConfirmDialog(
     const handleEsc = (e) => {
       if (e.key === "Escape") {
         closeModal(false);
+        document.removeEventListener("keydown", handleEsc);
+      }
+    };
+    document.addEventListener("keydown", handleEsc);
+  });
+}
+
+/**
+ * Show alert dialog (styled modal with only an OK button)
+ * @param {string} title - Dialog title
+ * @param {string} message - Alert message
+ * @param {string} buttonText - Text for the button (default: "OK")
+ * @returns {Promise<void>} Resolves when button is clicked
+ */
+export function showAlertDialog(title, message, buttonText = "OK") {
+  return new Promise((resolve) => {
+    const existingModal = document.getElementById("modal-overlay");
+    if (existingModal) {
+      existingModal.remove();
+    }
+
+    const modalHtml = `
+      <div id="modal-overlay" class="modal-overlay">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 class="modal-title">${title}</h3>
+            <button class="modal-close" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="confirm-message">${message}</div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-primary modal-confirm">${buttonText}</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML("beforeend", modalHtml);
+
+    const overlay = document.getElementById("modal-overlay");
+    const confirmBtn = overlay.querySelector(".modal-confirm");
+    const closeBtn = overlay.querySelector(".modal-close");
+
+    const closeModal = () => {
+      overlay.classList.add("modal-closing");
+      setTimeout(() => {
+        overlay.remove();
+        resolve();
+      }, 200);
+    };
+
+    confirmBtn.addEventListener("click", closeModal);
+    closeBtn.addEventListener("click", closeModal);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    const handleEsc = (e) => {
+      if (e.key === "Escape") {
+        closeModal();
         document.removeEventListener("keydown", handleEsc);
       }
     };
