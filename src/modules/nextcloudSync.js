@@ -772,15 +772,54 @@ function mergeStrokes(localStrokes, remoteStrokes) {
  * Attempt to merge two versions of a note
  */
 function attemptMerge(local, remote) {
-  // If text content changed on both sides, we can't safely auto-merge
-  if (local.content !== remote.content) return null;
+  // Always merge strokes, as this is a safe, additive operation.
+  const mergedStrokes = mergeStrokes(local.strokes || [], remote.strokes || []);
 
+  // Determine which note is newer based on modification time.
+  const newerNote = remote.modified > local.modified ? remote : local;
+
+  // Attempt to merge text content.
+  let mergedContent;
+  if (local.content === remote.content) {
+    // Content is identical, no merge needed.
+    mergedContent = local.content;
+  } else if (remote.content.includes(local.content)) {
+    // The remote content contains the local content, so it's likely an append. Use remote.
+    mergedContent = remote.content;
+  } else if (local.content.includes(remote.content)) {
+    // The local content contains the remote content, so it's likely an append. Use local.
+    mergedContent = local.content;
+  } else {
+    // This is a true conflict where both texts have diverged.
+    // We apply a "last write wins" strategy based on the note's modified timestamp.
+    // This handles the case where one client changed text and another changed strokes,
+    // by picking the content from the more recent change.
+    mergedContent = newerNote.content;
+  }
+
+  // Merge title using "last write wins".
+  const mergedTitle = local.title !== remote.title ? newerNote.title : local.title;
+
+  // Merge tags by taking the union of both sets.
+  const mergedTags = [...new Set([...(local.tags || []), ...(remote.tags || [])])];
+
+  // Construct the merged note.
   return {
-    ...local,
-    strokes: mergeStrokes(local.strokes || [], remote.strokes || []),
-    version: Math.max(local.version, remote.version) + 1,
-    modified: Date.now(),
-    synced: false,
+    id: local.id, // Keep original ID
+    notebookId: local.notebookId, // Keep original notebook ID
+    created: local.created, // Keep original creation timestamp
+
+    title: mergedTitle,
+    content: mergedContent,
+    strokes: mergedStrokes,
+    tags: mergedTags,
+    deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
+
+    formatVersion: newerNote.formatVersion, // Use format from newer note
+    modified: Date.now(), // Set a new modification time for the merged version
+    version: Math.max(local.version, remote.version) + 1, // Increment version
+    synced: false, // Mark as unsynced to trigger upload
+    lastSyncedEtag: remote.lastSyncedEtag, // IMPORTANT: Use remote ETag for If-Match header to resolve conflict
   };
 }
 
