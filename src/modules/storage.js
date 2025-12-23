@@ -73,6 +73,7 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
     modified: Date.now(),
     version: 1,
     synced: false,
+    lastSyncedEtag: null,
     deleted: false,
   };
 
@@ -174,6 +175,7 @@ export async function createNote({ title, notebookId = null }) {
     modified: Date.now(),
     version: 1,
     synced: false,
+    lastSyncedEtag: null,
     deleted: false,
     tags: [],
   };

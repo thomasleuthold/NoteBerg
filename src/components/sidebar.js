@@ -55,6 +55,7 @@ export async function renderSidebar() {
   if (!notesListContainer) return;
 
   await renderSidebarHeader();
+  await renderSidebarFooter();
 
   const currentNotebookId = getCurrentNotebookId();
   const currentNoteId = getCurrentNoteId();
@@ -69,6 +70,44 @@ export async function renderSidebar() {
         <div class="empty-state-text">Error loading sidebar</div>
       </div>
     `;
+  }
+}
+
+/**
+ * Render sidebar footer with settings and recycle bin
+ */
+async function renderSidebarFooter() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+
+  // Check if footer exists, if not create it dynamically
+  let sidebarFooter = document.getElementById("sidebar-footer");
+  if (!sidebarFooter) {
+    sidebarFooter = document.createElement("div");
+    sidebarFooter.id = "sidebar-footer";
+    sidebarFooter.className = "sidebar-footer";
+    // Ensure horizontal layout and bottom alignment
+    sidebarFooter.style.display = "flex";
+    sidebarFooter.style.justifyContent = "space-around";
+    sidebarFooter.style.padding = "10px";
+    sidebarFooter.style.borderTop = "1px solid var(--border-color)";
+    sidebar.appendChild(sidebarFooter);
+  }
+
+  sidebarFooter.innerHTML = `
+    <button class="sidebar-footer-btn btn-icon" id="nav-settings" title="Settings">⚙️</button>
+    <button class="sidebar-footer-btn btn-icon" id="recycle-bin-btn" title="Recycle Bin">🗑️</button>
+  `;
+
+  // Attach event listeners
+  const settingsBtn = sidebarFooter.querySelector("#nav-settings");
+  if (settingsBtn) {
+    settingsBtn.addEventListener("click", () => navigateTo("settings"));
+  }
+
+  const recycleBinBtn = sidebarFooter.querySelector("#recycle-bin-btn");
+  if (recycleBinBtn) {
+    recycleBinBtn.addEventListener("click", () => navigateTo("recyclebin"));
   }
 }
 

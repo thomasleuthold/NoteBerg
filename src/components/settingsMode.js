@@ -26,7 +26,7 @@ import {
 } from "../modules/storage.js";
 import { STORAGE_VERSION } from "../modules/storagePaths.js";
 import { getTheme, setTheme } from "../modules/theme.js";
-import { showAlertDialog, showConfirmDialog } from "./modals.js";
+import { showAlertDialog, showConfirmDialog, showConflictResolutionDialog } from "./modals.js";
 
 /**
  * Render settings UI
@@ -337,29 +337,59 @@ export function renderSettings(container) {
     const syncStatus = container.querySelector("#sync-status");
 
     syncBtn?.addEventListener("click", async () => {
-      syncBtn.disabled = true;
-      syncBtn.textContent = "Syncing...";
-      syncStatus.textContent = "Syncing with Nextcloud...";
-      syncStatus.style.color = "var(--color-text)";
+      const runSync = async () => {
+        syncBtn.disabled = true;
+        syncBtn.textContent = "Syncing...";
+        syncStatus.textContent = "Syncing with Nextcloud...";
+        syncStatus.style.color = "var(--color-text)";
 
-      try {
         const notebooks = await getAllNotebooksForSync();
         const notes = await getAllNotesForSync();
 
         const result = await fullSync(notebooks, notes);
 
+        // Handle manual conflict resolution for notes
+        if (result.conflicts?.notes?.length > 0) {
+          for (const conflict of result.conflicts.notes) {
+            const choice = await showConflictResolutionDialog(conflict.local, conflict.remote);
+            if (choice === "local") {
+              // Keep local: Accept remote ETag as base, but increment version and mark unsynced
+              await saveNote({
+                ...conflict.local,
+                lastSyncedEtag: conflict.remote.lastSyncedEtag,
+                synced: false,
+                version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
+                modified: Date.now(),
+              });
+            } else {
+              // Keep remote: Overwrite local with remote data
+              await saveNote({ ...conflict.remote, synced: true });
+            }
+          }
+          // Re-run sync logic to process the resolutions
+          return await runSync();
+        }
+
         // Mark uploaded items as synced in local storage
         for (const id of result.uploaded.notebooks.uploadedIds || []) {
-          const notebook = notebooks.find((n) => n.id === id);
+          const uploadedNotebook = result.notebooksToUpload.find((n) => n.id === id);
+          const notebook = uploadedNotebook || notebooks.find((n) => n.id === id);
           if (notebook) {
-            await saveNotebook({ ...notebook, synced: true });
+            const etag = result.uploaded.notebooks.metadata?.[id]?.etag;
+            await saveNotebook({
+              ...notebook,
+              synced: true,
+              lastSyncedEtag: etag || notebook.lastSyncedEtag,
+            });
           }
         }
 
         for (const id of result.uploaded.notes.uploadedIds || []) {
-          const note = notes.find((n) => n.id === id);
+          const uploadedNote = result.notesToUpload.find((n) => n.id === id);
+          const note = uploadedNote || notes.find((n) => n.id === id);
           if (note) {
-            await saveNote({ ...note, synced: true });
+            const etag = result.uploaded.notes.metadata?.[id]?.etag;
+            await saveNote({ ...note, synced: true, lastSyncedEtag: etag || note.lastSyncedEtag });
           }
         }
 
@@ -378,14 +408,28 @@ export function renderSettings(container) {
           downloadedNotes++;
         }
 
-        syncStatus.textContent = `✓ Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`;
-        syncStatus.style.color = "var(--color-success)";
+        const conflictCount =
+          (result.conflicts?.notebooks?.length || 0) + (result.conflicts?.notes?.length || 0);
+        let statusMsg = `✓ Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`;
+
+        if (conflictCount > 0) {
+          statusMsg += ` ⚠️ Detected ${conflictCount} conflicts.`;
+          syncStatus.style.color = "var(--color-warning)";
+        } else {
+          syncStatus.style.color = "var(--color-success)";
+        }
+
+        syncStatus.textContent = statusMsg;
 
         // Trigger a UI refresh if notes/notebooks were downloaded
         if (downloadedNotebooks > 0 || downloadedNotes > 0) {
           // Dispatch event to refresh sidebar
           window.dispatchEvent(new CustomEvent("notes-updated"));
         }
+      };
+
+      try {
+        await runSync();
       } catch (error) {
         syncStatus.textContent = `✗ Sync failed: ${error.message}`;
         syncStatus.style.color = "var(--color-error)";

@@ -3,6 +3,7 @@
  * Handles sync status display and sync triggering
  */
 
+import { showConflictResolutionDialog } from "../components/modals.js";
 import { fullSync, isAuthenticated } from "./nextcloudSync.js";
 import { getAllNotebooksForSync, getAllNotesForSync, saveNote, saveNotebook } from "./storage.js";
 
@@ -60,26 +61,55 @@ async function performSync() {
 
     const result = await fullSync(notebooks, notes);
 
+    // Handle manual conflict resolution
+    if (result.conflicts?.notes?.length > 0) {
+      for (const conflict of result.conflicts.notes) {
+        const choice = await showConflictResolutionDialog(conflict.local, conflict.remote);
+        if (choice === "local") {
+          await saveNote({
+            ...conflict.local,
+            lastSyncedEtag: conflict.remote.lastSyncedEtag,
+            synced: false,
+            version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
+            modified: Date.now(),
+          });
+        } else {
+          await saveNote({ ...conflict.remote, synced: true });
+        }
+      }
+      // Re-trigger sync to process resolutions
+      isSyncing = false;
+      return await performSync();
+    }
+
     // Mark uploaded items as synced in local storage
     for (const id of result.uploaded.notebooks.uploadedIds || []) {
-      const notebook = notebooks.find((n) => n.id === id);
+      const uploadedNotebook = result.notebooksToUpload.find((n) => n.id === id);
+      const notebook = uploadedNotebook || notebooks.find((n) => n.id === id);
       if (notebook) {
         // Don't modify the 'modified' timestamp when marking as synced
         console.log(`Marking notebook ${id} as synced (was: ${notebook.synced})`);
-        notebook.synced = true;
-        await saveNotebook(notebook);
-        console.log(`Saved notebook ${id} with synced=${notebook.synced}`);
+        const etag = result.uploaded.notebooks.metadata?.[id]?.etag;
+        await saveNotebook({
+          ...notebook,
+          synced: true,
+          lastSyncedEtag: etag || notebook.lastSyncedEtag,
+        });
       }
     }
 
     for (const id of result.uploaded.notes.uploadedIds || []) {
-      const note = notes.find((n) => n.id === id);
+      const uploadedNote = result.notesToUpload.find((n) => n.id === id);
+      const note = uploadedNote || notes.find((n) => n.id === id);
       if (note) {
         // Don't modify the 'modified' timestamp when marking as synced
         console.log(`Marking note ${id} as synced (was: ${note.synced})`);
-        note.synced = true;
-        await saveNote(note);
-        console.log(`Saved note ${id} with synced=${note.synced}`);
+        const etag = result.uploaded.notes.metadata?.[id]?.etag;
+        await saveNote({
+          ...note,
+          synced: true,
+          lastSyncedEtag: etag || note.lastSyncedEtag,
+        });
       }
     }
 

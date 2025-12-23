@@ -348,7 +348,8 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     throw new Error(`Failed to upload file: ${response.status} ${response.statusText}`);
   }
 
-  return true;
+  const newEtag = response.headers.get("etag")?.replace(/"/g, "");
+  return newEtag || true;
 }
 
 /**
@@ -368,14 +369,16 @@ async function downloadFile(path) {
   });
 
   if (response.status === 404) {
-    return null; // File doesn't exist
+    return { content: null, etag: null };
   }
 
   if (!response.ok) {
     throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
   }
 
-  return await response.text();
+  const content = await response.text();
+  const etag = response.headers.get("etag")?.replace(/"/g, "");
+  return { content, etag };
 }
 
 /**
@@ -540,7 +543,8 @@ export async function syncNotebooks(notebooks) {
     uploaded: 0,
     failed: 0,
     errors: [],
-    uploadedIds: [], // Track successfully uploaded IDs
+    uploadedIds: [],
+    metadata: {},
   };
 
   for (const notebook of notebooks) {
@@ -562,9 +566,15 @@ export async function syncNotebooks(notebooks) {
       };
       const content = JSON.stringify(syncedNotebook, null, 2);
 
-      await uploadFile(path, content, syncedNotebook.modified);
+      const etag = await uploadFile(
+        path,
+        content,
+        syncedNotebook.modified,
+        notebook.lastSyncedEtag,
+      );
       results.uploaded++;
       results.uploadedIds.push(notebook.id);
+      results.metadata[notebook.id] = { etag: typeof etag === "string" ? etag : null };
     } catch (error) {
       results.failed++;
       results.errors.push({ id: notebook.id, error: error.message });
@@ -590,7 +600,8 @@ export async function syncNotes(notes) {
     uploaded: 0,
     failed: 0,
     errors: [],
-    uploadedIds: [], // Track successfully uploaded IDs
+    uploadedIds: [],
+    metadata: {},
   };
 
   for (const note of notes) {
@@ -607,13 +618,12 @@ export async function syncNotes(notes) {
       };
 
       // Prepare content (strip internal _etag before saving)
-      const noteToUpload = { ...syncedNote };
-      delete noteToUpload._etag;
-      const content = JSON.stringify(noteToUpload, null, 2);
+      const content = JSON.stringify(syncedNote, null, 2);
 
-      await uploadFile(path, content, syncedNote.modified, note._etag);
+      const etag = await uploadFile(path, content, syncedNote.modified, note.lastSyncedEtag);
       results.uploaded++;
       results.uploadedIds.push(note.id);
+      results.metadata[note.id] = { etag: typeof etag === "string" ? etag : null };
       console.log(`Successfully uploaded note ${note.id}`);
     } catch (error) {
       results.failed++;
@@ -652,15 +662,17 @@ export async function downloadAllData() {
 
       // Download notebook metadata
       const notebookPath = getNotebookPath(notebookId);
-      const notebookContent = await downloadFile(notebookPath);
+      const { content: notebookContent, etag: notebookEtag } = await downloadFile(notebookPath);
 
       if (notebookContent) {
-        notebooks.push(JSON.parse(notebookContent));
+        const notebook = JSON.parse(notebookContent);
+        notebook.lastSyncedEtag = notebookEtag;
+        notebooks.push(notebook);
       }
 
       // Download tombstones for this notebook
       const tombstonePath = getNotebookTombstonePath(notebookId);
-      const tombstoneContent = await downloadFile(tombstonePath);
+      const { content: tombstoneContent } = await downloadFile(tombstonePath);
 
       if (tombstoneContent) {
         tombstones.set(notebookId, JSON.parse(tombstoneContent));
@@ -682,13 +694,11 @@ export async function downloadAllData() {
 
           const noteId = noteFile.name.replace(".json", "");
           const notePath = getNotePath(noteId, notebookId);
-          const noteContent = await downloadFile(notePath);
+          const { content: noteContent, etag: noteEtag } = await downloadFile(notePath);
 
           if (noteContent) {
             const note = JSON.parse(noteContent);
-            if (noteFile.etag) {
-              note._etag = noteFile.etag;
-            }
+            note.lastSyncedEtag = noteEtag || noteFile.etag;
             notes.push(note);
           }
         } catch (error) {
@@ -717,13 +727,11 @@ export async function downloadAllData() {
 
         const noteId = noteFile.name.replace(".json", "");
         const notePath = getNotePath(noteId, null);
-        const noteContent = await downloadFile(notePath);
+        const { content: noteContent, etag: noteEtag } = await downloadFile(notePath);
 
         if (noteContent) {
           const note = JSON.parse(noteContent);
-          if (noteFile.etag) {
-            note._etag = noteFile.etag;
-          }
+          note.lastSyncedEtag = noteEtag || noteFile.etag;
           notes.push(note);
         }
       } catch (error) {
@@ -733,7 +741,7 @@ export async function downloadAllData() {
 
     // Download quick notes tombstones
     const quickTombstonePath = getQuickNotesTombstonePath();
-    const quickTombstoneContent = await downloadFile(quickTombstonePath);
+    const { content: quickTombstoneContent } = await downloadFile(quickTombstonePath);
 
     if (quickTombstoneContent) {
       tombstones.set("quickNotes", JSON.parse(quickTombstoneContent));
@@ -743,6 +751,37 @@ export async function downloadAllData() {
   }
 
   return { notebooks, notes, tombstones };
+}
+
+/**
+ * Simple merge for strokes (union of unique strokes)
+ */
+function mergeStrokes(localStrokes, remoteStrokes) {
+  const remoteStrings = new Set(remoteStrokes.map((s) => JSON.stringify(s)));
+  const merged = [...remoteStrokes];
+
+  for (const s of localStrokes) {
+    if (!remoteStrings.has(JSON.stringify(s))) {
+      merged.push(s);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Attempt to merge two versions of a note
+ */
+function attemptMerge(local, remote) {
+  // If text content changed on both sides, we can't safely auto-merge
+  if (local.content !== remote.content) return null;
+
+  return {
+    ...local,
+    strokes: mergeStrokes(local.strokes || [], remote.strokes || []),
+    version: Math.max(local.version, remote.version) + 1,
+    modified: Date.now(),
+    synced: false,
+  };
 }
 
 /**
@@ -764,6 +803,7 @@ export async function fullSync(localNotebooks, localNotes) {
   // Step 2: Merge notebooks (newer wins)
   const notebooksToUpload = [];
   const notebooksToDownload = [];
+  const conflicts = { notebooks: [], notes: [] };
 
   // Create maps for quick lookup
   const localNotebookMap = new Map(localNotebooks.map((n) => [n.id, n]));
@@ -773,28 +813,28 @@ export async function fullSync(localNotebooks, localNotes) {
   for (const local of localNotebooks) {
     const remote = remoteNotebookMap.get(local.id);
 
-    const remoteVersion = remote?.version || 0;
-    const localVersion = local?.version || 0;
-
-    const shouldUpload = local.synced === false && localVersion >= remoteVersion;
-
-    if (shouldUpload) {
-      if (remote?._etag) {
-        local._etag = remote._etag;
+    if (!remote) {
+      if (local.synced === false) {
+        notebooksToUpload.push(local);
       }
+      continue;
+    }
+
+    const isModifiedLocally = local.synced === false;
+    const isModifiedRemotely = local.lastSyncedEtag !== remote.lastSyncedEtag;
+
+    if (isModifiedLocally && isModifiedRemotely) {
+      conflicts.notebooks.push({ local, remote });
+    } else if (isModifiedLocally) {
       notebooksToUpload.push(local);
+    } else if (isModifiedRemotely) {
+      notebooksToDownload.push(remote);
     }
   }
 
   // Check which remote notebooks should be downloaded
   for (const remote of remoteData.notebooks) {
-    const local = localNotebookMap.get(remote.id);
-
-    const remoteVersion = remote.version || 0;
-    const localVersion = local?.version || 0;
-    const shouldDownload = !local || remoteVersion > localVersion;
-
-    if (shouldDownload) {
+    if (!localNotebookMap.has(remote.id)) {
       notebooksToDownload.push(remote);
     }
   }
@@ -810,26 +850,35 @@ export async function fullSync(localNotebooks, localNotes) {
   for (const local of localNotes) {
     const remote = remoteNoteMap.get(local.id);
 
-    const remoteVersion = remote?.version || 0;
-    const localVersion = local?.version || 0;
+    if (!remote) {
+      if (local.synced === false) {
+        notesToUpload.push(local);
+      }
+      continue;
+    }
 
-    const shouldUpload = local.synced === false && localVersion >= remoteVersion;
+    const isModifiedLocally = local.synced === false;
+    const isModifiedRemotely = local.lastSyncedEtag !== remote.lastSyncedEtag;
 
-    if (shouldUpload) {
+    if (isModifiedLocally && isModifiedRemotely) {
+      const merged = attemptMerge(local, remote);
+      if (merged) {
+        // Use the remote ETag as the base for the upload to succeed via If-Match
+        const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote.lastSyncedEtag };
+        notesToUpload.push(mergedWithRemoteBase);
+      } else {
+        conflicts.notes.push({ local, remote });
+      }
+    } else if (isModifiedLocally) {
       notesToUpload.push(local);
+    } else if (isModifiedRemotely) {
+      notesToDownload.push(remote);
     }
   }
 
   // Check which remote notes should be downloaded
   for (const remote of remoteData.notes) {
-    const local = localNoteMap.get(remote.id);
-
-    const remoteVersion = remote.version || 0;
-    const localVersion = local?.version || 0;
-
-    const shouldDownload = !local || remoteVersion > localVersion;
-
-    if (shouldDownload) {
+    if (!localNoteMap.has(remote.id)) {
       notesToDownload.push(remote);
     }
   }
@@ -857,6 +906,9 @@ export async function fullSync(localNotebooks, localNotes) {
       notebooks: notebooksToDownload,
       notes: notesToDownload,
     },
+    conflicts,
+    notebooksToUpload,
+    notesToUpload,
   };
 }
 
@@ -876,7 +928,7 @@ export async function deleteRemoteNotebook(notebookId) {
 
     // Download current tombstone
     const tombstonePath = getNotebookTombstonePath(notebookId);
-    const tombstoneContent = await downloadFile(tombstonePath);
+    const { content: tombstoneContent } = await downloadFile(tombstonePath);
 
     const tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
 
@@ -910,7 +962,7 @@ export async function deleteRemoteNote(noteId, notebookId) {
       : getQuickNotesTombstonePath();
 
     // Download current tombstone
-    const tombstoneContent = await downloadFile(tombstonePath);
+    const { content: tombstoneContent } = await downloadFile(tombstonePath);
     let tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
 
     // Add to tombstone
@@ -958,7 +1010,7 @@ export async function downloadTombstone(notebookId) {
 
   const path = notebookId ? getNotebookTombstonePath(notebookId) : getQuickNotesTombstonePath();
 
-  const content = await downloadFile(path);
+  const { content } = await downloadFile(path);
 
   if (!content) {
     return createEmptyTombstone();
@@ -990,7 +1042,7 @@ export async function migrateToHierarchical() {
         if (file.name.startsWith("notebook_") && file.name.endsWith(".json")) {
           const notebookId = file.name.replace("notebook_", "").replace(".json", "");
           const path = getLegacyNotebookPath(notebookId);
-          const content = await downloadFile(path);
+          const { content } = await downloadFile(path);
 
           if (content) {
             notebooks.push(JSON.parse(content));
@@ -998,7 +1050,7 @@ export async function migrateToHierarchical() {
         } else if (file.name.startsWith("note_") && file.name.endsWith(".json")) {
           const noteId = file.name.replace("note_", "").replace(".json", "");
           const path = getLegacyNotePath(noteId);
-          const content = await downloadFile(path);
+          const { content } = await downloadFile(path);
 
           if (content) {
             notes.push(JSON.parse(content));

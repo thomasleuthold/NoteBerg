@@ -7,7 +7,7 @@
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
-import { showConfirmDialog } from "./modals.js";
+import { showConfirmDialog, showNoteInfoModal } from "./modals.js";
 
 // Editor state
 let currentEditor = null;
@@ -198,6 +198,9 @@ function renderEditor(container, _noteData) {
           <div class="toolbar-divider"></div>
           <button class="toolbar-btn" id="delete-note-btn" title="Delete note">
             🗑️
+          </button>
+          <button class="toolbar-btn" id="note-info-btn" title="Note properties">
+            ℹ️
           </button>
         </div>
       </div>
@@ -1231,6 +1234,13 @@ function attachToolbarListeners() {
 
   // Delete note
   document.getElementById("delete-note-btn")?.addEventListener("click", deleteCurrentNote);
+
+  // Note info
+  document.getElementById("note-info-btn")?.addEventListener("click", () => {
+    if (currentNoteData) {
+      showNoteInfoModal(currentNoteData);
+    }
+  });
 }
 
 /**

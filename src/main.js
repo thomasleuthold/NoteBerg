@@ -86,22 +86,6 @@ function setupEventListeners() {
     });
   }
 
-  // Settings button
-  const settingsBtn = document.getElementById("nav-settings");
-  if (settingsBtn) {
-    settingsBtn.addEventListener("click", () => {
-      navigateTo("settings");
-    });
-  }
-
-  // Recycle bin button
-  const recycleBinBtn = document.getElementById("recycle-bin-btn");
-  if (recycleBinBtn) {
-    recycleBinBtn.addEventListener("click", () => {
-      navigateTo("recyclebin");
-    });
-  }
-
   // New note button
   const newNoteBtn = document.getElementById("new-note-btn");
   if (newNoteBtn) {
