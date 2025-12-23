@@ -1567,6 +1567,15 @@ export function initNotebookEditorComponent() {
     }
   });
 
+  // Listen for data changes to refresh the editor if the current note was updated
+  window.addEventListener("datachange", async () => {
+    const noteId = getCurrentNoteId();
+    if (noteId && currentNoteData && noteId === currentNoteData.id) {
+      console.log("External data change detected for current note. Refreshing editor.");
+      await updateEditorContent(noteId);
+    }
+  });
+
   // Listen for navigation changes to cleanup
   window.addEventListener("navigate", (e) => {
     if (e.detail.previousMode === "notebook") {
@@ -1575,6 +1584,62 @@ export function initNotebookEditorComponent() {
   });
 
   console.log("Notebook editor component initialized");
+}
+
+/**
+ * Update editor content after external changes (e.g., sync) while preserving state.
+ * @param {string} noteId - The ID of the note to update.
+ */
+async function updateEditorContent(noteId) {
+  if (!noteId || !currentNoteData || noteId !== currentNoteData.id) {
+    return; // Should not happen if called from the event listener, but good practice
+  }
+
+  // 1. Preserve state (scroll and zoom)
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  const scrollLeft = wrapper ? wrapper.scrollLeft : 0;
+  const scrollTop = wrapper ? wrapper.scrollTop : 0;
+  const currentZoom = zoomScale; // `zoomScale` is a module-level variable
+
+  // 2. Reload data from storage
+  const newNoteData = await getNote(noteId);
+  if (!newNoteData) {
+    // The note may have been deleted on another client and synced.
+    console.log(`Note ${noteId} not found after sync. Navigating away.`);
+    cleanupNotebookEditor();
+    navigateTo("overview"); // Navigate to a safe place
+    return;
+  }
+  currentNoteData = newNoteData;
+
+  // 3. Re-render content if it has changed
+  if (currentEditor) {
+    const currentHtmlContent = currentEditor.innerHTML;
+    const newHtmlContent = markdownToHtml(newNoteData.content);
+    if (currentHtmlContent !== newHtmlContent) {
+      currentEditor.innerHTML = newHtmlContent;
+    }
+  }
+
+  if (canvas) {
+    strokes = newNoteData.strokes || [];
+    // Recalculate content bounds based on new strokes
+    updateContentBounds();
+    // `resizeCanvas` will handle resizing and `redrawCanvas`
+    resizeCanvas();
+  }
+
+  // 4. Restore state
+  setZoom(currentZoom);
+  if (wrapper) {
+    // Use requestAnimationFrame to ensure the browser has time to reflow
+    requestAnimationFrame(() => {
+      wrapper.scrollLeft = scrollLeft;
+      wrapper.scrollTop = scrollTop;
+    });
+  }
+
+  console.log("Notebook editor content updated and state preserved.");
 }
 
 /**

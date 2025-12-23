@@ -141,10 +141,8 @@ async function performSync() {
       }, 2000);
     }
 
-    // Trigger a UI refresh if notes/notebooks were downloaded
-    if (downloadedNotebooks > 0 || downloadedNotes > 0) {
-      window.dispatchEvent(new CustomEvent("notes-updated"));
-    }
+    // Dispatch a global event to notify all components that data has changed.
+    window.dispatchEvent(new CustomEvent("datachange"));
   } catch (error) {
     console.error("Sync failed:", error);
 

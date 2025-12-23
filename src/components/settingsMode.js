@@ -421,11 +421,9 @@ export function renderSettings(container) {
 
         syncStatus.textContent = statusMsg;
 
-        // Trigger a UI refresh if notes/notebooks were downloaded
-        if (downloadedNotebooks > 0 || downloadedNotes > 0) {
-          // Dispatch event to refresh sidebar
-          window.dispatchEvent(new CustomEvent("notes-updated"));
-        }
+        // Dispatch a global event to notify all components that data has changed.
+        // This is safer than conditional dispatching, as sync can have many side effects.
+        window.dispatchEvent(new CustomEvent("datachange"));
       };
 
       try {
