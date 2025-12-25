@@ -16,6 +16,8 @@ let isDrawMode = false;
 let isEraserMode = false; // Manual eraser toggle
 let canvas = null;
 let ctx = null;
+let cursorCanvas = null;
+let cursorCtx = null;
 let isDrawing = false;
 let isErasing = false; // Track if currently erasing
 let currentStroke = [];
@@ -23,7 +25,8 @@ let strokes = [];
 let lastExpansionTime = 0;
 const expansionCooldown = 500; // Minimum ms between expansions
 let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
-const eraserRadius = 20; // Eraser size in pixels
+let autoActivatedEraserMode = false; // Track if eraser mode was auto-activated by stylus button
+const eraserRadius = 10; // Eraser size in pixels
 
 // Pen settings state
 let currentPenWidth = 2;
@@ -94,6 +97,24 @@ export async function initNotebookEditor(noteId) {
 function renderEditor(container, _noteData) {
   container.innerHTML = `
     <style>
+      .editor-content-wrapper {
+        position: relative;
+      }
+      #text-editor {
+        position: relative;
+        z-index: 1; /* Behind the canvases */
+      }
+      .drawing-canvas, .cursor-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 10; /* On top of the text editor */
+        pointer-events: none; /* Default to none */
+        touch-action: none; /* Prevent browser gesture handling */
+      }
+      .drawing-canvas.active {
+        pointer-events: auto; /* Enable events only when active */
+      }
       .toolbar-btn-container {
         position: relative;
         display: inline-block;
@@ -208,6 +229,7 @@ function renderEditor(container, _noteData) {
       <div class="editor-content-wrapper">
         <div id="text-editor" class="text-editor" contenteditable="true"></div>
         <canvas id="drawing-canvas" class="drawing-canvas"></canvas>
+        <canvas id="cursor-canvas" class="cursor-canvas"></canvas>
       </div>
     </div>
   `;
@@ -259,9 +281,11 @@ function initTextEditor(noteData) {
  */
 function initCanvasLayer(noteData) {
   canvas = document.getElementById("drawing-canvas");
-  if (!canvas) return;
+  cursorCanvas = document.getElementById("cursor-canvas");
+  if (!canvas || !cursorCanvas) return;
 
   ctx = canvas.getContext("2d");
+  cursorCtx = cursorCanvas.getContext("2d");
 
   // Initial canvas sizing
   window.addEventListener("resize", resizeCanvas);
@@ -272,50 +296,38 @@ function initCanvasLayer(noteData) {
   // Load existing strokes
   if (noteData.strokes && Array.isArray(noteData.strokes)) {
     strokes = noteData.strokes;
-    // Calculate content bounds from existing strokes
     updateContentBounds();
   }
 
-  // Size canvas AFTER loading strokes and calculating bounds
-  // Use requestAnimationFrame to ensure DOM is fully laid out
   requestAnimationFrame(() => {
     resizeCanvas();
     redrawCanvas();
   });
 
-  // Canvas drawing events with pointer capture for better performance
-  canvas.addEventListener("pointerdown", (e) => {
-    console.log("=== POINTERDOWN WRAPPER ===", {
-      pointerType: e.pointerType,
-      isDrawMode: isDrawMode,
-      autoSwitchedToDrawMode: autoSwitchedToDrawMode,
-      canvasHasActiveClass: canvas.classList.contains("active"),
-      canvasPointerEvents: canvas.style.pointerEvents,
-    });
-
-    // Call handleCanvasPointerDown first - it will set autoSwitchedToDrawMode for pen
-    // and return early for touch if needed
-    const shouldContinue = handleCanvasPointerDown(e);
-
-    // If handleCanvasPointerDown returned false, it switched to text mode - don't prevent default
-    if (shouldContinue === false) {
-      return;
+  // Prevent context menu on right-click (e.g., from pen barrel button)
+  canvas.addEventListener("contextmenu", (e) => {
+    if (e.pointerType === "pen") {
+      e.preventDefault();
     }
+  });
 
-    if (isDrawMode) {
-      e.preventDefault(); // Prevent scrolling and default touch behavior
+  // Canvas drawing events
+  canvas.addEventListener("pointerdown", (e) => {
+    const shouldContinue = handleCanvasPointerDown(e);
+    if (shouldContinue === false) return;
+    if (isDrawMode || isErasing) {
+      e.preventDefault();
       canvas.setPointerCapture(e.pointerId);
     }
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (isDrawing && isDrawMode) {
-      e.preventDefault(); // Prevent scrolling during drawing
-    }
+    // Make prevention more aggressive: prevent default on any move in draw mode or erasing.
+    if (isDrawMode || isErasing) e.preventDefault();
     handleCanvasPointerMove(e);
   });
   canvas.addEventListener("pointerup", (e) => {
     handleCanvasPointerUp(e);
-    if (isDrawMode && canvas.hasPointerCapture(e.pointerId)) {
+    if ((isDrawMode || isErasing) && canvas.hasPointerCapture(e.pointerId)) {
       canvas.releasePointerCapture(e.pointerId);
     }
   });
@@ -325,18 +337,11 @@ function initCanvasLayer(noteData) {
   canvas.addEventListener(
     "touchstart",
     (e) => {
-      // Check if we need to auto-switch to text/pan mode
-      // IMPORTANT: Only switch if we're NOT currently drawing (to avoid switching mid-stroke)
-      if (autoSwitchedToDrawMode && isDrawMode && !isDrawing) {
-        console.log("Touch start detected with auto-switched draw mode - switching to text mode");
+      if (autoSwitchedToDrawMode && isDrawMode && !isDrawing && !isErasing) {
         switchToTextMode();
-        // Don't prevent default - allow scrolling/panning
         return;
       }
-
-      if (isDrawMode) {
-        e.preventDefault();
-      }
+      if (isDrawMode || isErasing) e.preventDefault();
     },
     { passive: false },
   );
@@ -344,9 +349,7 @@ function initCanvasLayer(noteData) {
   canvas.addEventListener(
     "touchmove",
     (e) => {
-      if (isDrawMode) {
-        e.preventDefault();
-      }
+      if (isDrawMode || isErasing) e.preventDefault();
     },
     { passive: false },
   );
@@ -356,27 +359,17 @@ function initCanvasLayer(noteData) {
  * Resize canvas to match container
  */
 function resizeCanvas() {
-  if (!canvas || !currentEditor) return;
+  if (!canvas || !cursorCanvas || !currentEditor) return;
 
   const wrapper = canvas.parentElement;
   const rect = wrapper.getBoundingClientRect();
-
-  // Store current strokes
   const currentStrokes = [...strokes];
 
-  // Account for zoom when calculating base dimensions
-  // rect.width/height are the scaled sizes, we need the unscaled sizes
   const baseWidth = rect.width / zoomScale;
   const baseHeight = rect.height / zoomScale;
-
-  // Get the actual scrollable content height from the text editor
-  // The scrollHeight already accounts for zoom via CSS transform
-  const textEditorHeight = currentEditor.scrollHeight / zoomScale + 200; // Extra padding for growth
-
-  // Also check the wrapper's scroll height
+  const textEditorHeight = currentEditor.scrollHeight / zoomScale + 200;
   const wrapperScrollHeight = wrapper.scrollHeight / zoomScale;
 
-  // Use the maximum of all measurements to ensure canvas is large enough
   const requiredHeight = Math.max(
     textEditorHeight,
     wrapperScrollHeight,
@@ -384,26 +377,18 @@ function resizeCanvas() {
     minCanvasHeight,
     800,
   );
-
-  // Calculate required width based on content bounds
-  // Don't let canvas shrink below current width to prevent squeezing
   const requiredWidth = Math.max(baseWidth, minCanvasWidth, canvas.width, 800);
 
-  // Resize canvas to match text editor dimensions (unscaled)
-  canvas.width = requiredWidth;
-  canvas.height = requiredHeight;
+  // Resize both canvases
+  canvas.width = cursorCanvas.width = requiredWidth;
+  canvas.height = cursorCanvas.height = requiredHeight;
+  canvas.style.width = cursorCanvas.style.width = `${requiredWidth}px`;
+  canvas.style.height = cursorCanvas.style.height = `${requiredHeight}px`;
 
-  // Set canvas CSS size explicitly (in unscaled pixels)
-  // This prevents squeezing when window resizes
-  canvas.style.width = `${requiredWidth}px`;
-  canvas.style.height = `${requiredHeight}px`;
-
-  // Update text editor width to match canvas (important for horizontal scroll)
   if (currentEditor) {
     currentEditor.style.minWidth = `${requiredWidth}px`;
   }
 
-  // Restore strokes
   strokes = currentStrokes;
   redrawCanvas();
 }
@@ -413,60 +398,37 @@ function resizeCanvas() {
  * @param {number} additionalHeight - Height to add in pixels (in unscaled space)
  */
 function expandCanvas(additionalHeight) {
-  if (!canvas) return;
+  if (!canvas || !cursorCanvas) return;
 
-  // Prevent too-frequent expansions
   const now = Date.now();
-  if (now - lastExpansionTime < expansionCooldown) {
-    return;
-  }
+  if (now - lastExpansionTime < expansionCooldown) return;
   lastExpansionTime = now;
 
   const wrapper = canvas.parentElement;
   const rect = wrapper.getBoundingClientRect();
-
-  // Store current strokes AND the current stroke being drawn
   const currentStrokes = [...strokes];
-  const currentStrokeInProgress = currentStroke.x
-    ? {
-        pointerType: currentStroke.pointerType,
-        x: [...currentStroke.x],
-        y: [...currentStroke.y],
-        pressure: [...currentStroke.pressure],
-        time: [...currentStroke.time],
-      }
-    : null;
+  const currentStrokeInProgress = currentStroke.x ? { ...currentStroke } : null;
 
-  // Calculate new height (additionalHeight is already in unscaled space)
   const newHeight = canvas.height + additionalHeight;
-
-  // Calculate base width accounting for zoom
   const baseWidth = rect.width / zoomScale;
 
-  // Resize canvas (dimensions in unscaled space)
-  canvas.width = baseWidth;
-  canvas.height = newHeight;
+  canvas.width = cursorCanvas.width = baseWidth;
+  canvas.height = cursorCanvas.height = newHeight;
+  canvas.style.width = cursorCanvas.style.width = `${baseWidth}px`;
+  canvas.style.height = cursorCanvas.style.height = `${newHeight}px`;
 
-  // Set canvas CSS size explicitly
-  canvas.style.width = `${baseWidth}px`;
-  canvas.style.height = `${newHeight}px`;
-
-  // Also expand the text editor to match (needs to be scaled for CSS transform)
   if (currentEditor) {
     currentEditor.style.minHeight = `${newHeight}px`;
   }
 
-  // Restore completed strokes
   strokes = currentStrokes;
   redrawCanvas();
 
-  // Restore the current stroke being drawn
   if (currentStrokeInProgress && currentStrokeInProgress.x.length > 0) {
     currentStroke = currentStrokeInProgress;
     drawStroke(currentStroke);
   }
 
-  // Update expansion zone indicator position
   updateExpansionZoneIndicator(null, true);
 }
 
@@ -477,33 +439,25 @@ function expandCanvas(additionalHeight) {
  */
 function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
   if (!canvas) return;
-
   let indicator = document.getElementById("expansion-zone-indicator");
-
-  // Create indicator if it doesn't exist
   if (!indicator) {
     indicator = document.createElement("div");
     indicator.id = "expansion-zone-indicator";
     indicator.className = "expansion-zone-indicator";
     canvas.parentElement.appendChild(indicator);
   }
-
   const expansionThreshold = 300;
   const distanceFromBottom = canvas.height - (currentY || 0);
 
-  // Show indicator when in expansion zone or force update
   if ((currentY !== null && distanceFromBottom < expansionThreshold) || forceUpdate) {
     const triggerLine = canvas.height - expansionThreshold;
     indicator.style.top = `${triggerLine}px`;
     indicator.style.display = "block";
-
-    // Fade in/out based on proximity
     if (currentY !== null) {
       const opacity = Math.max(0.2, Math.min(0.6, 1 - distanceFromBottom / expansionThreshold));
       indicator.style.opacity = opacity;
     }
   } else if (currentY === null) {
-    // Hide indicator when not drawing
     indicator.style.display = "none";
   }
 }
@@ -512,24 +466,13 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
  * Handle pointer down for auto mode detection
  */
 function handlePointerDown(e) {
-  console.log("Text editor pointer down:", {
-    pointerType: e.pointerType,
-    isDrawMode: isDrawMode,
-    autoSwitchedToDrawMode: autoSwitchedToDrawMode,
-  });
-
-  // Auto-detect stylus (pen) input - switch to draw mode
   if (e.pointerType === "pen") {
     if (!isDrawMode) {
-      console.log("Switching to draw mode (stylus detected)");
       switchToDrawMode();
-      autoSwitchedToDrawMode = true; // Remember this was auto-switched
+      autoSwitchedToDrawMode = true;
     }
     e.preventDefault();
-  }
-  // Auto-detect touch input - switch to text/pan mode if we auto-switched to draw mode
-  else if (e.pointerType === "touch" && autoSwitchedToDrawMode) {
-    console.log("Touch detected with auto-switched draw mode - switching to text mode");
+  } else if (e.pointerType === "touch" && autoSwitchedToDrawMode) {
     if (isDrawMode) {
       switchToTextMode();
     }
@@ -541,9 +484,8 @@ function handlePointerDown(e) {
  */
 function handlePointerMove(e) {
   if (e.pointerType === "pen" && !isDrawMode) {
-    console.log("Stylus hover detected on text editor - switching to draw mode");
     switchToDrawMode();
-    autoSwitchedToDrawMode = true; // Remember this was auto-switched
+    autoSwitchedToDrawMode = true;
     updateModeIndicator();
   }
 }
@@ -559,34 +501,41 @@ function handlePointerUp(_e) {
  * Get correct canvas coordinates accounting for scroll and zoom
  */
 function getCanvasCoordinates(e) {
-  // Get the actual pointer coordinates
   let clientX = e.clientX;
   let clientY = e.clientY;
 
-  // For touch events, use the first touch point
   if (e.touches && e.touches.length > 0) {
     clientX = e.touches[0].clientX;
     clientY = e.touches[0].clientY;
   }
 
-  // Get canvas position relative to viewport
   const rect = canvas.getBoundingClientRect();
-
-  // Calculate coordinates relative to canvas
   const x = clientX - rect.left;
   const y = clientY - rect.top;
-
-  // Scale coordinates from display size to canvas internal size
-  // rect.width/height includes the CSS zoom transform effect
-  // canvas.width/height is the actual internal size (unzoomed)
-  // So scaleX/scaleY accounts for both the CSS sizing and zoom
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
 
-  return {
-    x: x * scaleX,
-    y: y * scaleY,
-  };
+  return { x: x * scaleX, y: y * scaleY };
+}
+
+function isEraserEvent(e) {
+  // 1. Check for dedicated eraser pointer type
+  if (e.pointerType === "eraser") {
+    return true;
+  }
+  // 2. For pens, check for eraser button states
+  if (e.pointerType === "pen") {
+    // The `buttons` property is a bitmask. The value 2 represents the secondary
+    // (barrel) button. This is the most reliable check for S Pen and other active styluses.
+    if ((e.buttons & 2) === 2) {
+      return true;
+    }
+    // As a fallback for some devices, check the `button` property on down events.
+    if (e.type === "pointerdown" && e.button === 2) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -594,98 +543,51 @@ function getCanvasCoordinates(e) {
  * @returns {boolean} false if mode was switched to text (touch after auto-switch), true otherwise
  */
 function handleCanvasPointerDown(e) {
-  // Debug logging - including pointer type and buttons
-  console.log("Canvas pointer down:", {
-    pointerType: e.pointerType,
-    buttons: e.buttons,
-    button: e.button,
-    pointerTypeName: e.pointerType,
-    isDrawMode: isDrawMode,
-    autoSwitchedToDrawMode: autoSwitchedToDrawMode,
-  });
-
-  // CRITICAL: Check for stylus/pen input and set auto-switch flag
-  // This is needed because once in draw mode, the canvas captures events and text editor doesn't
   if (e.pointerType === "pen" || e.pointerType === "eraser") {
-    console.log("Stylus detected on canvas - ensuring auto-switch flag is set");
-    if (!isDrawMode) {
-      switchToDrawMode();
-    }
-    autoSwitchedToDrawMode = true; // Always set when stylus is used
-    updateModeIndicator(); // Update the indicator immediately
+    if (!isDrawMode) switchToDrawMode();
+    autoSwitchedToDrawMode = true;
   }
 
-  // CRITICAL: Check for auto-switch to text/pan mode when touch is detected
-  // This must happen AFTER checking for pen, so pen sets the flag first
-  // IMPORTANT: Only switch if we're NOT currently drawing (to avoid switching mid-stroke)
-  if (e.pointerType === "touch" && autoSwitchedToDrawMode && !isDrawing) {
-    console.log(
-      "Touch on canvas detected with auto-switched draw mode - switching to text mode for panning",
-    );
+  if (e.pointerType === "touch" && autoSwitchedToDrawMode && !isDrawing && !isErasing) {
     switchToTextMode();
-    e.stopPropagation(); // Stop event propagation
-    e.preventDefault(); // Prevent default to avoid any drawing
-    return false; // Signal to wrapper that we switched to text mode
+    e.stopPropagation();
+    e.preventDefault();
+    return false;
   }
 
-  // If we're not in draw mode, don't proceed with drawing
   if (!isDrawMode) return true;
 
-  // Check if eraser is active
-  // Method 1: Manual eraser mode (user clicked eraser button)
-  // Method 2: Automatic detection for devices that support it:
-  //   - Check if pointerType is 'eraser' (some devices report this)
-  //   - Check button state for various stylus types:
-  //     - Samsung S Pen: button === 2 (secondary button when pen button held) - NOTE: May not work on S Pen
-  //     - Other stylus: button === 5 or buttons === 32
-  const isEraserButton =
-    e.pointerType === "eraser" || e.button === 2 || e.button === 5 || e.buttons === 32;
-  const shouldErase = isEraserMode || isEraserButton;
+  // --- Eraser Activation (Stateful approach) ---
+  const isEraser = isEraserMode || isEraserEvent(e);
 
-  if (shouldErase) {
-    console.log("✓ ERASER ACTIVE - starting erase mode", {
-      isEraserMode: isEraserMode,
-      isEraserButton: isEraserButton,
-    });
+  if (isEraser) {
+    // Set the state for the duration of this interaction
     isErasing = true;
-    isDrawing = false; // Don't draw while erasing
+    isDrawing = false;
+
+    // Activate UI feedback if not already manually in eraser mode
+    if (!isEraserMode) {
+      isEraserMode = true;
+      autoActivatedEraserMode = true;
+      updateToolbarButtons();
+    }
   } else {
-    console.log("✗ Normal drawing mode");
     isErasing = false;
     isDrawing = true;
     currentStroke = [];
   }
+  // --- END ERASER LOGIC ---
 
   const { x, y } = getCanvasCoordinates(e);
 
-  // More debug logging
-  console.log("Starting stroke:", {
-    pointerType: e.pointerType,
-    button: e.button,
-    buttons: e.buttons,
-    isErasing: isErasing,
-    x,
-    y,
-    canvasWidth: canvas.width,
-    canvasHeight: canvas.height,
-  });
-
-  // Update mode indicator with debug info
-  updateModeIndicator({
-    pointerType: e.pointerType,
-    button: e.button,
-    buttons: e.buttons,
-    isErasing: isErasing,
-  });
-
   if (isErasing) {
-    // Start erasing at this point
     eraseStrokesAtPoint(x, y);
+    drawEraserCursor(x, y);
   } else {
-    // Initialize stroke structure if this is the first point
+    // Start drawing
     if (currentStroke.length === 0) {
       currentStroke = {
-        pointerType: e.pointerType, // Store once per stroke
+        pointerType: e.pointerType,
         x: [],
         y: [],
         pressure: [],
@@ -694,75 +596,58 @@ function handleCanvasPointerDown(e) {
         width: currentPenWidth,
       };
     }
-
-    // Add point data to arrays
     currentStroke.x.push(x);
     currentStroke.y.push(y);
     currentStroke.pressure.push(e.pressure || 0.5);
     currentStroke.time.push(Date.now());
   }
-
-  return true; // Continue with normal drawing
+  return true;
 }
 
 /**
  * Handle canvas pointer move
  */
 function handleCanvasPointerMove(e) {
-  if ((!isDrawing && !isErasing) || !isDrawMode) return;
+  if (!isDrawMode || (!isDrawing && !isErasing)) {
+    return;
+  }
 
   const { x, y } = getCanvasCoordinates(e);
 
-  // Update mode indicator with debug info during move
-  updateModeIndicator({
-    pointerType: e.pointerType,
-    button: e.button,
-    buttons: e.buttons,
-    isErasing: isErasing,
-  });
-
   if (isErasing) {
-    // Erase strokes at current position
     eraseStrokesAtPoint(x, y);
-
-    // Draw eraser cursor indicator
     drawEraserCursor(x, y);
-  } else {
-    // Normal drawing - add point to arrays
+  } else if (isDrawing) {
+    // Clear cursor canvas when moving to draw
+    if (cursorCtx) {
+      cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+    }
+
     currentStroke.x.push(x);
     currentStroke.y.push(y);
     currentStroke.pressure.push(e.pressure || 0.5);
     currentStroke.time.push(Date.now());
 
-    // Check if drawing near bottom and expand if needed
-    const expansionThreshold = 300; // Trigger when within 300px of bottom
-    const distanceFromBottom = canvas.height - y;
-
-    if (distanceFromBottom < expansionThreshold) {
-      expandCanvas(800); // Add 800px more space
+    if (canvas.height - y < 300) {
+      expandCanvas(800);
     }
 
-    // Draw incrementally for better performance
     const pointCount = currentStroke.x.length;
     if (pointCount > 1) {
       const prevX = currentStroke.x[pointCount - 2];
       const prevY = currentStroke.y[pointCount - 2];
       const currX = currentStroke.x[pointCount - 1];
       const currY = currentStroke.y[pointCount - 1];
-
       const palette = getThemePalette();
       ctx.strokeStyle = palette[currentStroke.colorIndex] || palette[0];
       ctx.lineWidth = currentStroke.width || 2;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-
       ctx.beginPath();
       ctx.moveTo(prevX, prevY);
       ctx.lineTo(currX, currY);
       ctx.stroke();
     }
-
-    // Update expansion zone indicator
     updateExpansionZoneIndicator(y);
   }
 }
@@ -771,41 +656,32 @@ function handleCanvasPointerMove(e) {
  * Handle canvas pointer up
  */
 function handleCanvasPointerUp(_e) {
-  if (isErasing) {
-    isErasing = false;
-    // Redraw canvas to remove eraser cursor
-    redrawCanvas();
-    // Auto-save after erasing
-    setTimeout(async () => {
-      await saveNoteContent();
-    }, 500);
-    return;
+  // Deactivate auto-activated eraser mode on pointer up
+  if (autoActivatedEraserMode) {
+    isEraserMode = false;
+    autoActivatedEraserMode = false;
+    updateToolbarButtons();
   }
 
-  if (!isDrawing) return;
+  // Clear the cursor canvas
+  if (cursorCtx) {
+    cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  }
 
+  // Reset drawing/erasing state
+  const wasErasing = isErasing;
+  isErasing = false;
+  const wasDrawing = isDrawing;
   isDrawing = false;
 
-  if (currentStroke.x && currentStroke.x.length > 0) {
-    // Save stroke (deep copy)
-    strokes.push({
-      pointerType: currentStroke.pointerType,
-      x: [...currentStroke.x],
-      y: [...currentStroke.y],
-      pressure: [...currentStroke.pressure],
-      time: [...currentStroke.time],
-      colorIndex: currentStroke.colorIndex,
-      width: currentStroke.width,
-    });
-    currentStroke = [];
-
-    // Hide expansion zone indicator
-    updateExpansionZoneIndicator(null);
-
-    // Update content bounds for overflow handling
-    updateContentBounds();
-
-    // Auto-save
+  // Save if an action was completed
+  if (wasErasing || (wasDrawing && currentStroke.x && currentStroke.x.length > 0)) {
+    if (wasDrawing) {
+      strokes.push({ ...currentStroke });
+      currentStroke = [];
+      updateExpansionZoneIndicator(null);
+      updateContentBounds();
+    }
     setTimeout(async () => {
       await saveNoteContent();
     }, 500);
@@ -817,21 +693,16 @@ function handleCanvasPointerUp(_e) {
  */
 function drawStroke(stroke) {
   if (!ctx || !stroke.x || stroke.x.length < 2) return;
-
   const pointCount = stroke.x.length;
-
   const palette = getThemePalette();
-  // Use colorIndex if available (theme-aware), fallback to hardcoded color (legacy)
   ctx.strokeStyle =
     stroke.colorIndex !== undefined ? palette[stroke.colorIndex] : stroke.color || palette[0];
   ctx.lineWidth = stroke.width || 2;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-
   ctx.beginPath();
   ctx.moveTo(stroke.x[0], stroke.y[0]);
 
-  // Use quadratic curves for smoother lines
   if (pointCount === 2) {
     ctx.lineTo(stroke.x[1], stroke.y[1]);
   } else {
@@ -840,7 +711,6 @@ function drawStroke(stroke) {
       const yc = (stroke.y[i] + stroke.y[i + 1]) / 2;
       ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], xc, yc);
     }
-    // Draw last segment
     const lastIdx = pointCount - 1;
     const secondLastIdx = pointCount - 2;
     ctx.quadraticCurveTo(
@@ -850,7 +720,6 @@ function drawStroke(stroke) {
       stroke.y[lastIdx],
     );
   }
-
   ctx.stroke();
 }
 
@@ -859,13 +728,7 @@ function drawStroke(stroke) {
  */
 function redrawCanvas() {
   if (!ctx) return;
-
-  // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // Draw all strokes
-  // Note: Zoom is handled by CSS transform on the canvas element,
-  // so we don't apply ctx.scale() here
   strokes.forEach((stroke) => {
     drawStroke(stroke);
   });
@@ -883,22 +746,17 @@ function redrawCanvas() {
  * @returns {boolean} True if point is within threshold distance
  */
 function isPointNearLine(px, py, x1, y1, x2, y2, threshold) {
-  // Calculate distance from point to line segment
   const A = px - x1;
   const B = py - y1;
   const C = x2 - x1;
   const D = y2 - y1;
-
   const dot = A * C + B * D;
   const lenSq = C * C + D * D;
   let param = -1;
-
   if (lenSq !== 0) {
     param = dot / lenSq;
   }
-
   let xx, yy;
-
   if (param < 0) {
     xx = x1;
     yy = y1;
@@ -909,11 +767,9 @@ function isPointNearLine(px, py, x1, y1, x2, y2, threshold) {
     xx = x1 + param * C;
     yy = y1 + param * D;
   }
-
   const dx = px - xx;
   const dy = py - yy;
   const distance = Math.sqrt(dx * dx + dy * dy);
-
   return distance <= threshold;
 }
 
@@ -926,31 +782,23 @@ function isPointNearLine(px, py, x1, y1, x2, y2, threshold) {
  */
 function strokeIntersectsEraser(stroke, eraserX, eraserY) {
   if (!stroke || !stroke.x || stroke.x.length === 0) return false;
-
   const pointCount = stroke.x.length;
-
-  // Check each segment of the stroke
   for (let i = 0; i < pointCount - 1; i++) {
     const x1 = stroke.x[i];
     const y1 = stroke.y[i];
     const x2 = stroke.x[i + 1];
     const y2 = stroke.y[i + 1];
-
     if (isPointNearLine(eraserX, eraserY, x1, y1, x2, y2, eraserRadius)) {
       return true;
     }
   }
-
-  // Also check if any point is within eraser radius
   for (let i = 0; i < pointCount; i++) {
     const dx = stroke.x[i] - eraserX;
     const dy = stroke.y[i] - eraserY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    if (distance <= eraserRadius) {
+    if (Math.sqrt(dx * dx + dy * dy) <= eraserRadius) {
       return true;
     }
   }
-
   return false;
 }
 
@@ -960,40 +808,27 @@ function strokeIntersectsEraser(stroke, eraserX, eraserY) {
  * @param {number} y - Y coordinate
  */
 function eraseStrokesAtPoint(x, y) {
-  // Filter out strokes that intersect with the eraser
   const originalLength = strokes.length;
   strokes = strokes.filter((stroke) => !strokeIntersectsEraser(stroke, x, y));
-
-  // Only redraw if strokes were removed
   if (strokes.length < originalLength) {
-    console.log(`Erased ${originalLength - strokes.length} stroke(s)`);
     redrawCanvas();
-    // Update content bounds after erasing
     updateContentBounds();
   }
 }
 
 /**
- * Draw eraser cursor indicator
+ * Draw eraser cursor indicator on the top canvas
  * @param {number} x - X coordinate
  * @param {number} y - Y coordinate
  */
 function drawEraserCursor(x, y) {
-  if (!ctx) return;
-
-  // Save context state
-  ctx.save();
-
-  // Draw eraser circle outline
-  ctx.strokeStyle = "#ff0000";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([5, 5]); // Dashed line
-  ctx.beginPath();
-  ctx.arc(x, y, eraserRadius, 0, 2 * Math.PI);
-  ctx.stroke();
-
-  // Restore context state
-  ctx.restore();
+  if (!cursorCtx) return;
+  cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  cursorCtx.strokeStyle = "red";
+  cursorCtx.lineWidth = 1;
+  cursorCtx.beginPath();
+  cursorCtx.arc(x, y, eraserRadius, 0, 2 * Math.PI);
+  cursorCtx.stroke();
 }
 
 /**
@@ -1088,10 +923,10 @@ function toggleEraserMode() {
   }
 
   isEraserMode = !isEraserMode;
+  autoSwitchedToDrawMode = false; // This is a manual action, so clear the auto-switch flag.
 
   // If enabling eraser mode, make sure we're in draw mode
   if (isEraserMode && !isDrawMode) {
-    autoSwitchedToDrawMode = false; // Clear auto-switch flag
     switchToDrawMode();
   }
 
