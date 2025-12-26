@@ -105,6 +105,14 @@ function toggleSidebar() {
     } else {
       sidebar.style.display = "flex";
     }
+
+    // Trigger resize event for canvas redraw after sidebar toggle
+    // Use requestAnimationFrame to ensure layout has updated
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+    });
   }
 }
 

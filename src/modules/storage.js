@@ -57,23 +57,23 @@ export async function initStorage() {
  */
 function generateId() {
   // Try native crypto.randomUUID() first (works in secure contexts and Tauri)
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
 
   // Fallback for non-secure contexts (HTTP dev server on mobile)
   // Generate UUID v4 using crypto.getRandomValues or Math.random as last resort
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
     // Use crypto.getRandomValues for better randomness
-    return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-      (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+    return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
+      (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16),
     );
   }
 
   // Last resort: Math.random (less secure but works everywhere)
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
 }
@@ -191,6 +191,7 @@ export async function createNote({ title, notebookId = null }) {
     content: "", // Markdown content
     strokes: [], // Array of drawing strokes
     formatVersion: 1, // Stroke format version
+    background: "none", // Background pattern: none, ruled-narrow, ruled-medium, ruled-wide, grid-small, grid-medium, grid-large
     created: Date.now(),
     modified: Date.now(),
     version: 1,

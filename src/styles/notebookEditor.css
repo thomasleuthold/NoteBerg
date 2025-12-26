@@ -163,7 +163,19 @@
   margin: 0.25em 0;
 }
 
-/* Canvas drawing layer */
+/* Background canvas layer (patterns/rules) */
+.background-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 0;
+  display: block;
+  touch-action: none;
+}
+
+/* Canvas drawing layer (strokes) */
 .drawing-canvas {
   position: absolute;
   top: 0;
@@ -181,6 +193,18 @@
   pointer-events: auto;
 }
 
+/* Cursor canvas layer (eraser cursor, etc.) */
+.cursor-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 3;
+  display: block;
+  touch-action: none;
+}
+
 /* Expansion zone indicator */
 .expansion-zone-indicator {
   position: absolute;
@@ -189,7 +213,7 @@
   height: 2px;
   background: linear-gradient(to right, transparent, var(--color-primary), transparent);
   pointer-events: none;
-  z-index: 3;
+  z-index: 4;
   display: none;
   opacity: 0.4;
   transition: opacity 0.2s ease;

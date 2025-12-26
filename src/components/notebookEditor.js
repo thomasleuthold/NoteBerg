@@ -16,6 +16,8 @@ let isDrawMode = false;
 let isEraserMode = false; // Manual eraser toggle
 let canvas = null;
 let ctx = null;
+let backgroundCanvas = null;
+let backgroundCtx = null;
 let cursorCanvas = null;
 let cursorCtx = null;
 let isDrawing = false;
@@ -46,6 +48,18 @@ const zoomStep = 0.1; // Zoom increment per step
 let lastTouchDistance = null;
 let initialPinchZoom = null;
 
+// Resize throttling
+let resizeThrottleTimer = null;
+let lastResizeTime = 0;
+
+// Cached theme palette to avoid repeated theme lookups
+let cachedPalette = null;
+let cachedTheme = null;
+
+// Cached background pattern colors to avoid repeated getComputedStyle calls
+let cachedPatternRuleColor = null;
+let cachedPatternGridColor = null;
+
 /**
  * Initialize notebook editor for a note
  * @param {string} noteId - ID of note to edit
@@ -61,6 +75,11 @@ export async function initNotebookEditor(noteId) {
     currentNoteData = await getNote(noteId);
     if (!currentNoteData) {
       throw new Error("Note not found");
+    }
+
+    // Set default background for existing notes without one
+    if (!currentNoteData.background) {
+      currentNoteData.background = "none";
     }
 
     // Initialize default pen settings
@@ -109,11 +128,11 @@ function renderEditor(container, _noteData) {
         top: 0;
         left: 0;
         z-index: 10; /* On top of the text editor */
-        pointer-events: none; /* Default to none */
+        pointer-events: none; /* Default to none to allow text interaction */
         touch-action: none; /* Prevent browser gesture handling */
       }
       .drawing-canvas.active {
-        pointer-events: auto; /* Enable events only when active */
+        pointer-events: auto; /* Enable events in draw mode */
       }
       .toolbar-btn-container {
         position: relative;
@@ -162,6 +181,34 @@ function renderEditor(container, _noteData) {
         align-items: center;
         gap: 10px;
       }
+      .background-settings-dialog {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        z-index: 100;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        width: 200px;
+        margin-top: 5px;
+      }
+      .background-option {
+        padding: 8px 12px;
+        margin-bottom: 4px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.875rem;
+        border: 1px solid var(--border-primary);
+      }
+      .background-option:hover {
+        background-color: var(--bg-hover);
+      }
+      .background-option.active {
+        background-color: var(--color-primary-light);
+        border-color: var(--color-primary);
+      }
     </style>
     <div class="notebook-editor">
       <div class="editor-toolbar">
@@ -191,6 +238,21 @@ function renderEditor(container, _noteData) {
           <button class="toolbar-btn" id="mode-erase-btn" title="Eraser mode">
             🧽
           </button>
+          <div class="toolbar-divider"></div>
+          <div class="toolbar-btn-container">
+            <button class="toolbar-btn" id="background-btn" title="Background">
+              📄
+            </button>
+            <div id="background-settings-dialog" class="background-settings-dialog" style="display: none;">
+              <div class="background-option" data-background="none">None</div>
+              <div class="background-option" data-background="ruled-narrow">Ruled - Narrow</div>
+              <div class="background-option" data-background="ruled-medium">Ruled - Medium</div>
+              <div class="background-option" data-background="ruled-wide">Ruled - Wide</div>
+              <div class="background-option" data-background="grid-small">Grid - Small</div>
+              <div class="background-option" data-background="grid-medium">Grid - Medium</div>
+              <div class="background-option" data-background="grid-large">Grid - Large</div>
+            </div>
+          </div>
           <div class="toolbar-divider"></div>
           <button class="toolbar-btn toolbar-btn-text" id="format-bold-btn" title="Bold">
             <strong>B</strong>
@@ -228,6 +290,7 @@ function renderEditor(container, _noteData) {
 
       <div class="editor-content-wrapper">
         <div id="text-editor" class="text-editor" contenteditable="true"></div>
+        <canvas id="background-canvas" class="background-canvas"></canvas>
         <canvas id="drawing-canvas" class="drawing-canvas"></canvas>
         <canvas id="cursor-canvas" class="cursor-canvas"></canvas>
       </div>
@@ -281,17 +344,29 @@ function initTextEditor(noteData) {
  */
 function initCanvasLayer(noteData) {
   canvas = document.getElementById("drawing-canvas");
+  backgroundCanvas = document.getElementById("background-canvas");
   cursorCanvas = document.getElementById("cursor-canvas");
-  if (!canvas || !cursorCanvas) return;
+  if (!canvas || !backgroundCanvas || !cursorCanvas) return;
 
   ctx = canvas.getContext("2d");
+  backgroundCtx = backgroundCanvas.getContext("2d");
   cursorCtx = cursorCanvas.getContext("2d");
 
-  // Initial canvas sizing
-  window.addEventListener("resize", resizeCanvas);
+  // Initial canvas sizing with throttling
+  window.addEventListener("resize", throttledResizeCanvas);
 
   // Add zoom event listeners
   initZoomListeners();
+
+  // Listen for theme changes to invalidate caches
+  window.addEventListener("themechange", () => {
+    cachedTheme = null;
+    cachedPalette = null;
+    cachedPatternRuleColor = null;
+    cachedPatternGridColor = null;
+    redrawBackground(); // Redraw background with new theme colors
+    redrawCanvas(); // Redraw strokes with new theme colors
+  });
 
   // Load existing strokes
   if (noteData.strokes && Array.isArray(noteData.strokes)) {
@@ -304,6 +379,23 @@ function initCanvasLayer(noteData) {
     redrawCanvas();
   });
 
+  // Add pen detection on the wrapper to enable canvas pointer-events for scrolled areas
+  const wrapper = canvas.parentElement;
+  if (wrapper) {
+    wrapper.addEventListener(
+      "pointerdown",
+      (e) => {
+        // If pen detected and not in draw mode, temporarily enable canvas pointer events
+        // so handleCanvasPointerDown can receive the event and auto-switch
+        if ((e.pointerType === "pen" || e.pointerType === "eraser") && !isDrawMode && canvas) {
+          canvas.style.pointerEvents = "auto";
+          // Let the event propagate to canvas
+        }
+      },
+      { capture: true },
+    ); // Use capture to intercept before canvas
+  }
+
   // Prevent context menu on right-click (e.g., from pen barrel button)
   canvas.addEventListener("contextmenu", (e) => {
     if (e.pointerType === "pen") {
@@ -313,9 +405,12 @@ function initCanvasLayer(noteData) {
 
   // Canvas drawing events
   canvas.addEventListener("pointerdown", (e) => {
+    // Auto-detect pen and switch to draw mode if needed
     const shouldContinue = handleCanvasPointerDown(e);
     if (shouldContinue === false) return;
-    if (isDrawMode || isErasing) {
+
+    // Only prevent default and capture for pen events or when in draw mode
+    if (e.pointerType === "pen" || e.pointerType === "eraser" || isDrawMode || isErasing) {
       e.preventDefault();
       canvas.setPointerCapture(e.pointerId);
     }
@@ -356,41 +451,76 @@ function initCanvasLayer(noteData) {
 }
 
 /**
+ * Throttled wrapper for resizeCanvas to improve performance
+ */
+function throttledResizeCanvas() {
+  // Skip resize if currently drawing to avoid performance issues
+  if (isDrawing || isErasing) {
+    return;
+  }
+
+  // Throttle resize events to max 60fps (every ~16ms)
+  const now = Date.now();
+  if (now - lastResizeTime < 16) {
+    clearTimeout(resizeThrottleTimer);
+    resizeThrottleTimer = setTimeout(resizeCanvas, 16);
+    return;
+  }
+
+  lastResizeTime = now;
+  resizeCanvas();
+}
+
+/**
  * Resize canvas to match container
  */
 function resizeCanvas() {
-  if (!canvas || !cursorCanvas || !currentEditor) return;
+  if (!canvas || !backgroundCanvas || !cursorCanvas || !currentEditor) return;
 
   const wrapper = canvas.parentElement;
   const rect = wrapper.getBoundingClientRect();
-  const currentStrokes = [...strokes];
 
   const baseWidth = rect.width / zoomScale;
   const baseHeight = rect.height / zoomScale;
-  const textEditorHeight = currentEditor.scrollHeight / zoomScale + 200;
-  const wrapperScrollHeight = wrapper.scrollHeight / zoomScale;
 
+  // Don't use scrollHeight with CSS transforms - it's unreliable
+  // Instead, use the wrapper dimensions and minimum bounds from content
   const requiredHeight = Math.max(
-    textEditorHeight,
-    wrapperScrollHeight,
     baseHeight,
     minCanvasHeight,
+    canvas.height, // Keep current canvas height to prevent shrinking
     800,
   );
-  const requiredWidth = Math.max(baseWidth, minCanvasWidth, canvas.width, 800);
+  const requiredWidth = Math.max(baseWidth, minCanvasWidth, 800);
 
-  // Resize both canvases
-  canvas.width = cursorCanvas.width = requiredWidth;
-  canvas.height = cursorCanvas.height = requiredHeight;
-  canvas.style.width = cursorCanvas.style.width = `${requiredWidth}px`;
-  canvas.style.height = cursorCanvas.style.height = `${requiredHeight}px`;
+  // Prevent excessive canvas sizes that could cause performance issues
+  const maxCanvasSize = 10000;
+  const safeWidth = Math.min(requiredWidth, maxCanvasSize);
+  const safeHeight = Math.min(requiredHeight, maxCanvasSize);
 
-  if (currentEditor) {
-    currentEditor.style.minWidth = `${requiredWidth}px`;
+  // Only resize if dimensions actually changed significantly
+  const widthChanged = Math.abs(canvas.width - safeWidth) > 1;
+  const heightChanged = Math.abs(canvas.height - safeHeight) > 1;
+
+  if (widthChanged || heightChanged) {
+    // Resize all three canvases
+    canvas.width = backgroundCanvas.width = cursorCanvas.width = safeWidth;
+    canvas.height = backgroundCanvas.height = cursorCanvas.height = safeHeight;
+    canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${safeWidth}px`;
+    canvas.style.height =
+      backgroundCanvas.style.height =
+      cursorCanvas.style.height =
+        `${safeHeight}px`;
+
+    if (currentEditor) {
+      currentEditor.style.minWidth = `${safeWidth}px`;
+      currentEditor.style.minHeight = `${safeHeight}px`;
+    }
+
+    // Redraw both background and strokes after resize (canvas is cleared when dimensions change)
+    redrawBackground();
+    redrawCanvas();
   }
-
-  strokes = currentStrokes;
-  redrawCanvas();
 }
 
 /**
@@ -398,7 +528,7 @@ function resizeCanvas() {
  * @param {number} additionalHeight - Height to add in pixels (in unscaled space)
  */
 function expandCanvas(additionalHeight) {
-  if (!canvas || !cursorCanvas) return;
+  if (!canvas || !backgroundCanvas || !cursorCanvas) return;
 
   const now = Date.now();
   if (now - lastExpansionTime < expansionCooldown) return;
@@ -406,27 +536,56 @@ function expandCanvas(additionalHeight) {
 
   const wrapper = canvas.parentElement;
   const rect = wrapper.getBoundingClientRect();
-  const currentStrokes = [...strokes];
-  const currentStrokeInProgress = currentStroke.x ? { ...currentStroke } : null;
 
   const newHeight = canvas.height + additionalHeight;
   const baseWidth = rect.width / zoomScale;
 
-  canvas.width = cursorCanvas.width = baseWidth;
-  canvas.height = cursorCanvas.height = newHeight;
-  canvas.style.width = cursorCanvas.style.width = `${baseWidth}px`;
-  canvas.style.height = cursorCanvas.style.height = `${newHeight}px`;
+  // During active drawing, use a faster resize strategy
+  // Create offscreen canvases to preserve current drawing and background
+  if (isDrawing && ctx && backgroundCtx) {
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    const tempCtx = tempCanvas.getContext("2d");
+    tempCtx.drawImage(canvas, 0, 0);
+
+    const tempBgCanvas = document.createElement("canvas");
+    tempBgCanvas.width = backgroundCanvas.width;
+    tempBgCanvas.height = backgroundCanvas.height;
+    const tempBgCtx = tempBgCanvas.getContext("2d");
+    tempBgCtx.drawImage(backgroundCanvas, 0, 0);
+
+    // Resize all canvases
+    canvas.width = backgroundCanvas.width = cursorCanvas.width = baseWidth;
+    canvas.height = backgroundCanvas.height = cursorCanvas.height = newHeight;
+    canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${baseWidth}px`;
+    canvas.style.height =
+      backgroundCanvas.style.height =
+      cursorCanvas.style.height =
+        `${newHeight}px`;
+
+    // Restore the content without expensive redraw
+    ctx.drawImage(tempCanvas, 0, 0);
+    backgroundCtx.drawImage(tempBgCanvas, 0, 0);
+
+    // Draw background pattern on newly expanded area
+    drawBackgroundExpansion(tempBgCanvas.height, newHeight);
+  } else {
+    // Not actively drawing - do normal resize with full redraw
+    canvas.width = backgroundCanvas.width = cursorCanvas.width = baseWidth;
+    canvas.height = backgroundCanvas.height = cursorCanvas.height = newHeight;
+    canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${baseWidth}px`;
+    canvas.style.height =
+      backgroundCanvas.style.height =
+      cursorCanvas.style.height =
+        `${newHeight}px`;
+
+    redrawBackground();
+    redrawCanvas();
+  }
 
   if (currentEditor) {
     currentEditor.style.minHeight = `${newHeight}px`;
-  }
-
-  strokes = currentStrokes;
-  redrawCanvas();
-
-  if (currentStrokeInProgress && currentStrokeInProgress.x.length > 0) {
-    currentStroke = currentStrokeInProgress;
-    drawStroke(currentStroke);
   }
 
   updateExpansionZoneIndicator(null, true);
@@ -471,7 +630,33 @@ function handlePointerDown(e) {
       switchToDrawMode();
       autoSwitchedToDrawMode = true;
     }
+
+    // Manually trigger canvas drawing since the event was on the text editor
+    // This ensures drawing works even when scrolled
+    if (canvas && isDrawMode) {
+      // Set pointer capture on canvas to ensure we get all subsequent events
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("Could not set pointer capture:", err);
+      }
+
+      const canvasEvent = new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        pointerType: e.pointerType,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        pressure: e.pressure,
+        pointerId: e.pointerId,
+        buttons: e.buttons,
+        button: e.button,
+      });
+      canvas.dispatchEvent(canvasEvent);
+    }
+
     e.preventDefault();
+    e.stopPropagation();
   } else if (e.pointerType === "touch" && autoSwitchedToDrawMode) {
     if (isDrawMode) {
       switchToTextMode();
@@ -483,18 +668,54 @@ function handlePointerDown(e) {
  * Handle pointer move
  */
 function handlePointerMove(e) {
-  if (e.pointerType === "pen" && !isDrawMode) {
-    switchToDrawMode();
-    autoSwitchedToDrawMode = true;
-    updateModeIndicator();
+  if (e.pointerType === "pen") {
+    if (!isDrawMode) {
+      switchToDrawMode();
+      autoSwitchedToDrawMode = true;
+      updateModeIndicator();
+    }
+
+    // Forward move events to canvas when in draw mode
+    if (canvas && isDrawMode) {
+      const canvasEvent = new PointerEvent("pointermove", {
+        bubbles: true,
+        cancelable: true,
+        pointerType: e.pointerType,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        pressure: e.pressure,
+        pointerId: e.pointerId,
+        buttons: e.buttons,
+        button: e.button,
+      });
+      canvas.dispatchEvent(canvasEvent);
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
 }
 
 /**
  * Handle pointer up
  */
-function handlePointerUp(_e) {
-  // Nothing to do here for text editor
+function handlePointerUp(e) {
+  // Forward up events to canvas when in draw mode
+  if (e.pointerType === "pen" && canvas && isDrawMode) {
+    const canvasEvent = new PointerEvent("pointerup", {
+      bubbles: true,
+      cancelable: true,
+      pointerType: e.pointerType,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      pressure: e.pressure,
+      pointerId: e.pointerId,
+      buttons: e.buttons,
+      button: e.button,
+    });
+    canvas.dispatchEvent(canvasEvent);
+    e.preventDefault();
+    e.stopPropagation();
+  }
 }
 
 /**
@@ -638,8 +859,14 @@ function handleCanvasPointerMove(e) {
       const prevY = currentStroke.y[pointCount - 2];
       const currX = currentStroke.x[pointCount - 1];
       const currY = currentStroke.y[pointCount - 1];
-      const palette = getThemePalette();
-      ctx.strokeStyle = palette[currentStroke.colorIndex] || palette[0];
+
+      // Use cached stroke style instead of recalculating on every move
+      if (!currentStroke.cachedStyle) {
+        const palette = getThemePalette();
+        currentStroke.cachedStyle = palette[currentStroke.colorIndex] || palette[0];
+      }
+
+      ctx.strokeStyle = currentStroke.cachedStyle;
       ctx.lineWidth = currentStroke.width || 2;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -724,11 +951,135 @@ function drawStroke(stroke) {
 }
 
 /**
- * Redraw entire canvas
+ * Draw background pattern on background canvas (internal helper)
+ * @param {string} backgroundType - Type of background pattern
+ * @param {number} startY - Starting Y coordinate (for partial redraws)
+ * @param {number} endY - Ending Y coordinate (for partial redraws)
+ */
+function drawBackgroundPattern(backgroundType, startY = 0, endY = null) {
+  if (!backgroundCtx || !backgroundCanvas || backgroundType === "none") return;
+
+  const height = endY || backgroundCanvas.height;
+  const width = backgroundCanvas.width;
+
+  // Get pattern color from cache or CSS variable
+  let patternColor;
+  if (backgroundType.startsWith("ruled")) {
+    if (!cachedPatternRuleColor) {
+      cachedPatternRuleColor = getComputedStyle(document.documentElement)
+        .getPropertyValue("--pattern-rule-color")
+        .trim();
+    }
+    patternColor = cachedPatternRuleColor;
+  } else {
+    if (!cachedPatternGridColor) {
+      cachedPatternGridColor = getComputedStyle(document.documentElement)
+        .getPropertyValue("--pattern-grid-color")
+        .trim();
+    }
+    patternColor = cachedPatternGridColor;
+  }
+
+  backgroundCtx.strokeStyle = patternColor;
+  backgroundCtx.lineWidth = 1;
+  backgroundCtx.beginPath();
+
+  switch (backgroundType) {
+    case "ruled-narrow":
+      // Draw horizontal lines every 20px
+      for (let y = Math.max(20, startY); y < height; y += 20) {
+        backgroundCtx.moveTo(0, y);
+        backgroundCtx.lineTo(width, y);
+      }
+      break;
+
+    case "ruled-medium":
+      // Draw horizontal lines every 30px
+      for (let y = Math.max(30, startY); y < height; y += 30) {
+        backgroundCtx.moveTo(0, y);
+        backgroundCtx.lineTo(width, y);
+      }
+      break;
+
+    case "ruled-wide":
+      // Draw horizontal lines every 40px
+      for (let y = Math.max(40, startY); y < height; y += 40) {
+        backgroundCtx.moveTo(0, y);
+        backgroundCtx.lineTo(width, y);
+      }
+      break;
+
+    case "grid-small":
+      // Draw grid with 20px squares
+      for (let y = Math.max(20, startY); y < height; y += 20) {
+        backgroundCtx.moveTo(0, y);
+        backgroundCtx.lineTo(width, y);
+      }
+      for (let x = 20; x < width; x += 20) {
+        backgroundCtx.moveTo(x, startY);
+        backgroundCtx.lineTo(x, height);
+      }
+      break;
+
+    case "grid-medium":
+      // Draw grid with 30px squares
+      for (let y = Math.max(30, startY); y < height; y += 30) {
+        backgroundCtx.moveTo(0, y);
+        backgroundCtx.lineTo(width, y);
+      }
+      for (let x = 30; x < width; x += 30) {
+        backgroundCtx.moveTo(x, startY);
+        backgroundCtx.lineTo(x, height);
+      }
+      break;
+
+    case "grid-large":
+      // Draw grid with 40px squares
+      for (let y = Math.max(40, startY); y < height; y += 40) {
+        backgroundCtx.moveTo(0, y);
+        backgroundCtx.lineTo(width, y);
+      }
+      for (let x = 40; x < width; x += 40) {
+        backgroundCtx.moveTo(x, startY);
+        backgroundCtx.lineTo(x, height);
+      }
+      break;
+  }
+
+  backgroundCtx.stroke();
+}
+
+/**
+ * Redraw entire background canvas
+ */
+function redrawBackground() {
+  if (!backgroundCtx || !backgroundCanvas || !currentNoteData) return;
+  backgroundCtx.clearRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+
+  if (currentNoteData.background && currentNoteData.background !== "none") {
+    drawBackgroundPattern(currentNoteData.background);
+  }
+}
+
+/**
+ * Draw background pattern only on newly expanded area (for performance)
+ * @param {number} oldHeight - Previous canvas height
+ * @param {number} newHeight - New canvas height
+ */
+function drawBackgroundExpansion(oldHeight, newHeight) {
+  if (!currentNoteData || !currentNoteData.background || currentNoteData.background === "none")
+    return;
+  drawBackgroundPattern(currentNoteData.background, oldHeight, newHeight);
+}
+
+/**
+ * Redraw entire canvas (strokes only - background is on separate canvas)
  */
 function redrawCanvas() {
   if (!ctx) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw strokes
   strokes.forEach((stroke) => {
     drawStroke(stroke);
   });
@@ -958,13 +1309,51 @@ function updateToolbarButtons() {
  */
 function getThemePalette() {
   const theme = getTheme();
-  if (theme === "dark") {
-    return ["#ffffff", "#f87171", "#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#9ca3af", "#fde047"];
-  } else if (theme === "epaper") {
-    return ["#000000", "#800000", "#000080", "#006400", "#a52a2a", "#4b0082", "#2f4f4f", "#5d4037"];
+
+  // Return cached palette if theme hasn't changed
+  if (cachedTheme === theme && cachedPalette !== null) {
+    return cachedPalette;
   }
-  // Default Light theme
-  return ["#000000", "#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#6b7280", "#78350f"];
+
+  // Theme changed or first call - compute and cache the palette
+  cachedTheme = theme;
+  if (theme === "dark") {
+    cachedPalette = [
+      "#ffffff",
+      "#f87171",
+      "#60a5fa",
+      "#34d399",
+      "#fbbf24",
+      "#a78bfa",
+      "#9ca3af",
+      "#fde047",
+    ];
+  } else if (theme === "epaper") {
+    cachedPalette = [
+      "#000000",
+      "#800000",
+      "#000080",
+      "#006400",
+      "#a52a2a",
+      "#4b0082",
+      "#2f4f4f",
+      "#5d4037",
+    ];
+  } else {
+    // Default Light theme
+    cachedPalette = [
+      "#000000",
+      "#ef4444",
+      "#3b82f6",
+      "#10b981",
+      "#f59e0b",
+      "#8b5cf6",
+      "#6b7280",
+      "#78350f",
+    ];
+  }
+
+  return cachedPalette;
 }
 
 /**
@@ -972,7 +1361,11 @@ function getThemePalette() {
  */
 function togglePenSettingsDialog() {
   const dialog = document.getElementById("pen-settings-dialog");
+  const bgDialog = document.getElementById("background-settings-dialog");
   if (!dialog) return;
+
+  // Close background dialog if open
+  if (bgDialog) bgDialog.style.display = "none";
 
   const isVisible = dialog.style.display === "block";
   if (isVisible) {
@@ -981,6 +1374,61 @@ function togglePenSettingsDialog() {
     updatePenSettingsUI();
     dialog.style.display = "block";
   }
+}
+
+/**
+ * Toggle background settings dialog visibility
+ */
+function toggleBackgroundSettingsDialog() {
+  const dialog = document.getElementById("background-settings-dialog");
+  const penDialog = document.getElementById("pen-settings-dialog");
+  if (!dialog) return;
+
+  // Close pen dialog if open
+  if (penDialog) penDialog.style.display = "none";
+
+  const isVisible = dialog.style.display === "block";
+  if (isVisible) {
+    dialog.style.display = "none";
+  } else {
+    updateBackgroundSettingsUI();
+    dialog.style.display = "block";
+  }
+}
+
+/**
+ * Update background settings dialog UI
+ */
+function updateBackgroundSettingsUI() {
+  const dialog = document.getElementById("background-settings-dialog");
+  if (!dialog || !currentNoteData) return;
+
+  const currentBackground = currentNoteData.background || "none";
+  const options = dialog.querySelectorAll(".background-option");
+
+  options.forEach((option) => {
+    const bgType = option.dataset.background;
+    if (bgType === currentBackground) {
+      option.classList.add("active");
+    } else {
+      option.classList.remove("active");
+    }
+  });
+}
+
+/**
+ * Set note background
+ * @param {string} backgroundType - Background pattern type
+ */
+async function setNoteBackground(backgroundType) {
+  if (!currentNoteData) return;
+
+  currentNoteData.background = backgroundType;
+  updateBackgroundSettingsUI();
+  redrawBackground();
+
+  // Save the background change
+  await updateNote(currentNoteData.id, { background: backgroundType });
 }
 
 /**
@@ -1022,11 +1470,20 @@ function updatePenSettingsUI() {
 function handleOutsideClick(e) {
   const dialog = document.getElementById("pen-settings-dialog");
   const drawBtn = document.getElementById("mode-draw-btn");
+  const bgDialog = document.getElementById("background-settings-dialog");
+  const bgBtn = document.getElementById("background-btn");
 
   if (dialog && dialog.style.display === "block") {
     // Close if the target is not the dialog itself and not the button that toggles it
     if (!dialog.contains(e.target) && !drawBtn?.contains(e.target)) {
       dialog.style.display = "none";
+    }
+  }
+
+  if (bgDialog && bgDialog.style.display === "block") {
+    // Close if the target is not the dialog itself and not the button that toggles it
+    if (!bgDialog.contains(e.target) && !bgBtn?.contains(e.target)) {
+      bgDialog.style.display = "none";
     }
   }
 }
@@ -1042,6 +1499,20 @@ function attachToolbarListeners() {
 
   // Add global listener to close pen settings when clicking outside
   document.addEventListener("pointerdown", handleOutsideClick);
+
+  // Background settings
+  document
+    .getElementById("background-btn")
+    ?.addEventListener("click", toggleBackgroundSettingsDialog);
+
+  // Background options listeners
+  const bgOptions = document.querySelectorAll(".background-option");
+  bgOptions.forEach((option) => {
+    option.addEventListener("click", () => {
+      const bgType = option.dataset.background;
+      setNoteBackground(bgType);
+    });
+  });
 
   // Pen settings listeners
   document.getElementById("pen-width-slider")?.addEventListener("input", (e) => {
@@ -1138,22 +1609,30 @@ function setZoom(newZoom) {
     currentEditor.style.transform = `scale(${zoomScale})`;
   }
 
-  // Apply same CSS transform to canvas to keep them aligned
+  // Apply same CSS transform to all canvases to keep them aligned
   // Don't set width/height here - let resizeCanvas() handle sizing
   if (canvas) {
     canvas.style.transformOrigin = "top left";
     canvas.style.transform = `scale(${zoomScale})`;
   }
+  if (backgroundCanvas) {
+    backgroundCanvas.style.transformOrigin = "top left";
+    backgroundCanvas.style.transform = `scale(${zoomScale})`;
+  }
+  if (cursorCanvas) {
+    cursorCanvas.style.transformOrigin = "top left";
+    cursorCanvas.style.transform = `scale(${zoomScale})`;
+  }
 
-  // Redraw canvas with zoom applied via context transform
+  // Resize and redraw canvas with new zoom scale
   if (canvas && ctx) {
     // Store current scroll position
     const wrapper = document.querySelector(".editor-content-wrapper");
     const scrollLeft = wrapper ? wrapper.scrollLeft : 0;
     const scrollTop = wrapper ? wrapper.scrollTop : 0;
 
-    // Redraw canvas with zoom applied via context transform
-    redrawCanvas();
+    // Resize canvas to account for new zoom scale, then redraw
+    resizeCanvas();
 
     // Restore scroll position
     if (wrapper) {
@@ -1445,6 +1924,12 @@ async function updateEditorContent(noteId) {
     navigateTo("overview"); // Navigate to a safe place
     return;
   }
+
+  // Set default background for existing notes without one
+  if (!newNoteData.background) {
+    newNoteData.background = "none";
+  }
+
   currentNoteData = newNoteData;
 
   // 3. Re-render content if it has changed
