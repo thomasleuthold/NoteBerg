@@ -94,6 +94,10 @@
   overflow: auto;
   background: var(--bg-primary);
   margin: 0 var(--spacing-md);
+  /* Enable smooth touch scrolling */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 /* Text editor layer */
@@ -108,6 +112,7 @@
   outline: none;
   z-index: 1;
   background: transparent;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 .text-editor:focus {

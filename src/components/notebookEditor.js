@@ -14,6 +14,7 @@ let currentEditor = null;
 let currentNoteData = null;
 let isDrawMode = false;
 let isEraserMode = false; // Manual eraser toggle
+let isLassoMode = false; // Manual lasso toggle
 let canvas = null;
 let ctx = null;
 let backgroundCanvas = null;
@@ -22,6 +23,9 @@ let cursorCanvas = null;
 let cursorCtx = null;
 let isDrawing = false;
 let isErasing = false; // Track if currently erasing
+let isLassoing = false; // Track if currently lassoing
+let lassoPoints = []; // Stores points for the lasso path
+const selectedStrokes = new Set(); // Stores selected strokes
 let currentStroke = [];
 let strokes = [];
 let lastExpansionTime = 0;
@@ -237,6 +241,12 @@ function renderEditor(container, _noteData) {
           </div>
           <button class="toolbar-btn" id="mode-erase-btn" title="Eraser mode">
             🧽
+          </button>
+          <button class="toolbar-btn" id="mode-lasso-btn" title="Lasso select">
+            &#x1FA98;
+          </button>
+          <button class="toolbar-btn" id="delete-selection-btn" title="Delete selection" style="display: none;">
+            🗑️
           </button>
           <div class="toolbar-divider"></div>
           <div class="toolbar-btn-container">
@@ -626,7 +636,7 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
  */
 function handlePointerDown(e) {
   if (e.pointerType === "pen") {
-    if (!isDrawMode) {
+    if (!isDrawMode && !isEraserMode && !isLassoMode) {
       switchToDrawMode();
       autoSwitchedToDrawMode = true;
     }
@@ -781,7 +791,14 @@ function handleCanvasPointerDown(e) {
   // --- Eraser Activation (Stateful approach) ---
   const isEraser = isEraserMode || isEraserEvent(e);
 
-  if (isEraser) {
+  if (isLassoMode) {
+    isLassoing = true;
+    isDrawing = false;
+    isErasing = false;
+    lassoPoints = [];
+    // Clear any previous selection visual
+    redrawCanvas();
+  } else if (isEraser) {
     // Set the state for the duration of this interaction
     isErasing = true;
     isDrawing = false;
@@ -796,6 +813,14 @@ function handleCanvasPointerDown(e) {
     isErasing = false;
     isDrawing = true;
     currentStroke = [];
+
+    // Clear selection when starting a new drawing
+    if (selectedStrokes.size > 0) {
+      selectedStrokes.clear();
+      const deleteBtn = document.getElementById("delete-selection-btn");
+      if (deleteBtn) deleteBtn.style.display = "none";
+      redrawCanvas();
+    }
   }
   // --- END ERASER LOGIC ---
 
@@ -829,13 +854,16 @@ function handleCanvasPointerDown(e) {
  * Handle canvas pointer move
  */
 function handleCanvasPointerMove(e) {
-  if (!isDrawMode || (!isDrawing && !isErasing)) {
+  if (!isDrawMode || (!isDrawing && !isErasing && !isLassoing)) {
     return;
   }
 
   const { x, y } = getCanvasCoordinates(e);
 
-  if (isErasing) {
+  if (isLassoing) {
+    lassoPoints.push({ x, y });
+    drawLassoPath();
+  } else if (isErasing) {
     eraseStrokesAtPoint(x, y);
     drawEraserCursor(x, y);
   } else if (isDrawing) {
@@ -880,6 +908,27 @@ function handleCanvasPointerMove(e) {
 }
 
 /**
+ * Draw the lasso path on the cursor canvas
+ */
+function drawLassoPath() {
+  if (!cursorCtx || lassoPoints.length < 2) return;
+
+  cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  cursorCtx.strokeStyle = "rgba(0, 100, 255, 0.8)";
+  cursorCtx.lineWidth = 2;
+  cursorCtx.setLineDash([5, 5]); // Dashed line for selection
+  cursorCtx.beginPath();
+  cursorCtx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+
+  for (let i = 1; i < lassoPoints.length; i++) {
+    cursorCtx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+  }
+
+  cursorCtx.stroke();
+  cursorCtx.setLineDash([]); // Reset line dash
+}
+
+/**
  * Handle canvas pointer up
  */
 function handleCanvasPointerUp(_e) {
@@ -893,6 +942,45 @@ function handleCanvasPointerUp(_e) {
   // Clear the cursor canvas
   if (cursorCtx) {
     cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  }
+
+  const wasLassoing = isLassoing;
+  isLassoing = false;
+
+  if (wasLassoing && lassoPoints.length > 2) {
+    // Finalize lasso selection
+    const polygon = lassoPoints;
+    selectedStrokes.clear();
+
+    // Pre-calculate lasso bounding box for efficiency
+    const lassoBounds = getStrokeBounds({ x: polygon.map((p) => p.x), y: polygon.map((p) => p.y) });
+
+    strokes.forEach((stroke, index) => {
+      const strokeBounds = getStrokeBounds(stroke);
+
+      if (doBoundingBoxesIntersect(lassoBounds, strokeBounds)) {
+        // Check if any point of the stroke is inside the polygon
+        let pointInside = false;
+        for (let i = 0; i < stroke.x.length; i++) {
+          if (isPointInPolygon(stroke.x[i], stroke.y[i], polygon)) {
+            pointInside = true;
+            break;
+          }
+        }
+        if (pointInside) {
+          selectedStrokes.add(index);
+        }
+      }
+    });
+
+    lassoPoints = [];
+    redrawCanvas(); // Redraw to show selection highlights
+
+    // show delete button
+    const deleteBtn = document.getElementById("delete-selection-btn");
+    if (deleteBtn) {
+      deleteBtn.style.display = selectedStrokes.size > 0 ? "block" : "none";
+    }
   }
 
   // Reset drawing/erasing state
@@ -916,15 +1004,92 @@ function handleCanvasPointerUp(_e) {
 }
 
 /**
+ * Check if a point is inside a polygon using the ray-casting algorithm
+ * @param {number} px - Point x
+ * @param {number} py - Point y
+ * @param {Array<Object>} polygon - Array of {x, y} points
+ * @returns {boolean} True if the point is inside
+ */
+function isPointInPolygon(px, py, polygon) {
+  let isInside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x,
+      yi = polygon[i].y;
+    const xj = polygon[j].x,
+      yj = polygon[j].y;
+
+    const intersect = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (intersect) isInside = !isInside;
+  }
+  return isInside;
+}
+
+/**
+ * Check if two bounding boxes intersect
+ * @param {Object} box1 - { minX, minY, maxX, maxY }
+ * @param {Object} box2 - { minX, minY, maxX, maxY }
+ * @returns {boolean} True if they intersect
+ */
+function doBoundingBoxesIntersect(box1, box2) {
+  if (!box1 || !box2) return false;
+  return (
+    box1.minX <= box2.maxX &&
+    box1.maxX >= box2.minX &&
+    box1.minY <= box2.maxY &&
+    box1.maxY >= box2.minY
+  );
+}
+
+/**
+ * Calculate the bounding box of a stroke
+ * @param {Object} stroke - Stroke object
+ * @returns {Object|null} Bounding box { minX, minY, maxX, maxY } or null
+ */
+function getStrokeBounds(stroke) {
+  if (!stroke || !stroke.x || stroke.x.length === 0) return null;
+
+  let minX = stroke.x[0],
+    maxX = stroke.x[0];
+  let minY = stroke.y[0],
+    maxY = stroke.y[0];
+
+  for (let i = 1; i < stroke.x.length; i++) {
+    minX = Math.min(minX, stroke.x[i]);
+    maxX = Math.max(maxX, stroke.x[i]);
+    minY = Math.min(minY, stroke.y[i]);
+    maxY = Math.max(maxY, stroke.y[i]);
+  }
+
+  // Add padding for line width
+  const padding = (stroke.width || 2) / 2;
+  return {
+    minX: minX - padding,
+    minY: minY - padding,
+    maxX: maxX + padding,
+    maxY: maxY + padding,
+  };
+}
+
+/**
  * Draw a single stroke with smooth curves
  */
-function drawStroke(stroke) {
+function drawStroke(stroke, index) {
   if (!ctx || !stroke.x || stroke.x.length < 2) return;
+
+  const isSelected = selectedStrokes.has(index);
+
   const pointCount = stroke.x.length;
   const palette = getThemePalette();
-  ctx.strokeStyle =
-    stroke.colorIndex !== undefined ? palette[stroke.colorIndex] : stroke.color || palette[0];
-  ctx.lineWidth = stroke.width || 2;
+
+  if (isSelected) {
+    ctx.strokeStyle = "rgba(0, 100, 255, 0.7)"; // Highlight color
+    ctx.lineWidth = (stroke.width || 2) + 4; // Make it thicker
+  } else {
+    ctx.strokeStyle =
+      stroke.colorIndex !== undefined ? palette[stroke.colorIndex] : stroke.color || palette[0];
+    ctx.lineWidth = stroke.width || 2;
+  }
+
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -948,6 +1113,14 @@ function drawStroke(stroke) {
     );
   }
   ctx.stroke();
+
+  // If not selected, draw the actual stroke on top of the highlight
+  if (isSelected) {
+    ctx.strokeStyle =
+      stroke.colorIndex !== undefined ? palette[stroke.colorIndex] : stroke.color || palette[0];
+    ctx.lineWidth = stroke.width || 2;
+    ctx.stroke();
+  }
 }
 
 /**
@@ -1080,8 +1253,8 @@ function redrawCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   // Draw strokes
-  strokes.forEach((stroke) => {
-    drawStroke(stroke);
+  strokes.forEach((stroke, index) => {
+    drawStroke(stroke, index);
   });
 }
 
@@ -1213,6 +1386,16 @@ function switchToTextMode() {
   if (dialog) {
     dialog.style.display = "none";
   }
+  // Hide delete selection button and clear selection
+  const deleteBtn = document.getElementById("delete-selection-btn");
+  if (deleteBtn) {
+    deleteBtn.style.display = "none";
+  }
+  if (selectedStrokes.size > 0) {
+    selectedStrokes.clear();
+    redrawCanvas();
+  }
+
   if (currentEditor) {
     currentEditor.style.pointerEvents = "auto";
   }
@@ -1252,13 +1435,22 @@ function manualSwitchToTextMode() {
  */
 function manualSwitchToDrawMode() {
   // If already in draw mode (and not erasing), toggle settings dialog
-  if (isDrawMode && !isEraserMode) {
+  if (isDrawMode && !isEraserMode && !isLassoMode) {
     togglePenSettingsDialog();
     return;
   }
 
+  // Clear selection when switching modes
+  if (selectedStrokes.size > 0) {
+    selectedStrokes.clear();
+    const deleteBtn = document.getElementById("delete-selection-btn");
+    if (deleteBtn) deleteBtn.style.display = "none";
+    redrawCanvas();
+  }
+
   autoSwitchedToDrawMode = false; // Clear auto-switch flag
   isEraserMode = false; // Exit eraser mode when switching to draw
+  isLassoMode = false;
   switchToDrawMode();
   updateToolbarButtons();
 }
@@ -1273,11 +1465,43 @@ function toggleEraserMode() {
     dialog.style.display = "none";
   }
 
+  // Clear selection when switching modes
+  if (selectedStrokes.size > 0) {
+    selectedStrokes.clear();
+    const deleteBtn = document.getElementById("delete-selection-btn");
+    if (deleteBtn) deleteBtn.style.display = "none";
+    redrawCanvas();
+  }
+
   isEraserMode = !isEraserMode;
+  isLassoMode = false;
   autoSwitchedToDrawMode = false; // This is a manual action, so clear the auto-switch flag.
 
   // If enabling eraser mode, make sure we're in draw mode
   if (isEraserMode && !isDrawMode) {
+    switchToDrawMode();
+  }
+
+  updateToolbarButtons();
+  updateModeIndicator();
+}
+
+/**
+ * Toggle lasso mode (user clicked lasso button)
+ */
+function toggleLassoMode() {
+  // Hide pen settings dialog when switching to lasso
+  const dialog = document.getElementById("pen-settings-dialog");
+  if (dialog) {
+    dialog.style.display = "none";
+  }
+
+  isLassoMode = !isLassoMode;
+  isEraserMode = false; // Disable eraser mode
+  autoSwitchedToDrawMode = false; // This is a manual action
+
+  // If enabling lasso mode, make sure we're in draw mode
+  if (isLassoMode && !isDrawMode) {
     switchToDrawMode();
   }
 
@@ -1292,15 +1516,19 @@ function updateToolbarButtons() {
   const textBtn = document.getElementById("mode-text-btn");
   const drawBtn = document.getElementById("mode-draw-btn");
   const eraseBtn = document.getElementById("mode-erase-btn");
+  const lassoBtn = document.getElementById("mode-lasso-btn");
 
   if (textBtn) {
     textBtn.classList.toggle("active", !isDrawMode);
   }
   if (drawBtn) {
-    drawBtn.classList.toggle("active", isDrawMode && !isEraserMode);
+    drawBtn.classList.toggle("active", isDrawMode && !isEraserMode && !isLassoMode);
   }
   if (eraseBtn) {
     eraseBtn.classList.toggle("active", isEraserMode);
+  }
+  if (lassoBtn) {
+    lassoBtn.classList.toggle("active", isLassoMode);
   }
 }
 
@@ -1496,6 +1724,7 @@ function attachToolbarListeners() {
   document.getElementById("mode-text-btn")?.addEventListener("click", manualSwitchToTextMode);
   document.getElementById("mode-draw-btn")?.addEventListener("click", manualSwitchToDrawMode);
   document.getElementById("mode-erase-btn")?.addEventListener("click", toggleEraserMode);
+  document.getElementById("mode-lasso-btn")?.addEventListener("click", toggleLassoMode);
 
   // Add global listener to close pen settings when clicking outside
   document.addEventListener("pointerdown", handleOutsideClick);
@@ -1547,6 +1776,33 @@ function attachToolbarListeners() {
       showNoteInfoModal(currentNoteData);
     }
   });
+
+  // Delete selection
+  document.getElementById("delete-selection-btn")?.addEventListener("click", deleteSelectedStrokes);
+}
+
+/**
+ * Deletes the strokes currently in the selectedStrokes set
+ */
+async function deleteSelectedStrokes() {
+  if (selectedStrokes.size === 0) return;
+
+  // Filter out the selected strokes
+  strokes = strokes.filter((_, index) => !selectedStrokes.has(index));
+
+  // Clear the selection
+  selectedStrokes.clear();
+
+  // Hide the delete button
+  const deleteBtn = document.getElementById("delete-selection-btn");
+  if (deleteBtn) {
+    deleteBtn.style.display = "none";
+  }
+
+  // Redraw and save
+  redrawCanvas();
+  updateContentBounds();
+  await saveNoteContent();
 }
 
 /**
