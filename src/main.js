@@ -12,15 +12,14 @@ import "./styles/components.css";
 import "./styles/editor.css";
 import "./styles/notebookEditor.css";
 
-import { initModals, showCreateNoteModal } from "./components/modals.js";
+import { initModals } from "./components/modals.js";
 import { initNotebookEditorComponent } from "./components/notebookEditor.js";
 import { initOverview } from "./components/overviewMode.js";
 import { initRecycleBin } from "./components/recycleBinMode.js";
 import { initSettings } from "./components/settingsMode.js";
-import { initSidebar } from "./components/sidebar.js";
 import { initBreadcrumb } from "./modules/breadcrumb.js";
 import { initFooter } from "./modules/footer.js";
-import { getCurrentNotebookId, initRouter, navigateTo } from "./modules/router.js";
+import { initRouter, navigateTo } from "./modules/router.js";
 import { initStorage } from "./modules/storage.js";
 // Import modules
 import { initTheme } from "./modules/theme.js";
@@ -29,7 +28,6 @@ import { initTheme } from "./modules/theme.js";
 const app = {
   initialized: false,
   currentNote: null,
-  sidebarCollapsed: false,
 };
 
 /**
@@ -51,7 +49,6 @@ async function init() {
   initSettings();
   initOverview();
   initModals();
-  initSidebar();
   initRecycleBin();
   initNotebookEditorComponent();
   initBreadcrumb();
@@ -72,12 +69,6 @@ async function init() {
  * Set up global event listeners
  */
 function setupEventListeners() {
-  // Menu button (toggle sidebar)
-  const menuBtn = document.getElementById("menu-btn");
-  if (menuBtn) {
-    menuBtn.addEventListener("click", toggleSidebar);
-  }
-
   // Overview button
   const overviewBtn = document.getElementById("nav-overview");
   if (overviewBtn) {
@@ -86,44 +77,11 @@ function setupEventListeners() {
     });
   }
 
-  // New note button
-  const newNoteBtn = document.getElementById("new-note-btn");
-  if (newNoteBtn) {
-    newNoteBtn.addEventListener("click", handleNewNote);
+  // Settings button
+  const settingsBtn = document.getElementById("nav-settings");
+  if (settingsBtn) {
+    settingsBtn.addEventListener("click", () => navigateTo("settings"));
   }
-}
-
-/**
- * Toggle sidebar visibility
- */
-function toggleSidebar() {
-  const sidebar = document.getElementById("sidebar");
-  if (sidebar) {
-    app.sidebarCollapsed = !app.sidebarCollapsed;
-    if (app.sidebarCollapsed) {
-      sidebar.style.display = "none";
-    } else {
-      sidebar.style.display = "flex";
-    }
-
-    // Trigger resize event for canvas redraw after sidebar toggle
-    // Use requestAnimationFrame to ensure layout has updated
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new Event("resize"));
-      });
-    });
-  }
-}
-
-/**
- * Handle new note creation
- */
-function handleNewNote() {
-  // Get current notebook ID if viewing a notebook
-  const notebookId = getCurrentNotebookId();
-  // Show modal with notebook context
-  showCreateNoteModal(notebookId);
 }
 
 // Initialize app when DOM is ready
