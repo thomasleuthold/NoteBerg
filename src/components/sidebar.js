@@ -95,8 +95,12 @@ async function renderSidebarFooter() {
   }
 
   sidebarFooter.innerHTML = `
-    <button class="sidebar-footer-btn btn-icon" id="nav-settings" title="Settings">⚙️</button>
-    <button class="sidebar-footer-btn btn-icon" id="recycle-bin-btn" title="Recycle Bin">🗑️</button>
+    <button class="sidebar-footer-btn btn-icon" id="nav-settings" title="Settings" style="display: flex; align-items: center; justify-content: center;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
+    <button class="sidebar-footer-btn btn-icon" id="recycle-bin-btn" title="Recycle Bin" style="display: flex; align-items: center; justify-content: center;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+    </button>
   `;
 
   // Attach event listeners
@@ -141,9 +145,15 @@ async function renderTreeView(container, currentNotebookId, currentNoteId) {
     const isActiveNotebook = notebook.id === currentNotebookId;
 
     treeHtml += `
-      <div class="tree-folder ${isActiveNotebook ? "active" : ""}" data-notebook-id="${notebook.id}">
-        <div class="tree-folder-header ${isActiveNotebook ? "active" : ""}" data-notebook-id="${notebook.id}">
-          <span class="tree-folder-icon">${isExpanded ? "📂" : "📁"}</span>
+      <div class="tree-folder ${isActiveNotebook ? "active" : ""}" data-notebook-id="${notebook.id}" style="margin-bottom: 2px;">
+        <div class="tree-folder-header ${isActiveNotebook ? "active" : ""}" data-notebook-id="${notebook.id}" style="display: flex; align-items: center; padding: 6px 8px; cursor: pointer; border-radius: 4px;">
+          <span class="tree-folder-icon" style="display: flex; align-items: center; margin-right: 10px; color: var(--text-secondary);">
+            ${
+              isExpanded
+                ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>`
+                : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`
+            }
+          </span>
           <span class="tree-folder-title">${escapeHtml(notebook.title)}</span>
           <span class="tree-item-count">(${notes.length})</span>
         </div>
@@ -158,7 +168,10 @@ async function renderTreeView(container, currentNotebookId, currentNoteId) {
   if (quickNotes.length > 0) {
     treeHtml += `
       <div class="tree-section">
-        <div class="tree-section-header">Quick Notes</div>
+        <div class="tree-section-header" style="display: flex; align-items: center; padding: 12px 8px 6px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.05em;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Quick Notes
+        </div>
         ${quickNotes.map((note) => renderTreeNote(note, currentNoteId)).join("")}
       </div>
     `;
@@ -176,12 +189,14 @@ async function renderTreeView(container, currentNotebookId, currentNoteId) {
 function renderTreeNote(note, currentNoteId) {
   const isActive = note.id === currentNoteId;
   return `
-    <div class="tree-note ${isActive ? "active" : ""}" data-note-id="${note.id}">
-      <span class="tree-note-icon">📄</span>
-      <span class="tree-note-title">${escapeHtml(note.title || "Untitled")}</span>
-      <button class="tree-note-delete" data-note-id="${note.id}" title="Delete note" aria-label="Delete note">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+    <div class="tree-note ${isActive ? "active" : ""}" data-note-id="${note.id}" style="display: flex; align-items: center; padding: 6px 8px 6px 28px; cursor: pointer; border-radius: 4px; margin: 1px 0;">
+      <span class="tree-note-icon" style="display: flex; align-items: center; margin-right: 10px; color: var(--text-secondary);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </span>
+      <span class="tree-note-title" style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9rem;">${escapeHtml(note.title || "Untitled")}</span>
+      <button class="tree-note-delete" data-note-id="${note.id}" title="Delete note" aria-label="Delete note" style="padding: 4px; opacity: 0; transition: opacity 0.2s;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
         </svg>
       </button>
     </div>
@@ -205,11 +220,11 @@ function attachTreeViewListeners(container) {
       if (content.classList.contains("collapsed")) {
         content.classList.remove("collapsed");
         content.classList.add("expanded");
-        icon.textContent = "📂";
+        icon.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>`;
       } else {
         content.classList.remove("expanded");
         content.classList.add("collapsed");
-        icon.textContent = "📁";
+        icon.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`;
       }
 
       // Navigate to notebook
