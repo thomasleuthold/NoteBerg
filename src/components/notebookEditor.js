@@ -26,6 +26,14 @@ let isErasing = false; // Track if currently erasing
 let isLassoing = false; // Track if currently lassoing
 let lassoPoints = []; // Stores points for the lasso path
 const selectedStrokes = new Set(); // Stores selected strokes
+let selectionBounds = null; // Bounding box of selected strokes
+let isTransforming = false;
+let transformMode = null; // 'move', 'resize', 'rotate'
+let transformStartPoint = null;
+let initialSelectionBounds = null;
+let initialStrokesData = []; // Store original points during transformation
+let clipboardStrokes = null;
+const handleSize = 24; // Size of selection handles
 let currentStroke = [];
 let strokes = [];
 let lastExpansionTime = 0;
@@ -63,6 +71,37 @@ let cachedTheme = null;
 // Cached background pattern colors to avoid repeated getComputedStyle calls
 let cachedPatternRuleColor = null;
 let cachedPatternGridColor = null;
+
+/**
+ * Initialize notebook editor component
+ */
+export function initNotebookEditorComponent() {
+  // Listen for render notebook event from router
+  window.addEventListener("rendernotebook", async (e) => {
+    const { noteId } = e.detail;
+    if (noteId) {
+      await initNotebookEditor(noteId);
+    }
+  });
+
+  // Listen for data changes to refresh the editor if the current note was updated
+  window.addEventListener("datachange", async () => {
+    const noteId = getCurrentNoteId();
+    if (noteId && currentNoteData && noteId === currentNoteData.id) {
+      console.log("External data change detected for current note. Refreshing editor.");
+      await updateEditorContent(noteId);
+    }
+  });
+
+  // Listen for navigation changes to cleanup
+  window.addEventListener("navigate", (e) => {
+    if (e.detail.previousMode === "notebook") {
+      cleanupNotebookEditor();
+    }
+  });
+
+  console.log("Notebook editor component initialized");
+}
 
 /**
  * Initialize notebook editor for a note
@@ -242,12 +281,9 @@ function renderEditor(container, _noteData) {
           <button class="toolbar-btn" id="mode-erase-btn" title="Eraser mode">
             🧽
           </button>
-          <button class="toolbar-btn" id="mode-lasso-btn" title="Lasso select">
-            &#x1FA98;
-          </button>
-          <button class="toolbar-btn" id="delete-selection-btn" title="Delete selection" style="display: none;">
-            🗑️
-          </button>
+          <button class="toolbar-btn" id="mode-lasso-btn" title="Lasso select">&#x1FA98;</button>
+          <button class="toolbar-btn" id="delete-selection-btn" title="Delete selection" style="display: none;">🗑️</button>
+          <button class="toolbar-btn" id="paste-btn" title="Paste" style="display: none;">📋</button>
           <div class="toolbar-divider"></div>
           <div class="toolbar-btn-container">
             <button class="toolbar-btn" id="background-btn" title="Background">
@@ -679,7 +715,7 @@ function handlePointerDown(e) {
  */
 function handlePointerMove(e) {
   if (e.pointerType === "pen") {
-    if (!isDrawMode) {
+    if (!isDrawMode && !isEraserMode && !isLassoMode) {
       switchToDrawMode();
       autoSwitchedToDrawMode = true;
       updateModeIndicator();
@@ -775,8 +811,10 @@ function isEraserEvent(e) {
  */
 function handleCanvasPointerDown(e) {
   if (e.pointerType === "pen" || e.pointerType === "eraser") {
-    if (!isDrawMode) switchToDrawMode();
-    autoSwitchedToDrawMode = true;
+    if (!isDrawMode && !isEraserMode && !isLassoMode) {
+      switchToDrawMode();
+      autoSwitchedToDrawMode = true;
+    }
   }
 
   if (e.pointerType === "touch" && autoSwitchedToDrawMode && !isDrawing && !isErasing) {
@@ -790,12 +828,38 @@ function handleCanvasPointerDown(e) {
 
   // --- Eraser Activation (Stateful approach) ---
   const isEraser = isEraserMode || isEraserEvent(e);
+  const { x, y } = getCanvasCoordinates(e);
 
   if (isLassoMode) {
+    // Check for transformation handles first
+    if (selectionBounds) {
+      const handle = getHandleAtPoint(x, y);
+      if (handle) {
+        if (handle === "copy") {
+          copySelectedStrokes();
+          return true;
+        }
+        isTransforming = true;
+        transformMode = handle;
+        transformStartPoint = { x, y };
+        initialSelectionBounds = { ...selectionBounds };
+        initialStrokesData = Array.from(selectedStrokes).map((idx) => ({
+          index: idx,
+          x: [...strokes[idx].x],
+          y: [...strokes[idx].y],
+        }));
+        return true;
+      }
+    }
+
     isLassoing = true;
     isDrawing = false;
     isErasing = false;
     lassoPoints = [];
+    selectedStrokes.clear();
+    selectionBounds = null;
+    const deleteBtn = document.getElementById("delete-selection-btn");
+    if (deleteBtn) deleteBtn.style.display = "none";
     // Clear any previous selection visual
     redrawCanvas();
   } else if (isEraser) {
@@ -823,8 +887,6 @@ function handleCanvasPointerDown(e) {
     }
   }
   // --- END ERASER LOGIC ---
-
-  const { x, y } = getCanvasCoordinates(e);
 
   if (isErasing) {
     eraseStrokesAtPoint(x, y);
@@ -854,11 +916,69 @@ function handleCanvasPointerDown(e) {
  * Handle canvas pointer move
  */
 function handleCanvasPointerMove(e) {
-  if (!isDrawMode || (!isDrawing && !isErasing && !isLassoing)) {
+  if (!isDrawMode || (!isDrawing && !isErasing && !isLassoing && !isTransforming)) {
     return;
   }
 
   const { x, y } = getCanvasCoordinates(e);
+
+  if (isTransforming) {
+    const dx = x - transformStartPoint.x;
+    const dy = y - transformStartPoint.y;
+
+    if (transformMode === "move") {
+      initialStrokesData.forEach((data) => {
+        strokes[data.index].x = data.x.map((px) => px + dx);
+        strokes[data.index].y = data.y.map((py) => py + dy);
+      });
+    } else if (transformMode === "resize") {
+      // Scale from Top-Right fixed point (maxX, minY) since handle is at LL (minX, maxY)
+      const scaleX =
+        initialSelectionBounds.width === 0
+          ? 1
+          : (initialSelectionBounds.maxX - x) / initialSelectionBounds.width;
+      const scaleY =
+        initialSelectionBounds.height === 0
+          ? 1
+          : (y - initialSelectionBounds.minY) / initialSelectionBounds.height;
+
+      initialStrokesData.forEach((data) => {
+        strokes[data.index].x = data.x.map(
+          (px) => initialSelectionBounds.maxX - (initialSelectionBounds.maxX - px) * scaleX,
+        );
+        strokes[data.index].y = data.y.map(
+          (py) => initialSelectionBounds.minY + (py - initialSelectionBounds.minY) * scaleY,
+        );
+      });
+    } else if (transformMode === "rotate") {
+      const centerX = (initialSelectionBounds.minX + initialSelectionBounds.maxX) / 2;
+      const centerY = (initialSelectionBounds.minY + initialSelectionBounds.maxY) / 2;
+      const angle1 = Math.atan2(transformStartPoint.y - centerY, transformStartPoint.x - centerX);
+      const angle2 = Math.atan2(y - centerY, x - centerX);
+      const da = angle2 - angle1;
+      const cos = Math.cos(da);
+      const sin = Math.sin(da);
+
+      initialStrokesData.forEach((data) => {
+        strokes[data.index].x = data.x.map((px, i) => {
+          const py = data.y[i];
+          const rx = px - centerX;
+          const ry = py - centerY;
+          return centerX + rx * cos - ry * sin;
+        });
+        strokes[data.index].y = data.y.map((py, i) => {
+          const px = data.x[i];
+          const rx = px - centerX;
+          const ry = py - centerY;
+          return centerY + rx * sin + ry * cos;
+        });
+      });
+    }
+
+    calculateSelectionBounds();
+    redrawCanvas();
+    return;
+  }
 
   if (isLassoing) {
     lassoPoints.push({ x, y });
@@ -932,6 +1052,16 @@ function drawLassoPath() {
  * Handle canvas pointer up
  */
 function handleCanvasPointerUp(_e) {
+  if (isTransforming) {
+    isTransforming = false;
+    transformMode = null;
+    initialStrokesData = [];
+    setTimeout(async () => {
+      await saveNoteContent();
+    }, 500);
+    return;
+  }
+
   // Deactivate auto-activated eraser mode on pointer up
   if (autoActivatedEraserMode) {
     isEraserMode = false;
@@ -959,21 +1089,22 @@ function handleCanvasPointerUp(_e) {
       const strokeBounds = getStrokeBounds(stroke);
 
       if (doBoundingBoxesIntersect(lassoBounds, strokeBounds)) {
-        // Check if any point of the stroke is inside the polygon
-        let pointInside = false;
+        // Check if all points of the stroke are inside the polygon
+        let allPointsInside = true;
         for (let i = 0; i < stroke.x.length; i++) {
-          if (isPointInPolygon(stroke.x[i], stroke.y[i], polygon)) {
-            pointInside = true;
+          if (!isPointInPolygon(stroke.x[i], stroke.y[i], polygon)) {
+            allPointsInside = false;
             break;
           }
         }
-        if (pointInside) {
+        if (allPointsInside) {
           selectedStrokes.add(index);
         }
       }
     });
 
     lassoPoints = [];
+    calculateSelectionBounds();
     redrawCanvas(); // Redraw to show selection highlights
 
     // show delete button
@@ -1001,6 +1132,58 @@ function handleCanvasPointerUp(_e) {
       await saveNoteContent();
     }, 500);
   }
+}
+
+/**
+ * Calculate the bounding box of all selected strokes
+ */
+function calculateSelectionBounds() {
+  if (selectedStrokes.size === 0) {
+    selectionBounds = null;
+    return;
+  }
+
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  let hasValidStroke = false;
+
+  selectedStrokes.forEach((index) => {
+    const stroke = strokes[index];
+    const bounds = getStrokeBounds(stroke);
+    if (bounds) {
+      minX = Math.min(minX, bounds.minX);
+      maxX = Math.max(maxX, bounds.maxX);
+      minY = Math.min(minY, bounds.minY);
+      maxY = Math.max(maxY, bounds.maxY);
+      hasValidStroke = true;
+    }
+  });
+
+  if (!hasValidStroke) {
+    selectionBounds = null;
+    return;
+  }
+
+  selectionBounds = { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * Check if a point is over a selection handle
+ * @returns {string|null} Handle name or null
+ */
+function getHandleAtPoint(x, y) {
+  if (!selectionBounds) return null;
+  const { minX, minY, maxX, maxY } = selectionBounds;
+  const h = handleSize / 2;
+
+  if (x >= minX - h && x <= minX + h && y >= minY - h && y <= minY + h) return "rotate";
+  if (x >= maxX - h && x <= maxX + h && y >= minY - h && y <= minY + h) return "copy";
+  if (x >= maxX - h && x <= maxX + h && y >= maxY - h && y <= maxY + h) return "move";
+  if (x >= minX - h && x <= minX + h && y >= maxY - h && y <= maxY + h) return "resize";
+
+  return null;
 }
 
 /**
@@ -1256,6 +1439,43 @@ function redrawCanvas() {
   strokes.forEach((stroke, index) => {
     drawStroke(stroke, index);
   });
+
+  // Draw selection UI
+  if (selectionBounds && !isLassoing) {
+    const { minX, minY, maxX, maxY } = selectionBounds;
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(0, 100, 255, 0.5)";
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+    ctx.setLineDash([]);
+
+    // Draw handles
+    const h = handleSize;
+    const drawHandle = (hx, hy, label) => {
+      ctx.fillStyle = "white";
+      ctx.strokeStyle = "rgba(0, 100, 255, 0.8)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.rect(hx - h / 2, hy - h / 2, h, h);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(0, 100, 255, 0.8)";
+      ctx.font = "bold 12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, hx, hy);
+    };
+
+    drawHandle(minX, minY, "R"); // Rotate
+    drawHandle(maxX, minY, "C"); // Copy
+    drawHandle(maxX, maxY, "M"); // Move
+    drawHandle(minX, maxY, "S"); // Size
+
+    ctx.restore();
+  }
 }
 
 /**
@@ -1393,6 +1613,7 @@ function switchToTextMode() {
   }
   if (selectedStrokes.size > 0) {
     selectedStrokes.clear();
+    selectionBounds = null;
     redrawCanvas();
   }
 
@@ -1443,6 +1664,7 @@ function manualSwitchToDrawMode() {
   // Clear selection when switching modes
   if (selectedStrokes.size > 0) {
     selectedStrokes.clear();
+    selectionBounds = null;
     const deleteBtn = document.getElementById("delete-selection-btn");
     if (deleteBtn) deleteBtn.style.display = "none";
     redrawCanvas();
@@ -1468,6 +1690,7 @@ function toggleEraserMode() {
   // Clear selection when switching modes
   if (selectedStrokes.size > 0) {
     selectedStrokes.clear();
+    selectionBounds = null;
     const deleteBtn = document.getElementById("delete-selection-btn");
     if (deleteBtn) deleteBtn.style.display = "none";
     redrawCanvas();
@@ -1498,6 +1721,11 @@ function toggleLassoMode() {
 
   isLassoMode = !isLassoMode;
   isEraserMode = false; // Disable eraser mode
+  if (selectedStrokes.size > 0) {
+    selectedStrokes.clear();
+    selectionBounds = null;
+    redrawCanvas();
+  }
   autoSwitchedToDrawMode = false; // This is a manual action
 
   // If enabling lasso mode, make sure we're in draw mode
@@ -1779,6 +2007,8 @@ function attachToolbarListeners() {
 
   // Delete selection
   document.getElementById("delete-selection-btn")?.addEventListener("click", deleteSelectedStrokes);
+  // Paste
+  document.getElementById("paste-btn")?.addEventListener("click", pasteStrokes);
 }
 
 /**
@@ -1792,6 +2022,7 @@ async function deleteSelectedStrokes() {
 
   // Clear the selection
   selectedStrokes.clear();
+  selectionBounds = null;
 
   // Hide the delete button
   const deleteBtn = document.getElementById("delete-selection-btn");
@@ -1802,6 +2033,57 @@ async function deleteSelectedStrokes() {
   // Redraw and save
   redrawCanvas();
   updateContentBounds();
+  await saveNoteContent();
+}
+
+/**
+ * Copies the selected strokes to the clipboard
+ */
+function copySelectedStrokes() {
+  if (selectedStrokes.size === 0) return;
+
+  clipboardStrokes = Array.from(selectedStrokes).map((index) =>
+    JSON.parse(JSON.stringify(strokes[index])),
+  );
+
+  const pasteBtn = document.getElementById("paste-btn");
+  if (pasteBtn) pasteBtn.style.display = "block";
+
+  // Flash the selection box as feedback
+  const originalBounds = { ...selectionBounds };
+  selectionBounds = null;
+  redrawCanvas();
+  setTimeout(() => {
+    selectionBounds = originalBounds;
+    redrawCanvas();
+  }, 100);
+}
+
+/**
+ * Pastes the strokes from the clipboard
+ */
+async function pasteStrokes() {
+  if (!clipboardStrokes || clipboardStrokes.length === 0) return;
+
+  const offset = 30;
+  const newStrokes = clipboardStrokes.map((stroke) => {
+    const copy = JSON.parse(JSON.stringify(stroke));
+    copy.x = copy.x.map((x) => x + offset);
+    copy.y = copy.y.map((y) => y + offset);
+    return copy;
+  });
+
+  const startIndex = strokes.length;
+  strokes.push(...newStrokes);
+
+  // Select the pasted strokes
+  selectedStrokes.clear();
+  for (let i = 0; i < newStrokes.length; i++) {
+    selectedStrokes.add(startIndex + i);
+  }
+
+  calculateSelectionBounds();
+  redrawCanvas();
   await saveNoteContent();
 }
 
@@ -2126,37 +2408,6 @@ function htmlToMarkdown(html) {
 }
 
 /**
- * Initialize notebook editor component
- */
-export function initNotebookEditorComponent() {
-  // Listen for render notebook event from router
-  window.addEventListener("rendernotebook", async (e) => {
-    const { noteId } = e.detail;
-    if (noteId) {
-      await initNotebookEditor(noteId);
-    }
-  });
-
-  // Listen for data changes to refresh the editor if the current note was updated
-  window.addEventListener("datachange", async () => {
-    const noteId = getCurrentNoteId();
-    if (noteId && currentNoteData && noteId === currentNoteData.id) {
-      console.log("External data change detected for current note. Refreshing editor.");
-      await updateEditorContent(noteId);
-    }
-  });
-
-  // Listen for navigation changes to cleanup
-  window.addEventListener("navigate", (e) => {
-    if (e.detail.previousMode === "notebook") {
-      cleanupNotebookEditor();
-    }
-  });
-
-  console.log("Notebook editor component initialized");
-}
-
-/**
  * Update editor content after external changes (e.g., sync) while preserving state.
  * @param {string} noteId - The ID of the note to update.
  */
@@ -2237,4 +2488,10 @@ export function cleanupNotebookEditor() {
   currentStroke = [];
   isDrawing = false;
   isDrawMode = false;
+  isEraserMode = false;
+  isLassoMode = false;
+  selectionBounds = null;
+  isTransforming = false;
+  transformMode = null;
+  clipboardStrokes = null;
 }
