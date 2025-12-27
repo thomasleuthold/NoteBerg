@@ -29,7 +29,9 @@ export async function renderRecycleBin(container) {
             .map(
               (notebook) => `
       <div class="recycle-item" data-type="notebook" data-id="${notebook.id}">
-        <div class="recycle-item-icon">📓</div>
+        <div class="recycle-item-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M16 2v20"/></svg>
+        </div>
         <div class="recycle-item-content">
           <div class="recycle-item-title">${escapeHtml(notebook.title)}</div>
           <div class="recycle-item-meta">
@@ -60,7 +62,9 @@ export async function renderRecycleBin(container) {
             .map(
               (note) => `
       <div class="recycle-item" data-type="note" data-id="${note.id}">
-        <div class="recycle-item-icon">📝</div>
+        <div class="recycle-item-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
         <div class="recycle-item-content">
           <div class="recycle-item-title">${escapeHtml(note.title || "Untitled")}</div>
           <div class="recycle-item-meta">
@@ -94,7 +98,9 @@ export async function renderRecycleBin(container) {
           totalItems === 0
             ? `
           <div class="empty-state">
-            <div class="empty-state-icon" style="font-size: 4rem; margin-bottom: 1rem;">🗑️</div>
+            <div class="empty-state-icon" style="margin-bottom: 1rem; color: var(--text-secondary);">
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+            </div>
             <h3>Recycle Bin is Empty</h3>
             <p>Deleted notebooks and notes will appear here.</p>
           </div>
