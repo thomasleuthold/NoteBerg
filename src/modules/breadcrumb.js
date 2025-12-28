@@ -79,7 +79,7 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
   if (notebookBtn) {
     notebookBtn.addEventListener("click", () => {
       const nbId = notebookBtn.dataset.notebookId;
-      navigateTo("notebook", { notebookId: nbId });
+      navigateTo("overview", { notebookId: nbId });
     });
   }
 }
