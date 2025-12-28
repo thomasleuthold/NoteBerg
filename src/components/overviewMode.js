@@ -13,10 +13,10 @@ import {
   getNotesByNotebook,
   getQuickNotes,
 } from "../modules/storage.js";
+import { getTheme } from "../modules/theme.js";
+import { getIcon } from "../utils/icons.js";
 import { showConfirmDialog } from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
-import { renderNoteCard } from "./noteCard.js";
-import { getTheme } from "../modules/theme.js";
 
 /**
  * Render overview UI
@@ -64,19 +64,14 @@ async function renderRootOverview(container) {
       ? quickNotes.map((note) => renderPreviewNoteCard(note)).join("")
       : '<p class="empty-state">No quick notes yet. Create a note outside of any notebook.</p>';
 
+  const trashIcon = getIcon("trash", 20);
+
   container.innerHTML = `
-    <style>
-      .quick-notes-list {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-        gap: 16px;
-      }
-    </style>
     <div class="overview-container">
       <div class="overview-header">
         <h2>Overview</h2>
         <button class="btn-secondary" id="recycle-bin-btn" title="Recycle Bin" style="display: flex; align-items: center; gap: 8px;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+          ${trashIcon}
           <span>Recycle Bin</span>
         </button>
       </div>
@@ -125,13 +120,6 @@ async function renderNotebookContents(container, notebookId) {
       : '<p class="empty-state">No notes in this notebook yet.</p>';
 
   container.innerHTML = `
-    <style>
-      .notes-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-        gap: 16px;
-      }
-    </style>
     <div class="overview-container">
       <div class="overview-header">
         <h2>${escapeHtml(notebook.title)}</h2>
@@ -294,6 +282,8 @@ function renderPreviewNoteCard(note) {
     previewContent = `<div style="padding: 12px; font-style: italic;">No content</div>`;
   }
 
+  const deleteIcon = getIcon("trash", 16);
+
   return `
     <div class="note-card preview-card" data-note-id="${note.id}" style="display: flex; flex-direction: column; aspect-ratio: 1; border: 2px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--bg-secondary); cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;">
       <div class="note-card-header" style="padding: 12px; border-bottom: 1px solid var(--border-color); background: var(--bg-primary);">
@@ -306,7 +296,7 @@ function renderPreviewNoteCard(note) {
       </div>
       <div class="note-card-actions" style="padding: 8px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end;">
          <button class="card-delete-btn btn-icon" data-note-id="${note.id}" title="Delete" style="padding: 4px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            ${deleteIcon}
          </button>
       </div>
     </div>
@@ -317,10 +307,12 @@ function updateBreadcrumb(notebookTitle = null) {
   const breadcrumb = document.getElementById("breadcrumb");
   if (!breadcrumb) return;
 
+  const homeIcon = getIcon("home", 24);
+
   // Reset to just Home
   breadcrumb.innerHTML = `
     <button id="nav-overview" class="breadcrumb-item" aria-label="Home" title="Home">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      ${homeIcon}
     </button>
   `;
 
@@ -412,7 +404,7 @@ function renderNotePreviews(container, notes) {
   });
 }
 
-function drawStrokesPreview(ctx, strokes, width, height, palette) {
+function drawStrokesPreview(ctx, strokes, width, _height, palette) {
   const bounds = getStrokeBounds(strokes);
   if (!bounds) return;
 

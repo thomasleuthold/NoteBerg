@@ -7,6 +7,7 @@
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
+import { getIcon } from "../utils/icons.js";
 import { showConfirmDialog, showNoteInfoModal } from "./modals.js";
 
 // Editor state
@@ -157,112 +158,21 @@ export async function initNotebookEditor(noteId) {
  * Render editor structure
  */
 function renderEditor(container, _noteData) {
+  // Get all icons upfront for better performance
+  const icons = {
+    pen: getIcon("pen"),
+    eraser: getIcon("eraser"),
+    lasso: getIcon("lasso"),
+    trash: getIcon("trash"),
+    clipboard: getIcon("clipboard"),
+    background: getIcon("background"),
+    zoomOut: getIcon("zoomOut"),
+    zoomIn: getIcon("zoomIn"),
+    zoomReset: getIcon("zoomReset"),
+    info: getIcon("info"),
+  };
+
   container.innerHTML = `
-    <style>
-      .editor-content-wrapper {
-        position: relative;
-      }
-      #text-editor {
-        position: relative;
-        z-index: 1; /* Behind the canvases */
-      }
-      .drawing-canvas, .cursor-canvas {
-        position: absolute;
-        top: 0;
-        left: 0;
-        z-index: 10; /* On top of the text editor */
-        pointer-events: none; /* Default to none to allow text interaction */
-        touch-action: none; /* Prevent browser gesture handling */
-      }
-      .drawing-canvas.active {
-        pointer-events: auto; /* Enable events in draw mode */
-      }
-      .toolbar-btn {
-        width: auto;
-        height: auto;
-        padding: 12px;
-      }
-      .toolbar-btn svg {
-        width: 24px;
-        height: 24px;
-        display: block;
-      }
-      .toolbar-btn-container {
-        position: relative;
-        display: inline-block;
-      }
-      .pen-settings-dialog {
-        position: absolute;
-        top: 100%;
-        left: 0;
-        z-index: 100;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        padding: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        width: 200px;
-        margin-top: 5px;
-      }
-      .pen-settings-section {
-        margin-bottom: 12px;
-      }
-      .pen-settings-label {
-        display: block;
-        font-size: 0.75rem;
-        color: var(--text-secondary);
-        margin-bottom: 8px;
-      }
-      .pen-color-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 8px;
-      }
-      .pen-color-option {
-        width: 30px;
-        height: 30px;
-        border-radius: 50%;
-        cursor: pointer;
-        border: 2px solid transparent;
-      }
-      .pen-color-option.active {
-        border-color: var(--color-primary);
-        transform: scale(1.1);
-      }
-      .pen-width-control {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .background-settings-dialog {
-        position: absolute;
-        top: 100%;
-        left: 0;
-        z-index: 100;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        padding: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        width: 200px;
-        margin-top: 5px;
-      }
-      .background-option {
-        padding: 8px 12px;
-        margin-bottom: 4px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.875rem;
-        border: 1px solid var(--border-primary);
-      }
-      .background-option:hover {
-        background-color: var(--bg-hover);
-      }
-      .background-option.active {
-        background-color: var(--color-primary-light);
-        border-color: var(--color-primary);
-      }
-    </style>
     <div class="notebook-editor">
       <div class="editor-toolbar">
         <div class="toolbar-section">
@@ -271,7 +181,7 @@ function renderEditor(container, _noteData) {
           </button>
           <div class="toolbar-btn-container">
             <button class="toolbar-btn" id="mode-draw-btn" title="Draw mode">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+              ${icons.pen}
             </button>
             <div id="pen-settings-dialog" class="pen-settings-dialog" style="display: none;">
               <div class="pen-settings-section">
@@ -289,21 +199,21 @@ function renderEditor(container, _noteData) {
             </div>
           </div>
           <button class="toolbar-btn" id="mode-erase-btn" title="Eraser mode">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.9-9.9c1-1 2.5-1 3.4 0l4.4 4.4c1 1 1 2.5 0 3.4L10.5 21z"/><path d="m22 21-10 0"/><path d="m18 11-4-4"/></svg>
+            ${icons.eraser}
           </button>
           <button class="toolbar-btn" id="mode-lasso-btn" title="Lasso select">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22a5 5 0 0 1-2-4"/><path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1"/><path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+            ${icons.lasso}
           </button>
           <button class="toolbar-btn" id="delete-selection-btn" title="Delete selection" style="display: none;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+            ${icons.trash}
           </button>
           <button class="toolbar-btn" id="paste-btn" title="Paste" style="display: none;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+            ${icons.clipboard}
           </button>
           <div class="toolbar-divider"></div>
           <div class="toolbar-btn-container">
             <button class="toolbar-btn" id="background-btn" title="Background">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+              ${icons.background}
             </button>
             <div id="background-settings-dialog" class="background-settings-dialog" style="display: none;">
               <div class="background-option" data-background="none">None</div>
@@ -331,21 +241,21 @@ function renderEditor(container, _noteData) {
         </div>
         <div class="toolbar-section toolbar-section-right">
           <button class="toolbar-btn" id="zoom-out-btn" title="Zoom out">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+            ${icons.zoomOut}
           </button>
           <span class="zoom-indicator" id="zoom-level">100%</span>
           <button class="toolbar-btn" id="zoom-in-btn" title="Zoom in">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+            ${icons.zoomIn}
           </button>
           <button class="toolbar-btn" id="zoom-reset-btn" title="Reset zoom">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            ${icons.zoomReset}
           </button>
           <div class="toolbar-divider"></div>
           <button class="toolbar-btn" id="delete-note-btn" title="Delete note">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+            ${icons.trash}
           </button>
           <button class="toolbar-btn" id="note-info-btn" title="Note properties">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            ${icons.info}
           </button>
         </div>
       </div>

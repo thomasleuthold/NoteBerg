@@ -36,12 +36,19 @@
   margin-left: auto;
 }
 
+/* Toolbar button container for dialogs */
+.toolbar-btn-container {
+  position: relative;
+  display: inline-block;
+}
+
 .toolbar-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: auto;
+  height: auto;
+  padding: 12px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -50,6 +57,12 @@
   transition: all var(--transition-fast);
   font-size: 18px;
   font-weight: 600;
+}
+
+.toolbar-btn svg {
+  width: 24px;
+  height: 24px;
+  display: block;
 }
 
 .toolbar-btn-text {
@@ -113,6 +126,11 @@
   z-index: 1;
   background: transparent;
   touch-action: pan-x pan-y pinch-zoom;
+}
+
+#text-editor {
+  position: relative;
+  z-index: 1; /* Behind the canvases */
 }
 
 .text-editor:focus {
@@ -181,15 +199,20 @@
 }
 
 /* Canvas drawing layer (strokes) */
-.drawing-canvas {
+.drawing-canvas,
+.cursor-canvas {
   position: absolute;
   top: 0;
   left: 0;
+  z-index: 10; /* On top of the text editor */
+  pointer-events: none; /* Default to none to allow text interaction */
+  touch-action: none; /* Prevent browser gesture handling */
+}
+
+.drawing-canvas {
   width: 100%;
-  pointer-events: none;
   z-index: 2;
   cursor: crosshair;
-  touch-action: none; /* Disable browser touch handling for better control */
   display: block;
 }
 
@@ -200,14 +223,9 @@
 
 /* Cursor canvas layer (eraser cursor, etc.) */
 .cursor-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 100%;
-  pointer-events: none;
   z-index: 3;
   display: block;
-  touch-action: none;
 }
 
 /* Expansion zone indicator */
@@ -264,6 +282,90 @@
   .mode-indicator {
     display: none;
   }
+}
+
+/* Pen settings dialog */
+.pen-settings-dialog {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: 200px;
+  margin-top: 5px;
+}
+
+.pen-settings-section {
+  margin-bottom: 12px;
+}
+
+.pen-settings-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.pen-color-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.pen-color-option {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+
+.pen-color-option.active {
+  border-color: var(--color-primary);
+  transform: scale(1.1);
+}
+
+.pen-width-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Background settings dialog */
+.background-settings-dialog {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: 200px;
+  margin-top: 5px;
+}
+
+.background-option {
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  border: 1px solid var(--border-primary);
+}
+
+.background-option:hover {
+  background-color: var(--bg-hover);
+}
+
+.background-option.active {
+  background-color: var(--color-primary-light);
+  border-color: var(--color-primary);
 }
 
 /* Print styles */

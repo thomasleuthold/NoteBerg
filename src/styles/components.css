@@ -131,3 +131,17 @@
   font-size: 0.75rem;
   padding: var(--spacing-xs) var(--spacing-sm);
 }
+
+/* Overview Mode - Quick Notes List */
+.quick-notes-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+/* Overview Mode - Notes Grid */
+.notes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
