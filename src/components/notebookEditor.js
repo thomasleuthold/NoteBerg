@@ -162,16 +162,16 @@ export async function initNotebookEditor(noteId) {
 function renderEditor(container, _noteData) {
   // Get all icons upfront for better performance
   const icons = {
-    pen: getIcon("pen"),
-    eraser: getIcon("eraser"),
-    lasso: getIcon("lasso"),
-    trash: getIcon("trash"),
-    clipboard: getIcon("clipboard"),
-    background: getIcon("background"),
-    zoomOut: getIcon("zoomOut"),
-    zoomIn: getIcon("zoomIn"),
-    zoomReset: getIcon("zoomReset"),
-    info: getIcon("info"),
+    pen: getIcon("pen", 20),
+    eraser: getIcon("eraser", 20),
+    lasso: getIcon("lasso", 20),
+    trash: getIcon("trash", 20),
+    clipboard: getIcon("clipboard", 20),
+    background: getIcon("background", 20),
+    zoomOut: getIcon("zoomOut", 20),
+    zoomIn: getIcon("zoomIn", 20),
+    zoomReset: getIcon("zoomReset", 20),
+    info: getIcon("info", 20),
   };
 
   container.innerHTML = `

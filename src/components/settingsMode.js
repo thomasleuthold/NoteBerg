@@ -26,6 +26,7 @@ import {
 } from "../modules/storage.js";
 import { STORAGE_VERSION } from "../modules/storagePaths.js";
 import { getTheme, setTheme } from "../modules/theme.js";
+import { showLicensesDialog } from "./licensesDialog.js";
 import { showAlertDialog, showConfirmDialog, showConflictResolutionDialog } from "./modals.js";
 
 /**
@@ -206,6 +207,10 @@ export function renderSettings(container) {
             <p>Version: 0.1.0 (Alpha)</p>
             <p>A note-taking app supporting handwritten notes, text, and drawings.</p>
           </div>
+        </div>
+
+        <div class="setting-item">
+          <button id="show-licenses-btn" class="btn-secondary">License Information</button>
         </div>
       </div>
     </div>
@@ -643,6 +648,12 @@ export function renderSettings(container) {
       purgeLocalBtn.disabled = false;
       purgeLocalBtn.textContent = "Purge Local Data";
     }
+  });
+
+  // License information button (available to all users)
+  const showLicensesBtn = container.querySelector("#show-licenses-btn");
+  showLicensesBtn?.addEventListener("click", () => {
+    showLicensesDialog();
   });
 }
 

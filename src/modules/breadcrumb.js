@@ -5,6 +5,7 @@
 
 import { navigateTo } from "./router.js";
 import { getNote, getNotebook } from "./storage.js";
+import { getIcon } from "../utils/icons.js";
 
 /**
  * Update breadcrumb based on current navigation state
@@ -16,9 +17,11 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
   const breadcrumb = document.getElementById("breadcrumb");
   if (!breadcrumb) return;
 
+  const homeIcon = getIcon("home", 24);
+
   let breadcrumbHtml = `
     <button id="nav-overview" class="breadcrumb-item" aria-label="Home" title="Home">
-      🏠
+      ${homeIcon}
     </button>
   `;
 
@@ -88,6 +91,12 @@ function escapeHtml(text) {
  * Initialize breadcrumb component
  */
 export function initBreadcrumb() {
+  // Initialize the home icon on page load
+  const navOverview = document.getElementById("nav-overview");
+  if (navOverview) {
+    navOverview.innerHTML = getIcon("home", 24);
+  }
+
   // Update breadcrumb on navigation
   window.addEventListener("navigate", async (e) => {
     const { mode } = e.detail;

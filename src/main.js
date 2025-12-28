@@ -9,7 +9,6 @@ import "./styles/themes/dark.css";
 import "./styles/themes/epaper.css";
 import "./styles/layout.css";
 import "./styles/components.css";
-import "./styles/editor.css";
 import "./styles/notebookEditor.css";
 
 import { initModals } from "./components/modals.js";
@@ -23,6 +22,7 @@ import { initRouter, navigateTo } from "./modules/router.js";
 import { initStorage } from "./modules/storage.js";
 // Import modules
 import { initTheme } from "./modules/theme.js";
+import { getIcon } from "./utils/icons.js";
 
 // Application state
 const app = {
@@ -80,6 +80,8 @@ function setupEventListeners() {
   // Settings button
   const settingsBtn = document.getElementById("nav-settings");
   if (settingsBtn) {
+    // Inject settings icon
+    settingsBtn.innerHTML = getIcon("settings", 24);
     settingsBtn.addEventListener("click", () => navigateTo("settings"));
   }
 }

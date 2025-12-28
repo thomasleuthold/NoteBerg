@@ -19,17 +19,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: 8px 12px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  gap: var(--spacing-md);
+  gap: 6px;
   flex-shrink: 0;
 }
 
 .toolbar-section {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  gap: 4px;
 }
 
 .toolbar-section-right {
@@ -48,25 +48,28 @@
   justify-content: center;
   width: auto;
   height: auto;
-  padding: 12px;
-  background: transparent;
-  border: 1px solid transparent;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
 }
 
 .toolbar-btn svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   display: block;
+  padding: 4px;
 }
 
 .toolbar-btn-text {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -85,7 +88,7 @@
   width: 1px;
   height: 24px;
   background: var(--border-color);
-  margin: 0 var(--spacing-xs);
+  margin: 0 4px;
 }
 
 .zoom-indicator {
@@ -93,7 +96,7 @@
   align-items: center;
   justify-content: center;
   min-width: 45px;
-  padding: 0 var(--spacing-xs);
+  padding: 0 4px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -106,7 +109,7 @@
   flex: 1;
   overflow: auto;
   background: var(--bg-primary);
-  margin: 0 var(--spacing-md);
+  margin: 0 12px;
   /* Enable smooth touch scrolling */
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -117,7 +120,7 @@
 .text-editor {
   position: relative;
   min-height: 100%;
-  padding: var(--spacing-xl);
+  padding: 20px;
   font-family: var(--font-family);
   font-size: 16px;
   line-height: 1.6;
@@ -260,23 +263,26 @@
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .editor-toolbar {
-    padding: var(--spacing-xs);
-    gap: var(--spacing-xs);
+    padding: 6px;
+    gap: 4px;
   }
 
   .toolbar-btn {
-    width: 36px;
-    height: 36px;
-    font-size: 16px;
+    padding: 6px;
+  }
+
+  .toolbar-btn svg {
+    width: 18px;
+    height: 18px;
   }
 
   .text-editor {
-    padding: var(--spacing-md);
+    padding: 12px;
     font-size: 14px;
   }
 
   .editor-content-wrapper {
-    margin: 0 var(--spacing-xs);
+    margin: 0 6px;
   }
 
   .mode-indicator {
