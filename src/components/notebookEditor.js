@@ -8,6 +8,12 @@ import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
 import { getIcon } from "../utils/icons.js";
+import { htmlToMarkdown, markdownToHtml } from "../utils/markdown.js";
+import {
+  drawBackgroundPattern as sharedDrawBackgroundPattern,
+  drawStroke as sharedDrawStroke,
+  getThemePalette as sharedGetThemePalette,
+} from "../utils/noteRenderer.js";
 import { showConfirmDialog, showNoteInfoModal } from "./modals.js";
 
 // Editor state
@@ -68,10 +74,6 @@ let lastResizeTime = 0;
 // Cached theme palette to avoid repeated theme lookups
 let cachedPalette = null;
 let cachedTheme = null;
-
-// Cached background pattern colors to avoid repeated getComputedStyle calls
-let cachedPatternRuleColor = null;
-let cachedPatternGridColor = null;
 
 /**
  * Initialize notebook editor component
@@ -334,8 +336,6 @@ function initCanvasLayer(noteData) {
   window.addEventListener("themechange", () => {
     cachedTheme = null;
     cachedPalette = null;
-    cachedPatternRuleColor = null;
-    cachedPatternGridColor = null;
     redrawBackground(); // Redraw background with new theme colors
     redrawCanvas(); // Redraw strokes with new theme colors
   });
@@ -1183,53 +1183,10 @@ function getStrokeBounds(stroke) {
  * Draw a single stroke with smooth curves
  */
 function drawStroke(stroke, index) {
-  if (!ctx || !stroke.x || stroke.x.length < 2) return;
-
+  if (!ctx) return;
   const isSelected = selectedStrokes.has(index);
-
-  const pointCount = stroke.x.length;
   const palette = getThemePalette();
-
-  if (isSelected) {
-    ctx.strokeStyle = "rgba(0, 100, 255, 0.7)"; // Highlight color
-    ctx.lineWidth = (stroke.width || 2) + 4; // Make it thicker
-  } else {
-    ctx.strokeStyle =
-      stroke.colorIndex !== undefined ? palette[stroke.colorIndex] : stroke.color || palette[0];
-    ctx.lineWidth = stroke.width || 2;
-  }
-
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(stroke.x[0], stroke.y[0]);
-
-  if (pointCount === 2) {
-    ctx.lineTo(stroke.x[1], stroke.y[1]);
-  } else {
-    for (let i = 1; i < pointCount - 1; i++) {
-      const xc = (stroke.x[i] + stroke.x[i + 1]) / 2;
-      const yc = (stroke.y[i] + stroke.y[i + 1]) / 2;
-      ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], xc, yc);
-    }
-    const lastIdx = pointCount - 1;
-    const secondLastIdx = pointCount - 2;
-    ctx.quadraticCurveTo(
-      stroke.x[secondLastIdx],
-      stroke.y[secondLastIdx],
-      stroke.x[lastIdx],
-      stroke.y[lastIdx],
-    );
-  }
-  ctx.stroke();
-
-  // If not selected, draw the actual stroke on top of the highlight
-  if (isSelected) {
-    ctx.strokeStyle =
-      stroke.colorIndex !== undefined ? palette[stroke.colorIndex] : stroke.color || palette[0];
-    ctx.lineWidth = stroke.width || 2;
-    ctx.stroke();
-  }
+  sharedDrawStroke(ctx, stroke, palette, isSelected);
 }
 
 /**
@@ -1244,91 +1201,7 @@ function drawBackgroundPattern(backgroundType, startY = 0, endY = null) {
   const height = endY || backgroundCanvas.height;
   const width = backgroundCanvas.width;
 
-  // Get pattern color from cache or CSS variable
-  let patternColor;
-  if (backgroundType.startsWith("ruled")) {
-    if (!cachedPatternRuleColor) {
-      cachedPatternRuleColor = getComputedStyle(document.documentElement)
-        .getPropertyValue("--pattern-rule-color")
-        .trim();
-    }
-    patternColor = cachedPatternRuleColor;
-  } else {
-    if (!cachedPatternGridColor) {
-      cachedPatternGridColor = getComputedStyle(document.documentElement)
-        .getPropertyValue("--pattern-grid-color")
-        .trim();
-    }
-    patternColor = cachedPatternGridColor;
-  }
-
-  backgroundCtx.strokeStyle = patternColor;
-  backgroundCtx.lineWidth = 1;
-  backgroundCtx.beginPath();
-
-  switch (backgroundType) {
-    case "ruled-narrow":
-      // Draw horizontal lines every 20px
-      for (let y = Math.max(20, startY); y < height; y += 20) {
-        backgroundCtx.moveTo(0, y);
-        backgroundCtx.lineTo(width, y);
-      }
-      break;
-
-    case "ruled-medium":
-      // Draw horizontal lines every 30px
-      for (let y = Math.max(30, startY); y < height; y += 30) {
-        backgroundCtx.moveTo(0, y);
-        backgroundCtx.lineTo(width, y);
-      }
-      break;
-
-    case "ruled-wide":
-      // Draw horizontal lines every 40px
-      for (let y = Math.max(40, startY); y < height; y += 40) {
-        backgroundCtx.moveTo(0, y);
-        backgroundCtx.lineTo(width, y);
-      }
-      break;
-
-    case "grid-small":
-      // Draw grid with 20px squares
-      for (let y = Math.max(20, startY); y < height; y += 20) {
-        backgroundCtx.moveTo(0, y);
-        backgroundCtx.lineTo(width, y);
-      }
-      for (let x = 20; x < width; x += 20) {
-        backgroundCtx.moveTo(x, startY);
-        backgroundCtx.lineTo(x, height);
-      }
-      break;
-
-    case "grid-medium":
-      // Draw grid with 30px squares
-      for (let y = Math.max(30, startY); y < height; y += 30) {
-        backgroundCtx.moveTo(0, y);
-        backgroundCtx.lineTo(width, y);
-      }
-      for (let x = 30; x < width; x += 30) {
-        backgroundCtx.moveTo(x, startY);
-        backgroundCtx.lineTo(x, height);
-      }
-      break;
-
-    case "grid-large":
-      // Draw grid with 40px squares
-      for (let y = Math.max(40, startY); y < height; y += 40) {
-        backgroundCtx.moveTo(0, y);
-        backgroundCtx.lineTo(width, y);
-      }
-      for (let x = 40; x < width; x += 40) {
-        backgroundCtx.moveTo(x, startY);
-        backgroundCtx.lineTo(x, height);
-      }
-      break;
-  }
-
-  backgroundCtx.stroke();
+  sharedDrawBackgroundPattern(backgroundCtx, backgroundType, width, height, startY);
 }
 
 /**
@@ -1697,43 +1570,9 @@ function getThemePalette() {
     return cachedPalette;
   }
 
-  // Theme changed or first call - compute and cache the palette
+  // Theme changed or first call - get palette from shared utility and cache it
   cachedTheme = theme;
-  if (theme === "dark") {
-    cachedPalette = [
-      "#ffffff",
-      "#f87171",
-      "#60a5fa",
-      "#34d399",
-      "#fbbf24",
-      "#a78bfa",
-      "#9ca3af",
-      "#fde047",
-    ];
-  } else if (theme === "epaper") {
-    cachedPalette = [
-      "#000000",
-      "#800000",
-      "#000080",
-      "#006400",
-      "#a52a2a",
-      "#4b0082",
-      "#2f4f4f",
-      "#5d4037",
-    ];
-  } else {
-    // Default Light theme
-    cachedPalette = [
-      "#000000",
-      "#ef4444",
-      "#3b82f6",
-      "#10b981",
-      "#f59e0b",
-      "#8b5cf6",
-      "#6b7280",
-      "#78350f",
-    ];
-  }
+  cachedPalette = sharedGetThemePalette();
 
   return cachedPalette;
 }
@@ -2274,64 +2113,7 @@ async function saveNoteContent() {
   }
 }
 
-/**
- * Simple markdown to HTML conversion (basic WYSIWYG)
- */
-function markdownToHtml(markdown) {
-  let html = markdown
-    // Headers
-    .replace(/^### (.*$)/gim, "<h3>$1</h3>")
-    .replace(/^## (.*$)/gim, "<h2>$1</h2>")
-    .replace(/^# (.*$)/gim, "<h1>$1</h1>")
-    // Bold
-    .replace(/\*\*(.*?)\*\*/gim, "<strong>$1</strong>")
-    // Italic
-    .replace(/\*(.*?)\*/gim, "<em>$1</em>")
-    // Lists
-    .replace(/^- (.*$)/gim, "<li>$1</li>")
-    // Paragraphs
-    .replace(/\n\n/g, "</p><p>")
-    .replace(/\n/g, "<br>");
-
-  // Wrap in paragraph if not already wrapped
-  if (!html.startsWith("<")) {
-    html = `<p>${html}</p>`;
-  }
-
-  // Wrap lists in ul tags
-  html = html.replace(/(<li>.*<\/li>)/gim, "<ul>$1</ul>");
-
-  return html;
-}
-
-/**
- * Simple HTML to markdown conversion
- */
-function htmlToMarkdown(html) {
-  let markdown = html
-    // Headers
-    .replace(/<h1>(.*?)<\/h1>/gim, "# $1\n\n")
-    .replace(/<h2>(.*?)<\/h2>/gim, "## $1\n\n")
-    .replace(/<h3>(.*?)<\/h3>/gim, "### $1\n\n")
-    // Bold
-    .replace(/<strong>(.*?)<\/strong>/gim, "**$1**")
-    .replace(/<b>(.*?)<\/b>/gim, "**$1**")
-    // Italic
-    .replace(/<em>(.*?)<\/em>/gim, "*$1*")
-    .replace(/<i>(.*?)<\/i>/gim, "*$1*")
-    // Lists
-    .replace(/<li>(.*?)<\/li>/gim, "- $1\n")
-    .replace(/<\/?ul>/gim, "")
-    // Line breaks and paragraphs
-    .replace(/<br\s*\/?>/gim, "\n")
-    .replace(/<\/p><p>/gim, "\n\n")
-    .replace(/<\/?p>/gim, "");
-
-  // Clean up extra whitespace
-  markdown = markdown.replace(/\n{3,}/g, "\n\n").trim();
-
-  return markdown;
-}
+// Markdown conversion functions are now imported from ../utils/markdown.js
 
 /**
  * Update editor content after external changes (e.g., sync) while preserving state.

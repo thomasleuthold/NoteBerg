@@ -13,8 +13,9 @@ import {
   getNotesByNotebook,
   getQuickNotes,
 } from "../modules/storage.js";
-import { getTheme } from "../modules/theme.js";
 import { getIcon } from "../utils/icons.js";
+import { markdownToHtml } from "../utils/markdown.js";
+import { renderNotePreview } from "../utils/noteRenderer.js";
 import { showConfirmDialog } from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
 
@@ -268,16 +269,33 @@ async function handleDeleteNote(e, noteId) {
 function renderPreviewNoteCard(note) {
   const hasDrawings = note.strokes && note.strokes.length > 0;
   const hasText = note.content && note.content.trim().length > 0;
+  const hasBackground = note.background && note.background !== "none";
 
   let previewContent = "";
 
-  if (hasDrawings) {
-    previewContent = `<canvas class="note-preview-canvas" data-note-id="${note.id}" style="width: 100%; height: 100%; display: block;"></canvas>`;
+  // Use layered approach like the editor when there are drawings/background
+  if (hasDrawings || hasBackground) {
+    // Create layered structure exactly like the editor, then scale the whole thing
+    // This ensures text and strokes maintain their exact relative positions
+    const textLayer = hasText
+      ? `<div class="text-editor" contenteditable="false" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; padding: 20px; font-size: 16px; line-height: 1.6; overflow: hidden; pointer-events: none; z-index: 1;">${markdownToHtml(note.content)}</div>`
+      : "";
+    // Render at full editor size (800x600) then scale down with CSS transform
+    previewContent = `
+      <div class="preview-scaler" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; transform-origin: top left; pointer-events: none;">
+        <canvas class="note-preview-canvas" data-note-id="${note.id}" data-full-size="true" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; display: block; z-index: 0;"></canvas>
+        ${textLayer}
+      </div>
+    `;
   } else if (hasText) {
-    const previewText =
-      note.content.replace(/[#*`]/g, "").substring(0, 150) +
-      (note.content.length > 150 ? "..." : "");
-    previewContent = `<div style="padding: 12px;">${escapeHtml(previewText)}</div>`;
+    // For text-only notes, render the HTML directly with text-editor class
+    // Convert markdown to HTML exactly like the editor does
+    const textLayer = `<div class="text-editor" contenteditable="false" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; padding: 20px; font-size: 16px; line-height: 1.6; overflow: hidden; pointer-events: none;">${markdownToHtml(note.content)}</div>`;
+    previewContent = `
+      <div class="preview-scaler" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; transform-origin: top left; pointer-events: none;">
+        ${textLayer}
+      </div>
+    `;
   } else {
     previewContent = `<div style="padding: 12px; font-style: italic;">No content</div>`;
   }
@@ -292,7 +310,6 @@ function renderPreviewNoteCard(note) {
       </div>
       <div class="note-card-preview" style="flex: 1; overflow: hidden; font-size: 0.875rem; color: var(--text-secondary); position: relative; background: var(--bg-primary);">
         ${previewContent}
-        ${hasDrawings && hasText ? '<div style="position: absolute; bottom: 8px; right: 8px; background: var(--bg-tertiary); padding: 4px 8px; border-radius: 12px; font-size: 0.7rem; display: flex; align-items: center; gap: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">+ Text</div>' : ""}
       </div>
       <div class="note-card-actions" style="padding: 8px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end;">
          <button class="card-delete-btn btn-icon" data-note-id="${note.id}" title="Delete" style="padding: 4px;">
@@ -384,105 +401,36 @@ export function initOverview() {
 
 function renderNotePreviews(container, notes) {
   const canvases = container.querySelectorAll(".note-preview-canvas");
-  const theme = getTheme();
-  const palette = getThemePalette(theme);
 
   canvases.forEach((canvas) => {
     const noteId = canvas.dataset.noteId;
     const note = notes.find((n) => n.id === noteId);
-    if (!note || !note.strokes) return;
+    if (!note) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
+    // Check if this is a full-size canvas that needs to be rendered at 800x600
+    const isFullSize = canvas.dataset.fullSize === "true";
 
-    const ctx = canvas.getContext("2d");
-    ctx.scale(dpr, dpr);
+    if (isFullSize) {
+      // Render at full size (800x600) without scaling
+      renderNotePreview(canvas, note, {
+        padding: 20,
+        fullSize: true,
+      });
 
-    drawStrokesPreview(ctx, note.strokes, rect.width, rect.height, palette);
-  });
-}
-
-function drawStrokesPreview(ctx, strokes, width, _height, palette) {
-  const bounds = getStrokeBounds(strokes);
-  if (!bounds) return;
-
-  const padding = 10;
-  const availableWidth = width - padding * 2;
-  const scale = availableWidth / Math.max(1, bounds.width);
-
-  ctx.save();
-  ctx.translate(padding, padding);
-  ctx.scale(scale, scale);
-  ctx.translate(-bounds.minX, -bounds.minY);
-
-  strokes.forEach((stroke) => {
-    if (!stroke.x || stroke.x.length < 2) return;
-
-    ctx.strokeStyle =
-      stroke.colorIndex !== undefined ? palette[stroke.colorIndex] : stroke.color || palette[0];
-    ctx.lineWidth = stroke.width || 2;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    ctx.beginPath();
-    ctx.moveTo(stroke.x[0], stroke.y[0]);
-
-    for (let i = 1; i < stroke.x.length - 1; i++) {
-      const xc = (stroke.x[i] + stroke.x[i + 1]) / 2;
-      const yc = (stroke.y[i] + stroke.y[i + 1]) / 2;
-      ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], xc, yc);
-    }
-
-    if (stroke.x.length > 2) {
-      const last = stroke.x.length - 1;
-      ctx.quadraticCurveTo(stroke.x[last - 1], stroke.y[last - 1], stroke.x[last], stroke.y[last]);
+      // Calculate and apply the scale transform to the parent scaler div
+      const scaler = canvas.closest(".preview-scaler");
+      const previewContainer = canvas.closest(".note-card-preview");
+      if (scaler && previewContainer) {
+        const containerRect = previewContainer.getBoundingClientRect();
+        const scale = Math.min(containerRect.width / 800, containerRect.height / 600);
+        scaler.style.transform = `scale(${scale})`;
+      }
     } else {
-      ctx.lineTo(stroke.x[1], stroke.y[1]);
+      // Legacy rendering for scaled canvas
+      renderNotePreview(canvas, note, {
+        padding: 10,
+        showTextIndicator: false,
+      });
     }
-
-    ctx.stroke();
   });
-
-  ctx.restore();
-}
-
-function getStrokeBounds(strokes) {
-  if (!strokes || strokes.length === 0) return null;
-
-  let minX = Infinity,
-    maxX = -Infinity,
-    minY = Infinity,
-    maxY = -Infinity;
-  let hasPoints = false;
-
-  strokes.forEach((stroke) => {
-    if (!stroke.x || stroke.x.length === 0) return;
-    hasPoints = true;
-    for (let i = 0; i < stroke.x.length; i++) {
-      minX = Math.min(minX, stroke.x[i]);
-      maxX = Math.max(maxX, stroke.x[i]);
-      minY = Math.min(minY, stroke.y[i]);
-      maxY = Math.max(maxY, stroke.y[i]);
-    }
-    const w = (stroke.width || 2) / 2;
-    minX -= w;
-    maxX += w;
-    minY -= w;
-    maxY += w;
-  });
-
-  if (!hasPoints) return null;
-  return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
-}
-
-function getThemePalette(theme) {
-  if (theme === "dark") {
-    return ["#ffffff", "#f87171", "#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#9ca3af", "#fde047"];
-  } else if (theme === "epaper") {
-    return ["#000000", "#800000", "#000080", "#006400", "#a52a2a", "#4b0082", "#2f4f4f", "#5d4037"];
-  } else {
-    return ["#000000", "#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#6b7280", "#78350f"];
-  }
 }
