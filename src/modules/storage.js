@@ -48,14 +48,76 @@ export async function initStorage() {
   });
 
   console.log("Storage initialized");
+
+  // Run migrations
+  await migrateStrokeIds();
+
   return db;
+}
+
+/**
+ * Migrate existing strokes to add IDs
+ * This ensures all strokes have unique IDs for deletion tracking
+ */
+async function migrateStrokeIds() {
+  if (!db) return;
+
+  try {
+    const notes = await db.getAll("notes");
+    let migratedCount = 0;
+
+    for (const note of notes) {
+      let needsUpdate = false;
+
+      // Check if any strokes are missing IDs
+      if (note.strokes && Array.isArray(note.strokes)) {
+        for (const stroke of note.strokes) {
+          if (!stroke.id) {
+            stroke.id = generateIdHelper(); // Use helper to avoid circular dependency
+            needsUpdate = true;
+          }
+        }
+      }
+
+      // Initialize deletedStrokes array if it doesn't exist
+      if (!note.deletedStrokes) {
+        note.deletedStrokes = [];
+        needsUpdate = true;
+      }
+
+      if (needsUpdate) {
+        await db.put("notes", note);
+        migratedCount++;
+      }
+    }
+
+    if (migratedCount > 0) {
+      console.log(`Migrated stroke IDs for ${migratedCount} notes`);
+    }
+  } catch (error) {
+    console.error("Failed to migrate stroke IDs:", error);
+  }
+}
+
+/**
+ * Helper to generate ID (used during migration before generateId is defined)
+ */
+function generateIdHelper() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 /**
  * Generate a UUID v4
  * Uses crypto.randomUUID() if available, falls back to polyfill for non-secure contexts
  */
-function generateId() {
+export function generateId() {
   // Try native crypto.randomUUID() first (works in secure contexts and Tauri)
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();

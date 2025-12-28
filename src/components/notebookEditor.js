@@ -6,7 +6,7 @@
 
 import { resetInactivityTimer, stopInactivityTimer, syncOnNoteClose } from "../modules/autoSync.js";
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
-import { deleteNote, getNote, updateNote } from "../modules/storage.js";
+import { deleteNote, generateId, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
 import { getIcon } from "../utils/icons.js";
 import { htmlToMarkdown, markdownToHtml } from "../utils/markdown.js";
@@ -44,6 +44,7 @@ let clipboardStrokes = null;
 const handleSize = 24; // Size of selection handles
 let currentStroke = [];
 let strokes = [];
+let deletedStrokes = []; // Track IDs of deleted strokes for sync
 let lastExpansionTime = 0;
 const expansionCooldown = 500; // Minimum ms between expansions
 let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
@@ -100,7 +101,8 @@ export function initNotebookEditorComponent() {
   // Listen for navigation changes to cleanup
   window.addEventListener("navigate", (e) => {
     if (e.detail.previousMode === "notebook") {
-      cleanupNotebookEditor();
+      // Fire and forget - don't block navigation
+      cleanupNotebookEditor().catch((err) => console.error("Cleanup error:", err));
     }
   });
 
@@ -341,10 +343,15 @@ function initCanvasLayer(noteData) {
     redrawCanvas(); // Redraw strokes with new theme colors
   });
 
-  // Load existing strokes
+  // Load existing strokes and deleted stroke IDs
   if (noteData.strokes && Array.isArray(noteData.strokes)) {
     strokes = noteData.strokes;
     updateContentBounds();
+  }
+  if (noteData.deletedStrokes && Array.isArray(noteData.deletedStrokes)) {
+    deletedStrokes = noteData.deletedStrokes;
+  } else {
+    deletedStrokes = [];
   }
 
   requestAnimationFrame(() => {
@@ -822,6 +829,7 @@ function handleCanvasPointerDown(e) {
     // Start drawing
     if (currentStroke.length === 0) {
       currentStroke = {
+        id: generateId(), // Unique ID for stroke deletion tracking
         pointerType: e.pointerType,
         x: [],
         y: [],
@@ -1353,8 +1361,18 @@ function strokeIntersectsEraser(stroke, eraserX, eraserY) {
  */
 function eraseStrokesAtPoint(x, y) {
   const originalLength = strokes.length;
+
+  // Track deleted stroke IDs
+  const erasedStrokeIds = strokes
+    .filter((stroke) => strokeIntersectsEraser(stroke, x, y))
+    .map((stroke) => stroke.id)
+    .filter((id) => id); // Only track strokes that have IDs
+
   strokes = strokes.filter((stroke) => !strokeIntersectsEraser(stroke, x, y));
+
   if (strokes.length < originalLength) {
+    // Add erased stroke IDs to deletedStrokes list
+    deletedStrokes.push(...erasedStrokeIds);
     redrawCanvas();
     updateContentBounds();
   }
@@ -1783,8 +1801,16 @@ function attachToolbarListeners() {
 async function deleteSelectedStrokes() {
   if (selectedStrokes.size === 0) return;
 
+  // Track deleted stroke IDs
+  const deletedStrokeIds = Array.from(selectedStrokes)
+    .map((index) => strokes[index]?.id)
+    .filter((id) => id); // Only track strokes that have IDs
+
   // Filter out the selected strokes
   strokes = strokes.filter((_, index) => !selectedStrokes.has(index));
+
+  // Add deleted stroke IDs to deletedStrokes list
+  deletedStrokes.push(...deletedStrokeIds);
 
   // Clear the selection
   selectedStrokes.clear();
@@ -1834,6 +1860,7 @@ async function pasteStrokes() {
   const offset = 30;
   const newStrokes = clipboardStrokes.map((stroke) => {
     const copy = JSON.parse(JSON.stringify(stroke));
+    copy.id = generateId(); // Assign new ID to pasted stroke
     copy.x = copy.x.map((x) => x + offset);
     copy.y = copy.y.map((y) => y + offset);
     return copy;
@@ -2101,10 +2128,12 @@ async function saveNoteContent() {
     const htmlContent = currentEditor.innerHTML;
     const markdownContent = htmlToMarkdown(htmlContent);
 
-    // Update note with content and strokes
+    // Update note with content, strokes, deleted stroke IDs, and background setting
     await updateNote(noteId, {
       content: markdownContent,
       strokes: strokes,
+      deletedStrokes: deletedStrokes,
+      background: currentNoteData?.background || "none",
       modified: Date.now(),
     });
 
@@ -2162,6 +2191,7 @@ async function updateEditorContent(noteId) {
 
   if (canvas) {
     strokes = newNoteData.strokes || [];
+    deletedStrokes = newNoteData.deletedStrokes || [];
     // Recalculate content bounds based on new strokes
     updateContentBounds();
     // `resizeCanvas` will handle resizing and `redrawCanvas`
@@ -2184,12 +2214,23 @@ async function updateEditorContent(noteId) {
 /**
  * Cleanup editor
  */
-export function cleanupNotebookEditor() {
-  // Sync note before cleanup
+export async function cleanupNotebookEditor() {
   const noteId = getCurrentNoteId();
+
+  // Save note content before cleanup (non-blocking)
+  if (noteId && currentEditor) {
+    try {
+      await saveNoteContent();
+    } catch (error) {
+      console.error("Failed to save note during cleanup:", error);
+    }
+  }
+
+  // Stop inactivity timer
   if (noteId) {
     stopInactivityTimer();
-    syncOnNoteClose(noteId);
+    // Trigger sync in background (don't await - let it run async)
+    syncOnNoteClose(noteId).catch((err) => console.error("Background sync failed:", err));
   }
 
   if (canvas) {
@@ -2204,6 +2245,7 @@ export function cleanupNotebookEditor() {
   canvas = null;
   ctx = null;
   strokes = [];
+  deletedStrokes = [];
   currentStroke = [];
   isDrawing = false;
   isDrawMode = false;

@@ -3,8 +3,8 @@
  * Handles automatic syncing of notes and notebooks to minimize conflicts
  */
 
-import { fullSync, isAuthenticated } from "./nextcloudSync.js";
-import { getAllNotebooksForSync, getAllNotesForSync, saveNote, saveNotebook } from "./storage.js";
+import { isAuthenticated } from "./nextcloudSync.js";
+import { getIsSyncing, performSync } from "./sync.js";
 
 // Configuration
 const INACTIVITY_TIMEOUT = 30000; // 30 seconds of inactivity before syncing
@@ -13,7 +13,6 @@ const SYNC_COOLDOWN = 5000; // Minimum time between syncs (5 seconds)
 // State
 let inactivityTimer = null;
 let lastSyncTime = 0;
-let isSyncing = false;
 let currentNoteId = null;
 
 /**
@@ -21,97 +20,12 @@ let currentNoteId = null;
  */
 function shouldSync() {
   if (!isAuthenticated()) return false;
-  if (isSyncing) return false;
+  if (getIsSyncing()) return false;
 
   const now = Date.now();
   const timeSinceLastSync = now - lastSyncTime;
 
   return timeSinceLastSync >= SYNC_COOLDOWN;
-}
-
-/**
- * Perform a full sync
- * @param {boolean} silent - If true, don't update UI status
- * @returns {Promise<Object>} Sync result
- */
-async function performSync(silent = true) {
-  if (!shouldSync()) {
-    console.log("Auto-sync: Skipping sync (cooldown period or already syncing)");
-    return null;
-  }
-
-  isSyncing = true;
-  lastSyncTime = Date.now();
-
-  try {
-    console.log("Auto-sync: Starting sync...");
-
-    const notebooks = await getAllNotebooksForSync();
-    const notes = await getAllNotesForSync();
-
-    const result = await fullSync(notebooks, notes);
-
-    // Mark uploaded items as synced
-    for (const id of result.uploaded.notebooks.uploadedIds || []) {
-      const notebook = notebooks.find((n) => n.id === id);
-      if (notebook) {
-        const etag = result.uploaded.notebooks.metadata?.[id]?.etag;
-        await saveNotebook({
-          ...notebook,
-          synced: true,
-          lastSyncedEtag: etag || notebook.lastSyncedEtag,
-        });
-      }
-    }
-
-    for (const id of result.uploaded.notes.uploadedIds || []) {
-      const note = notes.find((n) => n.id === id);
-      if (note) {
-        const etag = result.uploaded.notes.metadata?.[id]?.etag;
-        await saveNote({
-          ...note,
-          synced: true,
-          lastSyncedEtag: etag || note.lastSyncedEtag,
-        });
-      }
-    }
-
-    // Save downloaded items
-    for (const notebook of result.downloaded.notebooks) {
-      await saveNotebook(notebook);
-    }
-
-    for (const note of result.downloaded.notes) {
-      await saveNote(note);
-    }
-
-    if (!silent) {
-      // Dispatch event for UI updates
-      window.dispatchEvent(new CustomEvent("datachange"));
-    }
-
-    const totalConflicts =
-      (result.conflicts?.notebooks?.length || 0) + (result.conflicts?.notes?.length || 0);
-
-    if (totalConflicts > 0) {
-      console.warn(`Auto-sync: Completed with ${totalConflicts} conflicts`);
-      // Dispatch event to notify about conflicts
-      window.dispatchEvent(
-        new CustomEvent("sync-conflicts", {
-          detail: { conflicts: result.conflicts },
-        }),
-      );
-    } else {
-      console.log("Auto-sync: Completed successfully");
-    }
-
-    return result;
-  } catch (error) {
-    console.error("Auto-sync: Failed", error);
-    throw error;
-  } finally {
-    isSyncing = false;
-  }
 }
 
 /**
@@ -121,12 +35,19 @@ async function performSync(silent = true) {
 async function syncSingleNote(noteId) {
   if (!isAuthenticated()) return;
 
+  if (!shouldSync()) {
+    console.log("Auto-sync: Skipping sync (cooldown period or already syncing)");
+    return null;
+  }
+
+  lastSyncTime = Date.now();
+
   try {
     console.log(`Auto-sync: Syncing note ${noteId}`);
 
     // For now, we'll do a full sync since our sync logic handles individual items
     // In the future, we could optimize this to only sync the specific note
-    await performSync(true);
+    await performSync({ silent: true, skipConflictResolution: true });
   } catch (error) {
     console.error(`Auto-sync: Failed to sync note ${noteId}`, error);
   }
@@ -194,8 +115,19 @@ export async function syncOnNoteCreate(noteId) {
 export async function syncOnNotebookCreate(notebookId) {
   if (!isAuthenticated()) return;
 
+  if (!shouldSync()) {
+    console.log("Auto-sync: Skipping sync (cooldown period or already syncing)");
+    return;
+  }
+
+  lastSyncTime = Date.now();
+
   console.log(`Auto-sync: Notebook created (${notebookId}), syncing...`);
-  await performSync(true);
+  try {
+    await performSync({ silent: true, skipConflictResolution: true });
+  } catch (error) {
+    console.error(`Auto-sync: Failed to sync notebook ${notebookId}`, error);
+  }
 }
 
 /**
@@ -209,8 +141,10 @@ export async function syncOnAppStart() {
 
   console.log("Auto-sync: App started, performing initial sync...");
 
+  lastSyncTime = Date.now();
+
   try {
-    await performSync(false); // Not silent, update UI
+    await performSync({ silent: true, skipConflictResolution: true });
   } catch (error) {
     console.error("Auto-sync: Startup sync failed", error);
   }

@@ -754,26 +754,62 @@ export async function downloadAllData() {
 }
 
 /**
- * Simple merge for strokes (union of unique strokes)
+ * Merge strokes while respecting deletions
+ * @param {Array} localStrokes - Local strokes array
+ * @param {Array} remoteStrokes - Remote strokes array
+ * @param {Array} localDeleted - Local deleted stroke IDs
+ * @param {Array} remoteDeleted - Remote deleted stroke IDs
+ * @returns {Object} Object with merged strokes and deletedStrokes arrays
  */
-function mergeStrokes(localStrokes, remoteStrokes) {
-  const remoteStrings = new Set(remoteStrokes.map((s) => JSON.stringify(s)));
-  const merged = [...remoteStrokes];
+function mergeStrokes(localStrokes, remoteStrokes, localDeleted = [], remoteDeleted = []) {
+  // Combine all deleted stroke IDs from both sides
+  const allDeletedIds = new Set([...localDeleted, ...remoteDeleted]);
 
-  for (const s of localStrokes) {
-    if (!remoteStrings.has(JSON.stringify(s))) {
-      merged.push(s);
+  // Create a map of stroke ID to stroke for deduplication
+  const strokesById = new Map();
+
+  // Add remote strokes (but skip deleted ones)
+  for (const stroke of remoteStrokes) {
+    if (stroke.id && !allDeletedIds.has(stroke.id)) {
+      strokesById.set(stroke.id, stroke);
+    } else if (!stroke.id) {
+      // Legacy stroke without ID - keep it for now (will be migrated)
+      strokesById.set(JSON.stringify(stroke), stroke);
     }
   }
-  return merged;
+
+  // Add local strokes (but skip deleted ones and duplicates)
+  for (const stroke of localStrokes) {
+    if (stroke.id) {
+      if (!allDeletedIds.has(stroke.id) && !strokesById.has(stroke.id)) {
+        strokesById.set(stroke.id, stroke);
+      }
+    } else {
+      // Legacy stroke without ID
+      const key = JSON.stringify(stroke);
+      if (!strokesById.has(key)) {
+        strokesById.set(key, stroke);
+      }
+    }
+  }
+
+  return {
+    strokes: Array.from(strokesById.values()),
+    deletedStrokes: Array.from(allDeletedIds),
+  };
 }
 
 /**
  * Attempt to merge two versions of a note
  */
 function attemptMerge(local, remote) {
-  // Always merge strokes, as this is a safe, additive operation.
-  const mergedStrokes = mergeStrokes(local.strokes || [], remote.strokes || []);
+  // Merge strokes while respecting deletions from both sides
+  const mergedStrokeData = mergeStrokes(
+    local.strokes || [],
+    remote.strokes || [],
+    local.deletedStrokes || [],
+    remote.deletedStrokes || [],
+  );
 
   // Determine which note is newer based on modification time.
   const newerNote = remote.modified > local.modified ? remote : local;
@@ -811,7 +847,8 @@ function attemptMerge(local, remote) {
 
     title: mergedTitle,
     content: mergedContent,
-    strokes: mergedStrokes,
+    strokes: mergedStrokeData.strokes,
+    deletedStrokes: mergedStrokeData.deletedStrokes,
     tags: mergedTags,
     deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
 

@@ -25,14 +25,29 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
     </button>
   `;
 
-  // Add notebook if we're in a notebook
-  if (mode === "notebook" && notebookId) {
+  // If we have a noteId, get the notebookId from the note
+  let actualNotebookId = notebookId;
+  let note = null;
+
+  if (mode === "notebook" && noteId) {
     try {
-      const notebook = await getNotebook(notebookId);
+      note = await getNote(noteId);
+      if (note?.notebookId) {
+        actualNotebookId = note.notebookId;
+      }
+    } catch (error) {
+      console.error("Error loading note for breadcrumb:", error);
+    }
+  }
+
+  // Add notebook if we're in a notebook
+  if (mode === "notebook" && actualNotebookId) {
+    try {
+      const notebook = await getNotebook(actualNotebookId);
       if (notebook) {
         breadcrumbHtml += `
           <span class="breadcrumb-separator">→</span>
-          <button class="breadcrumb-item breadcrumb-notebook" data-notebook-id="${notebookId}">
+          <button class="breadcrumb-item breadcrumb-notebook" data-notebook-id="${actualNotebookId}">
             ${escapeHtml(notebook.title)}
           </button>
         `;
@@ -43,20 +58,13 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
   }
 
   // Add note if we have one open
-  if (mode === "notebook" && noteId) {
-    try {
-      const note = await getNote(noteId);
-      if (note) {
-        breadcrumbHtml += `
-          <span class="breadcrumb-separator">→</span>
-          <span class="breadcrumb-item breadcrumb-current">
-            ${escapeHtml(note.title || "Untitled")}
-          </span>
-        `;
-      }
-    } catch (error) {
-      console.error("Error loading note for breadcrumb:", error);
-    }
+  if (mode === "notebook" && noteId && note) {
+    breadcrumbHtml += `
+      <span class="breadcrumb-separator">→</span>
+      <span class="breadcrumb-item breadcrumb-current">
+        ${escapeHtml(note.title || "Untitled")}
+      </span>
+    `;
   }
 
   breadcrumb.innerHTML = breadcrumbHtml;
