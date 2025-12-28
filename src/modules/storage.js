@@ -99,6 +99,12 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
 
   await db.put("notebooks", notebook);
   console.log("Notebook created:", notebook.id);
+
+  // Dispatch event for auto-sync
+  window.dispatchEvent(
+    new CustomEvent("notebook-created", { detail: { notebookId: notebook.id } }),
+  );
+
   return notebook;
 }
 
@@ -203,6 +209,10 @@ export async function createNote({ title, notebookId = null }) {
 
   await db.put("notes", note);
   console.log("Note created:", note.id);
+
+  // Dispatch event for auto-sync
+  window.dispatchEvent(new CustomEvent("note-created", { detail: { noteId: note.id } }));
+
   return note;
 }
 

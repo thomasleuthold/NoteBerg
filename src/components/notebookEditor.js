@@ -4,6 +4,7 @@
  * Auto-detects input type (stylus vs mouse) for mode switching
  */
 
+import { resetInactivityTimer, stopInactivityTimer, syncOnNoteClose } from "../modules/autoSync.js";
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
@@ -2107,6 +2108,9 @@ async function saveNoteContent() {
       modified: Date.now(),
     });
 
+    // Reset inactivity timer after save
+    resetInactivityTimer(noteId);
+
     console.log("Note saved");
   } catch (error) {
     console.error("Error saving note:", error);
@@ -2181,6 +2185,13 @@ async function updateEditorContent(noteId) {
  * Cleanup editor
  */
 export function cleanupNotebookEditor() {
+  // Sync note before cleanup
+  const noteId = getCurrentNoteId();
+  if (noteId) {
+    stopInactivityTimer();
+    syncOnNoteClose(noteId);
+  }
+
   if (canvas) {
     window.removeEventListener("resize", resizeCanvas);
   }

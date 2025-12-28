@@ -3,9 +3,9 @@
  * Manages breadcrumb navigation in the header
  */
 
+import { getIcon } from "../utils/icons.js";
 import { navigateTo } from "./router.js";
 import { getNote, getNotebook } from "./storage.js";
-import { getIcon } from "../utils/icons.js";
 
 /**
  * Update breadcrumb based on current navigation state
