@@ -9,14 +9,14 @@ import { getIsSyncing, onSyncStatusChange, performSync } from "./sync.js";
 /**
  * Update sync status display
  */
-export function updateSyncStatus() {
+export async function updateSyncStatus() {
   const syncStatus = document.querySelector(".sync-status");
   const syncIndicator = document.querySelector(".sync-indicator");
   const syncText = document.querySelector(".sync-text");
 
   if (!syncStatus || !syncIndicator || !syncText) return;
 
-  const authenticated = isAuthenticated();
+  const authenticated = await isAuthenticated();
   const isSyncing = getIsSyncing();
 
   if (isSyncing) {
@@ -41,7 +41,7 @@ export function updateSyncStatus() {
  * Perform manual sync (triggered by user clicking footer)
  */
 async function handleManualSync() {
-  if (getIsSyncing() || !isAuthenticated()) return;
+  if (getIsSyncing() || !(await isAuthenticated())) return;
 
   try {
     await performSync({ silent: false, skipConflictResolution: false });
@@ -75,8 +75,8 @@ export function initFooter() {
   const syncStatus = document.querySelector(".sync-status");
 
   if (syncStatus) {
-    syncStatus.addEventListener("click", () => {
-      if (isAuthenticated() && !getIsSyncing()) {
+    syncStatus.addEventListener("click", async () => {
+      if ((await isAuthenticated()) && !getIsSyncing()) {
         handleManualSync();
       }
     });

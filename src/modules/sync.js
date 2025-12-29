@@ -44,7 +44,7 @@ export function getIsSyncing() {
  * @returns {Promise<Object|null>} Sync result or null if sync was skipped
  */
 export async function performSync({ silent = false, skipConflictResolution = false } = {}) {
-  if (isSyncing || !isAuthenticated()) {
+  if (isSyncing || !(await isAuthenticated())) {
     console.log("Sync: Skipping (already syncing or not authenticated)");
     return null;
   }

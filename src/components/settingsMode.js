@@ -16,12 +16,20 @@ import {
   testConnection,
 } from "../modules/nextcloudSync.js";
 import {
+  authenticateBiometric,
+  checkBiometricAvailability,
+  isBiometricEnabled,
+  setBiometricEnabled,
+} from "../modules/secureStorage.js";
+import {
   getAllNotebooksForSync,
   getAllNotesForSync,
   getStorageVersion,
+  getSetting,
   purgeLocalData,
   saveNote,
   saveNotebook,
+  setSetting,
   setStorageVersion,
 } from "../modules/storage.js";
 import { STORAGE_VERSION } from "../modules/storagePaths.js";
@@ -33,10 +41,16 @@ import { showAlertDialog, showConfirmDialog, showConflictResolutionDialog } from
  * Render settings UI
  * @param {HTMLElement} container - Container element to render into
  */
-export function renderSettings(container) {
+export async function renderSettings(container) {
   const currentTheme = getTheme();
-  const authenticated = isAuthenticated();
-  const credentials = getStoredCredentials();
+  const authenticated = await isAuthenticated();
+  const credentials = await getStoredCredentials();
+  const biometricCapability = await checkBiometricAvailability();
+  const biometricEnabled = await isBiometricEnabled();
+
+  // Get encryption settings
+  const encryptLocalData = (await getSetting('encrypt_local_data')) ?? true; // Default: enabled
+  const encryptNextcloudData = (await getSetting('encrypt_nextcloud_data')) ?? false; // Default: disabled
 
   container.innerHTML = `
     <div class="settings-panel">
@@ -67,6 +81,80 @@ export function renderSettings(container) {
             </button>
           </div>
         </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>Security</h3>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">Encrypt Local Data</span>
+            <span class="setting-description">Encrypt notes stored locally on this device</span>
+          </div>
+          <label class="toggle-switch">
+            <input
+              type="checkbox"
+              id="encrypt-local-toggle"
+              ${encryptLocalData ? "checked" : ""}
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">Encrypt Data on Nextcloud</span>
+            <span class="setting-description">
+              ${authenticated ? "Encrypt notes before uploading to Nextcloud (end-to-end encryption)" : "Nextcloud sync not configured"}
+            </span>
+          </div>
+          <label class="toggle-switch" ${!authenticated ? 'style="opacity: 0.5;"' : ""}>
+            <input
+              type="checkbox"
+              id="encrypt-nextcloud-toggle"
+              ${encryptNextcloudData ? "checked" : ""}
+              ${!authenticated ? "disabled" : ""}
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">Biometric Authentication</span>
+            <span class="setting-description">
+              ${
+                biometricCapability.available
+                  ? `Protect credentials with ${biometricCapability.biometricType === "windows_hello" ? "Windows Hello" : biometricCapability.biometricType === "touch_id" ? "Touch ID" : "fingerprint"}`
+                  : "Biometric authentication not available on this device"
+              }
+              <br>
+              <small style="color: var(--text-tertiary); font-size: 0.7rem;">
+                Debug: available=${biometricCapability.available}, type=${biometricCapability.biometricType}
+              </small>
+            </span>
+          </div>
+          <label class="toggle-switch" ${!biometricCapability.available ? 'style="opacity: 0.5;"' : ""}>
+            <input
+              type="checkbox"
+              id="biometric-toggle"
+              ${biometricEnabled ? "checked" : ""}
+              ${!biometricCapability.available ? "disabled" : ""}
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        ${
+          biometricCapability.available
+            ? `
+        <div class="setting-item">
+          <button id="test-biometric-btn" class="btn-secondary">Test Biometric Authentication</button>
+          <span id="biometric-test-status" class="setting-note"></span>
+        </div>
+        `
+            : ""
+        }
       </div>
 
       <div class="settings-section">
@@ -229,6 +317,114 @@ export function renderSettings(container) {
       }
       toggle.classList.add("active");
     });
+  });
+
+  // Encryption toggles event listeners
+  const encryptLocalToggle = container.querySelector("#encrypt-local-toggle");
+  const encryptNextcloudToggle = container.querySelector("#encrypt-nextcloud-toggle");
+
+  encryptLocalToggle?.addEventListener("change", async () => {
+    const enabled = encryptLocalToggle.checked;
+    await setSetting('encrypt_local_data', enabled);
+
+    // Show confirmation message
+    const statusMsg = enabled
+      ? "✓ Local data encryption enabled. New notes will be encrypted."
+      : "Local data encryption disabled. Existing encrypted notes remain encrypted.";
+
+    await showAlertDialog(
+      "Encryption Setting Updated",
+      statusMsg
+    );
+  });
+
+  encryptNextcloudToggle?.addEventListener("change", async () => {
+    const enabled = encryptNextcloudToggle.checked;
+    await setSetting('encrypt_nextcloud_data', enabled);
+
+    // Show confirmation message
+    const statusMsg = enabled
+      ? "✓ Nextcloud encryption enabled. Notes will be encrypted before uploading.<br><br><strong>Important:</strong> Encrypted notes cannot be read in Nextcloud's web interface or other clients."
+      : "Nextcloud encryption disabled. Notes will be synced as plain text.";
+
+    await showAlertDialog(
+      "Encryption Setting Updated",
+      statusMsg
+    );
+  });
+
+  // Biometric authentication event listeners
+  const biometricToggle = container.querySelector("#biometric-toggle");
+  const testBiometricBtn = container.querySelector("#test-biometric-btn");
+  const biometricTestStatus = container.querySelector("#biometric-test-status");
+
+  biometricToggle?.addEventListener("change", async () => {
+    const enabled = biometricToggle.checked;
+
+    if (enabled) {
+      // Test biometric authentication before enabling
+      const authenticated = await authenticateBiometric(
+        "Authenticate to enable biometric protection",
+      );
+
+      if (authenticated) {
+        await setBiometricEnabled(true);
+        if (biometricTestStatus) {
+          biometricTestStatus.textContent = "✓ Biometric authentication enabled";
+          biometricTestStatus.style.color = "var(--color-success)";
+          setTimeout(() => {
+            biometricTestStatus.textContent = "";
+          }, 3000);
+        }
+      } else {
+        // Authentication failed - revert toggle
+        biometricToggle.checked = false;
+        if (biometricTestStatus) {
+          biometricTestStatus.textContent = "✗ Authentication failed";
+          biometricTestStatus.style.color = "var(--color-error)";
+          setTimeout(() => {
+            biometricTestStatus.textContent = "";
+          }, 3000);
+        }
+      }
+    } else {
+      await setBiometricEnabled(false);
+      if (biometricTestStatus) {
+        biometricTestStatus.textContent = "Biometric authentication disabled";
+        biometricTestStatus.style.color = "var(--color-text)";
+        setTimeout(() => {
+          biometricTestStatus.textContent = "";
+        }, 3000);
+      }
+    }
+  });
+
+  testBiometricBtn?.addEventListener("click", async () => {
+    testBiometricBtn.disabled = true;
+    testBiometricBtn.textContent = "Testing...";
+
+    const authenticated = await authenticateBiometric("Test biometric authentication");
+
+    if (authenticated) {
+      if (biometricTestStatus) {
+        biometricTestStatus.textContent = "✓ Authentication successful!";
+        biometricTestStatus.style.color = "var(--color-success)";
+      }
+    } else {
+      if (biometricTestStatus) {
+        biometricTestStatus.textContent = "✗ Authentication failed";
+        biometricTestStatus.style.color = "var(--color-error)";
+      }
+    }
+
+    testBiometricBtn.disabled = false;
+    testBiometricBtn.textContent = "Test Biometric Authentication";
+
+    setTimeout(() => {
+      if (biometricTestStatus) {
+        biometricTestStatus.textContent = "";
+      }
+    }, 3000);
   });
 
   // Nextcloud sync event listeners
@@ -442,9 +638,9 @@ export function renderSettings(container) {
       }
     });
 
-    disconnectBtn?.addEventListener("click", () => {
+    disconnectBtn?.addEventListener("click", async () => {
       if (confirm("Are you sure you want to disconnect from Nextcloud?")) {
-        clearCredentials();
+        await clearCredentials();
 
         // Notify footer about auth change
         window.dispatchEvent(new CustomEvent("nextcloud-auth-changed"));
@@ -615,7 +811,7 @@ export function renderSettings(container) {
     try {
       await purgeLocalData();
 
-      const isAuth = isAuthenticated();
+      const isAuth = await isAuthenticated();
       if (purgeStatus) {
         purgeStatus.textContent = isAuth
           ? `✓ Local data purged successfully! Click "Sync Now" to download from server.`
@@ -662,10 +858,10 @@ export function renderSettings(container) {
  */
 export function initSettings() {
   // Listen for render settings event from router
-  window.addEventListener("rendersettings", () => {
+  window.addEventListener("rendersettings", async () => {
     const container = document.getElementById("settings-content");
     if (container) {
-      renderSettings(container);
+      await renderSettings(container);
     }
   });
 

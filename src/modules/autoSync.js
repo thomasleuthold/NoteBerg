@@ -18,8 +18,8 @@ let currentNoteId = null;
 /**
  * Check if we should sync (respects cooldown period)
  */
-function shouldSync() {
-  if (!isAuthenticated()) return false;
+async function shouldSync() {
+  if (!(await isAuthenticated())) return false;
   if (getIsSyncing()) return false;
 
   const now = Date.now();
@@ -33,9 +33,9 @@ function shouldSync() {
  * @param {string} noteId - Note ID to sync
  */
 async function syncSingleNote(noteId) {
-  if (!isAuthenticated()) return;
+  if (!(await isAuthenticated())) return;
 
-  if (!shouldSync()) {
+  if (!(await shouldSync())) {
     console.log("Auto-sync: Skipping sync (cooldown period or already syncing)");
     return null;
   }
@@ -91,7 +91,7 @@ export function stopInactivityTimer() {
 export async function syncOnNoteClose(noteId) {
   stopInactivityTimer();
 
-  if (!isAuthenticated()) return;
+  if (!(await isAuthenticated())) return;
 
   console.log(`Auto-sync: Note closed (${noteId}), syncing...`);
   await syncSingleNote(noteId);
@@ -102,7 +102,7 @@ export async function syncOnNoteClose(noteId) {
  * @param {string} noteId - Note ID that was created
  */
 export async function syncOnNoteCreate(noteId) {
-  if (!isAuthenticated()) return;
+  if (!(await isAuthenticated())) return;
 
   console.log(`Auto-sync: Note created (${noteId}), syncing...`);
   await syncSingleNote(noteId);
@@ -113,9 +113,9 @@ export async function syncOnNoteCreate(noteId) {
  * @param {string} notebookId - Notebook ID that was created
  */
 export async function syncOnNotebookCreate(notebookId) {
-  if (!isAuthenticated()) return;
+  if (!(await isAuthenticated())) return;
 
-  if (!shouldSync()) {
+  if (!(await shouldSync())) {
     console.log("Auto-sync: Skipping sync (cooldown period or already syncing)");
     return;
   }

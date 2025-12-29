@@ -9,6 +9,11 @@
 import { fetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  deleteSecureCredential,
+  getSecureCredential,
+  saveSecureCredential,
+} from "./secureStorage.js";
+import {
   getAllRequiredFolders,
   getLegacyNotebookPath,
   getLegacyNotePath,
@@ -22,36 +27,175 @@ import {
   STORAGE_VERSION,
 } from "./storagePaths.js";
 import { addNoteTombstone, cleanupOldTombstones, createEmptyTombstone } from "./tombstones.js";
+import { isNextcloudEncryptionEnabled } from "./storage.js";
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
+const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
 
 /**
- * Get stored Nextcloud credentials
+ * Encrypt note data for Nextcloud upload if encryption is enabled
+ * @param {Object} note - Note object
+ * @returns {Promise<Object>} - Note object (encrypted if enabled)
  */
-export function getStoredCredentials() {
-  const stored = localStorage.getItem(NEXTCLOUD_STORAGE_KEY);
-  return stored ? JSON.parse(stored) : null;
+async function encryptNoteForNextcloud(note) {
+  const shouldEncrypt = await isNextcloudEncryptionEnabled();
+
+  if (!shouldEncrypt) {
+    return note;
+  }
+
+  // Import encryption modules
+  const { getEncryptionKey, isAppUnlocked } = await import('./masterPassword.js');
+  const { encryptObject } = await import('./encryption.js');
+
+  if (!isAppUnlocked()) {
+    console.warn('[NextcloudSync] Cannot encrypt note - app is locked');
+    return note;
+  }
+
+  try {
+    const encryptionKey = getEncryptionKey();
+
+    // Encrypt content and strokes for Nextcloud storage
+    const encryptedContent = await encryptObject(note.content || '', encryptionKey);
+    const encryptedStrokes = await encryptObject(note.strokes || [], encryptionKey);
+
+    return {
+      ...note,
+      content: encryptedContent,
+      strokes: encryptedStrokes,
+      nextcloudEncrypted: true, // Mark as Nextcloud-encrypted
+    };
+  } catch (error) {
+    console.error('[NextcloudSync] Failed to encrypt note:', error);
+    return note;
+  }
 }
 
 /**
- * Save Nextcloud credentials
+ * Decrypt note data from Nextcloud if it's encrypted
+ * @param {Object} note - Note object (possibly encrypted)
+ * @returns {Promise<Object>} - Decrypted note object
  */
-function saveCredentials(credentials) {
-  localStorage.setItem(NEXTCLOUD_STORAGE_KEY, JSON.stringify(credentials));
+async function decryptNoteFromNextcloud(note) {
+  if (!note || !note.nextcloudEncrypted) {
+    return note;
+  }
+
+  // Import encryption modules
+  const { getEncryptionKey, isAppUnlocked } = await import('./masterPassword.js');
+  const { decryptObject } = await import('./encryption.js');
+
+  if (!isAppUnlocked()) {
+    throw new Error('Cannot decrypt note - app is locked');
+  }
+
+  try {
+    const encryptionKey = getEncryptionKey();
+
+    // Decrypt content and strokes
+    const decryptedContent = await decryptObject(note.content, encryptionKey);
+    const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
+
+    return {
+      ...note,
+      content: decryptedContent,
+      strokes: decryptedStrokes,
+      nextcloudEncrypted: undefined, // Remove flag
+    };
+  } catch (error) {
+    console.error('[NextcloudSync] Failed to decrypt note:', error);
+    throw new Error('Failed to decrypt note from Nextcloud');
+  }
 }
 
 /**
- * Clear stored credentials
+ * Migrate credentials from localStorage to secure storage
+ * Called once on app startup
  */
-export function clearCredentials() {
-  localStorage.removeItem(NEXTCLOUD_STORAGE_KEY);
+export async function migrateCredentials() {
+  console.log("[MIGRATION] Starting credential migration check...");
+  try {
+    // Check if credentials exist in localStorage
+    const legacyCredString = localStorage.getItem(LEGACY_STORAGE_KEY);
+    console.log("[MIGRATION] localStorage credentials:", legacyCredString ? "found" : "not found");
+
+    if (!legacyCredString) {
+      console.log("[MIGRATION] No legacy credentials found, skipping migration");
+      return;
+    }
+
+    // Check if credentials already exist in secure storage
+    console.log("[MIGRATION] Checking if credentials already exist in secure storage...");
+    const existingCreds = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    console.log("[MIGRATION] Existing secure credentials:", existingCreds ? "found" : "not found");
+
+    if (existingCreds) {
+      console.log("[MIGRATION] Credentials already exist in secure storage, cleaning up localStorage");
+      // Clean up localStorage since migration already happened
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      return;
+    }
+
+    // Migrate to secure storage
+    console.log("[MIGRATION] Migrating credentials from localStorage to secure storage...");
+    console.log("[MIGRATION] Credentials to migrate:", legacyCredString.substring(0, 50) + "...");
+    await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, legacyCredString);
+    console.log("[MIGRATION] Credentials saved to secure storage");
+
+    // Remove from localStorage after successful migration
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    console.log("[MIGRATION] Migration complete, localStorage cleaned up");
+  } catch (error) {
+    console.error("[MIGRATION] Failed to migrate credentials:", error);
+    console.error("[MIGRATION] Error details:", error.message, error.stack);
+    // Don't throw - we don't want to break app startup if migration fails
+    // User can still log in again manually
+  }
+}
+
+/**
+ * Get stored Nextcloud credentials from secure storage
+ */
+export async function getStoredCredentials() {
+  try {
+    const credString = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    return credString ? JSON.parse(credString) : null;
+  } catch (error) {
+    console.error("Failed to get credentials from secure storage:", error);
+    return null;
+  }
+}
+
+/**
+ * Save Nextcloud credentials to secure storage
+ */
+async function saveCredentials(credentials) {
+  try {
+    await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, JSON.stringify(credentials));
+  } catch (error) {
+    console.error("Failed to save credentials to secure storage:", error);
+    throw error;
+  }
+}
+
+/**
+ * Clear stored credentials from secure storage
+ */
+export async function clearCredentials() {
+  try {
+    await deleteSecureCredential(NEXTCLOUD_STORAGE_KEY);
+  } catch (error) {
+    console.error("Failed to clear credentials:", error);
+    throw error;
+  }
 }
 
 /**
  * Check if user is authenticated
  */
-export function isAuthenticated() {
-  const creds = getStoredCredentials();
+export async function isAuthenticated() {
+  const creds = await getStoredCredentials();
   return creds?.serverUrl && creds.loginName && creds.appPassword;
 }
 
@@ -266,7 +410,7 @@ async function pollForCredentials(endpoint, token, popup) {
  * Create a folder in Nextcloud using WebDAV
  */
 async function createFolder(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   console.log("Creating folder with credentials:", {
@@ -312,7 +456,7 @@ async function createFolder(path) {
  * Uses X-OC-Mtime to set the modification time to match local file
  */
 async function uploadFile(path, content, mtime = null, etag = null) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -356,7 +500,7 @@ async function uploadFile(path, content, mtime = null, etag = null) {
  * Download a file from Nextcloud using WebDAV
  */
 async function downloadFile(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -385,7 +529,7 @@ async function downloadFile(path) {
  * List files in a folder using WebDAV PROPFIND
  */
 export async function listFiles(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -414,7 +558,7 @@ export async function listFiles(path) {
  * List folders in a folder using WebDAV PROPFIND
  */
 export async function listFolders(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -495,7 +639,7 @@ function parseWebDAVResponse(xmlText, includeCollections = false) {
  * Delete a file from Nextcloud using WebDAV
  */
 async function deleteFile(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -617,8 +761,11 @@ export async function syncNotes(notes) {
         // Keep original modified timestamp to preserve history
       };
 
+      // Encrypt note for Nextcloud if encryption is enabled
+      const encryptedNote = await encryptNoteForNextcloud(syncedNote);
+
       // Prepare content (strip internal _etag before saving)
-      const content = JSON.stringify(syncedNote, null, 2);
+      const content = JSON.stringify(encryptedNote, null, 2);
 
       const etag = await uploadFile(path, content, syncedNote.modified, note.lastSyncedEtag);
       results.uploaded++;
@@ -699,7 +846,10 @@ export async function downloadAllData() {
           if (noteContent) {
             const note = JSON.parse(noteContent);
             note.lastSyncedEtag = noteEtag || noteFile.etag;
-            notes.push(note);
+
+            // Decrypt note if it's encrypted for Nextcloud
+            const decryptedNote = await decryptNoteFromNextcloud(note);
+            notes.push(decryptedNote);
           }
         } catch (error) {
           console.error(`Failed to download note ${noteFile.name}:`, error);
@@ -732,7 +882,10 @@ export async function downloadAllData() {
         if (noteContent) {
           const note = JSON.parse(noteContent);
           note.lastSyncedEtag = noteEtag || noteFile.etag;
-          notes.push(note);
+
+          // Decrypt note if it's encrypted for Nextcloud
+          const decryptedNote = await decryptNoteFromNextcloud(note);
+          notes.push(decryptedNote);
         }
       } catch (error) {
         console.error(`Failed to download quick note ${noteFile.name}:`, error);
