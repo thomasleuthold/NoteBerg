@@ -73,7 +73,7 @@ async function encryptNoteForNextcloud(note) {
     };
   } catch (error) {
     console.error("[NextcloudSync] Failed to encrypt note for Nextcloud:", error);
-    return decryptedNote;
+    throw new Error(`Encryption failed: ${error.message}`);
   }
 }
 
@@ -522,14 +522,26 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     headers["If-Match"] = `"${etag}"`;
   }
 
-  const response = await fetch(webdavUrl, {
+  let response = await fetch(webdavUrl, {
     method: "PUT",
     headers,
     body: content,
   });
 
   if (response.status === 412) {
-    throw new Error("Sync conflict: Remote file has changed since download. Please sync again.");
+    console.warn(`[NextcloudSync] 412 Conflict detected for ${path}. Forcing overwrite.`);
+
+    // Remove If-Match to force overwrite (Brute force resolution)
+    if (headers["If-Match"]) {
+      delete headers["If-Match"];
+    }
+
+    // Retry upload without the version check
+    response = await fetch(webdavUrl, {
+      method: "PUT",
+      headers,
+      body: content,
+    });
   }
 
   if (!response.ok && response.status !== 201 && response.status !== 204) {
@@ -538,8 +550,28 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     throw new Error(`Failed to upload file: ${response.status} ${response.statusText}`);
   }
 
-  const newEtag = response.headers.get("etag")?.replace(/"/g, "");
-  return newEtag || true;
+  let newEtag = response.headers.get("etag")?.replace(/"/g, "");
+
+  // If ETag is missing (e.g. 204 response), try to fetch it via HEAD
+  if (!newEtag && response.ok) {
+    try {
+      const headResponse = await fetch(webdavUrl, {
+        method: "HEAD",
+        headers: {
+          Authorization: headers.Authorization,
+        },
+      });
+      newEtag = headResponse.headers.get("etag")?.replace(/"/g, "");
+    } catch (e) {
+      console.warn("Failed to fetch ETag after upload:", e);
+    }
+  }
+
+  if (!newEtag) {
+    throw new Error("Server did not return an ETag for the uploaded file");
+  }
+
+  return newEtag;
 }
 
 /**
@@ -1070,7 +1102,7 @@ function attemptMerge(local, remote) {
     modified: Date.now(), // Set a new modification time for the merged version
     version: Math.max(local.version, remote.version) + 1, // Increment version
     synced: false, // Mark as unsynced to trigger upload
-    lastSyncedEtag: remote.lastSyncedEtag, // IMPORTANT: Use remote ETag for If-Match header to resolve conflict
+    lastSyncedEtag: remote._currentFileEtag || remote.lastSyncedEtag, // Use current file ETag for If-Match
   };
 }
 
@@ -1093,6 +1125,8 @@ export async function fullSync(localNotebooks, localNotes) {
   // Step 2: Merge notebooks (newer wins)
   const notebooksToUpload = [];
   const notebooksToDownload = [];
+  const notebooksToDelete = [];
+  const notesToDelete = [];
   const conflicts = { notebooks: [], notes: [] };
 
   // Create maps for quick lookup
@@ -1104,12 +1138,18 @@ export async function fullSync(localNotebooks, localNotes) {
     const remote = remoteNotebookMap.get(local.id);
 
     if (!remote) {
+      // Check if deleted remotely (via tombstone) - Notebook tombstones are stored inside the notebook folder usually,
+      // but if the notebook folder is gone, we can't read it.
+      // However, deleteRemoteNotebook implementation currently just marks it in the tombstone inside the folder.
+      // If the folder is gone, we assume it's deleted.
+      // But here we rely on downloadAllData which lists folders.
+      // If a notebook is missing from remoteData, it means the folder is missing or empty/invalid.
+
+      // For notebooks, if it's missing remotely and we are synced, we usually re-upload (self-heal).
+      // There isn't a global tombstone for notebooks currently.
       if (local.synced === false) {
-        // Local modified, remote missing. Clear ETag to avoid 412 Precondition Failed.
         notebooksToUpload.push({ ...local, lastSyncedEtag: null });
       } else {
-        // Local is synced, but remote is missing (e.g. manual deletion on server)
-        // Re-upload to restore consistency (Self-healing)
         console.log(`[Sync] Notebook ${local.id} missing on server. Re-uploading.`);
         notebooksToUpload.push({ ...local, lastSyncedEtag: null });
       }
@@ -1147,13 +1187,26 @@ export async function fullSync(localNotebooks, localNotes) {
     const remote = remoteNoteMap.get(local.id);
 
     if (!remote) {
-      if (local.synced === false) {
-        // Local modified, remote missing. Clear ETag to avoid 412 Precondition Failed.
-        notesToUpload.push({ ...local, lastSyncedEtag: null });
+      // Check tombstones to see if it was deleted remotely
+      const tombstoneKey = local.notebookId || "quickNotes";
+      const tombstone = remoteData.tombstones.get(tombstoneKey);
+      const isDeletedRemotely = tombstone?.notes?.some((t) => t.id === local.id);
+
+      if (isDeletedRemotely) {
+        if (local.synced === false) {
+          // Conflict: Deleted remotely, Modified locally. Strategy: Restore (re-upload).
+          console.log(`[Sync] Note ${local.id} was deleted remotely but modified locally. Restoring.`);
+          notesToUpload.push({ ...local, lastSyncedEtag: null });
+        } else {
+          // Deleted remotely, no local changes. Delete locally.
+          console.log(`[Sync] Note ${local.id} was deleted remotely. Deleting locally.`);
+          notesToDelete.push(local.id);
+        }
       } else {
-        // Local is synced, but remote is missing (e.g. manual deletion on server)
-        // Re-upload to restore consistency (Self-healing)
-        console.log(`[Sync] Note ${local.id} missing on server. Re-uploading.`);
+        // Not in tombstone -> Missing/Corrupted -> Re-upload (Self-healing)
+        if (local.synced === true) {
+          console.log(`[Sync] Note ${local.id} missing on server. Re-uploading.`);
+        }
         notesToUpload.push({ ...local, lastSyncedEtag: null });
       }
       continue;
@@ -1213,6 +1266,8 @@ export async function fullSync(localNotebooks, localNotes) {
     conflicts,
     notebooksToUpload,
     notesToUpload,
+    notebooksToDelete,
+    notesToDelete,
   };
 }
 

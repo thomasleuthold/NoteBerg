@@ -5,7 +5,14 @@
 
 import { showConflictResolutionDialog } from "../components/modals.js";
 import { fullSync, isAuthenticated } from "./nextcloudSync.js";
-import { getAllNotebooksForSync, getAllNotesForSync, saveNote, saveNotebook } from "./storage.js";
+import {
+  deleteNote,
+  deleteNotebook,
+  getAllNotebooksForSync,
+  getAllNotesForSync,
+  saveNote,
+  saveNotebook,
+} from "./storage.js";
 
 // Sync state
 let isSyncing = false;
@@ -151,6 +158,16 @@ export async function performSync({ silent = false, skipConflictResolution = fal
       const { _currentFileEtag, ...noteToSave } = note;
       noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
       await saveNote(noteToSave);
+    }
+
+    // Process deletions (Remote deleted -> Local delete)
+    for (const notebookId of result.notebooksToDelete || []) {
+      console.log(`[Sync] Deleting local notebook ${notebookId} (deleted remotely)`);
+      await deleteNotebook(notebookId);
+    }
+    for (const noteId of result.notesToDelete || []) {
+      console.log(`[Sync] Deleting local note ${noteId} (deleted remotely)`);
+      await deleteNote(noteId);
     }
 
     // Dispatch event for UI updates (always, even in silent mode)
