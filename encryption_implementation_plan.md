@@ -1696,9 +1696,346 @@ If issues arise:
 
 ---
 
+## Phase 4: Mobile Biometric Support (Android/iOS)
+
+**Goal**: Extend biometric authentication support to Android and iOS platforms.
+
+**Status**: Planned for future implementation (after Phase 1-3 complete)
+
+### Current Limitation
+
+As of Phase 1 implementation:
+- ✅ **Desktop platforms** fully supported (Windows Hello, macOS Touch ID, Linux fingerprint)
+- ❌ **Mobile platforms** return "not available"
+  - Android: No BiometricPrompt integration
+  - iOS: No Face ID/Touch ID integration
+- ⚠️ **Credentials still secured** on mobile using `tauri-plugin-store`, just without biometric protection
+
+### 4.1 Android Biometric Implementation
+
+**Requirements:**
+- Android API 28+ (Android 9.0 Pie) for BiometricPrompt API
+- Tauri v2 mobile support
+- Kotlin/Java code for native Android integration
+
+**Implementation approach:**
+
+1. **Add Android dependencies** (`src-tauri/gen/android/app/build.gradle`):
+```gradle
+dependencies {
+    implementation 'androidx.biometric:biometric:1.2.0-alpha05'
+}
+```
+
+2. **Create Kotlin biometric helper** (`src-tauri/gen/android/app/src/main/java/BiometricHelper.kt`):
+```kotlin
+package com.onejournal.app
+
+import android.content.Context
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+
+class BiometricHelper(private val activity: FragmentActivity) {
+
+    fun checkAvailability(): BiometricAvailability {
+        val biometricManager = BiometricManager.from(activity)
+
+        return when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+            BiometricManager.BIOMETRIC_SUCCESS -> {
+                BiometricAvailability(available = true, type = "fingerprint_or_face")
+            }
+            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> {
+                BiometricAvailability(available = false, type = "none")
+            }
+            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> {
+                BiometricAvailability(available = false, type = "none")
+            }
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
+                BiometricAvailability(available = false, type = "none")
+            }
+            else -> BiometricAvailability(available = false, type = "none")
+        }
+    }
+
+    fun authenticate(reason: String, callback: (Boolean) -> Unit) {
+        val executor = ContextCompat.getMainExecutor(activity)
+
+        val biometricPrompt = BiometricPrompt(activity, executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    callback(false)
+                }
+
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    callback(true)
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    callback(false)
+                }
+            })
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Authentication Required")
+            .setSubtitle(reason)
+            .setNegativeButtonText("Cancel")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .build()
+
+        biometricPrompt.authenticate(promptInfo)
+    }
+}
+
+data class BiometricAvailability(
+    val available: Boolean,
+    val type: String
+)
+```
+
+3. **Create Tauri plugin bridge** (Rust side, `src-tauri/src/mobile.rs`):
+```rust
+#[cfg(target_os = "android")]
+use jni::JNIEnv;
+#[cfg(target_os = "android")]
+use jni::objects::{JClass, JString, JValue};
+#[cfg(target_os = "android")]
+use jni::sys::jboolean;
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn check_biometric_availability_android(app: tauri::AppHandle) -> Result<BiometricCapability, String> {
+    // Call Kotlin BiometricHelper via JNI
+    // Implementation details depend on Tauri's Android plugin API
+
+    // Placeholder for actual JNI call
+    Ok(BiometricCapability {
+        available: false,
+        biometric_type: "android_biometric".to_string(),
+    })
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn authenticate_biometric_android(reason: String, app: tauri::AppHandle) -> Result<bool, String> {
+    // Call Kotlin BiometricHelper.authenticate() via JNI
+    // Implementation details depend on Tauri's Android plugin API
+
+    Ok(false)
+}
+```
+
+4. **Update main Rust commands** to use Android implementation:
+```rust
+#[tauri::command]
+async fn check_biometric_availability(app: tauri::AppHandle) -> Result<BiometricCapability, String> {
+    #[cfg(target_os = "windows")]
+    { /* existing Windows implementation */ }
+
+    #[cfg(target_os = "macos")]
+    { /* existing macOS implementation */ }
+
+    #[cfg(target_os = "linux")]
+    { /* existing Linux implementation */ }
+
+    #[cfg(target_os = "android")]
+    {
+        return check_biometric_availability_android(app).await;
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
+    {
+        Ok(BiometricCapability {
+            available: false,
+            biometric_type: "none".to_string(),
+        })
+    }
+}
+```
+
+### 4.2 iOS Biometric Implementation
+
+**Requirements:**
+- iOS 11+ for Face ID/Touch ID
+- Tauri v2 mobile support
+- Swift/Objective-C code for native iOS integration
+
+**Implementation approach:**
+
+1. **Update iOS permissions** (`src-tauri/gen/ios/Info.plist`):
+```xml
+<key>NSFaceIDUsageDescription</key>
+<string>We use Face ID to protect your Nextcloud credentials</string>
+```
+
+2. **Create Swift biometric helper** (`src-tauri/gen/ios/Sources/BiometricHelper.swift`):
+```swift
+import Foundation
+import LocalAuthentication
+
+class BiometricHelper {
+
+    func checkAvailability() -> (available: Bool, type: String) {
+        let context = LAContext()
+        var error: NSError?
+
+        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+            switch context.biometryType {
+            case .faceID:
+                return (true, "face_id")
+            case .touchID:
+                return (true, "touch_id")
+            default:
+                return (false, "none")
+            }
+        }
+
+        return (false, "none")
+    }
+
+    func authenticate(reason: String, completion: @escaping (Bool) -> Void) {
+        let context = LAContext()
+        var error: NSError?
+
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            completion(false)
+            return
+        }
+
+        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
+                             localizedReason: reason) { success, error in
+            DispatchQueue.main.async {
+                completion(success)
+            }
+        }
+    }
+}
+```
+
+3. **Create Tauri plugin bridge** (Rust side):
+```rust
+#[cfg(target_os = "ios")]
+use objc::{msg_send, sel, sel_impl};
+
+#[cfg(target_os = "ios")]
+#[tauri::command]
+async fn check_biometric_availability_ios() -> Result<BiometricCapability, String> {
+    // Call Swift BiometricHelper via Objective-C bridge
+    // Implementation details depend on Tauri's iOS plugin API
+
+    Ok(BiometricCapability {
+        available: false,
+        biometric_type: "ios_biometric".to_string(),
+    })
+}
+```
+
+### 4.3 Tauri Mobile Plugin Architecture
+
+**Option A: Use Tauri Plugin System**
+- Create a proper Tauri plugin with mobile support
+- Package as `tauri-plugin-biometric-mobile`
+- Cleaner separation, reusable by other projects
+
+**Option B: Direct Integration**
+- Embed native code directly in the app
+- Simpler for single-app use case
+- Less overhead
+
+**Recommendation**: Start with Option B (direct integration), refactor to Option A if needed.
+
+### 4.4 Testing on Mobile
+
+**Android testing:**
+- Test on physical device with fingerprint sensor
+- Test on emulator with simulated fingerprint
+- Test on device with face unlock
+- Test fallback when no biometric enrolled
+
+**iOS testing:**
+- Test on physical device with Touch ID (older iPhones/iPads)
+- Test on physical device with Face ID (iPhone X+)
+- Test on simulator (limited biometric simulation)
+- Test fallback when biometric disabled
+
+### 4.5 Mobile-Specific Considerations
+
+**Security:**
+- Android: Uses hardware-backed keystore (TEE/Secure Enclave on supported devices)
+- iOS: Always hardware-backed (Secure Enclave)
+- Both platforms: Biometric data never leaves device
+
+**User Experience:**
+- Mobile prompts are modal and block UI (expected behavior)
+- No need for window focus handling (like on Windows)
+- System handles cancellation and retry logic
+
+**Permissions:**
+- Android: No special permissions required for BiometricPrompt
+- iOS: Requires `NSFaceIDUsageDescription` in Info.plist
+
+**Fallback:**
+- Both platforms support fallback to PIN/pattern/password
+- Configure via BiometricPrompt options (Android) or LAPolicy (iOS)
+
+### 4.6 Timeline Estimate
+
+**Android implementation**: 2-3 days
+- Kotlin helper: 0.5 day
+- JNI bridge: 1 day
+- Testing: 0.5-1 day
+- Platform-specific bug fixes: 0.5-1 day
+
+**iOS implementation**: 2-3 days
+- Swift helper: 0.5 day
+- Objective-C bridge: 1 day
+- Testing: 0.5-1 day
+- Platform-specific bug fixes: 0.5-1 day
+
+**Total Phase 4**: ~5-7 days
+
+### 4.7 Dependencies
+
+**New dependencies (Android):**
+```toml
+# build.gradle
+androidx.biometric:biometric:1.2.0-alpha05
+```
+
+**New dependencies (iOS):**
+```swift
+// Built-in frameworks (no additional dependencies)
+import LocalAuthentication
+```
+
+**Rust crates:**
+```toml
+# Cargo.toml
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"  # For JNI bridge
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc = "0.2"  # For Objective-C bridge
+```
+
+### 4.8 Current Workaround
+
+Until Phase 4 is implemented, mobile users can:
+- ✅ Still use secure credential storage (tauri-plugin-store)
+- ✅ Credentials are encrypted at rest by the OS
+- ❌ Cannot use biometric authentication for additional protection
+- ℹ️ Security is still good, just missing the convenience/extra layer
+
+---
+
 ## Next Steps
 
 1. Review this plan and approve phases
 2. Begin Phase 1 implementation
 3. Test thoroughly after each phase
 4. Deploy incrementally to minimize risk
+5. Consider Phase 4 (mobile biometric) after desktop implementation is stable

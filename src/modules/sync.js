@@ -67,22 +67,39 @@ export async function performSync({ silent = false, skipConflictResolution = fal
       );
     }
 
-    const result = await fullSync(notebooks, notes);
+    // Pass copies of notes to fullSync to prevent any potential mutation of our local references
+    // which we need for updating status later.
+    const notesForSync = notes.map((n) => ({ ...n }));
+    const result = await fullSync(notebooks, notesForSync);
 
     // Handle manual conflict resolution (only for manual syncs)
     if (!skipConflictResolution && !silent && result.conflicts?.notes?.length > 0) {
       for (const conflict of result.conflicts.notes) {
         const choice = await showConflictResolutionDialog(conflict.local, conflict.remote);
         if (choice === "local") {
-          await saveNote({
-            ...conflict.local,
-            lastSyncedEtag: conflict.remote.lastSyncedEtag,
-            synced: false,
-            version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
-            modified: Date.now(),
-          });
+          // Keep local version - skip encryption as it's already in correct format
+          await saveNote(
+            {
+              ...conflict.local,
+              lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+              synced: false,
+              version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
+              modified: Date.now(),
+            },
+            // Allow saveNote to handle encryption since we are working with decrypted data
+          );
         } else {
-          await saveNote({ ...conflict.remote, synced: true });
+          // Use remote version - skip encryption as it's already prepared by decryptNoteFromNextcloud
+          // Also update with current file etag for proper future sync tracking
+          await saveNote(
+            {
+              ...conflict.remote,
+              lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+              synced: true,
+              _currentFileEtag: undefined, // Remove internal field
+            },
+            // Allow saveNote to handle encryption since we are working with decrypted data
+          );
         }
       }
       // Re-trigger sync to process resolutions
@@ -114,6 +131,7 @@ export async function performSync({ silent = false, skipConflictResolution = fal
         if (!silent) {
           console.log(`Marking note ${id} as synced (was: ${note.synced})`);
         }
+        // Use skipEncryption because note is already in correct encrypted format
         await saveNote({
           ...note,
           synced: true,
@@ -128,7 +146,12 @@ export async function performSync({ silent = false, skipConflictResolution = fal
     }
 
     for (const note of result.downloaded.notes) {
-      await saveNote(note);
+      // Skip encryption because the note is already in the correct format for local storage
+      // (decryptNoteFromNextcloud already handled encryption/decryption)
+      // Remove internal _currentFileEtag and update lastSyncedEtag for tracking
+      const { _currentFileEtag, ...noteToSave } = note;
+      noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
+      await saveNote(noteToSave);
     }
 
     // Dispatch event for UI updates (always, even in silent mode)

@@ -288,7 +288,7 @@ export async function getAllNotes() {
   const filtered = notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
 
   // Decrypt notes if needed
-  const decrypted = await Promise.all(filtered.map(note => decryptNoteIfNeeded(note)));
+  const decrypted = await Promise.all(filtered.map((note) => decryptNoteIfNeeded(note)));
   return decrypted;
 }
 
@@ -298,8 +298,10 @@ export async function getAllNotes() {
  * The sync layer will handle Nextcloud encryption separately
  */
 export async function getAllNotesForSync() {
+  if (!db) await initStorage();
   const notes = await db.getAll("notes");
-  return notes.sort((a, b) => b.modified - a.modified);
+  // Decrypt all notes before sync so the sync logic can read/merge content
+  return await Promise.all(notes.map((note) => decryptNoteIfNeeded(note)));
 }
 
 /**
@@ -310,7 +312,7 @@ export async function getNotesByNotebook(notebookId) {
   const filtered = notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
 
   // Decrypt notes if needed
-  const decrypted = await Promise.all(filtered.map(note => decryptNoteIfNeeded(note)));
+  const decrypted = await Promise.all(filtered.map((note) => decryptNoteIfNeeded(note)));
   return decrypted;
 }
 
@@ -324,7 +326,7 @@ export async function getQuickNotes() {
   const sorted = quickNotes.sort((a, b) => b.modified - a.modified);
 
   // Decrypt notes if needed
-  const decrypted = await Promise.all(sorted.map(note => decryptNoteIfNeeded(note)));
+  const decrypted = await Promise.all(sorted.map((note) => decryptNoteIfNeeded(note)));
   return decrypted;
 }
 
@@ -525,8 +527,18 @@ export async function saveNotebook(notebook) {
 /**
  * Save or update a note from sync
  * @param {Object} note - Note object to save
+ * @param {Object} options - Save options
+ * @param {boolean} options.skipEncryption - If true, skip encryption (note is already in correct format)
  */
-export async function saveNote(note) {
+export async function saveNote(note, options = {}) {
+  const { skipEncryption = false } = options;
+
+  // If skipEncryption is true, save note as-is (it's already in the correct format)
+  if (skipEncryption) {
+    await db.put("notes", note);
+    return;
+  }
+
   // Encrypt note before saving if local encryption is enabled
   const encryptedNote = await encryptNoteIfEnabled(note);
   await db.put("notes", encryptedNote);
@@ -537,7 +549,7 @@ export async function saveNote(note) {
  * @returns {Promise<boolean>}
  */
 export async function isLocalEncryptionEnabled() {
-  const setting = await getSetting('encrypt_local_data');
+  const setting = await getSetting("encrypt_local_data");
   return setting ?? true; // Default: enabled
 }
 
@@ -546,8 +558,63 @@ export async function isLocalEncryptionEnabled() {
  * @returns {Promise<boolean>}
  */
 export async function isNextcloudEncryptionEnabled() {
-  const setting = await getSetting('encrypt_nextcloud_data');
+  const setting = await getSetting("encrypt_nextcloud_data");
   return setting ?? false; // Default: disabled
+}
+
+/**
+ * Fix corrupted notes that have encrypted content but no encrypted flag
+ * This happens if sync ran while app was locked
+ * @returns {Promise<{fixed: number, skipped: number}>}
+ */
+export async function fixCorruptedNotes() {
+  console.log("[Storage] Scanning for corrupted notes...");
+
+  const allNotes = await db.getAll("notes");
+  let fixed = 0;
+  let skipped = 0;
+
+  for (const note of allNotes) {
+    try {
+      // Check if note has encrypted content but no encrypted flag
+      const hasEncryptedContent =
+        note.content &&
+        typeof note.content === "object" &&
+        note.content.data &&
+        note.content.iv &&
+        note.content.version;
+
+      const hasEncryptedStrokes =
+        note.strokes &&
+        typeof note.strokes === "object" &&
+        note.strokes.data &&
+        note.strokes.iv &&
+        note.strokes.version;
+
+      if ((hasEncryptedContent || hasEncryptedStrokes) && !note.encrypted) {
+        console.warn(`[Storage] Found corrupted note ${note.id} - fixing encrypted flag`);
+
+        // Fix the note by adding the encrypted flag
+        const fixedNote = {
+          ...note,
+          encrypted: true,
+        };
+
+        await db.put("notes", fixedNote);
+        fixed++;
+
+        console.log(`[Storage] Fixed note ${note.id}`);
+      } else {
+        skipped++;
+      }
+    } catch (error) {
+      console.error(`[Storage] Failed to check/fix note ${note.id}:`, error);
+    }
+  }
+
+  console.log(`[Storage] Corruption scan complete: ${fixed} fixed, ${skipped} skipped`);
+
+  return { fixed, skipped };
 }
 
 /**
@@ -559,16 +626,16 @@ export async function migrateNotesToEncrypted() {
   const encryptionEnabled = await isLocalEncryptionEnabled();
 
   if (!encryptionEnabled) {
-    console.log('[Storage] Local encryption is disabled, skipping migration');
+    console.log("[Storage] Local encryption is disabled, skipping migration");
     return { migrated: 0, skipped: 0, failed: 0 };
   }
 
-  console.log('[Storage] Starting note encryption migration...');
+  console.log("[Storage] Starting note encryption migration...");
 
-  const { isAppUnlocked } = await import('./masterPassword.js');
+  const { isAppUnlocked } = await import("./masterPassword.js");
 
   if (!isAppUnlocked()) {
-    throw new Error('Cannot migrate notes - app is locked');
+    throw new Error("Cannot migrate notes - app is locked");
   }
 
   const allNotes = await db.getAll("notes");
@@ -598,7 +665,9 @@ export async function migrateNotesToEncrypted() {
     }
   }
 
-  console.log(`[Storage] Migration complete: ${migrated} migrated, ${skipped} skipped, ${failed} failed`);
+  console.log(
+    `[Storage] Migration complete: ${migrated} migrated, ${skipped} skipped, ${failed} failed`,
+  );
 
   return { migrated, skipped, failed };
 }
@@ -616,12 +685,12 @@ async function encryptNoteIfEnabled(note) {
   }
 
   // Import encryption modules
-  const { getEncryptionKey, isAppUnlocked } = await import('./masterPassword.js');
-  const { encryptObject } = await import('./encryption.js');
+  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+  const { encryptObject } = await import("./encryption.js");
 
   // Check if app is unlocked
   if (!isAppUnlocked()) {
-    console.warn('[Storage] Cannot encrypt note - app is locked');
+    console.warn("[Storage] Cannot encrypt note - app is locked");
     return note;
   }
 
@@ -629,7 +698,7 @@ async function encryptNoteIfEnabled(note) {
     const encryptionKey = getEncryptionKey();
 
     // Encrypt sensitive fields (content and strokes)
-    const encryptedContent = await encryptObject(note.content || '', encryptionKey);
+    const encryptedContent = await encryptObject(note.content || "", encryptionKey);
     const encryptedStrokes = await encryptObject(note.strokes || [], encryptionKey);
 
     return {
@@ -639,7 +708,7 @@ async function encryptNoteIfEnabled(note) {
       encrypted: true, // Mark as encrypted
     };
   } catch (error) {
-    console.error('[Storage] Failed to encrypt note:', error);
+    console.error("[Storage] Failed to encrypt note:", error);
     // Return unencrypted note if encryption fails
     return note;
   }
@@ -655,13 +724,28 @@ async function decryptNoteIfNeeded(note) {
     return note;
   }
 
+  // Check if encryption is currently enabled
+  const encryptionEnabled = await isLocalEncryptionEnabled();
+  if (!encryptionEnabled) {
+    // Encryption is disabled but note is encrypted - we cannot decrypt it
+    // because we don't have access to the encryption key
+    console.warn(
+      "[Storage] Note is encrypted but encryption is disabled. Cannot decrypt without master password.",
+    );
+    throw new Error(
+      "Cannot access encrypted note - encryption is disabled. Please enable local encryption or reset your data.",
+    );
+  }
+
   // Import encryption modules
-  const { getEncryptionKey, isAppUnlocked } = await import('./masterPassword.js');
-  const { decryptObject } = await import('./encryption.js');
+  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+  const { decryptObject } = await import("./encryption.js");
 
   // Check if app is unlocked
   if (!isAppUnlocked()) {
-    throw new Error('Cannot decrypt note - app is locked');
+    throw new Error(
+      "Cannot decrypt note - app is locked. Please refresh the page to unlock with your master password.",
+    );
   }
 
   try {
@@ -678,7 +762,7 @@ async function decryptNoteIfNeeded(note) {
       encrypted: undefined, // Remove encrypted flag from decrypted version
     };
   } catch (error) {
-    console.error('[Storage] Failed to decrypt note:', error);
-    throw new Error('Failed to decrypt note - invalid master password or corrupted data');
+    console.error("[Storage] Failed to decrypt note:", error);
+    throw new Error("Failed to decrypt note - invalid master password or corrupted data");
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "onejournal",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
   "scripts": {
@@ -41,6 +41,7 @@
     "@tauri-apps/plugin-http": "^2.5.4",
     "@tauri-apps/plugin-opener": "^2.5.2",
     "@tauri-apps/plugin-shell": "^2.3.3",
+    "@tauri-apps/plugin-stronghold": "^2.3.1",
     "idb": "^8.0.0"
   }
 }

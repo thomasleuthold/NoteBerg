@@ -979,7 +979,7 @@
 
 .unlock-divider::before,
 .unlock-divider::after {
-  content: '';
+  content: "";
   flex: 1;
   border-bottom: 1px solid var(--border-primary);
 }

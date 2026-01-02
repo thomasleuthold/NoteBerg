@@ -4,35 +4,22 @@
  */
 
 import {
-  cleanupLegacyFiles,
   clearCredentials,
   fullSync,
   getStoredCredentials,
   isAuthenticated,
-  listFiles,
-  migrateToHierarchical,
-  needsMigration,
   startLoginFlow,
   testConnection,
 } from "../modules/nextcloudSync.js";
 import {
-  authenticateBiometric,
-  checkBiometricAvailability,
-  isBiometricEnabled,
-  setBiometricEnabled,
-} from "../modules/secureStorage.js";
-import {
   getAllNotebooksForSync,
   getAllNotesForSync,
-  getStorageVersion,
   getSetting,
   purgeLocalData,
   saveNote,
   saveNotebook,
   setSetting,
-  setStorageVersion,
 } from "../modules/storage.js";
-import { STORAGE_VERSION } from "../modules/storagePaths.js";
 import { getTheme, setTheme } from "../modules/theme.js";
 import { showLicensesDialog } from "./licensesDialog.js";
 import { showAlertDialog, showConfirmDialog, showConflictResolutionDialog } from "./modals.js";
@@ -45,12 +32,13 @@ export async function renderSettings(container) {
   const currentTheme = getTheme();
   const authenticated = await isAuthenticated();
   const credentials = await getStoredCredentials();
-  const biometricCapability = await checkBiometricAvailability();
-  const biometricEnabled = await isBiometricEnabled();
+  // Biometric authentication removed for performance
+  const biometricCapability = { available: false };
+  const biometricEnabled = false;
 
   // Get encryption settings
-  const encryptLocalData = (await getSetting('encrypt_local_data')) ?? true; // Default: enabled
-  const encryptNextcloudData = (await getSetting('encrypt_nextcloud_data')) ?? false; // Default: disabled
+  const encryptLocalData = (await getSetting("encrypt_local_data")) ?? true; // Default: enabled
+  const encryptNextcloudData = (await getSetting("encrypt_nextcloud_data")) ?? false; // Default: disabled
 
   container.innerHTML = `
     <div class="settings-panel">
@@ -119,19 +107,29 @@ export async function renderSettings(container) {
           </label>
         </div>
 
+        <!-- Biometric Authentication UI - Hidden for now, keeping code for future use
         <div class="setting-item">
           <div class="setting-label">
             <span class="setting-name">Biometric Authentication</span>
             <span class="setting-description">
               ${
                 biometricCapability.available
-                  ? `Protect credentials with ${biometricCapability.biometricType === "windows_hello" ? "Windows Hello" : biometricCapability.biometricType === "touch_id" ? "Touch ID" : "fingerprint"}`
+                  ? (
+                      () => {
+                        const type = biometricCapability.biometricType;
+                        if (type === "windows_hello")
+                          return "Protect credentials with Windows Hello";
+                        if (type === "touch_id") return "Protect credentials with Touch ID";
+                        if (type === "ios_biometric")
+                          return "Protect credentials with Face ID or Touch ID";
+                        if (type === "android_biometric")
+                          return "Protect credentials with Fingerprint or Face Unlock";
+                        if (type === "fingerprint") return "Protect credentials with Fingerprint";
+                        return "Protect credentials with biometric authentication";
+                      }
+                    )()
                   : "Biometric authentication not available on this device"
               }
-              <br>
-              <small style="color: var(--text-tertiary); font-size: 0.7rem;">
-                Debug: available=${biometricCapability.available}, type=${biometricCapability.biometricType}
-              </small>
             </span>
           </div>
           <label class="toggle-switch" ${!biometricCapability.available ? 'style="opacity: 0.5;"' : ""}>
@@ -155,6 +153,7 @@ export async function renderSettings(container) {
         `
             : ""
         }
+        -->
       </div>
 
       <div class="settings-section">
@@ -224,51 +223,41 @@ export async function renderSettings(container) {
         }
       </div>
 
-      ${
-        authenticated
-          ? `
       <div class="settings-section">
-        <h3>Storage Migration</h3>
+        <h3>Logging</h3>
 
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Hierarchical Storage Structure</span>
-            <span class="setting-description">Upgrade to organized folder structure with better support for media files</span>
+            <span class="setting-name">Log Level</span>
+            <span class="setting-description">Set minimum severity level for logging</span>
           </div>
+          <select id="log-level-select" class="setting-control">
+            <option value="debug">Debug (Verbose)</option>
+            <option value="info">Info</option>
+            <option value="warning" selected>Warning (Default)</option>
+            <option value="error">Error (Minimal)</option>
+          </select>
         </div>
 
         <div class="setting-item">
-          <button id="check-migration-btn" class="btn-secondary">Check Migration Status</button>
-          <button id="run-migration-btn" class="btn-primary" style="display: none;">Migrate Now</button>
-          <button id="cleanup-legacy-btn" class="btn-secondary" style="display: none;">Clean Up Old Files</button>
-          <span id="migration-status" class="setting-note"></span>
-        </div>
-
-        <div class="setting-item" id="migration-info" style="display: none;">
-          <div class="setting-description">
-            <p><strong>Migration Details:</strong></p>
-            <ul style="margin: 8px 0; padding-left: 20px;">
-              <li>Old structure: Flat files in /oneJournal/</li>
-              <li>New structure: Organized folders (notebooks/{id}/notes/)</li>
-              <li>Benefits: Better organization, media file support, faster sync</li>
-              <li>Note: Old files will be kept for safety</li>
-            </ul>
+          <div class="setting-label">
+            <span class="setting-name">Session Logs</span>
+            <span class="setting-description">View in-memory logs for this session</span>
           </div>
-        </div>
-
-        <div class="setting-item" id="cleanup-info" style="display: none;">
-          <div class="setting-description" style="color: var(--color-warning);">
-            <p><strong>⚠️ Old Files Detected</strong></p>
-            <p>Legacy flat structure files are still on the server. After confirming your data is safe, you can clean them up to save storage space.</p>
-          </div>
+          <button id="view-logs-btn" class="btn-secondary">View Logs</button>
         </div>
       </div>
-      `
-          : ""
-      }
 
       <div class="settings-section">
         <h3 style="color: var(--color-danger);">Danger Zone</h3>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">Reset Master Password</span>
+            <span class="setting-description">Clear master password and encryption keys. You'll need to set a new password.</span>
+          </div>
+          <button id="reset-master-password-btn" class="btn-secondary" style="background-color: var(--color-warning); color: white;">Reset Master Password</button>
+        </div>
 
         <div class="setting-item">
           <div class="setting-label">
@@ -281,7 +270,7 @@ export async function renderSettings(container) {
 
         <div class="setting-item">
           <div class="setting-description" style="color: var(--text-secondary); font-size: 0.875rem;">
-            ⚠️ <strong>Warning:</strong> This action will delete all local data including notebooks, notes, and sync history. If you are connected to Nextcloud, you can restore your data by syncing again. Unsynced changes will be permanently lost.
+            ⚠️ <strong>Warning:</strong> This action will delete all local data including notebooks, notes, and sync history. ${authenticated ? "If you are connected to Nextcloud, you can restore your data by syncing again. Unsynced changes will be permanently lost." : "This action is permanent and cannot be undone."}
           </div>
         </div>
       </div>
@@ -325,106 +314,224 @@ export async function renderSettings(container) {
 
   encryptLocalToggle?.addEventListener("change", async () => {
     const enabled = encryptLocalToggle.checked;
-    await setSetting('encrypt_local_data', enabled);
+
+    if (enabled) {
+      // Check if master password is configured AND actually stored in keyring
+      const { isMasterPasswordSet } = await import("../modules/masterPassword.js");
+      const { getSecureCredential } = await import("../modules/secureStorage.js");
+
+      const masterPasswordSet = await isMasterPasswordSet();
+      const masterPasswordInKeyring = await getSecureCredential("master_password");
+
+      console.log(
+        "[Settings] Local encryption toggle enabled, master password set:",
+        masterPasswordSet,
+        "in keyring:",
+        !!masterPasswordInKeyring,
+        "keyring value:",
+        masterPasswordInKeyring,
+      );
+
+      if (!masterPasswordSet || !masterPasswordInKeyring) {
+        // Need to set up master password first
+        console.log("[Settings] Showing master password setup modal...");
+        const { showMasterPasswordSetup } = await import("./masterPasswordModals.js");
+
+        const result = await new Promise((resolve) => {
+          showMasterPasswordSetup({
+            isMigration: false,
+            onSuccess: async () => {
+              console.log("[Settings] Master password setup complete for local encryption");
+              await setSetting("encrypt_local_data", true);
+              await showAlertDialog(
+                "Encryption Enabled",
+                "✓ Master password created and local data encryption enabled. New notes will be encrypted.",
+              );
+              resolve(true);
+            },
+            onCancel: () => {
+              console.log("[Settings] Master password setup canceled, reverting toggle");
+              encryptLocalToggle.checked = false;
+              resolve(false);
+            },
+          });
+        });
+
+        console.log("[Settings] Master password setup result:", result);
+        return;
+      } else {
+        console.log("[Settings] Master password already configured, enabling encryption directly");
+      }
+    }
+
+    await setSetting("encrypt_local_data", enabled);
 
     // Show confirmation message
     const statusMsg = enabled
       ? "✓ Local data encryption enabled. New notes will be encrypted."
       : "Local data encryption disabled. Existing encrypted notes remain encrypted.";
 
-    await showAlertDialog(
-      "Encryption Setting Updated",
-      statusMsg
-    );
+    await showAlertDialog("Encryption Setting Updated", statusMsg);
   });
 
   encryptNextcloudToggle?.addEventListener("change", async () => {
     const enabled = encryptNextcloudToggle.checked;
-    await setSetting('encrypt_nextcloud_data', enabled);
+
+    if (enabled) {
+      // Check if master password is configured AND actually stored in keyring
+      const { isMasterPasswordSet } = await import("../modules/masterPassword.js");
+      const { getSecureCredential } = await import("../modules/secureStorage.js");
+
+      const masterPasswordSet = await isMasterPasswordSet();
+      const masterPasswordInKeyring = await getSecureCredential("master_password");
+
+      console.log(
+        "[Settings] Nextcloud encryption toggle enabled, master password set:",
+        masterPasswordSet,
+        "in keyring:",
+        !!masterPasswordInKeyring,
+      );
+
+      if (!masterPasswordSet || !masterPasswordInKeyring) {
+        // Need to set up master password first
+        console.log("[Settings] Showing master password setup modal...");
+        const { showMasterPasswordSetup } = await import("./masterPasswordModals.js");
+
+        showMasterPasswordSetup({
+          isMigration: false,
+          onSuccess: async () => {
+            console.log("[Settings] Master password setup complete for Nextcloud encryption");
+            await setSetting("encrypt_nextcloud_data", true);
+            await showAlertDialog(
+              "Encryption Enabled",
+              "✓ Master password created and Nextcloud encryption enabled. Notes will be encrypted before uploading.<br><br><strong>Important:</strong> Encrypted notes cannot be read in Nextcloud's web interface or other clients.",
+            );
+          },
+          onCancel: () => {
+            console.log("[Settings] Master password setup canceled, reverting toggle");
+            encryptNextcloudToggle.checked = false;
+          },
+        });
+
+        return;
+      }
+    }
+
+    await setSetting("encrypt_nextcloud_data", enabled);
 
     // Show confirmation message
     const statusMsg = enabled
       ? "✓ Nextcloud encryption enabled. Notes will be encrypted before uploading.<br><br><strong>Important:</strong> Encrypted notes cannot be read in Nextcloud's web interface or other clients."
       : "Nextcloud encryption disabled. Notes will be synced as plain text.";
 
-    await showAlertDialog(
-      "Encryption Setting Updated",
-      statusMsg
-    );
+    await showAlertDialog("Encryption Setting Updated", statusMsg);
   });
 
-  // Biometric authentication event listeners
-  const biometricToggle = container.querySelector("#biometric-toggle");
-  const testBiometricBtn = container.querySelector("#test-biometric-btn");
-  const biometricTestStatus = container.querySelector("#biometric-test-status");
+  // Biometric authentication removed for performance - event listeners removed
 
-  biometricToggle?.addEventListener("change", async () => {
-    const enabled = biometricToggle.checked;
+  // Log level select - change minimum log level
+  const logLevelSelect = container.querySelector("#log-level-select");
+  if (logLevelSelect) {
+    // Load saved log level
+    const savedLogLevel = await getSetting("log_level");
+    if (savedLogLevel) {
+      logLevelSelect.value = savedLogLevel;
+    }
 
-    if (enabled) {
-      // Test biometric authentication before enabling
-      const authenticated = await authenticateBiometric(
-        "Authenticate to enable biometric protection",
-      );
+    logLevelSelect.addEventListener("change", async () => {
+      const { setLogLevel } = await import("../utils/logger.js");
+      const newLevel = logLevelSelect.value;
+      setLogLevel(newLevel);
+      await setSetting("log_level", newLevel);
+      console.log(`[Settings] Log level changed to: ${newLevel}`);
+    });
+  }
 
-      if (authenticated) {
-        await setBiometricEnabled(true);
-        if (biometricTestStatus) {
-          biometricTestStatus.textContent = "✓ Biometric authentication enabled";
-          biometricTestStatus.style.color = "var(--color-success)";
-          setTimeout(() => {
-            biometricTestStatus.textContent = "";
-          }, 3000);
-        }
-      } else {
-        // Authentication failed - revert toggle
-        biometricToggle.checked = false;
-        if (biometricTestStatus) {
-          biometricTestStatus.textContent = "✗ Authentication failed";
-          biometricTestStatus.style.color = "var(--color-error)";
-          setTimeout(() => {
-            biometricTestStatus.textContent = "";
-          }, 3000);
-        }
-      }
-    } else {
-      await setBiometricEnabled(false);
-      if (biometricTestStatus) {
-        biometricTestStatus.textContent = "Biometric authentication disabled";
-        biometricTestStatus.style.color = "var(--color-text)";
+  // View logs button - show in-memory logs in a modal
+  const viewLogsBtn = container.querySelector("#view-logs-btn");
+  viewLogsBtn?.addEventListener("click", async () => {
+    const { getLogsAsText, getLogCount, clearLogs } = await import("../utils/logger.js");
+    const logCount = getLogCount();
+    const logsText = getLogsAsText();
+
+    if (logCount === 0) {
+      await showAlertDialog("Debug Logs", "No logs available in this session.");
+      return;
+    }
+
+    // Create a custom modal with copy and clear buttons
+    const modalHtml = `
+      <div id="logs-modal" class="modal-overlay">
+        <div class="modal-dialog" style="max-width: 800px; max-height: 80vh;">
+          <div class="modal-header">
+            <h3 class="modal-title">Debug Logs (${logCount} entries)</h3>
+            <button class="modal-close" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p style="margin-bottom: 10px;">Session logs from this app run:</p>
+            <textarea
+              id="logs-content"
+              readonly
+              style="width: 100%; height: 400px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary);"
+            >${logsText}</textarea>
+          </div>
+          <div class="modal-footer" style="gap: 10px;">
+            <button class="btn-secondary" id="copy-logs-btn">Copy to Clipboard</button>
+            <button class="btn-danger" id="clear-logs-btn">Clear Logs</button>
+            <button class="btn-primary modal-close-btn">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML("beforeend", modalHtml);
+
+    const modal = document.getElementById("logs-modal");
+    const closeBtn = modal.querySelector(".modal-close");
+    const closeBtnFooter = modal.querySelector(".modal-close-btn");
+    const copyBtn = modal.querySelector("#copy-logs-btn");
+    const clearBtn = modal.querySelector("#clear-logs-btn");
+    const logsContent = modal.querySelector("#logs-content");
+
+    const closeModal = () => {
+      modal.classList.add("modal-closing");
+      setTimeout(() => modal.remove(), 200);
+    };
+
+    closeBtn.addEventListener("click", closeModal);
+    closeBtnFooter.addEventListener("click", closeModal);
+
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(logsText);
+        copyBtn.textContent = "✓ Copied!";
         setTimeout(() => {
-          biometricTestStatus.textContent = "";
-        }, 3000);
+          copyBtn.textContent = "Copy to Clipboard";
+        }, 2000);
+      } catch (error) {
+        console.error("Failed to copy logs:", error);
+        alert("Failed to copy logs to clipboard");
       }
-    }
-  });
+    });
 
-  testBiometricBtn?.addEventListener("click", async () => {
-    testBiometricBtn.disabled = true;
-    testBiometricBtn.textContent = "Testing...";
-
-    const authenticated = await authenticateBiometric("Test biometric authentication");
-
-    if (authenticated) {
-      if (biometricTestStatus) {
-        biometricTestStatus.textContent = "✓ Authentication successful!";
-        biometricTestStatus.style.color = "var(--color-success)";
+    clearBtn.addEventListener("click", () => {
+      if (confirm("Are you sure you want to clear all debug logs?")) {
+        clearLogs();
+        logsContent.value = "";
+        closeModal();
       }
-    } else {
-      if (biometricTestStatus) {
-        biometricTestStatus.textContent = "✗ Authentication failed";
-        biometricTestStatus.style.color = "var(--color-error)";
-      }
-    }
+    });
 
-    testBiometricBtn.disabled = false;
-    testBiometricBtn.textContent = "Test Biometric Authentication";
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
 
-    setTimeout(() => {
-      if (biometricTestStatus) {
-        biometricTestStatus.textContent = "";
+    document.addEventListener("keydown", function handleEsc(e) {
+      if (e.key === "Escape") {
+        closeModal();
+        document.removeEventListener("keydown", handleEsc);
       }
-    }, 3000);
+    });
   });
 
   // Nextcloud sync event listeners
@@ -604,8 +711,12 @@ export async function renderSettings(container) {
         }
 
         // Save downloaded notes to local storage
+        // Use skipEncryption because decryptNoteFromNextcloud already handled encryption format conversion
         for (const note of result.downloaded.notes) {
-          await saveNote(note);
+          // Remove internal _currentFileEtag and update lastSyncedEtag for tracking
+          const { _currentFileEtag, ...noteToSave } = note;
+          noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
+          await saveNote(noteToSave, { skipEncryption: true });
           downloadedNotes++;
         }
 
@@ -648,139 +759,42 @@ export async function renderSettings(container) {
         renderSettings(container);
       }
     });
-
-    // Migration button listeners
-    const checkMigrationBtn = container.querySelector("#check-migration-btn");
-    const runMigrationBtn = container.querySelector("#run-migration-btn");
-    const cleanupLegacyBtn = container.querySelector("#cleanup-legacy-btn");
-    const migrationStatus = container.querySelector("#migration-status");
-    const migrationInfo = container.querySelector("#migration-info");
-    const cleanupInfo = container.querySelector("#cleanup-info");
-
-    checkMigrationBtn?.addEventListener("click", async () => {
-      checkMigrationBtn.disabled = true;
-      checkMigrationBtn.textContent = "Checking...";
-      migrationStatus.textContent = "";
-
-      try {
-        const localVersion = await getStorageVersion();
-        const remoteMigrationNeeded = await needsMigration();
-
-        // Check if old files exist (for cleanup option)
-        const rootFiles = await listFiles("/oneJournal");
-        const hasOldFiles = rootFiles.some(
-          (f) =>
-            (f.name.startsWith("notebook_") || f.name.startsWith("note_")) &&
-            f.name.endsWith(".json"),
-        );
-
-        if (localVersion >= STORAGE_VERSION && !remoteMigrationNeeded) {
-          if (hasOldFiles) {
-            migrationStatus.textContent =
-              "✓ Using hierarchical structure (old backup files detected)";
-            migrationStatus.style.color = "var(--color-success)";
-            migrationInfo.style.display = "none";
-            runMigrationBtn.style.display = "none";
-            cleanupLegacyBtn.style.display = "inline-block";
-            cleanupInfo.style.display = "block";
-          } else {
-            migrationStatus.textContent = "✓ Already using hierarchical structure";
-            migrationStatus.style.color = "var(--color-success)";
-            migrationInfo.style.display = "none";
-            runMigrationBtn.style.display = "none";
-            cleanupLegacyBtn.style.display = "none";
-            cleanupInfo.style.display = "none";
-          }
-        } else if (remoteMigrationNeeded) {
-          migrationStatus.textContent = "Migration available - old flat files detected on server";
-          migrationStatus.style.color = "var(--color-warning)";
-          migrationInfo.style.display = "block";
-          runMigrationBtn.style.display = "inline-block";
-          cleanupLegacyBtn.style.display = "none";
-          cleanupInfo.style.display = "none";
-        } else {
-          migrationStatus.textContent = "No migration needed";
-          migrationStatus.style.color = "var(--color-success)";
-          migrationInfo.style.display = "none";
-          runMigrationBtn.style.display = "none";
-          cleanupLegacyBtn.style.display = "none";
-          cleanupInfo.style.display = "none";
-        }
-      } catch (error) {
-        migrationStatus.textContent = `Error: ${error.message}`;
-        migrationStatus.style.color = "var(--color-error)";
-      } finally {
-        checkMigrationBtn.disabled = false;
-        checkMigrationBtn.textContent = "Check Migration Status";
-      }
-    });
-
-    runMigrationBtn?.addEventListener("click", async () => {
-      if (
-        !confirm(
-          "This will migrate your data to the new hierarchical structure. Old files will be kept for safety. Continue?",
-        )
-      ) {
-        return;
-      }
-
-      runMigrationBtn.disabled = true;
-      runMigrationBtn.textContent = "Migrating...";
-      migrationStatus.textContent = "Migrating data structure...";
-      migrationStatus.style.color = "var(--color-text)";
-
-      try {
-        const result = await migrateToHierarchical();
-
-        // Update local storage version
-        await setStorageVersion(STORAGE_VERSION);
-
-        migrationStatus.textContent = `✓ Migration complete! ${result.migratedNotebooks} notebooks, ${result.migratedNotes} notes migrated`;
-        migrationStatus.style.color = "var(--color-success)";
-        runMigrationBtn.style.display = "none";
-
-        // Trigger data change event to refresh UI
-        window.dispatchEvent(new CustomEvent("datachange"));
-
-        // Trigger status check to show cleanup option
-        checkMigrationBtn.click();
-      } catch (error) {
-        migrationStatus.textContent = `✗ Migration failed: ${error.message}`;
-        migrationStatus.style.color = "var(--color-error)";
-        runMigrationBtn.disabled = false;
-        runMigrationBtn.textContent = "Migrate Now";
-      }
-    });
-
-    cleanupLegacyBtn?.addEventListener("click", async () => {
-      if (
-        !confirm(
-          "This will permanently delete old backup files from the server. Make sure your data has been migrated successfully before proceeding. Continue?",
-        )
-      ) {
-        return;
-      }
-
-      cleanupLegacyBtn.disabled = true;
-      cleanupLegacyBtn.textContent = "Cleaning up...";
-      migrationStatus.textContent = "Deleting old files...";
-      migrationStatus.style.color = "var(--color-text)";
-
-      try {
-        const result = await cleanupLegacyFiles();
-
-        migrationStatus.textContent = `✓ Cleanup complete! Deleted ${result.deletedCount} old files`;
-        migrationStatus.style.color = "var(--color-success)";
-        cleanupLegacyBtn.style.display = "none";
-        cleanupInfo.style.display = "none";
-      } catch (error) {
-        migrationStatus.textContent = `✗ Cleanup failed: ${error.message}`;
-        migrationStatus.style.color = "var(--color-error)";
-        cleanupLegacyBtn.disabled = false;
-        cleanupLegacyBtn.textContent = "Clean Up Old Files";
-      }
-    });
   }
+
+  // Reset master password listener
+  const resetMasterPasswordBtn = container.querySelector("#reset-master-password-btn");
+  resetMasterPasswordBtn?.addEventListener("click", async () => {
+    const confirmed = await showConfirmDialog(
+      "Reset Master Password",
+      "⚠️ This will clear your master password and encryption keys.<br><br>" +
+        "After reset, you'll need to set a new master password to use encryption.<br><br>" +
+        "<strong>Note:</strong> Encrypted notes will remain encrypted and cannot be decrypted without the original password.",
+      "Reset Password",
+      "btn-warning",
+    );
+
+    if (!confirmed) return;
+
+    try {
+      // Clear master password from storage
+      const { deleteSecureCredential } = await import("../modules/secureStorage.js");
+      const { clearMasterPassword } = await import("../modules/masterPassword.js");
+
+      await deleteSecureCredential("master_password");
+      await clearMasterPassword();
+
+      await showAlertDialog(
+        "Master Password Reset",
+        "✓ Master password has been cleared. You can now set a new password by enabling encryption.",
+      );
+
+      // Re-render settings to update UI
+      await renderSettings(container);
+    } catch (error) {
+      console.error("[Settings] Failed to reset master password:", error);
+      await showAlertDialog("Error", `Failed to reset master password: ${error.message}`);
+    }
+  });
 
   // Purge local data listener (available regardless of auth status)
   const purgeLocalBtn = container.querySelector("#purge-local-btn");

@@ -431,6 +431,103 @@ export function showNoteInfoModal(note) {
 }
 
 /**
+ * Show password prompt dialog
+ * @param {string} title - Dialog title
+ * @param {string} message - Prompt message
+ * @returns {Promise<string|null>} Password string, or null if cancelled
+ */
+export function showPasswordPrompt(title, message) {
+  return new Promise((resolve) => {
+    const existingModal = document.getElementById("modal-overlay");
+    if (existingModal) {
+      existingModal.remove();
+    }
+
+    const modalHtml = `
+      <div id="modal-overlay" class="modal-overlay">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 class="modal-title">${title}</h3>
+            <button class="modal-close" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p>${message}</p>
+            <div class="form-field" style="margin-top: 15px;">
+              <input
+                type="password"
+                id="password-input"
+                class="form-input"
+                placeholder="Enter password"
+                autocomplete="current-password"
+              />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary modal-cancel">Cancel</button>
+            <button class="btn-primary modal-confirm">OK</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML("beforeend", modalHtml);
+
+    const overlay = document.getElementById("modal-overlay");
+    const confirmBtn = overlay.querySelector(".modal-confirm");
+    const cancelBtn = overlay.querySelector(".modal-cancel");
+    const closeBtn = overlay.querySelector(".modal-close");
+    const passwordInput = document.getElementById("password-input");
+
+    const closeModal = (password = null) => {
+      overlay.classList.add("modal-closing");
+      setTimeout(() => {
+        overlay.remove();
+        resolve(password);
+      }, 200);
+    };
+
+    // Confirm handler
+    confirmBtn.addEventListener("click", () => {
+      const password = passwordInput.value;
+      if (password) {
+        closeModal(password);
+      }
+    });
+
+    // Cancel handlers
+    cancelBtn.addEventListener("click", () => closeModal(null));
+    closeBtn.addEventListener("click", () => closeModal(null));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeModal(null);
+    });
+
+    // ESC key handler
+    const handleEsc = (e) => {
+      if (e.key === "Escape") {
+        closeModal(null);
+        document.removeEventListener("keydown", handleEsc);
+      }
+    };
+    document.addEventListener("keydown", handleEsc);
+
+    // Enter key handler
+    const handleEnter = (e) => {
+      if (e.key === "Enter") {
+        const password = passwordInput.value;
+        if (password) {
+          closeModal(password);
+          document.removeEventListener("keydown", handleEnter);
+        }
+      }
+    };
+    passwordInput.addEventListener("keydown", handleEnter);
+
+    // Focus password input
+    setTimeout(() => passwordInput.focus(), 100);
+  });
+}
+
+/**
  * Show conflict resolution dialog
  * @param {Object} local - Local version
  * @param {Object} remote - Remote version

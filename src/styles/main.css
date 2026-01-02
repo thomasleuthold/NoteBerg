@@ -145,7 +145,8 @@ body {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0; /* Allow flex items to shrink below content size */
 }
 
 .breadcrumb-item {

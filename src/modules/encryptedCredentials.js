@@ -3,9 +3,9 @@
  * Provides secure access to encrypted credentials using master password
  */
 
-import { getEncryptionKey, isAppUnlocked } from './masterPassword.js';
-import { encryptObject, decryptObject } from './encryption.js';
-import { getSetting, setSetting } from './storage.js';
+import { decryptObject, encryptObject } from "./encryption.js";
+import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
+import { getSetting, setSetting } from "./storage.js";
 
 /**
  * Save encrypted Nextcloud credentials
@@ -13,21 +13,21 @@ import { getSetting, setSetting } from './storage.js';
  * @returns {Promise<void>}
  */
 export async function saveNextcloudCredentials(credentials) {
-  console.log('[EncryptedCredentials] Saving Nextcloud credentials...');
+  console.log("[EncryptedCredentials] Saving Nextcloud credentials...");
 
   if (!isAppUnlocked()) {
-    throw new Error('App is locked - cannot save credentials');
+    throw new Error("App is locked - cannot save credentials");
   }
 
   try {
     const encryptionKey = getEncryptionKey();
     const encryptedCreds = await encryptObject(credentials, encryptionKey);
 
-    await setSetting('encrypted_nextcloud_credentials', encryptedCreds);
+    await setSetting("encrypted_nextcloud_credentials", encryptedCreds);
 
-    console.log('[EncryptedCredentials] Nextcloud credentials saved successfully');
+    console.log("[EncryptedCredentials] Nextcloud credentials saved successfully");
   } catch (error) {
-    console.error('[EncryptedCredentials] Failed to save credentials:', error);
+    console.error("[EncryptedCredentials] Failed to save credentials:", error);
     throw error;
   }
 }
@@ -37,27 +37,27 @@ export async function saveNextcloudCredentials(credentials) {
  * @returns {Promise<Object|null>} Credentials object or null if not found
  */
 export async function getNextcloudCredentials() {
-  console.log('[EncryptedCredentials] Retrieving Nextcloud credentials...');
+  console.log("[EncryptedCredentials] Retrieving Nextcloud credentials...");
 
   if (!isAppUnlocked()) {
-    throw new Error('App is locked - cannot access credentials');
+    throw new Error("App is locked - cannot access credentials");
   }
 
   try {
-    const encryptedCreds = await getSetting('encrypted_nextcloud_credentials');
+    const encryptedCreds = await getSetting("encrypted_nextcloud_credentials");
 
     if (!encryptedCreds) {
-      console.log('[EncryptedCredentials] No encrypted credentials found');
+      console.log("[EncryptedCredentials] No encrypted credentials found");
       return null;
     }
 
     const encryptionKey = getEncryptionKey();
     const credentials = await decryptObject(encryptedCreds, encryptionKey);
 
-    console.log('[EncryptedCredentials] Credentials retrieved successfully');
+    console.log("[EncryptedCredentials] Credentials retrieved successfully");
     return credentials;
   } catch (error) {
-    console.error('[EncryptedCredentials] Failed to retrieve credentials:', error);
+    console.error("[EncryptedCredentials] Failed to retrieve credentials:", error);
     throw error;
   }
 }
@@ -67,17 +67,17 @@ export async function getNextcloudCredentials() {
  * @returns {Promise<void>}
  */
 export async function deleteNextcloudCredentials() {
-  console.log('[EncryptedCredentials] Deleting Nextcloud credentials...');
+  console.log("[EncryptedCredentials] Deleting Nextcloud credentials...");
 
   if (!isAppUnlocked()) {
-    throw new Error('App is locked - cannot delete credentials');
+    throw new Error("App is locked - cannot delete credentials");
   }
 
   try {
-    await setSetting('encrypted_nextcloud_credentials', null);
-    console.log('[EncryptedCredentials] Credentials deleted successfully');
+    await setSetting("encrypted_nextcloud_credentials", null);
+    console.log("[EncryptedCredentials] Credentials deleted successfully");
   } catch (error) {
-    console.error('[EncryptedCredentials] Failed to delete credentials:', error);
+    console.error("[EncryptedCredentials] Failed to delete credentials:", error);
     throw error;
   }
 }
@@ -88,10 +88,10 @@ export async function deleteNextcloudCredentials() {
  */
 export async function hasNextcloudCredentials() {
   try {
-    const encryptedCreds = await getSetting('encrypted_nextcloud_credentials');
+    const encryptedCreds = await getSetting("encrypted_nextcloud_credentials");
     return encryptedCreds !== null && encryptedCreds !== undefined;
   } catch (error) {
-    console.error('[EncryptedCredentials] Error checking credentials:', error);
+    console.error("[EncryptedCredentials] Error checking credentials:", error);
     return false;
   }
 }
@@ -104,7 +104,7 @@ export async function hasNextcloudCredentials() {
  */
 export async function saveEncryptedNote(noteId, noteData) {
   if (!isAppUnlocked()) {
-    throw new Error('App is locked - cannot save note');
+    throw new Error("App is locked - cannot save note");
   }
 
   try {
@@ -127,7 +127,7 @@ export async function saveEncryptedNote(noteId, noteData) {
  */
 export async function getEncryptedNote(noteId) {
   if (!isAppUnlocked()) {
-    throw new Error('App is locked - cannot access note');
+    throw new Error("App is locked - cannot access note");
   }
 
   try {
@@ -154,7 +154,7 @@ export async function getEncryptedNote(noteId) {
  */
 export async function deleteEncryptedNote(noteId) {
   if (!isAppUnlocked()) {
-    throw new Error('App is locked - cannot delete note');
+    throw new Error("App is locked - cannot delete note");
   }
 
   try {

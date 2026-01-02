@@ -5,21 +5,8 @@
  * Handles encryption key management and biometric unlock integration.
  */
 
-import {
-  generateSalt,
-  deriveKeyFromPassword,
-  encryptData,
-  decryptData,
-  encryptObject,
-  decryptObject,
-  testKey
-} from './encryption.js';
-import { getSetting, setSetting } from './storage.js';
-import {
-  checkBiometricAvailability,
-  authenticateBiometric,
-  isBiometricEnabled as isBiometricAuthEnabled
-} from './secureStorage.js';
+import { decryptData, deriveKeyFromPassword, encryptData, generateSalt } from "./encryption.js";
+import { getSetting, setSetting } from "./storage.js";
 
 // In-memory state (cleared on lock)
 let encryptionKey = null;
@@ -29,10 +16,10 @@ let autoLockTimeout = null;
 
 // Storage keys
 const STORAGE_KEYS = {
-  ENCRYPTION_CONFIG: 'encryption_config',
-  BIOMETRIC_CONFIG: 'biometric_unlock_config',
-  PASSWORD_TEST: 'password_test',
-  AUTO_LOCK_TIMEOUT: 'auto_lock_timeout_minutes'
+  ENCRYPTION_CONFIG: "encryption_config",
+  BIOMETRIC_CONFIG: "biometric_unlock_config",
+  PASSWORD_TEST: "password_test",
+  AUTO_LOCK_TIMEOUT: "auto_lock_timeout_minutes",
 };
 
 // Default auto-lock timeout (minutes)
@@ -71,12 +58,12 @@ async function saveEncryptionConfig(config) {
  * @returns {Promise<void>}
  * @throws {Error} If password is too weak or setup fails
  */
-export async function setupMasterPassword(password, hint = '', enableBiometric = false) {
-  console.log('[MasterPassword] Setting up master password...');
+export async function setupMasterPassword(password, hint = "", enableBiometric = false) {
+  console.log("[MasterPassword] Setting up master password...");
 
   // Validate password
   if (!password || password.length < 8) {
-    throw new Error('Password must be at least 8 characters long');
+    throw new Error("Password must be at least 8 characters long");
   }
 
   try {
@@ -88,7 +75,7 @@ export async function setupMasterPassword(password, hint = '', enableBiometric =
     const key = await deriveKeyFromPassword(password, salt);
 
     // Create a test encrypted value to verify password on unlock
-    const testData = 'master_password_verification';
+    const testData = "master_password_verification";
     const testEncrypted = await encryptData(testData, key);
 
     // Save encryption configuration
@@ -96,26 +83,27 @@ export async function setupMasterPassword(password, hint = '', enableBiometric =
       version: 1,
       salt: saltBase64,
       iterations: 100000,
-      algorithm: 'PBKDF2-SHA256',
+      algorithm: "PBKDF2-SHA256",
       passwordHint: hint || null,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
     await saveEncryptionConfig(config);
 
     // Save password test data
     await setSetting(STORAGE_KEYS.PASSWORD_TEST, testEncrypted);
 
-    console.log('[MasterPassword] Master password configured successfully');
+    console.log("[MasterPassword] Master password configured successfully");
 
-    // Set up biometric unlock if requested
+    // ALWAYS store master password in keyring for automatic unlock
+    const { saveSecureCredential } = await import("./secureStorage.js");
+    await saveSecureCredential("master_password", password);
+    console.log("[MasterPassword] Master password stored in keyring");
+
+    // Biometric unlock removed for performance
     if (enableBiometric) {
-      const biometricAvailable = await checkBiometricAvailability();
-      if (biometricAvailable.available) {
-        await enableBiometricUnlock(password, key);
-        console.log('[MasterPassword] Biometric unlock enabled');
-      } else {
-        console.warn('[MasterPassword] Biometric unlock requested but not available');
-      }
+      console.warn(
+        "[MasterPassword] Biometric unlock requested but feature removed for performance",
+      );
     }
 
     // Automatically unlock the app
@@ -124,50 +112,55 @@ export async function setupMasterPassword(password, hint = '', enableBiometric =
     unlockTime = Date.now();
     startAutoLockTimer();
 
-    console.log('[MasterPassword] App unlocked after setup');
+    console.log("[MasterPassword] App unlocked after setup");
   } catch (error) {
-    console.error('[MasterPassword] Failed to set up master password:', error);
-    throw new Error('Failed to set up master password: ' + error.message);
+    console.error("[MasterPassword] Failed to set up master password:", error);
+    throw new Error(`Failed to set up master password: ${error.message}`);
   }
 }
 
 /**
  * Enable biometric unlock
- * Encrypts the master password with a derived key and stores it
- * @param {string} password - Master password to encrypt
- * @param {CryptoKey} key - Current encryption key
+ * Just sets the biometric config flag (password is already in keyring)
+ * @param {string} password - Master password (unused, password already in keyring)
+ * @param {CryptoKey} key - Current encryption key (unused, kept for compatibility)
  * @returns {Promise<void>}
  */
-async function enableBiometricUnlock(password, key) {
-  console.log('[MasterPassword] Enabling biometric unlock...');
+async function enableBiometricUnlock(_password, _key) {
+  console.log("[MasterPassword] Enabling biometric unlock...");
 
   try {
-    // Encrypt the master password with the encryption key
-    const encryptedPassword = await encryptData(password, key);
-
-    // Save biometric configuration
+    // Password is already stored in keyring during setupMasterPassword
+    // Just save the biometric configuration flag
     const biometricConfig = {
       enabled: true,
-      encrypted_master_password: encryptedPassword,
-      enabledAt: new Date().toISOString()
+      enabledAt: new Date().toISOString(),
     };
     await setSetting(STORAGE_KEYS.BIOMETRIC_CONFIG, biometricConfig);
 
-    console.log('[MasterPassword] Biometric unlock enabled');
+    console.log("[MasterPassword] Biometric unlock enabled");
   } catch (error) {
-    console.error('[MasterPassword] Failed to enable biometric unlock:', error);
-    throw new Error('Failed to enable biometric unlock');
+    console.error("[MasterPassword] Failed to enable biometric unlock:", error);
+    throw new Error("Failed to enable biometric unlock");
   }
 }
 
 /**
  * Disable biometric unlock
+ * Note: Does NOT remove master password from keyring (it's always needed for auto-unlock)
  * @returns {Promise<void>}
  */
 export async function disableBiometricUnlock() {
-  console.log('[MasterPassword] Disabling biometric unlock...');
-  await setSetting(STORAGE_KEYS.BIOMETRIC_CONFIG, null);
-  console.log('[MasterPassword] Biometric unlock disabled');
+  console.log("[MasterPassword] Disabling biometric unlock...");
+
+  try {
+    // DO NOT delete master password from keyring - it's needed for automatic unlock
+    // Just remove the biometric configuration flag
+    await setSetting(STORAGE_KEYS.BIOMETRIC_CONFIG, null);
+    console.log("[MasterPassword] Biometric unlock disabled");
+  } catch (error) {
+    console.error("[MasterPassword] Failed to disable biometric unlock:", error);
+  }
 }
 
 /**
@@ -185,13 +178,13 @@ export async function isBiometricUnlockEnabled() {
  * @returns {Promise<boolean>} True if unlock successful
  */
 export async function unlockApp(password) {
-  console.log('[MasterPassword] Attempting to unlock app with password...');
+  console.log("[MasterPassword] Attempting to unlock app with password...");
 
   try {
     // Get encryption configuration
     const config = await getEncryptionConfig();
     if (!config) {
-      throw new Error('Master password not configured');
+      throw new Error("Master password not configured");
     }
 
     // Convert salt from base64
@@ -203,12 +196,12 @@ export async function unlockApp(password) {
     // Test the key by trying to decrypt the test data
     const testEncrypted = await getSetting(STORAGE_KEYS.PASSWORD_TEST);
     if (!testEncrypted) {
-      throw new Error('Password verification data not found');
+      throw new Error("Password verification data not found");
     }
 
     const testDecrypted = await decryptData(testEncrypted.data, testEncrypted.iv, key);
-    if (testDecrypted !== 'master_password_verification') {
-      console.log('[MasterPassword] Password verification failed');
+    if (testDecrypted !== "master_password_verification") {
+      console.log("[MasterPassword] Password verification failed");
       return false;
     }
 
@@ -218,10 +211,46 @@ export async function unlockApp(password) {
     unlockTime = Date.now();
     startAutoLockTimer();
 
-    console.log('[MasterPassword] App unlocked successfully');
+    console.log("[MasterPassword] App unlocked successfully");
     return true;
   } catch (error) {
-    console.error('[MasterPassword] Failed to unlock app:', error);
+    console.error("[MasterPassword] Failed to unlock app:", error);
+    return false;
+  }
+}
+
+/**
+ * Auto-unlock the app using master password from keyring
+ * This is called automatically on app startup
+ * @returns {Promise<boolean>} True if unlock successful
+ */
+export async function autoUnlockFromKeyring() {
+  console.log("[MasterPassword] Attempting auto-unlock from keyring...");
+
+  try {
+    // Get the stored master password from keyring
+    const { getSecureCredential } = await import("./secureStorage.js");
+    const masterPassword = await getSecureCredential("master_password");
+
+    if (!masterPassword) {
+      console.warn("[MasterPassword] No master password found in keyring");
+      return false;
+    }
+
+    console.log("[MasterPassword] Master password retrieved from keyring, unlocking...");
+
+    // Unlock the app with the retrieved master password
+    const unlocked = await unlockApp(masterPassword);
+
+    if (unlocked) {
+      console.log("[MasterPassword] App auto-unlocked successfully from keyring");
+      return true;
+    } else {
+      console.error("[MasterPassword] Failed to unlock app with keyring password");
+      return false;
+    }
+  } catch (error) {
+    console.error("[MasterPassword] Failed to auto-unlock from keyring:", error);
     return false;
   }
 }
@@ -231,60 +260,15 @@ export async function unlockApp(password) {
  * @returns {Promise<boolean>} True if unlock successful
  */
 export async function unlockWithBiometric() {
-  console.log('[MasterPassword] Attempting to unlock app with biometric...');
-
-  try {
-    // Check if biometric unlock is enabled
-    const biometricConfig = await getSetting(STORAGE_KEYS.BIOMETRIC_CONFIG);
-    if (!biometricConfig || !biometricConfig.enabled) {
-      throw new Error('Biometric unlock not enabled');
-    }
-
-    // Authenticate with biometric
-    const authenticated = await authenticateBiometric('Unlock oneJournal');
-    if (!authenticated) {
-      console.log('[MasterPassword] Biometric authentication failed or cancelled');
-      return false;
-    }
-
-    // Get encryption configuration
-    const config = await getEncryptionConfig();
-    if (!config) {
-      throw new Error('Master password not configured');
-    }
-
-    // Convert salt from base64
-    const salt = base64ToBufferHelper(config.salt);
-
-    // We need to derive a temporary key to decrypt the stored password
-    // For now, we'll use a workaround: store the password encrypted with a test key
-    // In a production system, you'd use platform keychain to store the password
-
-    // For this implementation, we'll derive the key directly from biometric success
-    // This is a simplified approach - in production, use platform-specific secure storage
-
-    // Get the encrypted master password from biometric config
-    const encryptedPassword = biometricConfig.encrypted_master_password;
-
-    // We need the encryption key to decrypt the password, but we don't have it yet
-    // This is a chicken-and-egg problem. Solution: store the salt and derive from biometric
-
-    // TODO: Implement proper platform keychain integration
-    // For now, we'll require the user to enter password once after enabling biometric
-
-    console.warn('[MasterPassword] Biometric unlock implementation incomplete - requires password once');
-    return false;
-  } catch (error) {
-    console.error('[MasterPassword] Failed to unlock with biometric:', error);
-    return false;
-  }
+  console.log("[MasterPassword] Biometric unlock removed for performance");
+  return false;
 }
 
 /**
  * Lock the app and clear encryption key from memory
  */
 export function lockApp() {
-  console.log('[MasterPassword] Locking app...');
+  console.log("[MasterPassword] Locking app...");
 
   // Clear encryption key from memory
   encryptionKey = null;
@@ -297,7 +281,26 @@ export function lockApp() {
     autoLockTimeout = null;
   }
 
-  console.log('[MasterPassword] App locked');
+  console.log("[MasterPassword] App locked");
+}
+
+/**
+ * Clear master password and all encryption configuration
+ * This removes all stored passwords and encryption settings
+ * @returns {Promise<void>}
+ */
+export async function clearMasterPassword() {
+  console.log("[MasterPassword] Clearing master password...");
+
+  // Lock the app and clear in-memory state
+  lockApp();
+
+  // Clear encryption configuration from IndexedDB
+  await setSetting(STORAGE_KEYS.ENCRYPTION_CONFIG, null);
+  await setSetting(STORAGE_KEYS.PASSWORD_TEST, null);
+  await setSetting(STORAGE_KEYS.BIOMETRIC_CONFIG, null);
+
+  console.log("[MasterPassword] Master password and encryption configuration cleared");
 }
 
 /**
@@ -315,7 +318,7 @@ export function isAppUnlocked() {
  */
 export function getEncryptionKey() {
   if (!isAppUnlocked()) {
-    throw new Error('App is locked - cannot access encryption key');
+    throw new Error("App is locked - cannot access encryption key");
   }
   return encryptionKey;
 }
@@ -338,18 +341,18 @@ export async function getPasswordHint() {
  * @throws {Error} If old password is incorrect or change fails
  */
 export async function changeMasterPassword(oldPassword, newPassword, newHint) {
-  console.log('[MasterPassword] Changing master password...');
+  console.log("[MasterPassword] Changing master password...");
 
   // Validate new password
   if (!newPassword || newPassword.length < 8) {
-    throw new Error('New password must be at least 8 characters long');
+    throw new Error("New password must be at least 8 characters long");
   }
 
   try {
     // Verify old password
     const unlockSuccess = await unlockApp(oldPassword);
     if (!unlockSuccess) {
-      throw new Error('Current password is incorrect');
+      throw new Error("Current password is incorrect");
     }
 
     // Get current encryption config
@@ -363,7 +366,7 @@ export async function changeMasterPassword(oldPassword, newPassword, newHint) {
     const newKey = await deriveKeyFromPassword(newPassword, newSalt);
 
     // Create new test encrypted value
-    const testData = 'master_password_verification';
+    const testData = "master_password_verification";
     const testEncrypted = await encryptData(testData, newKey);
 
     // TODO: Re-encrypt all encrypted data with the new key
@@ -378,7 +381,7 @@ export async function changeMasterPassword(oldPassword, newPassword, newHint) {
       ...oldConfig,
       salt: newSaltBase64,
       passwordHint: newHint !== undefined ? newHint : oldConfig.passwordHint,
-      changedAt: new Date().toISOString()
+      changedAt: new Date().toISOString(),
     };
     await saveEncryptionConfig(newConfig);
 
@@ -390,14 +393,14 @@ export async function changeMasterPassword(oldPassword, newPassword, newHint) {
 
     // If biometric unlock is enabled, update the stored encrypted password
     const biometricConfig = await getSetting(STORAGE_KEYS.BIOMETRIC_CONFIG);
-    if (biometricConfig && biometricConfig.enabled) {
+    if (biometricConfig?.enabled) {
       await enableBiometricUnlock(newPassword, newKey);
     }
 
-    console.log('[MasterPassword] Master password changed successfully');
+    console.log("[MasterPassword] Master password changed successfully");
   } catch (error) {
-    console.error('[MasterPassword] Failed to change master password:', error);
-    throw new Error('Failed to change master password: ' + error.message);
+    console.error("[MasterPassword] Failed to change master password:", error);
+    throw new Error(`Failed to change master password: ${error.message}`);
   }
 }
 
@@ -438,17 +441,17 @@ async function startAutoLockTimer() {
 
   // If timeout is 0, don't auto-lock
   if (timeoutMinutes === 0) {
-    console.log('[MasterPassword] Auto-lock disabled');
+    console.log("[MasterPassword] Auto-lock disabled");
     return;
   }
 
   // Set new timer
   const timeoutMs = timeoutMinutes * 60 * 1000;
   autoLockTimeout = setTimeout(() => {
-    console.log('[MasterPassword] Auto-lock timeout reached');
+    console.log("[MasterPassword] Auto-lock timeout reached");
     lockApp();
     // Trigger app-wide lock event
-    window.dispatchEvent(new CustomEvent('app-locked', { detail: { reason: 'timeout' } }));
+    window.dispatchEvent(new CustomEvent("app-locked", { detail: { reason: "timeout" } }));
   }, timeoutMs);
 
   console.log(`[MasterPassword] Auto-lock timer set for ${timeoutMinutes} minutes`);
@@ -483,7 +486,7 @@ export function getTimeSinceUnlock() {
 export async function exportEncryptionConfig() {
   const config = await getEncryptionConfig();
   if (!config) {
-    throw new Error('Master password not configured');
+    throw new Error("Master password not configured");
   }
 
   return {
@@ -500,7 +503,7 @@ export async function exportEncryptionConfig() {
 // Helper functions for base64 conversion (defined inline to avoid circular imports)
 function bufferToBase64Helper(buffer) {
   const bytes = new Uint8Array(buffer);
-  let binary = '';
+  let binary = "";
   for (let i = 0; i < bytes.byteLength; i++) {
     binary += String.fromCharCode(bytes[i]);
   }

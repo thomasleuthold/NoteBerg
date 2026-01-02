@@ -267,8 +267,19 @@ async function handleDeleteNote(e, noteId) {
 }
 
 function renderPreviewNoteCard(note) {
+  // Defensive check: ensure content is a string
+  const content = typeof note.content === "string" ? note.content : "";
+  if (typeof note.content !== "string" && note.content) {
+    console.error(
+      "[OverviewMode] Note content is not a string:",
+      note.id,
+      typeof note.content,
+      note.content,
+    );
+  }
+
   const hasDrawings = note.strokes && note.strokes.length > 0;
-  const hasText = note.content && note.content.trim().length > 0;
+  const hasText = content && content.trim().length > 0;
   const hasBackground = note.background && note.background !== "none";
 
   let previewContent = "";
@@ -278,7 +289,7 @@ function renderPreviewNoteCard(note) {
     // Create layered structure exactly like the editor, then scale the whole thing
     // This ensures text and strokes maintain their exact relative positions
     const textLayer = hasText
-      ? `<div class="text-editor" contenteditable="false" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; padding: 20px; font-size: 16px; line-height: 1.6; overflow: hidden; pointer-events: none; z-index: 1;">${markdownToHtml(note.content)}</div>`
+      ? `<div class="text-editor" contenteditable="false" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; padding: 20px; font-size: 16px; line-height: 1.6; overflow: hidden; pointer-events: none; z-index: 1;">${markdownToHtml(content)}</div>`
       : "";
     // Render at full editor size (800x600) then scale down with CSS transform
     previewContent = `
@@ -290,7 +301,7 @@ function renderPreviewNoteCard(note) {
   } else if (hasText) {
     // For text-only notes, render the HTML directly with text-editor class
     // Convert markdown to HTML exactly like the editor does
-    const textLayer = `<div class="text-editor" contenteditable="false" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; padding: 20px; font-size: 16px; line-height: 1.6; overflow: hidden; pointer-events: none;">${markdownToHtml(note.content)}</div>`;
+    const textLayer = `<div class="text-editor" contenteditable="false" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; padding: 20px; font-size: 16px; line-height: 1.6; overflow: hidden; pointer-events: none;">${markdownToHtml(content)}</div>`;
     previewContent = `
       <div class="preview-scaler" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; transform-origin: top left; pointer-events: none;">
         ${textLayer}

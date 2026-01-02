@@ -26,6 +26,7 @@ import { initStorage } from "./modules/storage.js";
 // Import modules
 import { initTheme } from "./modules/theme.js";
 import { getIcon } from "./utils/icons.js";
+import { initLogger } from "./utils/logger.js";
 
 // Application state
 const app = {
@@ -37,18 +38,31 @@ const app = {
  * Initialize the application
  */
 async function init() {
+  const appStartTime = performance.now();
+
   console.log("oneJournal initializing...");
 
-  // Initialize storage (IndexedDB)
+  // Initialize storage FIRST (required for logger to load saved level)
+  const storageStart = performance.now();
   await initStorage();
+  console.log(`Storage initialized in ${Math.round(performance.now() - storageStart)}ms`);
+
+  // Initialize logger (loads saved log level from storage)
+  const loggerStart = performance.now();
+  await initLogger();
+  console.log(`Logger initialized in ${Math.round(performance.now() - loggerStart)}ms`);
 
   // Initialize theme system (before master password modal for proper styling)
+  const themeStart = performance.now();
   await initTheme();
+  console.log(`Theme initialized in ${Math.round(performance.now() - themeStart)}ms`);
 
   // MASTER PASSWORD: Initialize and unlock app (shows modal if needed)
   // This MUST happen before any data access
   try {
+    const appInitStart = performance.now();
     await initializeApp();
+    console.log(`App initialization took ${Math.round(performance.now() - appInitStart)}ms`);
     setupAppLockListener();
   } catch (error) {
     console.error("Failed to initialize master password system:", error);
@@ -74,9 +88,12 @@ async function init() {
 
   // Migrate credentials from localStorage to secure storage (one-time migration)
   // Note: This is the Phase 1 migration, not master password migration
+  const migrateStart = performance.now();
   await migrateCredentials();
+  console.log(`Credential migration took ${Math.round(performance.now() - migrateStart)}ms`);
 
   // Initialize router
+  const componentsStart = performance.now();
   initRouter();
 
   // Initialize components
@@ -88,16 +105,20 @@ async function init() {
   initBreadcrumb();
   initFooter();
   initAutoSync();
+  console.log(`Components initialized in ${Math.round(performance.now() - componentsStart)}ms`);
 
   // Set up event listeners
   setupEventListeners();
 
   // Navigate to overview by default
+  const navStart = performance.now();
   navigateTo("overview");
+  console.log(`Navigation to overview took ${Math.round(performance.now() - navStart)}ms`);
 
   // Mark as initialized
   app.initialized = true;
-  console.log("oneJournal ready!");
+  const totalTime = Math.round(performance.now() - appStartTime);
+  console.log(`oneJournal ready! Total startup time: ${totalTime}ms`);
 }
 
 /**

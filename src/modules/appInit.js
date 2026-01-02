@@ -1,240 +1,94 @@
 /**
  * App Initialization
- * Handles app startup, master password unlock, and migration
+ * Handles app startup and automatic master password unlock from keyring
  */
 
-import { isMasterPasswordSet, isAppUnlocked } from './masterPassword.js';
-import { showMasterPasswordSetup, showAppUnlock } from '../components/masterPasswordModals.js';
-import { getSecureCredential } from './secureStorage.js';
+import { autoUnlockFromKeyring, isAppUnlocked, isMasterPasswordSet } from "./masterPassword.js";
+import { fixCorruptedNotes, getSetting } from "./storage.js";
 
 /**
  * Initialize the app and handle master password unlock
+ * Master password is automatically retrieved from OS keyring - no user prompt needed
  * @returns {Promise<boolean>} True if app is ready to use
  */
 export async function initializeApp() {
-  console.log('[AppInit] Starting app initialization...');
+  const startTime = performance.now();
+  console.log("[AppInit] Starting app initialization...");
 
   try {
-    // Check if master password is configured
-    const masterPasswordConfigured = await isMasterPasswordSet();
+    // Check if encryption is actually ENABLED (not just configured)
+    const settingsStart = performance.now();
+    const encryptLocalData = await getSetting("encrypt_local_data");
+    const encryptNextcloudData = await getSetting("encrypt_nextcloud_data");
+    const encryptionEnabled = encryptLocalData === true || encryptNextcloudData === true;
+    console.log(`[AppInit] Settings check took ${Math.round(performance.now() - settingsStart)}ms`);
 
-    if (!masterPasswordConfigured) {
-      // Check if there are existing credentials to migrate
-      const haLegacyCredentials = await checkLegacyCredentials();
-
-      if (haLegacyCredentials) {
-        console.log('[AppInit] Legacy credentials found - showing migration setup');
-        await showMasterPasswordSetupWithMigration();
-      } else {
-        console.log('[AppInit] No master password - showing setup');
-        await showMasterPasswordSetupFlow();
-      }
-    } else {
-      // Master password is configured - check if app is unlocked
-      if (!isAppUnlocked()) {
-        console.log('[AppInit] App locked - showing unlock modal');
-        await showAppUnlockFlow();
-      } else {
-        console.log('[AppInit] App already unlocked');
-      }
-    }
-
-    console.log('[AppInit] App initialization complete');
-    return true;
-  } catch (error) {
-    console.error('[AppInit] App initialization failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Check if there are legacy credentials to migrate
- * @returns {Promise<boolean>}
- */
-async function checkLegacyCredentials() {
-  try {
-    // Check localStorage for old credentials
-    const legacyNextcloudCredentials = localStorage.getItem('nextcloud_credentials');
-    if (legacyNextcloudCredentials) {
-      console.log('[AppInit] Found legacy Nextcloud credentials in localStorage');
-      return true;
-    }
-
-    // Check if credentials exist in secure storage (from Phase 1)
-    // These would be unencrypted with master password
-    try {
-      const secureCredentials = await getSecureCredential('nextcloud_credentials');
-      if (secureCredentials) {
-        console.log('[AppInit] Found credentials in secure storage (Phase 1)');
-        return true;
-      }
-    } catch (error) {
-      // Ignore errors - credentials might not exist
-    }
-
-    return false;
-  } catch (error) {
-    console.error('[AppInit] Error checking legacy credentials:', error);
-    return false;
-  }
-}
-
-/**
- * Show master password setup with migration notice
- * @returns {Promise<void>}
- */
-function showMasterPasswordSetupWithMigration() {
-  return new Promise((resolve) => {
-    showMasterPasswordSetup({
-      isMigration: true,
-      onSuccess: async () => {
-        console.log('[AppInit] Master password setup complete (migration)');
-        // Perform migration
-        await migrateCredentials();
-        resolve();
-      }
+    console.log("[AppInit] Encryption status:", {
+      encryptLocalData,
+      encryptNextcloudData,
+      encryptionEnabled,
     });
-  });
-}
 
-/**
- * Show master password setup (new user)
- * @returns {Promise<void>}
- */
-function showMasterPasswordSetupFlow() {
-  return new Promise((resolve) => {
-    showMasterPasswordSetup({
-      isMigration: false,
-      onSuccess: () => {
-        console.log('[AppInit] Master password setup complete (new user)');
-        resolve();
-      }
-    });
-  });
-}
+    // Auto-unlock from keyring if encryption is enabled
+    if (encryptionEnabled) {
+      const passwordCheckStart = performance.now();
+      const masterPasswordConfigured = await isMasterPasswordSet();
+      console.log(
+        `[AppInit] Master password check took ${Math.round(performance.now() - passwordCheckStart)}ms`,
+      );
 
-/**
- * Show app unlock modal
- * @returns {Promise<void>}
- */
-function showAppUnlockFlow() {
-  return new Promise((resolve) => {
-    showAppUnlock({
-      onSuccess: () => {
-        console.log('[AppInit] App unlocked successfully');
-        resolve();
-      }
-    });
-  });
-}
+      if (!masterPasswordConfigured) {
+        console.log(
+          "[AppInit] Encryption enabled but no master password - user must set it up in Settings",
+        );
+        // Don't block app startup - user can set it up later in Settings
+      } else if (!isAppUnlocked()) {
+        console.log("[AppInit] Encryption enabled - attempting auto-unlock from keyring...");
+        const unlockStart = performance.now();
+        const unlocked = await autoUnlockFromKeyring();
+        console.log(`[AppInit] Auto-unlock took ${Math.round(performance.now() - unlockStart)}ms`);
 
-/**
- * Migrate legacy credentials to encrypted storage
- * @returns {Promise<void>}
- */
-async function migrateCredentials() {
-  console.log('[AppInit] Starting credential migration...');
+        if (unlocked) {
+          console.log("[AppInit] Successfully auto-unlocked from keyring");
 
-  try {
-    const { getEncryptionKey } = await import('./masterPassword.js');
-    const { encryptObject } = await import('./encryption.js');
-    const { setSetting, getSetting } = await import('./storage.js');
-
-    // Get the encryption key (app must be unlocked at this point)
-    let encryptionKey;
-    try {
-      encryptionKey = getEncryptionKey();
-    } catch (error) {
-      console.error('[AppInit] Cannot migrate - app is locked');
-      return;
-    }
-
-    let migratedCount = 0;
-
-    // 1. Check for legacy credentials in localStorage
-    const legacyNextcloudCreds = localStorage.getItem('nextcloud_credentials');
-    if (legacyNextcloudCreds) {
-      console.log('[AppInit] Found legacy Nextcloud credentials in localStorage');
-
-      try {
-        // Parse the credentials
-        const credsData = JSON.parse(legacyNextcloudCreds);
-
-        // Encrypt with master password
-        const encryptedCreds = await encryptObject(credsData, encryptionKey);
-
-        // Store in encrypted format
-        await setSetting('encrypted_nextcloud_credentials', encryptedCreds);
-
-        // Clear legacy localStorage
-        localStorage.removeItem('nextcloud_credentials');
-
-        migratedCount++;
-        console.log('[AppInit] Migrated Nextcloud credentials from localStorage');
-      } catch (error) {
-        console.error('[AppInit] Failed to migrate localStorage credentials:', error);
-      }
-    }
-
-    // 2. Check for Phase 1 secure storage credentials (unencrypted with master password)
-    try {
-      const secureCredentials = await getSecureCredential('nextcloud_credentials');
-      if (secureCredentials) {
-        console.log('[AppInit] Found credentials in Phase 1 secure storage');
-
-        // Check if we haven't already migrated these
-        const alreadyMigrated = await getSetting('encrypted_nextcloud_credentials');
-        if (!alreadyMigrated) {
-          try {
-            // Parse the credentials
-            const credsData = JSON.parse(secureCredentials);
-
-            // Encrypt with master password
-            const encryptedCreds = await encryptObject(credsData, encryptionKey);
-
-            // Store in encrypted format
-            await setSetting('encrypted_nextcloud_credentials', encryptedCreds);
-
-            // Note: We'll keep Phase 1 credentials for now as backup
-            // They can be manually cleared later in settings
-
-            migratedCount++;
-            console.log('[AppInit] Migrated Nextcloud credentials from Phase 1 secure storage');
-          } catch (error) {
-            console.error('[AppInit] Failed to migrate Phase 1 credentials:', error);
-          }
+          // Fix any corrupted notes (encrypted content but no encrypted flag)
+          const fixStart = performance.now();
+          const { fixed } = await fixCorruptedNotes();
+          console.log(
+            `[AppInit] Corrupted notes scan took ${Math.round(performance.now() - fixStart)}ms (${fixed} fixed)`,
+          );
         } else {
-          console.log('[AppInit] Phase 1 credentials already migrated, skipping');
+          console.error(
+            "[AppInit] Failed to auto-unlock from keyring - master password may be missing or corrupted",
+          );
+          // Don't block app startup - encryption just won't work until user fixes it in Settings
         }
       }
-    } catch (error) {
-      // Ignore errors - credentials might not exist
-      console.log('[AppInit] No Phase 1 credentials found or error accessing them');
+    } else {
+      console.log("[AppInit] No encryption enabled - proceeding without master password");
     }
 
-    // Mark migration as complete
-    if (migratedCount > 0) {
-      await setSetting('credentials_migration_completed', {
-        completed: true,
-        timestamp: new Date().toISOString(),
-        migratedCount
-      });
-      console.log(`[AppInit] Credential migration complete - migrated ${migratedCount} credential(s)`);
-    } else {
-      console.log('[AppInit] No credentials to migrate');
-    }
+    const totalTime = Math.round(performance.now() - startTime);
+    console.log(`[AppInit] App initialization complete in ${totalTime}ms`);
+    return true;
   } catch (error) {
-    console.error('[AppInit] Migration failed:', error);
+    console.error("[AppInit] App initialization failed:", error);
     throw error;
   }
 }
 
 /**
- * Listen for app lock events and show unlock modal
+ * Listen for app lock events and auto-unlock from keyring
  */
 export function setupAppLockListener() {
-  window.addEventListener('app-locked', async (event) => {
-    console.log('[AppInit] App locked:', event.detail);
-    await showAppUnlockFlow();
+  window.addEventListener("app-locked", async (event) => {
+    console.log("[AppInit] App locked:", event.detail);
+    console.log("[AppInit] Auto-unlocking from keyring after lock event...");
+    const unlocked = await autoUnlockFromKeyring();
+    if (unlocked) {
+      console.log("[AppInit] Successfully auto-unlocked after lock event");
+    } else {
+      console.error("[AppInit] Failed to auto-unlock after lock event");
+    }
   });
 }

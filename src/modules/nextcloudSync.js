@@ -13,6 +13,7 @@ import {
   getSecureCredential,
   saveSecureCredential,
 } from "./secureStorage.js";
+import { isNextcloudEncryptionEnabled } from "./storage.js";
 import {
   getAllRequiredFolders,
   getLegacyNotebookPath,
@@ -27,86 +28,94 @@ import {
   STORAGE_VERSION,
 } from "./storagePaths.js";
 import { addNoteTombstone, cleanupOldTombstones, createEmptyTombstone } from "./tombstones.js";
-import { isNextcloudEncryptionEnabled } from "./storage.js";
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
 const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
 
 /**
  * Encrypt note data for Nextcloud upload if encryption is enabled
- * @param {Object} note - Note object
- * @returns {Promise<Object>} - Note object (encrypted if enabled)
+ * Handles conversion between local encryption and Nextcloud encryption formats
+ * @param {Object} note - Note object (may be locally encrypted)
+ * @returns {Promise<Object>} - Note object (in Nextcloud format)
  */
 async function encryptNoteForNextcloud(note) {
-  const shouldEncrypt = await isNextcloudEncryptionEnabled();
+  const shouldEncryptForNextcloud = await isNextcloudEncryptionEnabled();
+  // Note is already decrypted by storage.js before reaching here
+  const decryptedNote = note;
 
-  if (!shouldEncrypt) {
-    return note;
+  // Step 2: Encrypt for Nextcloud if enabled
+  if (!shouldEncryptForNextcloud) {
+    // Nextcloud encryption disabled - return decrypted note
+    return decryptedNote;
   }
 
-  // Import encryption modules
-  const { getEncryptionKey, isAppUnlocked } = await import('./masterPassword.js');
-  const { encryptObject } = await import('./encryption.js');
+  // Nextcloud encryption enabled - encrypt the decrypted note
+  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+  const { encryptObject } = await import("./encryption.js");
 
   if (!isAppUnlocked()) {
-    console.warn('[NextcloudSync] Cannot encrypt note - app is locked');
-    return note;
+    console.warn("[NextcloudSync] Cannot encrypt note for Nextcloud - app is locked");
+    return decryptedNote;
   }
 
   try {
     const encryptionKey = getEncryptionKey();
 
     // Encrypt content and strokes for Nextcloud storage
-    const encryptedContent = await encryptObject(note.content || '', encryptionKey);
-    const encryptedStrokes = await encryptObject(note.strokes || [], encryptionKey);
+    const encryptedContent = await encryptObject(decryptedNote.content || "", encryptionKey);
+    const encryptedStrokes = await encryptObject(decryptedNote.strokes || [], encryptionKey);
 
     return {
-      ...note,
+      ...decryptedNote,
       content: encryptedContent,
       strokes: encryptedStrokes,
       nextcloudEncrypted: true, // Mark as Nextcloud-encrypted
     };
   } catch (error) {
-    console.error('[NextcloudSync] Failed to encrypt note:', error);
-    return note;
+    console.error("[NextcloudSync] Failed to encrypt note for Nextcloud:", error);
+    return decryptedNote;
   }
 }
 
 /**
- * Decrypt note data from Nextcloud if it's encrypted
- * @param {Object} note - Note object (possibly encrypted)
- * @returns {Promise<Object>} - Decrypted note object
+ * Decrypt note data from Nextcloud and prepare it for local storage
+ * @param {Object} note - Note object (possibly encrypted for Nextcloud)
+ * @returns {Promise<Object>} - Note prepared for local storage (encrypted if local encryption enabled)
  */
 async function decryptNoteFromNextcloud(note) {
-  if (!note || !note.nextcloudEncrypted) {
-    return note;
+  // Step 1: Decrypt from Nextcloud format if needed
+  let decryptedNote = note;
+
+  if (note?.nextcloudEncrypted) {
+    // Import encryption modules
+    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+    const { decryptObject } = await import("./encryption.js");
+
+    if (!isAppUnlocked()) {
+      throw new Error("Cannot decrypt note - app is locked");
+    }
+
+    try {
+      const encryptionKey = getEncryptionKey();
+
+      // Decrypt content and strokes from Nextcloud encryption
+      const decryptedContent = await decryptObject(note.content, encryptionKey);
+      const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
+
+      decryptedNote = {
+        ...note,
+        content: decryptedContent,
+        strokes: decryptedStrokes,
+        nextcloudEncrypted: undefined, // Remove Nextcloud encryption flag
+      };
+    } catch (error) {
+      console.error("[NextcloudSync] Failed to decrypt note from Nextcloud:", error);
+      throw new Error("Failed to decrypt note from Nextcloud");
+    }
   }
 
-  // Import encryption modules
-  const { getEncryptionKey, isAppUnlocked } = await import('./masterPassword.js');
-  const { decryptObject } = await import('./encryption.js');
-
-  if (!isAppUnlocked()) {
-    throw new Error('Cannot decrypt note - app is locked');
-  }
-
-  try {
-    const encryptionKey = getEncryptionKey();
-
-    // Decrypt content and strokes
-    const decryptedContent = await decryptObject(note.content, encryptionKey);
-    const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
-
-    return {
-      ...note,
-      content: decryptedContent,
-      strokes: decryptedStrokes,
-      nextcloudEncrypted: undefined, // Remove flag
-    };
-  } catch (error) {
-    console.error('[NextcloudSync] Failed to decrypt note:', error);
-    throw new Error('Failed to decrypt note from Nextcloud');
-  }
+  // Return plain text note (storage.js will handle local encryption on save)
+  return decryptedNote;
 }
 
 /**
@@ -131,7 +140,9 @@ export async function migrateCredentials() {
     console.log("[MIGRATION] Existing secure credentials:", existingCreds ? "found" : "not found");
 
     if (existingCreds) {
-      console.log("[MIGRATION] Credentials already exist in secure storage, cleaning up localStorage");
+      console.log(
+        "[MIGRATION] Credentials already exist in secure storage, cleaning up localStorage",
+      );
       // Clean up localStorage since migration already happened
       localStorage.removeItem(LEGACY_STORAGE_KEY);
       return;
@@ -139,7 +150,7 @@ export async function migrateCredentials() {
 
     // Migrate to secure storage
     console.log("[MIGRATION] Migrating credentials from localStorage to secure storage...");
-    console.log("[MIGRATION] Credentials to migrate:", legacyCredString.substring(0, 50) + "...");
+    console.log("[MIGRATION] Credentials to migrate:", `${legacyCredString.substring(0, 50)}...`);
     await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, legacyCredString);
     console.log("[MIGRATION] Credentials saved to secure storage");
 
@@ -159,10 +170,24 @@ export async function migrateCredentials() {
  */
 export async function getStoredCredentials() {
   try {
+    console.log("[NextcloudSync] Getting credentials from secure storage...");
     const credString = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
-    return credString ? JSON.parse(credString) : null;
+    console.log("[NextcloudSync] Credential string retrieved:", credString ? "YES" : "NO");
+
+    if (credString) {
+      const parsed = JSON.parse(credString);
+      console.log("[NextcloudSync] Parsed credentials:", {
+        hasServerUrl: !!parsed.serverUrl,
+        hasLoginName: !!parsed.loginName,
+        hasAppPassword: !!parsed.appPassword,
+      });
+      return parsed;
+    }
+
+    console.log("[NextcloudSync] No credentials found in secure storage");
+    return null;
   } catch (error) {
-    console.error("Failed to get credentials from secure storage:", error);
+    console.error("[NextcloudSync] Failed to get credentials from secure storage:", error);
     return null;
   }
 }
@@ -172,9 +197,30 @@ export async function getStoredCredentials() {
  */
 async function saveCredentials(credentials) {
   try {
-    await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, JSON.stringify(credentials));
+    console.log("[NextcloudSync] Saving credentials to secure storage:", {
+      hasServerUrl: !!credentials.serverUrl,
+      hasLoginName: !!credentials.loginName,
+      hasAppPassword: !!credentials.appPassword,
+    });
+    const credString = JSON.stringify(credentials);
+    console.log("[NextcloudSync] Credential JSON length:", credString.length);
+    await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, credString);
+    console.log("[NextcloudSync] Credentials saved successfully to keyring");
+
+    // VERIFICATION: Immediately read back to verify save worked
+    console.log("[NextcloudSync] VERIFICATION: Reading back immediately after save...");
+    const verifyRead = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    console.log(
+      "[NextcloudSync] VERIFICATION: Read back result:",
+      verifyRead ? "SUCCESS" : "FAILED (null)",
+    );
+    if (!verifyRead) {
+      console.error(
+        "[NextcloudSync] CRITICAL: Credential save verification FAILED - credential not in keyring!",
+      );
+    }
   } catch (error) {
-    console.error("Failed to save credentials to secure storage:", error);
+    console.error("[NextcloudSync] Failed to save credentials to secure storage:", error);
     throw error;
   }
 }
@@ -329,7 +375,7 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
       appPassword: credentials.appPassword,
     };
 
-    saveCredentials(savedCreds);
+    await saveCredentials(savedCreds);
     console.log("Nextcloud authentication successful");
 
     return savedCreds;
@@ -764,8 +810,17 @@ export async function syncNotes(notes) {
       // Encrypt note for Nextcloud if encryption is enabled
       const encryptedNote = await encryptNoteForNextcloud(syncedNote);
 
-      // Prepare content (strip internal _etag before saving)
-      const content = JSON.stringify(encryptedNote, null, 2);
+      // Strip internal sync tracking fields before uploading
+      const {
+        lastSyncedEtag: _,
+        synced: __,
+        encrypted: ___,
+        _currentFileEtag: ____,
+        ...noteForUpload
+      } = encryptedNote;
+
+      // Prepare content
+      const content = JSON.stringify(noteForUpload, null, 2);
 
       const etag = await uploadFile(path, content, syncedNote.modified, note.lastSyncedEtag);
       results.uploaded++;
@@ -845,7 +900,10 @@ export async function downloadAllData() {
 
           if (noteContent) {
             const note = JSON.parse(noteContent);
-            note.lastSyncedEtag = noteEtag || noteFile.etag;
+            // Store both the etag from the note's JSON content (for conflict detection)
+            // and the current file etag (for upload conditional requests)
+            note._currentFileEtag = noteEtag || noteFile.etag;
+            // Keep the lastSyncedEtag from the note's JSON content (don't overwrite it)
 
             // Decrypt note if it's encrypted for Nextcloud
             const decryptedNote = await decryptNoteFromNextcloud(note);
@@ -881,7 +939,10 @@ export async function downloadAllData() {
 
         if (noteContent) {
           const note = JSON.parse(noteContent);
-          note.lastSyncedEtag = noteEtag || noteFile.etag;
+          // Store both the etag from the note's JSON content (for conflict detection)
+          // and the current file etag (for upload conditional requests)
+          note._currentFileEtag = noteEtag || noteFile.etag;
+          // Keep the lastSyncedEtag from the note's JSON content (don't overwrite it)
 
           // Decrypt note if it's encrypted for Nextcloud
           const decryptedNote = await decryptNoteFromNextcloud(note);
@@ -1087,13 +1148,15 @@ export async function fullSync(localNotebooks, localNotes) {
     }
 
     const isModifiedLocally = local.synced === false;
-    const isModifiedRemotely = local.lastSyncedEtag !== remote.lastSyncedEtag;
+    // A note is modified remotely if the current file etag differs from our last synced etag
+    // Since we don't store lastSyncedEtag in Nextcloud JSON, we compare with _currentFileEtag
+    const isModifiedRemotely = local.lastSyncedEtag !== remote._currentFileEtag;
 
     if (isModifiedLocally && isModifiedRemotely) {
       const merged = attemptMerge(local, remote);
       if (merged) {
-        // Use the remote ETag as the base for the upload to succeed via If-Match
-        const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote.lastSyncedEtag };
+        // Use the remote's current file ETag for the upload to succeed via If-Match
+        const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
         notesToUpload.push(mergedWithRemoteBase);
       } else {
         conflicts.notes.push({ local, remote });

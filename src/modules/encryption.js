@@ -13,7 +13,7 @@
 
 const PBKDF2_ITERATIONS = 100000;
 const SALT_LENGTH = 16; // 128 bits
-const IV_LENGTH = 12;   // 96 bits (recommended for AES-GCM)
+const IV_LENGTH = 12; // 96 bits (recommended for AES-GCM)
 const KEY_LENGTH = 256; // 256 bits
 
 /**
@@ -39,7 +39,7 @@ export function generateIV() {
  */
 function bufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
-  let binary = '';
+  let binary = "";
   for (let i = 0; i < bytes.byteLength; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
@@ -73,35 +73,31 @@ export async function deriveKeyFromPassword(password, salt) {
     const passwordBuffer = encoder.encode(password);
 
     // Import password as a CryptoKey for PBKDF2
-    const baseKey = await crypto.subtle.importKey(
-      'raw',
-      passwordBuffer,
-      'PBKDF2',
-      false,
-      ['deriveKey']
-    );
+    const baseKey = await crypto.subtle.importKey("raw", passwordBuffer, "PBKDF2", false, [
+      "deriveKey",
+    ]);
 
     // Derive the encryption key
     const derivedKey = await crypto.subtle.deriveKey(
       {
-        name: 'PBKDF2',
+        name: "PBKDF2",
         salt: salt,
         iterations: PBKDF2_ITERATIONS,
-        hash: 'SHA-256'
+        hash: "SHA-256",
       },
       baseKey,
       {
-        name: 'AES-GCM',
-        length: KEY_LENGTH
+        name: "AES-GCM",
+        length: KEY_LENGTH,
       },
       true, // Extractable (for future export if needed)
-      ['encrypt', 'decrypt']
+      ["encrypt", "decrypt"],
     );
 
     return derivedKey;
   } catch (error) {
-    console.error('[Encryption] Failed to derive key:', error);
-    throw new Error('Failed to derive encryption key from password');
+    console.error("[Encryption] Failed to derive key:", error);
+    throw new Error("Failed to derive encryption key from password");
   }
 }
 
@@ -114,7 +110,7 @@ export async function deriveKeyFromPassword(password, salt) {
 export async function encryptData(data, key) {
   try {
     // Convert data to string if it's an object
-    const dataString = typeof data === 'string' ? data : JSON.stringify(data);
+    const dataString = typeof data === "string" ? data : JSON.stringify(data);
 
     // Convert string to ArrayBuffer
     const encoder = new TextEncoder();
@@ -126,11 +122,11 @@ export async function encryptData(data, key) {
     // Encrypt the data
     const encryptedBuffer = await crypto.subtle.encrypt(
       {
-        name: 'AES-GCM',
-        iv: iv
+        name: "AES-GCM",
+        iv: iv,
       },
       key,
-      dataBuffer
+      dataBuffer,
     );
 
     // Convert encrypted data and IV to base64
@@ -139,11 +135,11 @@ export async function encryptData(data, key) {
 
     return {
       data: encryptedData,
-      iv: ivBase64
+      iv: ivBase64,
     };
   } catch (error) {
-    console.error('[Encryption] Failed to encrypt data:', error);
-    throw new Error('Failed to encrypt data');
+    console.error("[Encryption] Failed to encrypt data:", error);
+    throw new Error("Failed to encrypt data");
   }
 }
 
@@ -163,11 +159,11 @@ export async function decryptData(encryptedData, ivBase64, key) {
     // Decrypt the data
     const decryptedBuffer = await crypto.subtle.decrypt(
       {
-        name: 'AES-GCM',
-        iv: iv
+        name: "AES-GCM",
+        iv: iv,
       },
       key,
-      encryptedBuffer
+      encryptedBuffer,
     );
 
     // Convert ArrayBuffer to string
@@ -176,8 +172,8 @@ export async function decryptData(encryptedData, ivBase64, key) {
 
     return decryptedData;
   } catch (error) {
-    console.error('[Encryption] Failed to decrypt data:', error);
-    throw new Error('Failed to decrypt data - incorrect password or corrupted data');
+    console.error("[Encryption] Failed to decrypt data:", error);
+    throw new Error("Failed to decrypt data - incorrect password or corrupted data");
   }
 }
 
@@ -194,30 +190,26 @@ export async function hashPassword(password, salt) {
     const passwordBuffer = encoder.encode(password);
 
     // Import password as a key
-    const baseKey = await crypto.subtle.importKey(
-      'raw',
-      passwordBuffer,
-      'PBKDF2',
-      false,
-      ['deriveBits']
-    );
+    const baseKey = await crypto.subtle.importKey("raw", passwordBuffer, "PBKDF2", false, [
+      "deriveBits",
+    ]);
 
     // Derive bits (not a key) for hashing
     const hashBits = await crypto.subtle.deriveBits(
       {
-        name: 'PBKDF2',
+        name: "PBKDF2",
         salt: salt,
         iterations: PBKDF2_ITERATIONS,
-        hash: 'SHA-256'
+        hash: "SHA-256",
       },
       baseKey,
-      256 // 256 bits
+      256, // 256 bits
     );
 
     return bufferToBase64(hashBits);
   } catch (error) {
-    console.error('[Encryption] Failed to hash password:', error);
-    throw new Error('Failed to hash password');
+    console.error("[Encryption] Failed to hash password:", error);
+    throw new Error("Failed to hash password");
   }
 }
 
@@ -233,7 +225,7 @@ export async function verifyPassword(password, storedHash, salt) {
     const computedHash = await hashPassword(password, salt);
     return computedHash === storedHash;
   } catch (error) {
-    console.error('[Encryption] Failed to verify password:', error);
+    console.error("[Encryption] Failed to verify password:", error);
     return false;
   }
 }
@@ -249,7 +241,7 @@ export async function encryptObject(obj, key) {
   return {
     data: encrypted.data,
     iv: encrypted.iv,
-    version: 1 // Encryption version for future compatibility
+    version: 1, // Encryption version for future compatibility
   };
 }
 
@@ -272,11 +264,11 @@ export async function decryptObject(encryptedObj, key) {
  */
 export async function testKey(key) {
   try {
-    const testData = 'encryption_test';
+    const testData = "encryption_test";
     const encrypted = await encryptData(testData, key);
     const decrypted = await decryptData(encrypted.data, encrypted.iv, key);
     return decrypted === testData;
-  } catch (error) {
+  } catch (_error) {
     return false;
   }
 }
@@ -324,10 +316,10 @@ export function calculatePasswordStrength(password) {
  * @returns {string} Strength label
  */
 export function getPasswordStrengthLabel(strength) {
-  if (strength < 30) return 'Weak';
-  if (strength < 60) return 'Fair';
-  if (strength < 80) return 'Good';
-  return 'Strong';
+  if (strength < 30) return "Weak";
+  if (strength < 60) return "Fair";
+  if (strength < 80) return "Good";
+  return "Strong";
 }
 
 /**
@@ -336,10 +328,10 @@ export function getPasswordStrengthLabel(strength) {
  * @returns {string} Color class or hex code
  */
 export function getPasswordStrengthColor(strength) {
-  if (strength < 30) return '#ef4444'; // Red
-  if (strength < 60) return '#f59e0b'; // Orange
-  if (strength < 80) return '#eab308'; // Yellow
-  return '#22c55e'; // Green
+  if (strength < 30) return "#ef4444"; // Red
+  if (strength < 60) return "#f59e0b"; // Orange
+  if (strength < 80) return "#eab308"; // Yellow
+  return "#22c55e"; // Green
 }
 
 // Export configuration constants for reference
@@ -348,8 +340,8 @@ export const ENCRYPTION_CONFIG = {
   SALT_LENGTH,
   IV_LENGTH,
   KEY_LENGTH,
-  ALGORITHM: 'AES-GCM',
-  KEY_DERIVATION: 'PBKDF2',
-  HASH: 'SHA-256',
-  VERSION: 1
+  ALGORITHM: "AES-GCM",
+  KEY_DERIVATION: "PBKDF2",
+  HASH: "SHA-256",
+  VERSION: 1,
 };
