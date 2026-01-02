@@ -3,6 +3,7 @@
  * Renders the settings panel with theme selection and other preferences
  */
 
+import { APP_FULL_VERSION, APP_NAME } from "../config.js";
 import {
   clearCredentials,
   fullSync,
@@ -280,8 +281,8 @@ export async function renderSettings(container) {
 
         <div class="setting-item">
           <div class="about-info">
-            <p><strong>oneJournal</strong></p>
-            <p>Version: 0.1.0 (Alpha)</p>
+            <p><strong>${APP_NAME}</strong></p>
+            <p>Version: ${APP_FULL_VERSION}</p>
             <p>A note-taking app supporting handwritten notes, text, and drawings.</p>
           </div>
         </div>

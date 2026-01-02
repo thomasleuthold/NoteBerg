@@ -3,6 +3,7 @@
  * Handles sync status display and sync triggering
  */
 
+import { APP_FULL_VERSION } from "../config.js";
 import { isAuthenticated } from "./nextcloudSync.js";
 import { getIsSyncing, onSyncStatusChange, performSync } from "./sync.js";
 
@@ -92,6 +93,12 @@ export function initFooter() {
 
   // Listen for auth changes
   window.addEventListener("nextcloud-auth-changed", updateSyncStatus);
+
+  // Initialize version display
+  const versionEl = document.querySelector(".app-version");
+  if (versionEl) {
+    versionEl.textContent = `v${APP_FULL_VERSION}`;
+  }
 
   console.log("Footer initialized");
 }

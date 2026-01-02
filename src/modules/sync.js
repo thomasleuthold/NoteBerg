@@ -89,7 +89,7 @@ export async function performSync({ silent = false, skipConflictResolution = fal
             // Allow saveNote to handle encryption since we are working with decrypted data
           );
         } else {
-          // Use remote version - skip encryption as it's already prepared by decryptNoteFromNextcloud
+          // Use remote version - saveNote will handle local encryption
           // Also update with current file etag for proper future sync tracking
           await saveNote(
             {
@@ -146,8 +146,7 @@ export async function performSync({ silent = false, skipConflictResolution = fal
     }
 
     for (const note of result.downloaded.notes) {
-      // Skip encryption because the note is already in the correct format for local storage
-      // (decryptNoteFromNextcloud already handled encryption/decryption)
+      // Note is decrypted (plain text) from Nextcloud, so saveNote will handle local encryption
       // Remove internal _currentFileEtag and update lastSyncedEtag for tracking
       const { _currentFileEtag, ...noteToSave } = note;
       noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;

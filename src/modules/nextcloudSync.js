@@ -8,6 +8,7 @@
 
 import { fetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { APP_NAME, APP_VERSION } from "../config.js";
 import {
   deleteSecureCredential,
   getSecureCredential,
@@ -54,8 +55,7 @@ async function encryptNoteForNextcloud(note) {
   const { encryptObject } = await import("./encryption.js");
 
   if (!isAppUnlocked()) {
-    console.warn("[NextcloudSync] Cannot encrypt note for Nextcloud - app is locked");
-    return decryptedNote;
+    throw new Error("Cannot encrypt note for Nextcloud - app is locked");
   }
 
   try {
@@ -289,7 +289,7 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
           "Content-Type": "application/x-www-form-urlencoded",
           Accept: "application/json",
           "OCS-APIRequest": "true",
-          "User-Agent": "oneJournal/1.0",
+          "User-Agent": `${APP_NAME}/${APP_VERSION}`,
         },
         body: "",
       });
@@ -1105,7 +1105,13 @@ export async function fullSync(localNotebooks, localNotes) {
 
     if (!remote) {
       if (local.synced === false) {
-        notebooksToUpload.push(local);
+        // Local modified, remote missing. Clear ETag to avoid 412 Precondition Failed.
+        notebooksToUpload.push({ ...local, lastSyncedEtag: null });
+      } else {
+        // Local is synced, but remote is missing (e.g. manual deletion on server)
+        // Re-upload to restore consistency (Self-healing)
+        console.log(`[Sync] Notebook ${local.id} missing on server. Re-uploading.`);
+        notebooksToUpload.push({ ...local, lastSyncedEtag: null });
       }
       continue;
     }
@@ -1142,7 +1148,13 @@ export async function fullSync(localNotebooks, localNotes) {
 
     if (!remote) {
       if (local.synced === false) {
-        notesToUpload.push(local);
+        // Local modified, remote missing. Clear ETag to avoid 412 Precondition Failed.
+        notesToUpload.push({ ...local, lastSyncedEtag: null });
+      } else {
+        // Local is synced, but remote is missing (e.g. manual deletion on server)
+        // Re-upload to restore consistency (Self-healing)
+        console.log(`[Sync] Note ${local.id} missing on server. Re-uploading.`);
+        notesToUpload.push({ ...local, lastSyncedEtag: null });
       }
       continue;
     }
