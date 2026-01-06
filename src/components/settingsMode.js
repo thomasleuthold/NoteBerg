@@ -41,6 +41,7 @@ export async function renderSettings(container) {
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? true; // Default: enabled
   const encryptNextcloudData = (await getSetting("encrypt_nextcloud_data")) ?? false; // Default: disabled
   const recognitionUrl = (await getSetting("recognition_url")) || "http://localhost:5000";
+  const recognitionLanguage = (await getSetting("recognition_language")) || "en-US";
 
   container.innerHTML = `
     <div class="settings-panel">
@@ -240,6 +241,22 @@ export async function renderSettings(container) {
             value="${recognitionUrl}"
             placeholder="http://localhost:5000"
           />
+        </div>
+
+        <div class="setting-item">
+          <label for="recognition-language" class="setting-label">
+            <span class="setting-name">Language</span>
+            <span class="setting-description">Target language (requires installed Windows language pack)</span>
+          </label>
+          <select id="recognition-language" class="setting-control">
+            <option value="en-US" ${recognitionLanguage === "en-US" ? "selected" : ""}>English (US)</option>
+            <option value="de-DE" ${recognitionLanguage === "de-DE" ? "selected" : ""}>German</option>
+            <option value="fr-FR" ${recognitionLanguage === "fr-FR" ? "selected" : ""}>French</option>
+            <option value="es-ES" ${recognitionLanguage === "es-ES" ? "selected" : ""}>Spanish</option>
+            <option value="it-IT" ${recognitionLanguage === "it-IT" ? "selected" : ""}>Italian</option>
+            <option value="ja-JP" ${recognitionLanguage === "ja-JP" ? "selected" : ""}>Japanese</option>
+            <option value="zh-CN" ${recognitionLanguage === "zh-CN" ? "selected" : ""}>Chinese (Simplified)</option>
+          </select>
         </div>
 
         <div class="setting-item">
@@ -456,6 +473,7 @@ export async function renderSettings(container) {
 
   // Recognition settings listeners
   const recognitionUrlInput = container.querySelector("#recognition-url");
+  const recognitionLanguageSelect = container.querySelector("#recognition-language");
   const testRecognitionBtn = container.querySelector("#test-recognition-btn");
   const recognitionStatus = container.querySelector("#recognition-status");
 
@@ -464,6 +482,10 @@ export async function renderSettings(container) {
     if (url.endsWith("/")) url = url.slice(0, -1);
     await setSetting("recognition_url", url);
     if (recognitionStatus) recognitionStatus.textContent = "";
+  });
+
+  recognitionLanguageSelect?.addEventListener("change", async () => {
+    await setSetting("recognition_language", recognitionLanguageSelect.value);
   });
 
   testRecognitionBtn?.addEventListener("click", async () => {

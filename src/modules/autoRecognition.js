@@ -51,7 +51,8 @@ async function performRecognition(noteId, strokes) {
 
     // Get URL from settings
     const baseUrl = (await getSetting("recognition_url")) || "http://localhost:5000";
-    const apiUrl = `${baseUrl.replace(/\/$/, "")}/recognize`;
+    const language = (await getSetting("recognition_language")) || "en-US";
+    const apiUrl = `${baseUrl.replace(/\/$/, "")}/recognize?language=${language}`;
 
     // Format strokes for the Web Service
     // Expected format: { id: "uuid", points: [{x, y, pressure, ...}] }

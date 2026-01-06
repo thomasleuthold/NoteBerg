@@ -2,8 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using System.Numerics;
 using Windows.Foundation;
 using Windows.UI.Input.Inking;
-using Windows.UI.Input.Inking.Analysis;
 using Serilog;
+using System.Globalization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,7 +42,7 @@ app.UseSerilogRequestLogging();
 app.UseCors();
 
 // 4. Define the Recognition Endpoint
-app.MapPost("/recognize", async ([FromBody] List<JsStroke> strokes) =>
+app.MapPost("/recognize", async ([FromBody] List<JsStroke> strokes, [FromQuery] string? language) =>
 {
     if (strokes == null || strokes.Count == 0)
     {
@@ -51,12 +51,42 @@ app.MapPost("/recognize", async ([FromBody] List<JsStroke> strokes) =>
 
     try
     {
-        // Initialize Ink Analyzer
-        var analyzer = new InkAnalyzer();
+        // Use InkRecognizerContainer for explicit language support
+        var recognizerContainer = new InkRecognizerContainer();
+        var strokeContainer = new InkStrokeContainer();
         var strokeBuilder = new InkStrokeBuilder();
         
         // Map to track stroke IDs: InkId -> Original UUID
         var strokeIdMap = new Dictionary<uint, string>();
+
+        // Set Language
+        if (!string.IsNullOrEmpty(language))
+        {
+            try 
+            {
+                var allRecognizers = recognizerContainer.GetRecognizers();
+                var culture = new CultureInfo(language);
+                // Construct expected name part, e.g., "English (United States)" or "German (Germany)"
+                var langName = culture.EnglishName; 
+                
+                var targetRecognizer = allRecognizers.FirstOrDefault(r => 
+                    r.Name.Contains(langName, StringComparison.OrdinalIgnoreCase));
+
+                if (targetRecognizer != null)
+                {
+                    recognizerContainer.SetDefaultRecognizer(targetRecognizer);
+                    Log.Information("Set handwriting recognizer to: {Name}", targetRecognizer.Name);
+                }
+                else
+                {
+                    Log.Warning("No recognizer found for language {Language} (looked for '{Name}'). Using default.", language, langName);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning("Error setting recognition language: {Error}", ex.Message);
+            }
+        }
 
         // Convert Input to Windows Ink Strokes
         for (int i = 0; i < strokes.Count; i++)
@@ -68,34 +98,31 @@ app.MapPost("/recognize", async ([FromBody] List<JsStroke> strokes) =>
                 .Select(p => new InkPoint(new Windows.Foundation.Point(p.X, p.Y), p.Pressure))
                 .ToList();
 
-            // Create stroke with identity transform
             var stroke = strokeBuilder.CreateStrokeFromInkPoints(inkPoints, Matrix3x2.Identity);
             
-            // Store mapping
             strokeIdMap[stroke.Id] = jsStroke.Id;
-            
-            analyzer.AddDataForStroke(stroke);
+            strokeContainer.AddStroke(stroke);
         }
 
-        // Perform Analysis
-        var status = await analyzer.AnalyzeAsync();
+        // Perform Recognition
+        var results = await recognizerContainer.RecognizeAsync(strokeContainer, InkRecognitionTarget.All);
 
         // Extract Results
         var words = new List<RecognizedWord>();
-        var nodes = analyzer.AnalysisRoot.FindNodes(InkAnalysisNodeKind.InkWord);
-
-        foreach (var node in nodes)
+        
+        foreach (var result in results)
         {
-            var inkWord = (InkAnalysisInkWord)node;
-            var text = inkWord.RecognizedText;
-            var rect = node.BoundingRect;
-            var strokeIds = node.GetStrokeIds();
+            var text = result.GetTextCandidates().FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            var rect = result.BoundingRect;
+            var resultStrokes = result.GetStrokes();
 
             // Map back to original IDs
             var mappedIds = new List<string>();
-            foreach (var id in strokeIds)
+            foreach (var s in resultStrokes)
             {
-                if (strokeIdMap.TryGetValue(id, out string originalId))
+                if (strokeIdMap.TryGetValue(s.Id, out var originalId))
                 {
                     mappedIds.Add(originalId);
                 }

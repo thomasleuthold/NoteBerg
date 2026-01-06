@@ -57,3 +57,8 @@ build-backend:
 
 fix-build:
     Remove-Item "src-tauri/capabilities/recognition.json" -ErrorAction SilentlyContinue
+
+# Package the recognition backend and installer script
+package-backend:
+    dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
+    Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"
