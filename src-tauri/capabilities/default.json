@@ -6,7 +6,6 @@
   "platforms": ["windows", "macOS", "linux", "android"],
   "permissions": [
     "core:default",
-    "http:default",
     "opener:default",
     {
       "identifier": "shell:allow-open",
@@ -24,6 +23,9 @@
         },
         {
           "url": "https://**"
+        },
+        {
+          "url": "http://localhost:5000/**"
         }
       ]
     }

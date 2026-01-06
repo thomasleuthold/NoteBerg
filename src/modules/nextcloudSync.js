@@ -1195,7 +1195,9 @@ export async function fullSync(localNotebooks, localNotes) {
       if (isDeletedRemotely) {
         if (local.synced === false) {
           // Conflict: Deleted remotely, Modified locally. Strategy: Restore (re-upload).
-          console.log(`[Sync] Note ${local.id} was deleted remotely but modified locally. Restoring.`);
+          console.log(
+            `[Sync] Note ${local.id} was deleted remotely but modified locally. Restoring.`,
+          );
           notesToUpload.push({ ...local, lastSyncedEtag: null });
         } else {
           // Deleted remotely, no local changes. Delete locally.

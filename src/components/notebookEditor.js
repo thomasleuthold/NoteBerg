@@ -4,6 +4,7 @@
  * Auto-detects input type (stylus vs mouse) for mode switching
  */
 
+import { forceRecognition, scheduleRecognition } from "../modules/autoRecognition.js";
 import { resetInactivityTimer, stopInactivityTimer, syncOnNoteClose } from "../modules/autoSync.js";
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, generateId, getNote, updateNote } from "../modules/storage.js";
@@ -1063,6 +1064,12 @@ function handleCanvasPointerUp(_e) {
       updateExpansionZoneIndicator(null);
       updateContentBounds();
     }
+
+    // Schedule handwriting recognition
+    if (currentNoteData) {
+      scheduleRecognition(currentNoteData.id, strokes);
+    }
+
     setTimeout(async () => {
       await saveNoteContent();
     }, 500);
@@ -1825,6 +1832,11 @@ async function deleteSelectedStrokes() {
   // Redraw and save
   redrawCanvas();
   updateContentBounds();
+
+  if (currentNoteData) {
+    scheduleRecognition(currentNoteData.id, strokes);
+  }
+
   await saveNoteContent();
 }
 
@@ -1877,6 +1889,11 @@ async function pasteStrokes() {
 
   calculateSelectionBounds();
   redrawCanvas();
+
+  if (currentNoteData) {
+    scheduleRecognition(currentNoteData.id, strokes);
+  }
+
   await saveNoteContent();
 }
 
@@ -2224,6 +2241,13 @@ export async function cleanupNotebookEditor() {
     } catch (error) {
       console.error("Failed to save note during cleanup:", error);
     }
+  }
+
+  // Trigger recognition on close
+  if (noteId && strokes && strokes.length > 0) {
+    forceRecognition(noteId, strokes).catch((err) =>
+      console.error("Recognition on close failed:", err),
+    );
   }
 
   // Stop inactivity timer

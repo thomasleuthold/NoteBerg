@@ -40,6 +40,7 @@ export async function renderSettings(container) {
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? true; // Default: enabled
   const encryptNextcloudData = (await getSetting("encrypt_nextcloud_data")) ?? false; // Default: disabled
+  const recognitionUrl = (await getSetting("recognition_url")) || "http://localhost:5000";
 
   container.innerHTML = `
     <div class="settings-panel">
@@ -222,6 +223,29 @@ export async function renderSettings(container) {
         </div>
         `
         }
+      </div>
+
+      <div class="settings-section">
+        <h3>Handwriting Recognition</h3>
+
+        <div class="setting-item">
+          <label for="recognition-url" class="setting-label">
+            <span class="setting-name">Backend URL</span>
+            <span class="setting-description">URL of the recognition service</span>
+          </label>
+          <input
+            type="url"
+            id="recognition-url"
+            class="setting-control"
+            value="${recognitionUrl}"
+            placeholder="http://localhost:5000"
+          />
+        </div>
+
+        <div class="setting-item">
+          <button id="test-recognition-btn" class="btn-secondary">Test Connection</button>
+          <span id="recognition-status" class="setting-note"></span>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -429,6 +453,53 @@ export async function renderSettings(container) {
   });
 
   // Biometric authentication removed for performance - event listeners removed
+
+  // Recognition settings listeners
+  const recognitionUrlInput = container.querySelector("#recognition-url");
+  const testRecognitionBtn = container.querySelector("#test-recognition-btn");
+  const recognitionStatus = container.querySelector("#recognition-status");
+
+  recognitionUrlInput?.addEventListener("change", async () => {
+    let url = recognitionUrlInput.value.trim();
+    if (url.endsWith("/")) url = url.slice(0, -1);
+    await setSetting("recognition_url", url);
+    if (recognitionStatus) recognitionStatus.textContent = "";
+  });
+
+  testRecognitionBtn?.addEventListener("click", async () => {
+    const url = recognitionUrlInput.value.trim().replace(/\/$/, "");
+    const apiUrl = `${url}/recognize`;
+
+    testRecognitionBtn.disabled = true;
+    testRecognitionBtn.textContent = "Testing...";
+    recognitionStatus.textContent = "Connecting...";
+    recognitionStatus.style.color = "var(--color-text)";
+
+    try {
+      const { fetch } = await import("@tauri-apps/plugin-http");
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([]),
+      });
+
+      if (response.ok) {
+        recognitionStatus.textContent = "✓ Connection successful!";
+        recognitionStatus.style.color = "var(--color-success)";
+      } else {
+        recognitionStatus.textContent = `✗ Server returned ${response.status}`;
+        recognitionStatus.style.color = "var(--color-error)";
+      }
+    } catch (error) {
+      console.error("Recognition test failed:", error);
+      const errorMessage = error.message || String(error);
+      recognitionStatus.textContent = `✗ Connection failed: ${errorMessage}`;
+      recognitionStatus.style.color = "var(--color-error)";
+    } finally {
+      testRecognitionBtn.disabled = false;
+      testRecognitionBtn.textContent = "Test Connection";
+    }
+  });
 
   // Log level select - change minimum log level
   const logLevelSelect = container.querySelector("#log-level-select");
