@@ -75,6 +75,30 @@ async function handleManualSync() {
 export function initFooter() {
   const syncStatus = document.querySelector(".sync-status");
 
+  // Create recognition indicator
+  if (syncStatus && syncStatus.parentElement) {
+    const recognitionIndicator = document.createElement("div");
+    recognitionIndicator.className = "recognition-indicator";
+    recognitionIndicator.style.display = "none";
+    recognitionIndicator.style.alignItems = "center";
+    recognitionIndicator.style.marginLeft = "16px";
+    recognitionIndicator.style.color = "#3b82f6"; // Blue
+    recognitionIndicator.title = "Handwriting recognition running...";
+    // Pen icon
+    recognitionIndicator.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
+
+    // Insert after sync status
+    syncStatus.insertAdjacentElement("afterend", recognitionIndicator);
+
+    // Listen for recognition events
+    window.addEventListener("recognition-start", () => {
+      recognitionIndicator.style.display = "flex";
+    });
+    window.addEventListener("recognition-end", () => {
+      recognitionIndicator.style.display = "none";
+    });
+  }
+
   if (syncStatus) {
     syncStatus.addEventListener("click", async () => {
       if ((await isAuthenticated()) && !getIsSyncing()) {

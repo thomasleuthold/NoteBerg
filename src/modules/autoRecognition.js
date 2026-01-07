@@ -46,6 +46,9 @@ export async function forceRecognition(noteId, strokes) {
 async function performRecognition(noteId, strokes) {
   if (!strokes || strokes.length === 0) return;
 
+  // Notify start of recognition
+  window.dispatchEvent(new CustomEvent("recognition-start"));
+
   try {
     console.log(`[Recognition] Processing note ${noteId}...`);
 
@@ -108,5 +111,8 @@ async function performRecognition(noteId, strokes) {
     }
   } catch (error) {
     console.error(`[Recognition] Failed for note ${noteId}:`, error);
+  } finally {
+    // Notify end of recognition
+    window.dispatchEvent(new CustomEvent("recognition-end"));
   }
 }
