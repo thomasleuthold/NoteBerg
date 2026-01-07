@@ -51,6 +51,7 @@ const expansionCooldown = 500; // Minimum ms between expansions
 let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
 let autoActivatedEraserMode = false; // Track if eraser mode was auto-activated by stylus button
 const eraserRadius = 10; // Eraser size in pixels
+let activeSearchQuery = null; // Track active search query for highlighting
 
 // Pen settings state
 let currentPenWidth = 2;
@@ -84,9 +85,19 @@ let cachedTheme = null;
 export function initNotebookEditorComponent() {
   // Listen for render notebook event from router
   window.addEventListener("rendernotebook", async (e) => {
-    const { noteId } = e.detail;
+    let { noteId, searchQuery } = e.detail || {};
+
+    // Fallback: check session storage for search query if not in event detail
+    if (!searchQuery) {
+      const storedQuery = sessionStorage.getItem("onejournal_search_query");
+      if (storedQuery) {
+        searchQuery = storedQuery;
+        sessionStorage.removeItem("onejournal_search_query");
+      }
+    }
+
     if (noteId) {
-      await initNotebookEditor(noteId);
+      await initNotebookEditor(noteId, searchQuery);
     }
   });
 
@@ -113,8 +124,9 @@ export function initNotebookEditorComponent() {
 /**
  * Initialize notebook editor for a note
  * @param {string} noteId - ID of note to edit
+ * @param {string|null} searchQuery - Optional search query to highlight
  */
-export async function initNotebookEditor(noteId) {
+export async function initNotebookEditor(noteId, searchQuery = null) {
   if (!noteId) {
     console.warn("No note ID provided to editor");
     return;
@@ -126,6 +138,9 @@ export async function initNotebookEditor(noteId) {
     if (!currentNoteData) {
       throw new Error("Note not found");
     }
+
+    activeSearchQuery = searchQuery;
+    console.log("[NotebookEditor] Initializing with search query:", searchQuery);
 
     // Set default background for existing notes without one
     if (!currentNoteData.background) {
@@ -153,6 +168,14 @@ export async function initNotebookEditor(noteId) {
 
     // Initialize zoom to ensure transforms are applied on load
     setZoom(1.0);
+
+    // Highlight search terms if provided
+    if (searchQuery) {
+      console.log("[NotebookEditor] Scheduling initial highlight");
+      setTimeout(() => {
+        highlightSearchTerms(searchQuery);
+      }, 100);
+    }
 
     console.log("Notebook editor initialized for note:", noteId);
   } catch (error) {
@@ -501,6 +524,12 @@ function resizeCanvas() {
     // Redraw both background and strokes after resize (canvas is cleared when dimensions change)
     redrawBackground();
     redrawCanvas();
+
+    // Re-apply stroke highlighting if active
+    if (activeSearchQuery) {
+      console.log("[NotebookEditor] Re-applying highlights after resize");
+      highlightStrokes(activeSearchQuery);
+    }
   }
 }
 
@@ -563,6 +592,10 @@ function expandCanvas(additionalHeight) {
 
     redrawBackground();
     redrawCanvas();
+
+    if (activeSearchQuery) {
+      highlightStrokes(activeSearchQuery);
+    }
   }
 
   if (currentEditor) {
@@ -2203,6 +2236,10 @@ async function updateEditorContent(noteId) {
     const newHtmlContent = markdownToHtml(newNoteData.content);
     if (currentHtmlContent !== newHtmlContent) {
       currentEditor.innerHTML = newHtmlContent;
+      // Restore highlights if needed
+      if (activeSearchQuery) {
+        highlightText(activeSearchQuery);
+      }
     }
   }
 
@@ -2279,4 +2316,120 @@ export async function cleanupNotebookEditor() {
   isTransforming = false;
   transformMode = null;
   clipboardStrokes = null;
+  activeSearchQuery = null;
+}
+
+/**
+ * Highlight search terms in text and strokes
+ * @param {string} query - Search query
+ */
+function highlightSearchTerms(query) {
+  highlightText(query);
+  highlightStrokes(query);
+}
+
+/**
+ * Highlight search terms in text editor
+ * @param {string} query - Search query
+ */
+function highlightText(query) {
+  if (!query || !currentEditor) return;
+  console.log("[NotebookEditor] Highlighting text for:", query);
+  console.log("[NotebookEditor] Editor text content length:", currentEditor.innerText?.length || 0);
+
+  // Create regex pattern from query with wildcard support
+  const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+  const regex = new RegExp(pattern, "gi");
+
+    const walker = document.createTreeWalker(currentEditor, NodeFilter.SHOW_TEXT, null, false);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    console.log(`[NotebookEditor] Found ${nodes.length} text nodes to check`);
+
+    nodes.forEach((node) => {
+      if (node.parentNode && node.parentNode.nodeName !== "SCRIPT" && node.parentNode.nodeName !== "STYLE") {
+        regex.lastIndex = 0; // Ensure regex is reset before test
+        const text = node.nodeValue;
+        // Check if node contains match
+        if (regex.test(text)) {
+          const fragment = document.createDocumentFragment();
+          let lastIndex = 0;
+          regex.lastIndex = 0; // Reset regex state
+          let match;
+          while ((match = regex.exec(text)) !== null) {
+            if (match.index > lastIndex) {
+              fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
+            }
+            const span = document.createElement("span");
+            span.style.backgroundColor = "yellow";
+            span.style.color = "black";
+            span.textContent = match[0];
+            fragment.appendChild(span);
+            lastIndex = match.index + match[0].length;
+          }
+          if (lastIndex < text.length) {
+            fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+          }
+          node.parentNode.replaceChild(fragment, node);
+        }
+      }
+    });
+}
+
+/**
+ * Highlight search terms in strokes (canvas)
+ * @param {string} query - Search query
+ */
+function highlightStrokes(query) {
+  if (!query || !currentNoteData?.recognition?.words || !cursorCtx) {
+    console.log("[NotebookEditor] highlightStrokes skipped:", { query, hasData: !!currentNoteData?.recognition?.words, hasCtx: !!cursorCtx });
+    return;
+  }
+  console.log("[NotebookEditor] Highlighting strokes for:", query, "Word count:", currentNoteData.recognition.words.length);
+
+  // Create regex pattern from query with wildcard support
+  const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+  const regex = new RegExp(pattern, "gi");
+
+  let matchCount = 0;
+    cursorCtx.save();
+    cursorCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
+    cursorCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
+    cursorCtx.lineWidth = 2;
+
+    currentNoteData.recognition.words.forEach((word) => {
+      regex.lastIndex = 0; // Ensure regex is reset before test
+      if (word.text && regex.test(word.text)) {
+        matchCount++;
+
+        regex.lastIndex = 0; // Reset for next test
+        
+        // Support multiple structures for bounding box (nested or flat), prioritizing boundingRect
+        const box = word.boundingRect || word.boundingBox || word.rect || word;
+
+        if (!box) {
+          console.warn("[NotebookEditor] Missing bounding box for word:", word.text);
+          return;
+        }
+
+        // Handle potential property variations (x/y vs left/top)
+        const x = box.x !== undefined ? box.x : box.left;
+        const y = box.y !== undefined ? box.y : box.top;
+        const w = box.width !== undefined ? box.width : box.w;
+        const h = box.height !== undefined ? box.height : box.h;
+
+        if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
+          console.log("[NotebookEditor] Highlighting match:", word.text, { x, y, w, h });
+          cursorCtx.fillRect(x, y, w, h);
+          cursorCtx.strokeRect(x, y, w, h);
+        } else {
+          console.warn("[NotebookEditor] Could not determine bounding box dimensions for word:", word.text, "Object:", box);
+        }
+      }
+    });
+    cursorCtx.restore();
+    console.log(`[NotebookEditor] Finished highlighting. Matches found: ${matchCount}`);
 }

@@ -19,6 +19,12 @@ import { renderNotePreview } from "../utils/noteRenderer.js";
 import { showConfirmDialog } from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
 
+// Search state persistence
+let searchState = {
+  query: "",
+  results: [],
+};
+
 /**
  * Render overview UI
  * @param {HTMLElement} container - Container element to render into
@@ -66,6 +72,7 @@ async function renderRootOverview(container) {
       : '<p class="empty-state">No quick notes yet. Create a note outside of any notebook.</p>';
 
   const trashIcon = getIcon("trash", 20);
+  const closeIcon = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
 
   container.innerHTML = `
     <div class="overview-container">
@@ -75,6 +82,19 @@ async function renderRootOverview(container) {
           ${trashIcon}
           <span>Recycle Bin</span>
         </button>
+      </div>
+
+      <div class="search-section" style="margin-bottom: 24px;">
+        <div style="display: flex; gap: 8px;">
+          <div style="position: relative; flex: 1;">
+            <input type="text" id="search-input" placeholder="Search notes..." style="width: 100%; padding: 8px 12px; padding-right: 32px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary);">
+            <button id="search-clear-btn" type="button" title="Clear search" style="display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: transparent; border: none; cursor: pointer; color: var(--text-secondary); padding: 4px; width: 24px; height: 24px; border-radius: 50%; align-items: center; justify-content: center; z-index: 10; line-height: 0;">
+              ${closeIcon}
+            </button>
+          </div>
+          <button id="search-btn" class="btn-primary">Search</button>
+        </div>
+        <div id="search-results" style="display: none; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); max-height: 300px; overflow-y: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"></div>
       </div>
 
       <div class="notebooks-section">
@@ -249,6 +269,93 @@ function attachRootOverviewListeners(container) {
   if (recycleBinBtn) {
     recycleBinBtn.addEventListener("click", () => navigateTo("recyclebin"));
   }
+
+  // Search functionality
+  const searchInput = container.querySelector("#search-input");
+  const searchBtn = container.querySelector("#search-btn");
+  const searchClearBtn = container.querySelector("#search-clear-btn");
+  const searchResults = container.querySelector("#search-results");
+
+  if (searchInput && searchBtn && searchResults) {
+    const updateClearBtn = () => {
+      if (searchClearBtn) {
+        searchClearBtn.style.display = searchInput.value.length > 0 ? "flex" : "none";
+      }
+    };
+
+    const performSearch = async () => {
+      const rawQuery = searchInput.value.trim();
+      searchState.query = rawQuery;
+
+      if (!rawQuery) {
+        searchResults.style.display = "none";
+        searchState.results = [];
+        updateClearBtn();
+        return;
+      }
+
+      updateClearBtn();
+      searchResults.style.display = "block";
+      searchResults.innerHTML = '<div style="padding: 12px; color: var(--text-secondary);">Searching...</div>';
+
+      try {
+        const notebooks = await getAllNotebooks();
+        const quickNotes = await getQuickNotes();
+        const notebookNotes = await Promise.all(notebooks.map((nb) => getNotesByNotebook(nb.id)));
+        const allNotes = [...quickNotes, ...notebookNotes.flat()];
+
+        // Create regex pattern from query with wildcard support
+        // 1. Escape special regex characters
+        // 2. Convert wildcards: * -> .* and ? -> .
+        const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = escapeRegex(rawQuery).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+        const searchRegex = new RegExp(pattern, "i");
+
+        const results = allNotes.filter((note) => {
+          const contentMatch = searchRegex.test(note.content || "");
+          const recognitionMatch = searchRegex.test(note.recognition?.fullText || "");
+          return contentMatch || recognitionMatch;
+        });
+
+        searchState.results = results;
+        renderSearchResultsList(searchResults, results);
+      } catch (error) {
+        console.error("Search error:", error);
+        searchResults.innerHTML = '<div style="padding: 12px; color: var(--error-color);">Error performing search</div>';
+      }
+    };
+
+    searchBtn.addEventListener("click", performSearch);
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") performSearch();
+    });
+    searchInput.addEventListener("input", updateClearBtn);
+
+    if (searchClearBtn) {
+      searchClearBtn.addEventListener("click", () => {
+        searchInput.value = "";
+        searchState.query = "";
+        searchState.results = [];
+        searchResults.style.display = "none";
+        updateClearBtn();
+        searchInput.focus();
+      });
+
+      // Add hover effect
+      searchClearBtn.addEventListener("mouseenter", () => (searchClearBtn.style.backgroundColor = "var(--bg-secondary)"));
+      searchClearBtn.addEventListener("mouseleave", () => (searchClearBtn.style.backgroundColor = "transparent"));
+    }
+
+    // Restore state
+    if (searchState.query) {
+      searchInput.value = searchState.query;
+      updateClearBtn();
+      if (searchState.results) {
+        searchResults.style.display = "block";
+        renderSearchResultsList(searchResults, searchState.results);
+      }
+    }
+  }
 }
 
 async function handleDeleteNote(e, noteId) {
@@ -264,6 +371,41 @@ async function handleDeleteNote(e, noteId) {
     await deleteNote(noteId);
     window.dispatchEvent(new CustomEvent("datachange"));
   }
+}
+
+function renderSearchResultsList(container, results) {
+  if (results.length === 0) {
+    container.innerHTML = '<div style="padding: 12px; color: var(--text-secondary);">No notes found matching your search.</div>';
+    return;
+  }
+
+  container.innerHTML = results
+    .map(
+      (note) => `
+    <div class="search-result-item" data-note-id="${note.id}" style="padding: 10px 12px; border-bottom: 1px solid var(--border-color); cursor: pointer;">
+      <div style="font-weight: 600; margin-bottom: 2px;">${escapeHtml(note.title || "Untitled")}</div>
+      <div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between;">
+        <span>${formatDate(note.modified)}</span>
+        ${note.recognition?.fullText ? '<span title="Contains handwriting">✍️</span>' : ""}
+      </div>
+    </div>
+  `,
+    )
+    .join("");
+
+  container.querySelectorAll(".search-result-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      if (searchState.query) {
+        sessionStorage.setItem("onejournal_search_query", searchState.query);
+      }
+      navigateTo("notebook", {
+        noteId: item.dataset.noteId,
+        searchQuery: searchState.query
+      });
+    });
+    item.addEventListener("mouseenter", () => (item.style.backgroundColor = "var(--bg-secondary)"));
+    item.addEventListener("mouseleave", () => (item.style.backgroundColor = "transparent"));
+  });
 }
 
 function renderPreviewNoteCard(note) {
