@@ -203,89 +203,108 @@ function renderEditor(container, _noteData) {
 
   container.innerHTML = `
     <div class="notebook-editor">
-      <div class="editor-toolbar">
-        <div class="toolbar-section">
-          <button class="toolbar-btn toolbar-btn-text" id="mode-text-btn" title="Text mode">
-            T
-          </button>
-          <div class="toolbar-btn-container">
+      <div class="editor-toolbar" style="flex-direction: column; height: auto; padding: 0;">
+        
+        <!-- Row 1 -->
+        <div class="toolbar-row" style="display: flex; justify-content: space-between; width: 100%; padding: 4px 8px; border-bottom: 1px solid var(--border-color);">
+          <div class="toolbar-section">
+            <button class="toolbar-btn toolbar-btn-text" id="mode-text-btn" title="Text mode">
+              T
+            </button>
             <button class="toolbar-btn" id="mode-draw-btn" title="Draw mode">
               ${icons.pen}
             </button>
-            <div id="pen-settings-dialog" class="pen-settings-dialog" style="display: none;">
-              <div class="pen-settings-section">
-                <span class="pen-settings-label">Pen Width: <span id="pen-width-value">2</span>px</span>
-                <div class="pen-width-control">
-                  <input type="range" id="pen-width-slider" min="1" max="15" step="1" value="2" style="width: 100%;">
-                </div>
-              </div>
-              <div class="pen-settings-section">
-                <span class="pen-settings-label">Pen Color</span>
-                <div id="pen-color-grid" class="pen-color-grid">
-                  <!-- Colors injected by JS -->
-                </div>
+            <div class="toolbar-btn-container">
+              <button class="toolbar-btn" id="background-btn" title="Background">
+                ${icons.background}
+              </button>
+              <div id="background-settings-dialog" class="background-settings-dialog" style="display: none;">
+                <div class="background-option" data-background="none">None</div>
+                <div class="background-option" data-background="ruled-narrow">Ruled - Narrow</div>
+                <div class="background-option" data-background="ruled-medium">Ruled - Medium</div>
+                <div class="background-option" data-background="ruled-wide">Ruled - Wide</div>
+                <div class="background-option" data-background="grid-small">Grid - Small</div>
+                <div class="background-option" data-background="grid-medium">Grid - Medium</div>
+                <div class="background-option" data-background="grid-large">Grid - Large</div>
               </div>
             </div>
           </div>
-          <button class="toolbar-btn" id="mode-erase-btn" title="Eraser mode">
-            ${icons.eraser}
-          </button>
-          <button class="toolbar-btn" id="mode-lasso-btn" title="Lasso select">
-            ${icons.lasso}
-          </button>
-          <button class="toolbar-btn" id="delete-selection-btn" title="Delete selection" style="display: none;">
-            ${icons.trash}
-          </button>
-          <button class="toolbar-btn" id="paste-btn" title="Paste" style="display: none;">
-            ${icons.clipboard}
-          </button>
-          <div class="toolbar-divider"></div>
-          <div class="toolbar-btn-container">
-            <button class="toolbar-btn" id="background-btn" title="Background">
-              ${icons.background}
+          
+          <div class="toolbar-section toolbar-section-right">
+            <button class="toolbar-btn" id="zoom-out-btn" title="Zoom out">
+              ${icons.zoomOut}
             </button>
-            <div id="background-settings-dialog" class="background-settings-dialog" style="display: none;">
-              <div class="background-option" data-background="none">None</div>
-              <div class="background-option" data-background="ruled-narrow">Ruled - Narrow</div>
-              <div class="background-option" data-background="ruled-medium">Ruled - Medium</div>
-              <div class="background-option" data-background="ruled-wide">Ruled - Wide</div>
-              <div class="background-option" data-background="grid-small">Grid - Small</div>
-              <div class="background-option" data-background="grid-medium">Grid - Medium</div>
-              <div class="background-option" data-background="grid-large">Grid - Large</div>
-            </div>
+            <span class="zoom-indicator" id="zoom-level">100%</span>
+            <button class="toolbar-btn" id="zoom-in-btn" title="Zoom in">
+              ${icons.zoomIn}
+            </button>
+            <button class="toolbar-btn" id="zoom-reset-btn" title="Reset zoom">
+              ${icons.zoomReset}
+            </button>
+            <div class="toolbar-divider"></div>
+            <button class="toolbar-btn" id="delete-note-btn" title="Delete note">
+              ${icons.trash}
+            </button>
+            <button class="toolbar-btn" id="note-info-btn" title="Note properties">
+              ${icons.info}
+            </button>
           </div>
-          <div class="toolbar-divider"></div>
-          <button class="toolbar-btn toolbar-btn-text" id="format-bold-btn" title="Bold">
-            <strong>B</strong>
-          </button>
-          <button class="toolbar-btn toolbar-btn-text" id="format-italic-btn" title="Italic">
-            <em>I</em>
-          </button>
-          <button class="toolbar-btn toolbar-btn-text" id="format-heading-btn" title="Heading">
-            H
-          </button>
-          <button class="toolbar-btn" id="format-list-btn" title="List">
-            •
-          </button>
         </div>
-        <div class="toolbar-section toolbar-section-right">
-          <button class="toolbar-btn" id="zoom-out-btn" title="Zoom out">
-            ${icons.zoomOut}
-          </button>
-          <span class="zoom-indicator" id="zoom-level">100%</span>
-          <button class="toolbar-btn" id="zoom-in-btn" title="Zoom in">
-            ${icons.zoomIn}
-          </button>
-          <button class="toolbar-btn" id="zoom-reset-btn" title="Reset zoom">
-            ${icons.zoomReset}
-          </button>
-          <div class="toolbar-divider"></div>
-          <button class="toolbar-btn" id="delete-note-btn" title="Delete note">
-            ${icons.trash}
-          </button>
-          <button class="toolbar-btn" id="note-info-btn" title="Note properties">
-            ${icons.info}
-          </button>
+
+        <!-- Row 2 -->
+        <div class="toolbar-row" id="toolbar-row-2" style="display: flex; width: 100%; padding: 4px 8px; min-height: 40px; background-color: var(--bg-secondary);">
+          
+          <!-- Text Tools -->
+          <div id="text-tools" class="toolbar-section" style="display: flex;">
+            <button class="toolbar-btn toolbar-btn-text" id="format-bold-btn" title="Bold">
+              <strong>B</strong>
+            </button>
+            <button class="toolbar-btn toolbar-btn-text" id="format-italic-btn" title="Italic">
+              <em>I</em>
+            </button>
+            <button class="toolbar-btn toolbar-btn-text" id="format-heading-btn" title="Heading">
+              H
+            </button>
+            <button class="toolbar-btn" id="format-list-btn" title="List">
+              •
+            </button>
+          </div>
+
+          <!-- Pen Tools -->
+          <div id="pen-tools" class="toolbar-section" style="display: none;">
+            <div class="toolbar-btn-container">
+              <button class="toolbar-btn" id="pen-settings-btn" title="Pen Settings">
+                ${icons.pen}
+              </button>
+              <div id="pen-settings-dialog" class="pen-settings-dialog" style="display: none;">
+                <div class="pen-settings-section">
+                  <span class="pen-settings-label">Pen Width: <span id="pen-width-value">2</span>px</span>
+                  <div class="pen-width-control">
+                    <input type="range" id="pen-width-slider" min="1" max="15" step="1" value="2" style="width: 100%;">
+                  </div>
+                </div>
+                <div class="pen-settings-section">
+                  <span class="pen-settings-label">Pen Color</span>
+                  <div id="pen-color-grid" class="pen-color-grid">
+                    <!-- Colors injected by JS -->
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button class="toolbar-btn" id="mode-erase-btn" title="Eraser mode">
+              ${icons.eraser}
+            </button>
+            <button class="toolbar-btn" id="mode-lasso-btn" title="Lasso select">
+              ${icons.lasso}
+            </button>
+            <button class="toolbar-btn" id="delete-selection-btn" title="Delete selection" style="display: none;">
+              ${icons.trash}
+            </button>
+            <button class="toolbar-btn" id="paste-btn" title="Paste" style="display: none;">
+              ${icons.clipboard}
+            </button>
+          </div>
+
         </div>
       </div>
 
@@ -1513,9 +1532,8 @@ function manualSwitchToTextMode() {
  * Manually switch to draw mode (user clicked button)
  */
 function manualSwitchToDrawMode() {
-  // If already in draw mode (and not erasing), toggle settings dialog
+  // If already in draw mode (and not erasing), do nothing (settings are now on separate button)
   if (isDrawMode && !isEraserMode && !isLassoMode) {
-    togglePenSettingsDialog();
     return;
   }
 
@@ -1601,6 +1619,7 @@ function toggleLassoMode() {
 function updateToolbarButtons() {
   const textBtn = document.getElementById("mode-text-btn");
   const drawBtn = document.getElementById("mode-draw-btn");
+  const penBtn = document.getElementById("pen-settings-btn");
   const eraseBtn = document.getElementById("mode-erase-btn");
   const lassoBtn = document.getElementById("mode-lasso-btn");
 
@@ -1610,11 +1629,28 @@ function updateToolbarButtons() {
   if (drawBtn) {
     drawBtn.classList.toggle("active", isDrawMode && !isEraserMode && !isLassoMode);
   }
+  if (penBtn) {
+    penBtn.classList.toggle("active", isDrawMode && !isEraserMode && !isLassoMode);
+  }
   if (eraseBtn) {
     eraseBtn.classList.toggle("active", isEraserMode);
   }
   if (lassoBtn) {
     lassoBtn.classList.toggle("active", isLassoMode);
+  }
+
+  // Toggle Row 2 sections based on mode
+  const textTools = document.getElementById("text-tools");
+  const penTools = document.getElementById("pen-tools");
+
+  if (textTools && penTools) {
+    if (isDrawMode) {
+      textTools.style.display = "none";
+      penTools.style.display = "flex";
+    } else {
+      textTools.style.display = "flex";
+      penTools.style.display = "none";
+    }
   }
 }
 
@@ -1709,6 +1745,12 @@ async function setNoteBackground(backgroundType) {
 
   // Save the background change
   await updateNote(currentNoteData.id, { background: backgroundType });
+
+  // Close the dialog
+  const dialog = document.getElementById("background-settings-dialog");
+  if (dialog) {
+    dialog.style.display = "none";
+  }
 }
 
 /**
@@ -1749,13 +1791,13 @@ function updatePenSettingsUI() {
  */
 function handleOutsideClick(e) {
   const dialog = document.getElementById("pen-settings-dialog");
-  const drawBtn = document.getElementById("mode-draw-btn");
+  const settingsBtn = document.getElementById("pen-settings-btn");
   const bgDialog = document.getElementById("background-settings-dialog");
   const bgBtn = document.getElementById("background-btn");
 
   if (dialog && dialog.style.display === "block") {
     // Close if the target is not the dialog itself and not the button that toggles it
-    if (!dialog.contains(e.target) && !drawBtn?.contains(e.target)) {
+    if (!dialog.contains(e.target) && !settingsBtn?.contains(e.target)) {
       dialog.style.display = "none";
     }
   }
@@ -1777,6 +1819,13 @@ function attachToolbarListeners() {
   document.getElementById("mode-draw-btn")?.addEventListener("click", manualSwitchToDrawMode);
   document.getElementById("mode-erase-btn")?.addEventListener("click", toggleEraserMode);
   document.getElementById("mode-lasso-btn")?.addEventListener("click", toggleLassoMode);
+  document.getElementById("pen-settings-btn")?.addEventListener("click", () => {
+    if (!isDrawMode || isEraserMode || isLassoMode) {
+      manualSwitchToDrawMode();
+    } else {
+      togglePenSettingsDialog();
+    }
+  });
 
   // Add global listener to close pen settings when clicking outside
   document.addEventListener("pointerdown", handleOutsideClick);
