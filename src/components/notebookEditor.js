@@ -39,6 +39,7 @@ let canvasRect = null; // Cached bounding client rect for performance
 let isDrawing = false;
 let isErasing = false; // Track if currently erasing
 let isLassoing = false; // Track if currently lassoing
+let needsCanvasExpansion = false; // Flag to defer canvas expansion
 let lassoPoints = []; // Stores points for the lasso path
 const selectedStrokes = new Set(); // Stores selected strokes
 let selectionBounds = null; // Bounding box of selected strokes
@@ -890,6 +891,7 @@ function handleCanvasPointerDown(e) {
   } else {
     isErasing = false;
     isDrawing = true;
+    needsCanvasExpansion = false; // Reset expansion flag at the start of a stroke
     currentStroke = [];
 
     // Clear selection when starting a new drawing
@@ -1012,8 +1014,9 @@ function handleCanvasPointerMove(e) {
       currentStroke.time.push(Date.now());
     }
 
+    // Defer canvas expansion to pointerup to avoid stuttering
     if (dynamicCanvas.height - y < 300) {
-      expandCanvas(800);
+      needsCanvasExpansion = true;
     }
 
     // Clear the dynamic (top) canvas and redraw the current stroke
@@ -1129,6 +1132,12 @@ function handleCanvasPointerUp(_e) {
       currentStroke = [];
       updateExpansionZoneIndicator(null);
       updateContentBounds();
+
+      // Perform canvas expansion now if it was needed
+      if (needsCanvasExpansion) {
+        expandCanvas(800);
+        needsCanvasExpansion = false;
+      }
     }
 
     scheduleSave();
@@ -2270,11 +2279,17 @@ async function updateEditorContent(noteId) {
     return; // Should not happen if called from the event listener, but good practice
   }
 
-  // 1. Preserve state (scroll and zoom)
+  // 1. Preserve state (scroll, zoom, and in-progress stroke)
   const wrapper = document.querySelector(".editor-content-wrapper");
   const scrollLeft = wrapper ? wrapper.scrollLeft : 0;
   const scrollTop = wrapper ? wrapper.scrollTop : 0;
-  const currentZoom = zoomScale; // `zoomScale` is a module-level variable
+  const currentZoom = zoomScale;
+
+  let inProgressStroke = null;
+  if (isDrawing && currentStroke && currentStroke.id && currentStroke.x.length > 0) {
+    inProgressStroke = { ...currentStroke };
+    console.log("Preserving in-progress stroke:", inProgressStroke.id);
+  }
 
   // 2. Reload data from storage
   const newNoteData = await getNote(noteId);
@@ -2309,6 +2324,16 @@ async function updateEditorContent(noteId) {
   if (dynamicCanvas) {
     strokes = newNoteData.strokes || [];
     deletedStrokes = newNoteData.deletedStrokes || [];
+
+    // If there was an in-progress stroke, ensure it's not lost
+    if (inProgressStroke) {
+      const strokeExists = strokes.some((s) => s.id === inProgressStroke.id);
+      if (!strokeExists) {
+        strokes.push(inProgressStroke);
+        console.log("Restored in-progress stroke after sync.");
+      }
+    }
+
     // Recalculate content bounds based on new strokes
     updateContentBounds();
     // `resizeCanvas` will handle resizing and `redrawCanvas`
