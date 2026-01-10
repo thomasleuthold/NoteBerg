@@ -24,12 +24,18 @@ let currentNoteData = null;
 let isDrawMode = false;
 let isEraserMode = false; // Manual eraser toggle
 let isLassoMode = false; // Manual lasso toggle
-let canvas = null;
-let ctx = null;
+
+// Layered Canvases
+let staticCanvas = null; // For completed strokes
+let staticCtx = null;
+let dynamicCanvas = null; // For active drawing
+let dynamicCtx = null;
 let backgroundCanvas = null;
 let backgroundCtx = null;
 let cursorCanvas = null;
 let cursorCtx = null;
+let canvasRect = null; // Cached bounding client rect for performance
+
 let isDrawing = false;
 let isErasing = false; // Track if currently erasing
 let isLassoing = false; // Track if currently lassoing
@@ -316,11 +322,12 @@ function renderEditor(container, _noteData) {
         </div>
       </div>
 
-      <div class="editor-content-wrapper">
+      <div class="editor-content-wrapper" style="position: relative;">
         <div id="text-editor" class="text-editor" contenteditable="true"></div>
-        <canvas id="background-canvas" class="background-canvas"></canvas>
-        <canvas id="drawing-canvas" class="drawing-canvas"></canvas>
-        <canvas id="cursor-canvas" class="cursor-canvas"></canvas>
+        <canvas id="background-canvas" class="background-canvas" style="position: absolute; top: 0; left: 0; z-index: 1;"></canvas>
+        <canvas id="static-canvas" class="static-canvas" style="position: absolute; top: 0; left: 0; z-index: 2;"></canvas>
+        <canvas id="dynamic-canvas" class="dynamic-canvas" style="position: absolute; top: 0; left: 0; z-index: 3;"></canvas>
+        <canvas id="cursor-canvas" class="cursor-canvas" style="position: absolute; top: 0; left: 0; z-index: 4;"></canvas>
       </div>
     </div>
   `;
@@ -371,13 +378,20 @@ function initTextEditor(noteData) {
  * Initialize canvas layer for drawing
  */
 function initCanvasLayer(noteData) {
-  canvas = document.getElementById("drawing-canvas");
+  // Setup all canvas layers
   backgroundCanvas = document.getElementById("background-canvas");
+  staticCanvas = document.getElementById("static-canvas");
+  dynamicCanvas = document.getElementById("dynamic-canvas");
   cursorCanvas = document.getElementById("cursor-canvas");
-  if (!canvas || !backgroundCanvas || !cursorCanvas) return;
 
-  ctx = canvas.getContext("2d");
+  if (!backgroundCanvas || !staticCanvas || !dynamicCanvas || !cursorCanvas) {
+    console.error("One or more canvas layers are missing from the DOM.");
+    return;
+  }
+
   backgroundCtx = backgroundCanvas.getContext("2d");
+  staticCtx = staticCanvas.getContext("2d");
+  dynamicCtx = dynamicCanvas.getContext("2d");
   cursorCtx = cursorCanvas.getContext("2d");
 
   // Initial canvas sizing with throttling
@@ -407,19 +421,23 @@ function initCanvasLayer(noteData) {
 
   requestAnimationFrame(() => {
     resizeCanvas();
-    redrawCanvas();
+    redrawCanvas(); // This will now draw to the static canvas
   });
 
   // Add pen detection on the wrapper to enable canvas pointer-events for scrolled areas
-  const wrapper = canvas.parentElement;
+  const wrapper = dynamicCanvas.parentElement;
   if (wrapper) {
     wrapper.addEventListener(
       "pointerdown",
       (e) => {
         // If pen detected and not in draw mode, temporarily enable canvas pointer events
         // so handleCanvasPointerDown can receive the event and auto-switch
-        if ((e.pointerType === "pen" || e.pointerType === "eraser") && !isDrawMode && canvas) {
-          canvas.style.pointerEvents = "auto";
+        if (
+          (e.pointerType === "pen" || e.pointerType === "eraser") &&
+          !isDrawMode &&
+          dynamicCanvas
+        ) {
+          dynamicCanvas.style.pointerEvents = "auto";
           // Let the event propagate to canvas
         }
       },
@@ -428,14 +446,14 @@ function initCanvasLayer(noteData) {
   }
 
   // Prevent context menu on right-click (e.g., from pen barrel button)
-  canvas.addEventListener("contextmenu", (e) => {
+  dynamicCanvas.addEventListener("contextmenu", (e) => {
     if (e.pointerType === "pen") {
       e.preventDefault();
     }
   });
 
-  // Canvas drawing events
-  canvas.addEventListener("pointerdown", (e) => {
+  // Canvas drawing events on the top-most (dynamic) canvas
+  dynamicCanvas.addEventListener("pointerdown", (e) => {
     // Auto-detect pen and switch to draw mode if needed
     const shouldContinue = handleCanvasPointerDown(e);
     if (shouldContinue === false) return;
@@ -443,24 +461,24 @@ function initCanvasLayer(noteData) {
     // Only prevent default and capture for pen events or when in draw mode
     if (e.pointerType === "pen" || e.pointerType === "eraser" || isDrawMode || isErasing) {
       e.preventDefault();
-      canvas.setPointerCapture(e.pointerId);
+      dynamicCanvas.setPointerCapture(e.pointerId);
     }
   });
-  canvas.addEventListener("pointermove", (e) => {
+  dynamicCanvas.addEventListener("pointermove", (e) => {
     // Make prevention more aggressive: prevent default on any move in draw mode or erasing.
     if (isDrawMode || isErasing) e.preventDefault();
     handleCanvasPointerMove(e);
   });
-  canvas.addEventListener("pointerup", (e) => {
+  dynamicCanvas.addEventListener("pointerup", (e) => {
     handleCanvasPointerUp(e);
-    if ((isDrawMode || isErasing) && canvas.hasPointerCapture(e.pointerId)) {
-      canvas.releasePointerCapture(e.pointerId);
+    if ((isDrawMode || isErasing) && dynamicCanvas.hasPointerCapture(e.pointerId)) {
+      dynamicCanvas.releasePointerCapture(e.pointerId);
     }
   });
-  canvas.addEventListener("pointercancel", handleCanvasPointerUp);
+  dynamicCanvas.addEventListener("pointercancel", handleCanvasPointerUp);
 
   // Prevent touch scrolling on canvas when in draw mode
-  canvas.addEventListener(
+  dynamicCanvas.addEventListener(
     "touchstart",
     (e) => {
       if (autoSwitchedToDrawMode && isDrawMode && !isDrawing && !isErasing) {
@@ -472,7 +490,7 @@ function initCanvasLayer(noteData) {
     { passive: false },
   );
 
-  canvas.addEventListener(
+  dynamicCanvas.addEventListener(
     "touchmove",
     (e) => {
       if (isDrawMode || isErasing) e.preventDefault();
@@ -506,10 +524,14 @@ function throttledResizeCanvas() {
  * Resize canvas to match container
  */
 function resizeCanvas() {
-  if (!canvas || !backgroundCanvas || !cursorCanvas || !currentEditor) return;
+  if (!dynamicCanvas || !staticCanvas || !backgroundCanvas || !cursorCanvas || !currentEditor)
+    return;
 
-  const wrapper = canvas.parentElement;
+  const wrapper = dynamicCanvas.parentElement;
   const rect = wrapper.getBoundingClientRect();
+
+  // Cache the bounding rect for coordinate calculations
+  canvasRect = dynamicCanvas.getBoundingClientRect();
 
   const baseWidth = rect.width / zoomScale;
   const baseHeight = rect.height / zoomScale;
@@ -519,7 +541,7 @@ function resizeCanvas() {
   const requiredHeight = Math.max(
     baseHeight,
     minCanvasHeight,
-    canvas.height, // Keep current canvas height to prevent shrinking
+    dynamicCanvas.height, // Keep current canvas height to prevent shrinking
     800,
   );
   const requiredWidth = Math.max(baseWidth, minCanvasWidth, 800);
@@ -530,19 +552,18 @@ function resizeCanvas() {
   const safeHeight = Math.min(requiredHeight, maxCanvasSize);
 
   // Only resize if dimensions actually changed significantly
-  const widthChanged = Math.abs(canvas.width - safeWidth) > 1;
-  const heightChanged = Math.abs(canvas.height - safeHeight) > 1;
+  const widthChanged = Math.abs(dynamicCanvas.width - safeWidth) > 1;
+  const heightChanged = Math.abs(dynamicCanvas.height - safeHeight) > 1;
 
   if (widthChanged || heightChanged) {
     // Resize all canvases
-    canvas.width = backgroundCanvas.width = cursorCanvas.width = safeWidth;
-    canvas.height = backgroundCanvas.height = cursorCanvas.height = safeHeight;
-
-    canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${safeWidth}px`;
-    canvas.style.height =
-      backgroundCanvas.style.height =
-      cursorCanvas.style.height =
-        `${safeHeight}px`;
+    const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas];
+    canvases.forEach((cvs) => {
+      cvs.width = safeWidth;
+      cvs.height = safeHeight;
+      cvs.style.width = `${safeWidth}px`;
+      cvs.style.height = `${safeHeight}px`;
+    });
 
     if (currentEditor) {
       currentEditor.style.minWidth = `${safeWidth}px`;
@@ -566,67 +587,54 @@ function resizeCanvas() {
  * @param {number} additionalHeight - Height to add in pixels (in unscaled space)
  */
 function expandCanvas(additionalHeight) {
-  if (!canvas || !backgroundCanvas || !cursorCanvas) return;
+  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas];
+  if (canvases.some((c) => !c)) return;
 
   const now = Date.now();
   if (now - lastExpansionTime < expansionCooldown) return;
   lastExpansionTime = now;
 
-  const wrapper = canvas.parentElement;
+  const wrapper = dynamicCanvas.parentElement;
   const rect = wrapper.getBoundingClientRect();
 
-  const newHeight = canvas.height + additionalHeight;
-  const baseWidth = rect.width / zoomScale;
+  const newHeight = dynamicCanvas.height + additionalHeight;
+  const newWidth = Math.max(dynamicCanvas.width, rect.width / zoomScale);
 
-  // During active drawing, use a faster resize strategy
-  // Create offscreen canvases to preserve current drawing and background
-  if (isDrawing && ctx && backgroundCtx) {
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = canvas.width;
-    tempCanvas.height = canvas.height;
-    const tempCtx = tempCanvas.getContext("2d");
-    tempCtx.drawImage(canvas, 0, 0);
+  // Create offscreen canvases to preserve current drawings
+  const tempCanvases = {
+    dynamic: document.createElement("canvas"),
+    static: document.createElement("canvas"),
+    background: document.createElement("canvas"),
+  };
 
-    const tempBgCanvas = document.createElement("canvas");
-    tempBgCanvas.width = backgroundCanvas.width;
-    tempBgCanvas.height = backgroundCanvas.height;
-    const tempBgCtx = tempBgCanvas.getContext("2d");
-    tempBgCtx.drawImage(backgroundCanvas, 0, 0);
+  tempCanvases.dynamic.width =
+    tempCanvases.static.width =
+    tempCanvases.background.width =
+      dynamicCanvas.width;
+  tempCanvases.dynamic.height =
+    tempCanvases.static.height =
+    tempCanvases.background.height =
+      dynamicCanvas.height;
 
-    // Resize all canvases
-    canvas.width = backgroundCanvas.width = cursorCanvas.width = baseWidth;
-    canvas.height = backgroundCanvas.height = cursorCanvas.height = newHeight;
+  tempCanvases.dynamic.getContext("2d").drawImage(dynamicCanvas, 0, 0);
+  tempCanvases.static.getContext("2d").drawImage(staticCanvas, 0, 0);
+  tempCanvases.background.getContext("2d").drawImage(backgroundCanvas, 0, 0);
 
-    canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${baseWidth}px`;
-    canvas.style.height =
-      backgroundCanvas.style.height =
-      cursorCanvas.style.height =
-        `${newHeight}px`;
+  // Resize all canvases
+  canvases.forEach((cvs) => {
+    cvs.width = newWidth;
+    cvs.height = newHeight;
+    cvs.style.width = `${newWidth}px`;
+    cvs.style.height = `${newHeight}px`;
+  });
 
-    // Restore the content without expensive redraw
-    ctx.drawImage(tempCanvas, 0, 0);
-    backgroundCtx.drawImage(tempBgCanvas, 0, 0);
+  // Restore the content without expensive redraw
+  dynamicCtx.drawImage(tempCanvases.dynamic, 0, 0);
+  staticCtx.drawImage(tempCanvases.static, 0, 0);
+  backgroundCtx.drawImage(tempCanvases.background, 0, 0);
 
-    // Draw background pattern on newly expanded area
-    drawBackgroundExpansion(tempBgCanvas.height, newHeight);
-  } else {
-    // Not actively drawing - do normal resize with full redraw
-    canvas.width = backgroundCanvas.width = cursorCanvas.width = baseWidth;
-    canvas.height = backgroundCanvas.height = cursorCanvas.height = newHeight;
-
-    canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${baseWidth}px`;
-    canvas.style.height =
-      backgroundCanvas.style.height =
-      cursorCanvas.style.height =
-        `${newHeight}px`;
-
-    redrawBackground();
-    redrawCanvas();
-
-    if (activeSearchQuery) {
-      highlightStrokes(activeSearchQuery);
-    }
-  }
+  // Draw background pattern on newly expanded area
+  drawBackgroundExpansion(tempCanvases.background.height, newHeight);
 
   if (currentEditor) {
     currentEditor.style.minHeight = `${newHeight}px`;
@@ -641,19 +649,19 @@ function expandCanvas(additionalHeight) {
  * @param {boolean} forceUpdate - Force update indicator position
  */
 function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
-  if (!canvas) return;
+  if (!dynamicCanvas) return;
   let indicator = document.getElementById("expansion-zone-indicator");
   if (!indicator) {
     indicator = document.createElement("div");
     indicator.id = "expansion-zone-indicator";
     indicator.className = "expansion-zone-indicator";
-    canvas.parentElement.appendChild(indicator);
+    dynamicCanvas.parentElement.appendChild(indicator);
   }
   const expansionThreshold = 300;
-  const distanceFromBottom = canvas.height - (currentY || 0);
+  const distanceFromBottom = dynamicCanvas.height - (currentY || 0);
 
   if ((currentY !== null && distanceFromBottom < expansionThreshold) || forceUpdate) {
-    const triggerLine = canvas.height - expansionThreshold;
+    const triggerLine = dynamicCanvas.height - expansionThreshold;
     indicator.style.top = `${triggerLine}px`;
     indicator.style.display = "block";
     if (currentY !== null) {
@@ -677,10 +685,10 @@ function handlePointerDown(e) {
 
     // Manually trigger canvas drawing since the event was on the text editor
     // This ensures drawing works even when scrolled
-    if (canvas && isDrawMode) {
+    if (dynamicCanvas && isDrawMode) {
       // Set pointer capture on canvas to ensure we get all subsequent events
       try {
-        canvas.setPointerCapture(e.pointerId);
+        dynamicCanvas.setPointerCapture(e.pointerId);
       } catch (err) {
         console.warn("Could not set pointer capture:", err);
       }
@@ -696,7 +704,7 @@ function handlePointerDown(e) {
         buttons: e.buttons,
         button: e.button,
       });
-      canvas.dispatchEvent(canvasEvent);
+      dynamicCanvas.dispatchEvent(canvasEvent);
     }
 
     e.preventDefault();
@@ -720,7 +728,7 @@ function handlePointerMove(e) {
     }
 
     // Forward move events to canvas when in draw mode
-    if (canvas && isDrawMode) {
+    if (dynamicCanvas && isDrawMode) {
       const canvasEvent = new PointerEvent("pointermove", {
         bubbles: true,
         cancelable: true,
@@ -732,7 +740,7 @@ function handlePointerMove(e) {
         buttons: e.buttons,
         button: e.button,
       });
-      canvas.dispatchEvent(canvasEvent);
+      dynamicCanvas.dispatchEvent(canvasEvent);
       e.preventDefault();
       e.stopPropagation();
     }
@@ -744,7 +752,7 @@ function handlePointerMove(e) {
  */
 function handlePointerUp(e) {
   // Forward up events to canvas when in draw mode
-  if (e.pointerType === "pen" && canvas && isDrawMode) {
+  if (e.pointerType === "pen" && dynamicCanvas && isDrawMode) {
     const canvasEvent = new PointerEvent("pointerup", {
       bubbles: true,
       cancelable: true,
@@ -756,7 +764,7 @@ function handlePointerUp(e) {
       buttons: e.buttons,
       button: e.button,
     });
-    canvas.dispatchEvent(canvasEvent);
+    dynamicCanvas.dispatchEvent(canvasEvent);
     e.preventDefault();
     e.stopPropagation();
   }
@@ -766,6 +774,11 @@ function handlePointerUp(e) {
  * Get correct canvas coordinates accounting for scroll and zoom
  */
 function getCanvasCoordinates(e) {
+  if (!canvasRect) {
+    // Fallback if pointerdown was missed or rect is stale
+    canvasRect = dynamicCanvas.getBoundingClientRect();
+  }
+
   let clientX = e.clientX;
   let clientY = e.clientY;
 
@@ -774,11 +787,10 @@ function getCanvasCoordinates(e) {
     clientY = e.touches[0].clientY;
   }
 
-  const rect = canvas.getBoundingClientRect();
-  const x = clientX - rect.left;
-  const y = clientY - rect.top;
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  const x = clientX - canvasRect.left;
+  const y = clientY - canvasRect.top;
+  const scaleX = dynamicCanvas.width / canvasRect.width;
+  const scaleY = dynamicCanvas.height / canvasRect.height;
 
   return { x: x * scaleX, y: y * scaleY };
 }
@@ -823,6 +835,10 @@ function handleCanvasPointerDown(e) {
   }
 
   if (!isDrawMode) return true;
+
+  // --- Cache canvas rect and context settings ---
+  canvasRect = dynamicCanvas.getBoundingClientRect();
+  const palette = getThemePalette();
 
   // --- Eraser Activation (Stateful approach) ---
   const isEraser = isEraserMode || isEraserEvent(e);
@@ -889,24 +905,24 @@ function handleCanvasPointerDown(e) {
   if (isErasing) {
     eraseStrokesAtPoint(x, y);
     drawEraserCursor(x, y);
-  } else {
+  } else if (isDrawing) {
     // Start drawing
-    if (currentStroke.length === 0) {
-      currentStroke = {
-        id: generateId(), // Unique ID for stroke deletion tracking
-        pointerType: e.pointerType,
-        x: [],
-        y: [],
-        pressure: [],
-        time: [],
-        colorIndex: currentPenColorIndex,
-        width: currentPenWidth,
-      };
-    }
-    currentStroke.x.push(x);
-    currentStroke.y.push(y);
-    currentStroke.pressure.push(e.pressure || 0.5);
-    currentStroke.time.push(Date.now());
+    currentStroke = {
+      id: generateId(), // Unique ID for stroke deletion tracking
+      pointerType: e.pointerType,
+      x: [x],
+      y: [y],
+      pressure: [e.pressure || 0.5],
+      time: [Date.now()],
+      colorIndex: currentPenColorIndex,
+      width: currentPenWidth,
+    };
+
+    // Set context properties once per stroke
+    dynamicCtx.strokeStyle = palette[currentStroke.colorIndex] || palette[0];
+    dynamicCtx.lineWidth = currentStroke.width || 2;
+    dynamicCtx.lineCap = "round";
+    dynamicCtx.lineJoin = "round";
   }
   return true;
 }
@@ -919,7 +935,9 @@ function handleCanvasPointerMove(e) {
     return;
   }
 
-  const { x, y } = getCanvasCoordinates(e);
+  const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  const lastEvent = events[events.length - 1];
+  const { x, y } = getCanvasCoordinates(lastEvent);
 
   if (isTransforming) {
     const dx = x - transformStartPoint.x;
@@ -975,7 +993,7 @@ function handleCanvasPointerMove(e) {
     }
 
     calculateSelectionBounds();
-    redrawCanvas();
+    redrawCanvas(); // This is slow but not part of the current refactor focus
     return;
   }
 
@@ -985,41 +1003,23 @@ function handleCanvasPointerMove(e) {
   } else if (isErasing) {
     eraseStrokesAtPoint(x, y);
     drawEraserCursor(x, y);
-  } else if (isDrawing) {
-    currentStroke.x.push(x);
-    currentStroke.y.push(y);
-    currentStroke.pressure.push(e.pressure || 0.5);
-    currentStroke.time.push(Date.now());
+  } else if (isDrawing && currentStroke.x) {
+    for (const event of events) {
+      const { x: eventX, y: eventY } = getCanvasCoordinates(event);
+      currentStroke.x.push(eventX);
+      currentStroke.y.push(eventY);
+      currentStroke.pressure.push(event.pressure || 0.5);
+      currentStroke.time.push(Date.now());
+    }
 
-    if (canvas.height - y < 300) {
+    if (dynamicCanvas.height - y < 300) {
       expandCanvas(800);
     }
 
-    const pointCount = currentStroke.x.length;
-    if (pointCount > 1) {
-      // SIMPLEST APPROACH: Incremental drawing on main canvas
-      // Just draw the new segment - no tricks, no caching, no layers
-      const prevX = currentStroke.x[pointCount - 2];
-      const prevY = currentStroke.y[pointCount - 2];
-      const currX = currentStroke.x[pointCount - 1];
-      const currY = currentStroke.y[pointCount - 1];
+    // Clear the dynamic (top) canvas and redraw the current stroke
+    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+    sharedDrawStroke(dynamicCtx, currentStroke, null, false); // No need for palette, already set in context
 
-      // Use cached stroke style
-      if (!currentStroke.cachedStyle) {
-        const palette = getThemePalette();
-        currentStroke.cachedStyle = palette[currentStroke.colorIndex] || palette[0];
-      }
-
-      // Draw directly on main canvas
-      ctx.strokeStyle = currentStroke.cachedStyle;
-      ctx.lineWidth = currentStroke.width || 2;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      ctx.moveTo(prevX, prevY);
-      ctx.lineTo(currX, currY);
-      ctx.stroke();
-    }
     updateExpansionZoneIndicator(y);
   }
 }
@@ -1116,8 +1116,15 @@ function handleCanvasPointerUp(_e) {
   isDrawing = false;
 
   // Save if an action was completed
-  if (wasErasing || (wasDrawing && currentStroke.x && currentStroke.x.length > 0)) {
+  if (wasErasing || (wasDrawing && currentStroke.x && currentStroke.x.length > 1)) {
     if (wasDrawing) {
+      // Commit the completed stroke to the static canvas
+      const palette = getThemePalette();
+      sharedDrawStroke(staticCtx, currentStroke, palette, false);
+
+      // Clear the dynamic canvas
+      dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+
       strokes.push({ ...currentStroke });
       currentStroke = [];
       updateExpansionZoneIndicator(null);
@@ -1125,6 +1132,10 @@ function handleCanvasPointerUp(_e) {
     }
 
     scheduleSave();
+  } else if (wasDrawing) {
+    // Stroke was too short (a tap), clear the dynamic canvas
+    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+    currentStroke = [];
   }
 }
 
@@ -1286,47 +1297,52 @@ function drawBackgroundExpansion(oldHeight, newHeight) {
 }
 
 /**
- * Redraw entire canvas (strokes only - background is on separate canvas)
- * Simple approach: just draw all strokes directly
+ * Redraws all completed strokes onto the static canvas.
+ * This should be called on zoom, pan, resize, or when the underlying data changes.
  */
 function redrawCanvas() {
-  if (!ctx) return;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!staticCtx || !staticCanvas) return;
 
-  // Draw all strokes
+  // Clear both canvases
+  staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
+  if (dynamicCtx) {
+    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+  }
+
+  // Draw all completed strokes to the static canvas
   const palette = getThemePalette();
   strokes.forEach((stroke, index) => {
     const isSelected = selectedStrokes.has(index);
-    sharedDrawStroke(ctx, stroke, palette, isSelected);
+    sharedDrawStroke(staticCtx, stroke, palette, isSelected);
   });
 
-  // Draw selection UI on top
+  // Draw selection UI on top of the static canvas
   if (selectionBounds && !isLassoing) {
     const { minX, minY, maxX, maxY } = selectionBounds;
 
-    ctx.save();
-    ctx.strokeStyle = "rgba(0, 100, 255, 0.5)";
-    ctx.setLineDash([5, 5]);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
-    ctx.setLineDash([]);
+    staticCtx.save();
+    staticCtx.strokeStyle = "rgba(0, 100, 255, 0.5)";
+    staticCtx.setLineDash([5, 5]);
+    staticCtx.lineWidth = 1;
+    staticCtx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+    staticCtx.setLineDash([]);
 
     // Draw handles
     const h = handleSize;
     const drawHandle = (hx, hy, label) => {
-      ctx.fillStyle = "white";
-      ctx.strokeStyle = "rgba(0, 100, 255, 0.8)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.rect(hx - h / 2, hy - h / 2, h, h);
-      ctx.fill();
-      ctx.stroke();
+      staticCtx.fillStyle = "white";
+      staticCtx.strokeStyle = "rgba(0, 100, 255, 0.8)";
+      staticCtx.lineWidth = 2;
+      staticCtx.beginPath();
+      staticCtx.rect(hx - h / 2, hy - h / 2, h, h);
+      staticCtx.fill();
+      staticCtx.stroke();
 
-      ctx.fillStyle = "rgba(0, 100, 255, 0.8)";
-      ctx.font = "bold 12px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(label, hx, hy);
+      staticCtx.fillStyle = "rgba(0, 100, 255, 0.8)";
+      staticCtx.font = "bold 12px sans-serif";
+      staticCtx.textAlign = "center";
+      staticCtx.textBaseline = "middle";
+      staticCtx.fillText(label, hx, hy);
     };
 
     drawHandle(minX, minY, "R"); // Rotate
@@ -1334,7 +1350,7 @@ function redrawCanvas() {
     drawHandle(maxX, maxY, "M"); // Move
     drawHandle(minX, maxY, "S"); // Size
 
-    ctx.restore();
+    staticCtx.restore();
   }
 }
 
@@ -1450,9 +1466,9 @@ function drawEraserCursor(x, y) {
  */
 function switchToDrawMode() {
   isDrawMode = true;
-  if (canvas) {
-    canvas.classList.add("active");
-    canvas.style.pointerEvents = "auto";
+  if (dynamicCanvas) {
+    dynamicCanvas.classList.add("active");
+    dynamicCanvas.style.pointerEvents = "auto";
   }
   if (currentEditor) {
     currentEditor.style.pointerEvents = "none";
@@ -1467,9 +1483,9 @@ function switchToDrawMode() {
  */
 function switchToTextMode() {
   isDrawMode = false;
-  if (canvas) {
-    canvas.classList.remove("active");
-    canvas.style.pointerEvents = "none";
+  if (dynamicCanvas) {
+    dynamicCanvas.classList.remove("active");
+    dynamicCanvas.style.pointerEvents = "none";
   }
   // Hide pen settings dialog
   const dialog = document.getElementById("pen-settings-dialog");
@@ -2025,22 +2041,16 @@ function setZoom(newZoom) {
   }
 
   // Apply same CSS transform to all canvases to keep them aligned
-  // Don't set width/height here - let resizeCanvas() handle sizing
-  if (canvas) {
-    canvas.style.transformOrigin = "top left";
-    canvas.style.transform = `scale(${zoomScale})`;
-  }
-  if (backgroundCanvas) {
-    backgroundCanvas.style.transformOrigin = "top left";
-    backgroundCanvas.style.transform = `scale(${zoomScale})`;
-  }
-  if (cursorCanvas) {
-    cursorCanvas.style.transformOrigin = "top left";
-    cursorCanvas.style.transform = `scale(${zoomScale})`;
-  }
+  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas];
+  canvases.forEach((cvs) => {
+    if (cvs) {
+      cvs.style.transformOrigin = "top left";
+      cvs.style.transform = `scale(${zoomScale})`;
+    }
+  });
 
   // Resize and redraw canvas with new zoom scale
-  if (canvas && ctx) {
+  if (dynamicCanvas && staticCtx) {
     // Store current scroll position
     const wrapper = document.querySelector(".editor-content-wrapper");
     const scrollLeft = wrapper ? wrapper.scrollLeft : 0;
@@ -2082,11 +2092,11 @@ function updateZoomIndicator() {
  * Update content bounds tracking for overflow handling
  */
 function updateContentBounds() {
-  if (!canvas || !currentEditor) return;
+  if (!dynamicCanvas || !currentEditor) return;
 
   // Calculate minimum canvas dimensions needed to show all content
-  let maxX = canvas.width;
-  let maxY = canvas.height;
+  let maxX = dynamicCanvas.width;
+  let maxY = dynamicCanvas.height;
 
   // Check all strokes to find the extent
   for (const stroke of strokes) {
@@ -2103,13 +2113,16 @@ function updateContentBounds() {
   minCanvasHeight = maxY;
 
   // Expand canvas if needed
-  if (canvas.width < minCanvasWidth) {
-    const wrapper = canvas.parentElement;
+  if (dynamicCanvas.width < minCanvasWidth) {
+    const wrapper = dynamicCanvas.parentElement;
     const rect = wrapper.getBoundingClientRect();
-    const currentStrokes = [...strokes];
 
-    canvas.width = Math.max(minCanvasWidth, rect.width);
-    strokes = currentStrokes;
+    dynamicCanvas.width =
+      staticCanvas.width =
+      backgroundCanvas.width =
+      cursorCanvas.width =
+        Math.max(minCanvasWidth, rect.width);
+
     redrawCanvas();
   }
 }
@@ -2293,7 +2306,7 @@ async function updateEditorContent(noteId) {
     }
   }
 
-  if (canvas) {
+  if (dynamicCanvas) {
     strokes = newNoteData.strokes || [];
     deletedStrokes = newNoteData.deletedStrokes || [];
     // Recalculate content bounds based on new strokes
@@ -2356,7 +2369,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
     syncOnNoteClose(noteId).catch((err) => console.error("Background sync failed:", err));
   }
 
-  if (canvas) {
+  if (dynamicCanvas) {
     window.removeEventListener("resize", resizeCanvas);
   }
 
@@ -2365,8 +2378,17 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
 
   currentEditor = null;
   currentNoteData = null;
-  canvas = null;
-  ctx = null;
+
+  dynamicCanvas = null;
+  dynamicCtx = null;
+  staticCanvas = null;
+  staticCtx = null;
+  backgroundCanvas = null;
+  backgroundCtx = null;
+  cursorCanvas = null;
+  cursorCtx = null;
+  canvasRect = null;
+
   strokes = [];
   deletedStrokes = [];
   currentStroke = [];
