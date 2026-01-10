@@ -4,7 +4,7 @@
  */
 
 import { fetch } from "@tauri-apps/plugin-http";
-import { getNote, updateNote, getSetting } from "./storage.js";
+import { getNote, getSetting, updateNote } from "./storage.js";
 
 // Configuration
 const RECOGNITION_DEBOUNCE_MS = 2500; // 2.5 seconds inactivity
@@ -77,7 +77,8 @@ async function performRecognition(noteId, strokes) {
         body: JSON.stringify(formattedStrokes),
       });
 
-      if (!response.ok) throw new Error(`Service returned ${response.status} ${response.statusText}`);
+      if (!response.ok)
+        throw new Error(`Service returned ${response.status} ${response.statusText}`);
       result = await response.json();
     } catch (err) {
       console.warn("[Recognition] Service call failed:", err);

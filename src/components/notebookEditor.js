@@ -4,7 +4,7 @@
  * Auto-detects input type (stylus vs mouse) for mode switching
  */
 
-import { forceRecognition, scheduleRecognition } from "../modules/autoRecognition.js";
+import { forceRecognition } from "../modules/autoRecognition.js";
 import { resetInactivityTimer, stopInactivityTimer, syncOnNoteClose } from "../modules/autoSync.js";
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, generateId, getNote, updateNote } from "../modules/storage.js";
@@ -79,6 +79,10 @@ let lastResizeTime = 0;
 let cachedPalette = null;
 let cachedTheme = null;
 
+// Debounce save operations - much longer delay to avoid I/O during active drawing
+let saveDebounceTimer = null;
+const SAVE_DEBOUNCE_MS = 5000; // Wait 5 seconds after last activity before saving to disk
+
 /**
  * Initialize notebook editor component
  */
@@ -113,8 +117,12 @@ export function initNotebookEditorComponent() {
   // Listen for navigation changes to cleanup
   window.addEventListener("navigate", (e) => {
     if (e.detail.previousMode === "notebook") {
+      // Capture noteId before router clears it
+      const noteIdBeforeCleanup = currentNoteData?.id;
       // Fire and forget - don't block navigation
-      cleanupNotebookEditor().catch((err) => console.error("Cleanup error:", err));
+      cleanupNotebookEditor(noteIdBeforeCleanup).catch((err) =>
+        console.error("Cleanup error:", err),
+      );
     }
   });
 
@@ -346,9 +354,9 @@ function initTextEditor(noteData) {
     }, 100); // Resize after 100ms of no input
 
     clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(async () => {
-      await saveNoteContent();
-    }, 1000); // Save after 1 second of no input
+    saveTimeout = setTimeout(() => {
+      scheduleSave();
+    }, 5000); // Save after 5 seconds of no input (matches SAVE_DEBOUNCE_MS)
   });
 
   // Handle input type detection for auto mode switching
@@ -526,9 +534,10 @@ function resizeCanvas() {
   const heightChanged = Math.abs(canvas.height - safeHeight) > 1;
 
   if (widthChanged || heightChanged) {
-    // Resize all three canvases
+    // Resize all canvases
     canvas.width = backgroundCanvas.width = cursorCanvas.width = safeWidth;
     canvas.height = backgroundCanvas.height = cursorCanvas.height = safeHeight;
+
     canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${safeWidth}px`;
     canvas.style.height =
       backgroundCanvas.style.height =
@@ -587,6 +596,7 @@ function expandCanvas(additionalHeight) {
     // Resize all canvases
     canvas.width = backgroundCanvas.width = cursorCanvas.width = baseWidth;
     canvas.height = backgroundCanvas.height = cursorCanvas.height = newHeight;
+
     canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${baseWidth}px`;
     canvas.style.height =
       backgroundCanvas.style.height =
@@ -603,6 +613,7 @@ function expandCanvas(additionalHeight) {
     // Not actively drawing - do normal resize with full redraw
     canvas.width = backgroundCanvas.width = cursorCanvas.width = baseWidth;
     canvas.height = backgroundCanvas.height = cursorCanvas.height = newHeight;
+
     canvas.style.width = backgroundCanvas.style.width = cursorCanvas.style.width = `${baseWidth}px`;
     canvas.style.height =
       backgroundCanvas.style.height =
@@ -975,11 +986,6 @@ function handleCanvasPointerMove(e) {
     eraseStrokesAtPoint(x, y);
     drawEraserCursor(x, y);
   } else if (isDrawing) {
-    // Clear cursor canvas when moving to draw
-    if (cursorCtx) {
-      cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
-    }
-
     currentStroke.x.push(x);
     currentStroke.y.push(y);
     currentStroke.pressure.push(e.pressure || 0.5);
@@ -991,17 +997,20 @@ function handleCanvasPointerMove(e) {
 
     const pointCount = currentStroke.x.length;
     if (pointCount > 1) {
+      // SIMPLEST APPROACH: Incremental drawing on main canvas
+      // Just draw the new segment - no tricks, no caching, no layers
       const prevX = currentStroke.x[pointCount - 2];
       const prevY = currentStroke.y[pointCount - 2];
       const currX = currentStroke.x[pointCount - 1];
       const currY = currentStroke.y[pointCount - 1];
 
-      // Use cached stroke style instead of recalculating on every move
+      // Use cached stroke style
       if (!currentStroke.cachedStyle) {
         const palette = getThemePalette();
         currentStroke.cachedStyle = palette[currentStroke.colorIndex] || palette[0];
       }
 
+      // Draw directly on main canvas
       ctx.strokeStyle = currentStroke.cachedStyle;
       ctx.lineWidth = currentStroke.width || 2;
       ctx.lineCap = "round";
@@ -1044,9 +1053,7 @@ function handleCanvasPointerUp(_e) {
     isTransforming = false;
     transformMode = null;
     initialStrokesData = [];
-    setTimeout(async () => {
-      await saveNoteContent();
-    }, 500);
+    scheduleSave();
     return;
   }
 
@@ -1117,14 +1124,7 @@ function handleCanvasPointerUp(_e) {
       updateContentBounds();
     }
 
-    // Schedule handwriting recognition
-    if (currentNoteData) {
-      scheduleRecognition(currentNoteData.id, strokes);
-    }
-
-    setTimeout(async () => {
-      await saveNoteContent();
-    }, 500);
+    scheduleSave();
   }
 }
 
@@ -1248,16 +1248,6 @@ function getStrokeBounds(stroke) {
 }
 
 /**
- * Draw a single stroke with smooth curves
- */
-function drawStroke(stroke, index) {
-  if (!ctx) return;
-  const isSelected = selectedStrokes.has(index);
-  const palette = getThemePalette();
-  sharedDrawStroke(ctx, stroke, palette, isSelected);
-}
-
-/**
  * Draw background pattern on background canvas (internal helper)
  * @param {string} backgroundType - Type of background pattern
  * @param {number} startY - Starting Y coordinate (for partial redraws)
@@ -1297,17 +1287,20 @@ function drawBackgroundExpansion(oldHeight, newHeight) {
 
 /**
  * Redraw entire canvas (strokes only - background is on separate canvas)
+ * Simple approach: just draw all strokes directly
  */
 function redrawCanvas() {
   if (!ctx) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Draw strokes
+  // Draw all strokes
+  const palette = getThemePalette();
   strokes.forEach((stroke, index) => {
-    drawStroke(stroke, index);
+    const isSelected = selectedStrokes.has(index);
+    sharedDrawStroke(ctx, stroke, palette, isSelected);
   });
 
-  // Draw selection UI
+  // Draw selection UI on top
   if (selectionBounds && !isLassoing) {
     const { minX, minY, maxX, maxY } = selectionBounds;
 
@@ -1887,7 +1880,7 @@ function attachToolbarListeners() {
 /**
  * Deletes the strokes currently in the selectedStrokes set
  */
-async function deleteSelectedStrokes() {
+function deleteSelectedStrokes() {
   if (selectedStrokes.size === 0) return;
 
   // Track deleted stroke IDs
@@ -1911,15 +1904,11 @@ async function deleteSelectedStrokes() {
     deleteBtn.style.display = "none";
   }
 
-  // Redraw and save
+  // Redraw and save (async, don't block)
   redrawCanvas();
   updateContentBounds();
 
-  if (currentNoteData) {
-    scheduleRecognition(currentNoteData.id, strokes);
-  }
-
-  await saveNoteContent();
+  saveNoteContent().catch((err) => console.error("Save after delete failed:", err));
 }
 
 /**
@@ -1948,7 +1937,7 @@ function copySelectedStrokes() {
 /**
  * Pastes the strokes from the clipboard
  */
-async function pasteStrokes() {
+function pasteStrokes() {
   if (!clipboardStrokes || clipboardStrokes.length === 0) return;
 
   const offset = 30;
@@ -1972,11 +1961,7 @@ async function pasteStrokes() {
   calculateSelectionBounds();
   redrawCanvas();
 
-  if (currentNoteData) {
-    scheduleRecognition(currentNoteData.id, strokes);
-  }
-
-  await saveNoteContent();
+  saveNoteContent().catch((err) => console.error("Save after paste failed:", err));
 }
 
 /**
@@ -2216,7 +2201,23 @@ function initZoomListeners() {
 }
 
 /**
- * Save note content
+ * Schedule a debounced save - multiple rapid calls will only result in one save
+ * Runs completely asynchronously without blocking drawing operations
+ */
+function scheduleSave() {
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer);
+  }
+
+  saveDebounceTimer = setTimeout(() => {
+    // Fire and forget - don't await, let it run in background
+    saveNoteContent().catch((err) => console.error("Background save failed:", err));
+    saveDebounceTimer = null;
+  }, SAVE_DEBOUNCE_MS);
+}
+
+/**
+ * Save note content immediately (without debouncing)
  */
 async function saveNoteContent() {
   const noteId = getCurrentNoteId();
@@ -2316,30 +2317,42 @@ async function updateEditorContent(noteId) {
 
 /**
  * Cleanup editor
+ * @param {string} noteIdOverride - Optional noteId to use (when router has already cleared it)
  */
-export async function cleanupNotebookEditor() {
-  const noteId = getCurrentNoteId();
+export async function cleanupNotebookEditor(noteIdOverride = null) {
+  const noteId = noteIdOverride || getCurrentNoteId();
 
-  // Save note content before cleanup (non-blocking)
+  // Clear any pending debounced saves since we're doing an immediate save now
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+  }
+
+  // SEQUENCE ON CLOSE:
+  // 1. Persist strokes to storage (await to ensure completion)
   if (noteId && currentEditor) {
     try {
+      console.log("[NotebookEditor] Step 1: Persisting strokes on close...");
       await saveNoteContent();
     } catch (error) {
       console.error("Failed to save note during cleanup:", error);
     }
   }
 
-  // Trigger recognition on close
+  // 2. Trigger handwriting recognition (await to ensure completion)
   if (noteId && strokes && strokes.length > 0) {
-    forceRecognition(noteId, strokes).catch((err) =>
-      console.error("Recognition on close failed:", err),
-    );
+    try {
+      console.log("[NotebookEditor] Step 2: Triggering handwriting recognition...");
+      await forceRecognition(noteId, strokes);
+    } catch (err) {
+      console.error("Recognition on close failed:", err);
+    }
   }
 
-  // Stop inactivity timer
+  // 3. Trigger sync in background (don't await - let it run async)
   if (noteId) {
+    console.log("[NotebookEditor] Step 3: Triggering sync in background...");
     stopInactivityTimer();
-    // Trigger sync in background (don't await - let it run async)
     syncOnNoteClose(noteId).catch((err) => console.error("Background sync failed:", err));
   }
 
@@ -2391,40 +2404,45 @@ function highlightText(query) {
   const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
   const regex = new RegExp(pattern, "gi");
 
-    const walker = document.createTreeWalker(currentEditor, NodeFilter.SHOW_TEXT, null, false);
-    const nodes = [];
-    while (walker.nextNode()) nodes.push(walker.currentNode);
+  const walker = document.createTreeWalker(currentEditor, NodeFilter.SHOW_TEXT, null, false);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
 
-    console.log(`[NotebookEditor] Found ${nodes.length} text nodes to check`);
+  console.log(`[NotebookEditor] Found ${nodes.length} text nodes to check`);
 
-    nodes.forEach((node) => {
-      if (node.parentNode && node.parentNode.nodeName !== "SCRIPT" && node.parentNode.nodeName !== "STYLE") {
-        regex.lastIndex = 0; // Ensure regex is reset before test
-        const text = node.nodeValue;
-        // Check if node contains match
-        if (regex.test(text)) {
-          const fragment = document.createDocumentFragment();
-          let lastIndex = 0;
-          regex.lastIndex = 0; // Reset regex state
-          let match;
-          while ((match = regex.exec(text)) !== null) {
-            if (match.index > lastIndex) {
-              fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
-            }
-            const span = document.createElement("span");
-            span.style.backgroundColor = "yellow";
-            span.style.color = "black";
-            span.textContent = match[0];
-            fragment.appendChild(span);
-            lastIndex = match.index + match[0].length;
+  nodes.forEach((node) => {
+    if (
+      node.parentNode &&
+      node.parentNode.nodeName !== "SCRIPT" &&
+      node.parentNode.nodeName !== "STYLE"
+    ) {
+      regex.lastIndex = 0; // Ensure regex is reset before test
+      const text = node.nodeValue;
+      // Check if node contains match
+      if (regex.test(text)) {
+        const fragment = document.createDocumentFragment();
+        let lastIndex = 0;
+        regex.lastIndex = 0; // Reset regex state
+        let match = regex.exec(text);
+        while (match !== null) {
+          if (match.index > lastIndex) {
+            fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
           }
-          if (lastIndex < text.length) {
-            fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
-          }
-          node.parentNode.replaceChild(fragment, node);
+          const span = document.createElement("span");
+          span.style.backgroundColor = "yellow";
+          span.style.color = "black";
+          span.textContent = match[0];
+          fragment.appendChild(span);
+          lastIndex = match.index + match[0].length;
+          match = regex.exec(text);
         }
+        if (lastIndex < text.length) {
+          fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+        }
+        node.parentNode.replaceChild(fragment, node);
       }
-    });
+    }
+  });
 }
 
 /**
@@ -2433,10 +2451,19 @@ function highlightText(query) {
  */
 function highlightStrokes(query) {
   if (!query || !currentNoteData?.recognition?.words || !cursorCtx) {
-    console.log("[NotebookEditor] highlightStrokes skipped:", { query, hasData: !!currentNoteData?.recognition?.words, hasCtx: !!cursorCtx });
+    console.log("[NotebookEditor] highlightStrokes skipped:", {
+      query,
+      hasData: !!currentNoteData?.recognition?.words,
+      hasCtx: !!cursorCtx,
+    });
     return;
   }
-  console.log("[NotebookEditor] Highlighting strokes for:", query, "Word count:", currentNoteData.recognition.words.length);
+  console.log(
+    "[NotebookEditor] Highlighting strokes for:",
+    query,
+    "Word count:",
+    currentNoteData.recognition.words.length,
+  );
 
   // Create regex pattern from query with wildcard support
   const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2444,41 +2471,46 @@ function highlightStrokes(query) {
   const regex = new RegExp(pattern, "gi");
 
   let matchCount = 0;
-    cursorCtx.save();
-    cursorCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
-    cursorCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
-    cursorCtx.lineWidth = 2;
+  cursorCtx.save();
+  cursorCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
+  cursorCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
+  cursorCtx.lineWidth = 2;
 
-    currentNoteData.recognition.words.forEach((word) => {
-      regex.lastIndex = 0; // Ensure regex is reset before test
-      if (word.text && regex.test(word.text)) {
-        matchCount++;
+  currentNoteData.recognition.words.forEach((word) => {
+    regex.lastIndex = 0; // Ensure regex is reset before test
+    if (word.text && regex.test(word.text)) {
+      matchCount++;
 
-        regex.lastIndex = 0; // Reset for next test
-        
-        // Support multiple structures for bounding box (nested or flat), prioritizing boundingRect
-        const box = word.boundingRect || word.boundingBox || word.rect || word;
+      regex.lastIndex = 0; // Reset for next test
 
-        if (!box) {
-          console.warn("[NotebookEditor] Missing bounding box for word:", word.text);
-          return;
-        }
+      // Support multiple structures for bounding box (nested or flat), prioritizing boundingRect
+      const box = word.boundingRect || word.boundingBox || word.rect || word;
 
-        // Handle potential property variations (x/y vs left/top)
-        const x = box.x !== undefined ? box.x : box.left;
-        const y = box.y !== undefined ? box.y : box.top;
-        const w = box.width !== undefined ? box.width : box.w;
-        const h = box.height !== undefined ? box.height : box.h;
-
-        if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
-          console.log("[NotebookEditor] Highlighting match:", word.text, { x, y, w, h });
-          cursorCtx.fillRect(x, y, w, h);
-          cursorCtx.strokeRect(x, y, w, h);
-        } else {
-          console.warn("[NotebookEditor] Could not determine bounding box dimensions for word:", word.text, "Object:", box);
-        }
+      if (!box) {
+        console.warn("[NotebookEditor] Missing bounding box for word:", word.text);
+        return;
       }
-    });
-    cursorCtx.restore();
-    console.log(`[NotebookEditor] Finished highlighting. Matches found: ${matchCount}`);
+
+      // Handle potential property variations (x/y vs left/top)
+      const x = box.x !== undefined ? box.x : box.left;
+      const y = box.y !== undefined ? box.y : box.top;
+      const w = box.width !== undefined ? box.width : box.w;
+      const h = box.height !== undefined ? box.height : box.h;
+
+      if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
+        console.log("[NotebookEditor] Highlighting match:", word.text, { x, y, w, h });
+        cursorCtx.fillRect(x, y, w, h);
+        cursorCtx.strokeRect(x, y, w, h);
+      } else {
+        console.warn(
+          "[NotebookEditor] Could not determine bounding box dimensions for word:",
+          word.text,
+          "Object:",
+          box,
+        );
+      }
+    }
+  });
+  cursorCtx.restore();
+  console.log(`[NotebookEditor] Finished highlighting. Matches found: ${matchCount}`);
 }

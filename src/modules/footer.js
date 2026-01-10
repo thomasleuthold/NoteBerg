@@ -76,7 +76,7 @@ export function initFooter() {
   const syncStatus = document.querySelector(".sync-status");
 
   // Create recognition indicator
-  if (syncStatus && syncStatus.parentElement) {
+  if (syncStatus?.parentElement) {
     const recognitionIndicator = document.createElement("div");
     recognitionIndicator.className = "recognition-indicator";
     recognitionIndicator.style.display = "none";

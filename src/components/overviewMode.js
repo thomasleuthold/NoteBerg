@@ -20,7 +20,7 @@ import { showConfirmDialog } from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
 
 // Search state persistence
-let searchState = {
+const searchState = {
   query: "",
   results: [],
 };
@@ -296,7 +296,8 @@ function attachRootOverviewListeners(container) {
 
       updateClearBtn();
       searchResults.style.display = "block";
-      searchResults.innerHTML = '<div style="padding: 12px; color: var(--text-secondary);">Searching...</div>';
+      searchResults.innerHTML =
+        '<div style="padding: 12px; color: var(--text-secondary);">Searching...</div>';
 
       try {
         const notebooks = await getAllNotebooks();
@@ -321,7 +322,8 @@ function attachRootOverviewListeners(container) {
         renderSearchResultsList(searchResults, results);
       } catch (error) {
         console.error("Search error:", error);
-        searchResults.innerHTML = '<div style="padding: 12px; color: var(--error-color);">Error performing search</div>';
+        searchResults.innerHTML =
+          '<div style="padding: 12px; color: var(--error-color);">Error performing search</div>';
       }
     };
 
@@ -342,8 +344,12 @@ function attachRootOverviewListeners(container) {
       });
 
       // Add hover effect
-      searchClearBtn.addEventListener("mouseenter", () => (searchClearBtn.style.backgroundColor = "var(--bg-secondary)"));
-      searchClearBtn.addEventListener("mouseleave", () => (searchClearBtn.style.backgroundColor = "transparent"));
+      searchClearBtn.addEventListener("mouseenter", () => {
+        searchClearBtn.style.backgroundColor = "var(--bg-secondary)";
+      });
+      searchClearBtn.addEventListener("mouseleave", () => {
+        searchClearBtn.style.backgroundColor = "transparent";
+      });
     }
 
     // Restore state
@@ -375,7 +381,8 @@ async function handleDeleteNote(e, noteId) {
 
 function renderSearchResultsList(container, results) {
   if (results.length === 0) {
-    container.innerHTML = '<div style="padding: 12px; color: var(--text-secondary);">No notes found matching your search.</div>';
+    container.innerHTML =
+      '<div style="padding: 12px; color: var(--text-secondary);">No notes found matching your search.</div>';
     return;
   }
 
@@ -400,11 +407,15 @@ function renderSearchResultsList(container, results) {
       }
       navigateTo("notebook", {
         noteId: item.dataset.noteId,
-        searchQuery: searchState.query
+        searchQuery: searchState.query,
       });
     });
-    item.addEventListener("mouseenter", () => (item.style.backgroundColor = "var(--bg-secondary)"));
-    item.addEventListener("mouseleave", () => (item.style.backgroundColor = "transparent"));
+    item.addEventListener("mouseenter", () => {
+      item.style.backgroundColor = "var(--bg-secondary)";
+    });
+    item.addEventListener("mouseleave", () => {
+      item.style.backgroundColor = "transparent";
+    });
   });
 }
 
