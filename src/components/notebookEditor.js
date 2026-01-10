@@ -86,9 +86,11 @@ let lastResizeTime = 0;
 let cachedPalette = null;
 let cachedTheme = null;
 
-// Debounce save operations - much longer delay to avoid I/O during active drawing
+// Debounce and throttle save operations
 let saveDebounceTimer = null;
-const SAVE_DEBOUNCE_MS = 5000; // Wait 5 seconds after last activity before saving to disk
+const SAVE_DEBOUNCE_MS = 1500; // Save after 1.5s of inactivity
+let lastSaveTime = 0;
+const SAVE_THROTTLE_MS = 3000; // Also save at least every 3s during writing
 
 /**
  * Initialize notebook editor component
@@ -183,6 +185,9 @@ export async function initNotebookEditor(noteId, searchQuery = null) {
 
     // Initialize zoom to ensure transforms are applied on load
     setZoom(1.0);
+
+    // Initialize save timer
+    lastSaveTime = Date.now();
 
     // Highlight search terms if provided
     if (searchQuery) {
@@ -2235,15 +2240,26 @@ function initZoomListeners() {
  * Runs completely asynchronously without blocking drawing operations
  */
 function scheduleSave() {
+  // 1. Debounce Logic: Always schedule a save for after the user stops writing.
   if (saveDebounceTimer) {
     clearTimeout(saveDebounceTimer);
   }
-
   saveDebounceTimer = setTimeout(() => {
-    // Fire and forget - don't await, let it run in background
-    saveNoteContent().catch((err) => console.error("Background save failed:", err));
-    saveDebounceTimer = null;
+    saveNoteContent().catch((err) => console.error("Debounced save failed:", err));
+    lastSaveTime = Date.now(); // Record the time of this save
   }, SAVE_DEBOUNCE_MS);
+
+  // 2. Throttle Logic: If it's been too long since the last save, save now.
+  const now = Date.now();
+  if (now - lastSaveTime > SAVE_THROTTLE_MS) {
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer); // Clear the pending debounce timer
+      saveDebounceTimer = null;
+    }
+    // This save happens immediately, not in a timeout.
+    saveNoteContent().catch((err) => console.error("Throttled save failed:", err));
+    lastSaveTime = now; // Record the time of this immediate save
+  }
 }
 
 /**
@@ -2287,22 +2303,17 @@ async function updateEditorContent(noteId) {
     return; // Should not happen if called from the event listener, but good practice
   }
 
-  // 1. Preserve state (scroll, zoom, and in-progress stroke)
+  // 1. Preserve state (scroll and zoom) and a copy of local data
   const wrapper = document.querySelector(".editor-content-wrapper");
   const scrollLeft = wrapper ? wrapper.scrollLeft : 0;
   const scrollTop = wrapper ? wrapper.scrollTop : 0;
   const currentZoom = zoomScale;
-
-  let inProgressStroke = null;
-  if (isDrawing && currentStroke && currentStroke.id && currentStroke.x.length > 0) {
-    inProgressStroke = { ...currentStroke };
-    console.log("Preserving in-progress stroke:", inProgressStroke.id);
-  }
+  const localStrokes = [...strokes];
+  const localDeletedStrokeIds = new Set(deletedStrokes);
 
   // 2. Reload data from storage
   const newNoteData = await getNote(noteId);
   if (!newNoteData) {
-    // The note may have been deleted on another client and synced.
     console.log(`Note ${noteId} not found after sync. Navigating away.`);
     cleanupNotebookEditor();
     navigateTo("overview"); // Navigate to a safe place
@@ -2316,49 +2327,70 @@ async function updateEditorContent(noteId) {
 
   currentNoteData = newNoteData;
 
-  // 3. Re-render content if it has changed
+  // 3. Re-render text content if it has changed
   if (currentEditor) {
     const currentHtmlContent = currentEditor.innerHTML;
     const newHtmlContent = markdownToHtml(newNoteData.content);
     if (currentHtmlContent !== newHtmlContent) {
       currentEditor.innerHTML = newHtmlContent;
-      // Restore highlights if needed
       if (activeSearchQuery) {
         highlightText(activeSearchQuery);
       }
     }
   }
 
+  // 4. Merge strokes to prevent data loss from race conditions
   if (dynamicCanvas) {
-    strokes = newNoteData.strokes || [];
-    deletedStrokes = newNoteData.deletedStrokes || [];
+    const newStrokes = newNoteData.strokes || [];
+    const newDeletedStrokeIds = new Set(newNoteData.deletedStrokes || []);
+    const strokeMap = new Map();
 
-    // If there was an in-progress stroke, ensure it's not lost
-    if (inProgressStroke) {
-      const strokeExists = strokes.some((s) => s.id === inProgressStroke.id);
-      if (!strokeExists) {
-        strokes.push(inProgressStroke);
-        console.log("Restored in-progress stroke after sync.");
+    // Add local strokes to the map, respecting deletions from the sync
+    for (const stroke of localStrokes) {
+      if (stroke.id && !newDeletedStrokeIds.has(stroke.id)) {
+        strokeMap.set(stroke.id, stroke);
       }
     }
 
-    // Recalculate content bounds based on new strokes
+    // Add/overwrite with strokes from the sync
+    for (const stroke of newStrokes) {
+      if (stroke.id) {
+        strokeMap.set(stroke.id, stroke);
+      }
+    }
+
+    // Ensure the currently-being-drawn stroke is preserved
+    if (
+      isDrawing &&
+      currentStroke &&
+      currentStroke.id &&
+      !newDeletedStrokeIds.has(currentStroke.id)
+    ) {
+      strokeMap.set(currentStroke.id, { ...currentStroke });
+    }
+
+    const mergedStrokes = Array.from(strokeMap.values());
+    mergedStrokes.sort((a, b) => (a.time?.[0] || 0) - (b.time?.[0] || 0));
+
+    // Update main state
+    strokes = mergedStrokes;
+    deletedStrokes = Array.from(new Set([...localDeletedStrokeIds, ...newDeletedStrokeIds]));
+
+    // Recalculate content bounds and redraw everything
     updateContentBounds();
-    // `resizeCanvas` will handle resizing and `redrawCanvas`
     resizeCanvas();
   }
 
-  // 4. Restore state
+  // 5. Restore state
   setZoom(currentZoom);
   if (wrapper) {
-    // Use requestAnimationFrame to ensure the browser has time to reflow
     requestAnimationFrame(() => {
       wrapper.scrollLeft = scrollLeft;
       wrapper.scrollTop = scrollTop;
     });
   }
 
-  console.log("Notebook editor content updated and state preserved.");
+  console.log("Notebook editor content updated and state preserved via merge.");
 }
 
 /**
@@ -2418,7 +2450,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
 
   currentEditor = null;
   currentNoteData = null;
-  
+
   dynamicCanvas = null;
   dynamicCtx = null;
   staticCanvas = null;
