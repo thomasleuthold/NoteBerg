@@ -2241,8 +2241,8 @@ function scheduleSave() {
 /**
  * Save note content immediately (without debouncing)
  */
-async function saveNoteContent() {
-  const noteId = getCurrentNoteId();
+async function saveNoteContent(noteIdOverride = null) {
+  const noteId = noteIdOverride || getCurrentNoteId();
   if (!noteId || !currentEditor) return;
 
   try {
@@ -2360,6 +2360,13 @@ async function updateEditorContent(noteId) {
 export async function cleanupNotebookEditor(noteIdOverride = null) {
   const noteId = noteIdOverride || getCurrentNoteId();
 
+  // Before anything else, check if there's an un-ended stroke and commit it.
+  // This handles the case where the user navigates away mid-stroke.
+  if (isDrawing && currentStroke && currentStroke.x && currentStroke.x.length > 1) {
+    console.log("[NotebookEditor] Committing in-progress stroke on cleanup.");
+    strokes.push({ ...currentStroke });
+  }
+
   // Clear any pending debounced saves since we're doing an immediate save now
   if (saveDebounceTimer) {
     clearTimeout(saveDebounceTimer);
@@ -2371,7 +2378,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   if (noteId && currentEditor) {
     try {
       console.log("[NotebookEditor] Step 1: Persisting strokes on close...");
-      await saveNoteContent();
+      await saveNoteContent(noteId);
     } catch (error) {
       console.error("Failed to save note during cleanup:", error);
     }
@@ -2403,7 +2410,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
 
   currentEditor = null;
   currentNoteData = null;
-
+  
   dynamicCanvas = null;
   dynamicCtx = null;
   staticCanvas = null;
@@ -2427,7 +2434,6 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   clipboardStrokes = null;
   activeSearchQuery = null;
 }
-
 /**
  * Highlight search terms in text and strokes
  * @param {string} query - Search query
