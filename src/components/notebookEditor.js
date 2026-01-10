@@ -1496,6 +1496,14 @@ function switchToTextMode() {
     dynamicCanvas.classList.remove("active");
     dynamicCanvas.style.pointerEvents = "none";
   }
+  // Ensure other canvas layers are also transparent to pointer events
+  if (staticCanvas) {
+    staticCanvas.style.pointerEvents = "none";
+  }
+  if (cursorCanvas) {
+    cursorCanvas.style.pointerEvents = "none";
+  }
+
   // Hide pen settings dialog
   const dialog = document.getElementById("pen-settings-dialog");
   if (dialog) {
