@@ -87,6 +87,7 @@ let cachedPalette = null;
 let cachedTheme = null;
 
 // Debounce and throttle save operations
+let isSaving = false; // Flag to prevent re-entrant saves and self-triggered updates
 let saveDebounceTimer = null;
 const SAVE_DEBOUNCE_MS = 1500; // Save after 1.5s of inactivity
 let lastSaveTime = 0;
@@ -116,6 +117,10 @@ export function initNotebookEditorComponent() {
 
   // Listen for data changes to refresh the editor if the current note was updated
   window.addEventListener("datachange", async () => {
+    // Ignore updates that were triggered by this component's own save operations
+    if (isSaving) {
+      return;
+    }
     const noteId = getCurrentNoteId();
     if (noteId && currentNoteData && noteId === currentNoteData.id) {
       console.log("External data change detected for current note. Refreshing editor.");
@@ -1072,10 +1077,9 @@ function handleCanvasPointerUp(_e) {
     updateToolbarButtons();
   }
 
-  // Clear the cursor canvas
-  if (cursorCtx) {
-    cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
-  }
+  // Do NOT clear the cursor canvas here. It wipes search highlights.
+  // Other functions like drawLassoPath and drawEraserCursor are responsible
+  // for clearing the canvas before they draw.
 
   const wasLassoing = isLassoing;
   isLassoing = false;
@@ -1774,8 +1778,8 @@ function setNoteBackground(backgroundType) {
   updateBackgroundSettingsUI();
   redrawBackground();
 
-  // Trigger the main debounced/throttled save instead of a partial update
-  scheduleSave();
+  // Save the change immediately to prevent race conditions.
+  saveNoteContent().catch((err) => console.error("Save on background change failed:", err));
 
   // Close the dialog
   const dialog = document.getElementById("background-settings-dialog");
@@ -2269,7 +2273,20 @@ async function saveNoteContent(noteIdOverride = null) {
   const noteId = noteIdOverride || getCurrentNoteId();
   if (!noteId || !currentEditor) return;
 
+  // Prevent re-entrant saves and data-change echos
+  if (isSaving) return;
+
+  const hadHighlights =
+    activeSearchQuery && currentEditor.querySelector('span[style*="background-color: yellow"]');
+
   try {
+    isSaving = true;
+
+    // Temporarily remove highlights before saving
+    if (hadHighlights) {
+      removeTextHighlights();
+    }
+
     // Convert HTML back to markdown (simplified)
     const htmlContent = currentEditor.innerHTML;
     const markdownContent = htmlToMarkdown(htmlContent);
@@ -2289,10 +2306,34 @@ async function saveNoteContent(noteIdOverride = null) {
     console.log("Note saved");
   } catch (error) {
     console.error("Error saving note:", error);
+  } finally {
+    isSaving = false; // Ensure the lock is always released
+    // Re-apply highlights if they were removed
+    if (hadHighlights) {
+      highlightText(activeSearchQuery);
+    }
   }
 }
 
 // Markdown conversion functions are now imported from ../utils/markdown.js
+
+/**
+ * Removes highlight spans from the text editor, preserving the text.
+ */
+function removeTextHighlights() {
+  if (!currentEditor) return;
+  const highlights = currentEditor.querySelectorAll('span[style*="background-color: yellow"]');
+  highlights.forEach((span) => {
+    const parent = span.parentNode;
+    if (parent) {
+      while (span.firstChild) {
+        parent.insertBefore(span.firstChild, span);
+      }
+      parent.removeChild(span);
+      parent.normalize(); // Merges adjacent text nodes
+    }
+  });
+}
 
 /**
  * Update editor content after external changes (e.g., sync) while preserving state.
