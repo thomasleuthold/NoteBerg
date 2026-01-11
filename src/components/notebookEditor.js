@@ -1767,15 +1767,15 @@ function updateBackgroundSettingsUI() {
  * Set note background
  * @param {string} backgroundType - Background pattern type
  */
-async function setNoteBackground(backgroundType) {
+function setNoteBackground(backgroundType) {
   if (!currentNoteData) return;
 
   currentNoteData.background = backgroundType;
   updateBackgroundSettingsUI();
   redrawBackground();
 
-  // Save the background change
-  await updateNote(currentNoteData.id, { background: backgroundType });
+  // Trigger the main debounced/throttled save instead of a partial update
+  scheduleSave();
 
   // Close the dialog
   const dialog = document.getElementById("background-settings-dialog");
