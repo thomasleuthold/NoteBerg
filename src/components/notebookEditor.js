@@ -28,6 +28,8 @@ let isLassoMode = false; // Manual lasso toggle
 // Layered Canvases
 let staticCanvas = null; // For completed strokes
 let staticCtx = null;
+let highlightCanvas = null; // For search highlights
+let highlightCtx = null;
 let dynamicCanvas = null; // For active drawing
 let dynamicCtx = null;
 let backgroundCanvas = null;
@@ -337,8 +339,9 @@ function renderEditor(container, _noteData) {
         <div id="text-editor" class="text-editor" contenteditable="true"></div>
         <canvas id="background-canvas" class="background-canvas" style="position: absolute; top: 0; left: 0; z-index: 1;"></canvas>
         <canvas id="static-canvas" class="static-canvas" style="position: absolute; top: 0; left: 0; z-index: 2;"></canvas>
-        <canvas id="dynamic-canvas" class="dynamic-canvas" style="position: absolute; top: 0; left: 0; z-index: 3;"></canvas>
-        <canvas id="cursor-canvas" class="cursor-canvas" style="position: absolute; top: 0; left: 0; z-index: 4;"></canvas>
+        <canvas id="highlight-canvas" class="highlight-canvas" style="position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none;"></canvas>
+        <canvas id="dynamic-canvas" class="dynamic-canvas" style="position: absolute; top: 0; left: 0; z-index: 4;"></canvas>
+        <canvas id="cursor-canvas" class="cursor-canvas" style="position: absolute; top: 0; left: 0; z-index: 5; pointer-events: none;"></canvas>
       </div>
     </div>
   `;
@@ -392,16 +395,18 @@ function initCanvasLayer(noteData) {
   // Setup all canvas layers
   backgroundCanvas = document.getElementById("background-canvas");
   staticCanvas = document.getElementById("static-canvas");
+  highlightCanvas = document.getElementById("highlight-canvas");
   dynamicCanvas = document.getElementById("dynamic-canvas");
   cursorCanvas = document.getElementById("cursor-canvas");
 
-  if (!backgroundCanvas || !staticCanvas || !dynamicCanvas || !cursorCanvas) {
+  if (!backgroundCanvas || !staticCanvas || !highlightCanvas || !dynamicCanvas || !cursorCanvas) {
     console.error("One or more canvas layers are missing from the DOM.");
     return;
   }
 
   backgroundCtx = backgroundCanvas.getContext("2d");
   staticCtx = staticCanvas.getContext("2d");
+  highlightCtx = highlightCanvas.getContext("2d");
   dynamicCtx = dynamicCanvas.getContext("2d");
   cursorCtx = cursorCanvas.getContext("2d");
 
@@ -422,6 +427,7 @@ function initCanvasLayer(noteData) {
   // Load existing strokes and deleted stroke IDs
   if (noteData.strokes && Array.isArray(noteData.strokes)) {
     strokes = noteData.strokes;
+    console.log(`[NotebookEditor] Initial strokes loaded: ${strokes.length}`);
     updateContentBounds();
   }
   if (noteData.deletedStrokes && Array.isArray(noteData.deletedStrokes)) {
@@ -535,7 +541,14 @@ function throttledResizeCanvas() {
  * Resize canvas to match container
  */
 function resizeCanvas() {
-  if (!dynamicCanvas || !staticCanvas || !backgroundCanvas || !cursorCanvas || !currentEditor)
+  if (
+    !dynamicCanvas ||
+    !staticCanvas ||
+    !backgroundCanvas ||
+    !cursorCanvas ||
+    !highlightCanvas ||
+    !currentEditor
+  )
     return;
 
   const wrapper = dynamicCanvas.parentElement;
@@ -568,7 +581,7 @@ function resizeCanvas() {
 
   if (widthChanged || heightChanged) {
     // Resize all canvases
-    const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas];
+    const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
     canvases.forEach((cvs) => {
       cvs.width = safeWidth;
       cvs.height = safeHeight;
@@ -598,7 +611,7 @@ function resizeCanvas() {
  * @param {number} additionalHeight - Height to add in pixels (in unscaled space)
  */
 function expandCanvas(additionalHeight) {
-  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas];
+  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
   if (canvases.some((c) => !c)) return;
 
   const now = Date.now();
@@ -616,20 +629,24 @@ function expandCanvas(additionalHeight) {
     dynamic: document.createElement("canvas"),
     static: document.createElement("canvas"),
     background: document.createElement("canvas"),
+    highlight: document.createElement("canvas"),
   };
 
   tempCanvases.dynamic.width =
     tempCanvases.static.width =
     tempCanvases.background.width =
+    tempCanvases.highlight.width =
       dynamicCanvas.width;
   tempCanvases.dynamic.height =
     tempCanvases.static.height =
     tempCanvases.background.height =
+    tempCanvases.highlight.height =
       dynamicCanvas.height;
 
   tempCanvases.dynamic.getContext("2d").drawImage(dynamicCanvas, 0, 0);
   tempCanvases.static.getContext("2d").drawImage(staticCanvas, 0, 0);
   tempCanvases.background.getContext("2d").drawImage(backgroundCanvas, 0, 0);
+  tempCanvases.highlight.getContext("2d").drawImage(highlightCanvas, 0, 0);
 
   // Resize all canvases
   canvases.forEach((cvs) => {
@@ -643,6 +660,7 @@ function expandCanvas(additionalHeight) {
   dynamicCtx.drawImage(tempCanvases.dynamic, 0, 0);
   staticCtx.drawImage(tempCanvases.static, 0, 0);
   backgroundCtx.drawImage(tempCanvases.background, 0, 0);
+  highlightCtx.drawImage(tempCanvases.highlight, 0, 0);
 
   // Draw background pattern on newly expanded area
   drawBackgroundExpansion(tempCanvases.background.height, newHeight);
@@ -1077,9 +1095,10 @@ function handleCanvasPointerUp(_e) {
     updateToolbarButtons();
   }
 
-  // Do NOT clear the cursor canvas here. It wipes search highlights.
-  // Other functions like drawLassoPath and drawEraserCursor are responsible
-  // for clearing the canvas before they draw.
+  // Clear the cursor canvas of any transient indicators like the eraser cursor
+  if (cursorCtx) {
+    cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  }
 
   const wasLassoing = isLassoing;
   isLassoing = false;
@@ -2067,7 +2086,7 @@ function setZoom(newZoom) {
   }
 
   // Apply same CSS transform to all canvases to keep them aligned
-  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas];
+  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
   canvases.forEach((cvs) => {
     if (cvs) {
       cvs.style.transformOrigin = "top left";
@@ -2147,6 +2166,7 @@ function updateContentBounds() {
       staticCanvas.width =
       backgroundCanvas.width =
       cursorCanvas.width =
+      highlightCanvas.width =
         Math.max(minCanvasWidth, rect.width);
 
     redrawCanvas();
@@ -2416,6 +2436,7 @@ async function updateEditorContent(noteId) {
     // Update main state
     strokes = mergedStrokes;
     deletedStrokes = Array.from(new Set([...localDeletedStrokeIds, ...newDeletedStrokeIds]));
+    console.log(`[NotebookEditor] Strokes merged. New total count: ${strokes.length}`);
 
     // Recalculate content bounds and redraw everything
     updateContentBounds();
@@ -2468,10 +2489,20 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   // 2. Trigger handwriting recognition (await to ensure completion)
   if (noteId && strokes && strokes.length > 0) {
     try {
-      console.log("[NotebookEditor] Step 2: Triggering handwriting recognition...");
+      console.log(`[NotebookEditor] Step 2: Sending ${strokes.length} total strokes to recognition...`);
       await forceRecognition(noteId, strokes);
     } catch (err) {
-      console.error("Recognition on close failed:", err);
+      console.warn("Recognition on close failed. Reason:", err);
+      // Add more detail in case the default err.toString() is not useful
+      if (err instanceof Error) {
+        console.warn(`Error details: name=${err.name}, message=${err.message}`);
+      } else {
+        try {
+          console.warn("Full error object:", JSON.stringify(err, null, 2));
+        } catch {
+          console.warn("Could not stringify the error object.");
+        }
+      }
     }
   }
 
@@ -2500,6 +2531,8 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   backgroundCtx = null;
   cursorCanvas = null;
   cursorCtx = null;
+  highlightCanvas = null;
+  highlightCtx = null;
   canvasRect = null;
 
   strokes = [];
@@ -2584,12 +2617,11 @@ function highlightText(query) {
  * @param {string} query - Search query
  */
 function highlightStrokes(query) {
-  if (!query || !currentNoteData?.recognition?.words || !cursorCtx) {
-    console.log("[NotebookEditor] highlightStrokes skipped:", {
-      query,
-      hasData: !!currentNoteData?.recognition?.words,
-      hasCtx: !!cursorCtx,
-    });
+  if (!query || !currentNoteData?.recognition?.words || !highlightCtx) {
+    // Clear previous highlights if query is cleared
+    if (highlightCtx) {
+      highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+    }
     return;
   }
   console.log(
@@ -2604,11 +2636,14 @@ function highlightStrokes(query) {
   const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
   const regex = new RegExp(pattern, "gi");
 
+  // Clear previous highlights
+  highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+
   let matchCount = 0;
-  cursorCtx.save();
-  cursorCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
-  cursorCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
-  cursorCtx.lineWidth = 2;
+  highlightCtx.save();
+  highlightCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
+  highlightCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
+  highlightCtx.lineWidth = 2;
 
   currentNoteData.recognition.words.forEach((word) => {
     regex.lastIndex = 0; // Ensure regex is reset before test
@@ -2633,8 +2668,8 @@ function highlightStrokes(query) {
 
       if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
         console.log("[NotebookEditor] Highlighting match:", word.text, { x, y, w, h });
-        cursorCtx.fillRect(x, y, w, h);
-        cursorCtx.strokeRect(x, y, w, h);
+        highlightCtx.fillRect(x, y, w, h);
+        highlightCtx.strokeRect(x, y, w, h);
       } else {
         console.warn(
           "[NotebookEditor] Could not determine bounding box dimensions for word:",
@@ -2645,6 +2680,6 @@ function highlightStrokes(query) {
       }
     }
   });
-  cursorCtx.restore();
+  highlightCtx.restore();
   console.log(`[NotebookEditor] Finished highlighting. Matches found: ${matchCount}`);
 }

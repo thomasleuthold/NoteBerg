@@ -68,6 +68,8 @@ async function performRecognition(noteId, strokes) {
       })),
     }));
 
+    console.log(`[Recognition] Sending ${formattedStrokes.length} of ${strokes.length} total strokes to recognition service.`);
+
     // Call the web service
     let result;
     try {
@@ -75,13 +77,18 @@ async function performRecognition(noteId, strokes) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formattedStrokes),
+        connectTimeout: 15000, // 15 seconds
       });
 
-      if (!response.ok)
-        throw new Error(`Service returned ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        const errorBody = await response.text(); // Try to get more details from the body
+        throw new Error(
+          `Service returned ${response.status} ${response.statusText}. Body: ${errorBody}`
+        );
+      }
       result = await response.json();
     } catch (err) {
-      console.warn("[Recognition] Service call failed:", err);
+      console.error("[Recognition] Service call failed.", err);
       return;
     }
 
