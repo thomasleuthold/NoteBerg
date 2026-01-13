@@ -10,6 +10,7 @@ import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, generateId, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
 import { getIcon } from "../utils/icons.js";
+import { pickImages, captureFromCamera, processImageFiles } from "../utils/imageUtils.js";
 import { htmlToMarkdown, markdownToHtml } from "../utils/markdown.js";
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
@@ -244,6 +245,8 @@ function renderEditor(container, _noteData) {
     zoomIn: getIcon("zoomIn", 20),
     zoomReset: getIcon("zoomReset", 20),
     info: getIcon("info", 20),
+    image: getIcon("image", 20),
+    camera: getIcon("camera", 20),
   };
 
   container.innerHTML = `
@@ -314,6 +317,13 @@ function renderEditor(container, _noteData) {
             </button>
             <button class="toolbar-btn" id="format-list-btn" title="List">
               •
+            </button>
+            <div class="toolbar-divider"></div>
+            <button class="toolbar-btn" id="insert-image-btn" title="Insert image">
+              ${icons.image}
+            </button>
+            <button class="toolbar-btn" id="insert-camera-btn" title="Take photo">
+              ${icons.camera}
             </button>
           </div>
 
@@ -2003,6 +2013,10 @@ function attachToolbarListeners() {
     ?.addEventListener("click", () => formatText("heading"));
   document.getElementById("format-list-btn")?.addEventListener("click", () => formatText("list"));
 
+  // Image import
+  document.getElementById("insert-image-btn")?.addEventListener("click", handleInsertImage);
+  document.getElementById("insert-camera-btn")?.addEventListener("click", handleInsertCamera);
+
   // Zoom controls
   document.getElementById("zoom-in-btn")?.addEventListener("click", () => adjustZoom(zoomStep));
   document.getElementById("zoom-out-btn")?.addEventListener("click", () => adjustZoom(-zoomStep));
@@ -2134,6 +2148,77 @@ function formatText(format) {
     case "list":
       document.execCommand("insertUnorderedList");
       break;
+  }
+}
+
+/**
+ * Handle image import from file system
+ */
+async function handleInsertImage() {
+  try {
+    const files = await pickImages(true);
+    if (files.length === 0) return;
+
+    console.log(`[Image Import] Processing ${files.length} image(s)...`);
+
+    // Process images with progress
+    const results = await processImageFiles(files, (current, total) => {
+      console.log(`[Image Import] Processing ${current}/${total}...`);
+    });
+
+    // Filter successful results
+    const successful = results.filter(r => r.success);
+
+    if (successful.length > 0) {
+      console.log(`[Image Import] Successfully processed ${successful.length} image(s)`);
+
+      // Add images to note (will implement in Phase 3)
+      // For now, just log the results
+      successful.forEach(result => {
+        console.log(`[Image Import] ${result.fileName}: ${result.data.width}x${result.data.height}, ${result.data.size}KB`);
+      });
+
+      // TODO: Add images to currentNoteData.media array and render them
+      // markNoteEdited();
+    }
+
+    // Report failures
+    const failed = results.filter(r => !r.success);
+    if (failed.length > 0) {
+      console.error(`[Image Import] Failed to process ${failed.length} image(s)`);
+      failed.forEach(result => {
+        console.error(`[Image Import] ${result.fileName}: ${result.error}`);
+      });
+    }
+  } catch (error) {
+    console.error("[Image Import] Error:", error);
+  }
+}
+
+/**
+ * Handle image capture from camera
+ */
+async function handleInsertCamera() {
+  try {
+    const file = await captureFromCamera("environment");
+    if (!file) return;
+
+    console.log("[Camera] Processing captured image...");
+
+    // Process the captured image
+    const results = await processImageFiles([file]);
+
+    if (results[0]?.success) {
+      console.log(`[Camera] Successfully processed image: ${results[0].data.width}x${results[0].data.height}, ${results[0].data.size}KB`);
+
+      // Add image to note (will implement in Phase 3)
+      // TODO: Add image to currentNoteData.media array and render it
+      // markNoteEdited();
+    } else {
+      console.error(`[Camera] Failed to process image: ${results[0]?.error}`);
+    }
+  } catch (error) {
+    console.error("[Camera] Error:", error);
   }
 }
 
