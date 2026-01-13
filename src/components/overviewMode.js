@@ -533,11 +533,14 @@ function escapeHtml(text) {
 /**
  * Initialize overview component
  */
+let currentNotebookId = null;
+
 export function initOverview() {
   // Listen for render overview event from router
   window.addEventListener("renderoverview", async (e) => {
     const container = document.getElementById("overview-content");
     const notebookId = e.detail ? e.detail.notebookId : null;
+    currentNotebookId = notebookId || null;
     if (container) {
       await renderOverview(container, notebookId);
     }
@@ -556,7 +559,7 @@ export function initOverview() {
       // we will assume root overview for auto-refresh.
       // To fix this properly, we'd need to track state.
       // Let's try to grab the ID from the breadcrumb if possible or just render root.
-      await renderOverview(container);
+      await renderOverview(container, currentNotebookId);
     }
   });
 

@@ -58,6 +58,8 @@ let deletedStrokes = []; // Track IDs of deleted strokes for sync
 let dynamicStrokeDrawScheduled = false;
 let dynamicStrokeLastDrawIndex = 0;
 let dynamicStrokeLastY = null;
+let noteEditedSinceOpen = false;
+let pendingExternalRefresh = false;
 let lastExpansionTime = 0;
 const expansionCooldown = 500; // Minimum ms between expansions
 let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
@@ -128,6 +130,10 @@ export function initNotebookEditorComponent() {
     }
     const noteId = getCurrentNoteId();
     if (noteId && currentNoteData && noteId === currentNoteData.id) {
+      if (isDrawing || isErasing || isLassoing || isTransforming) {
+        pendingExternalRefresh = true;
+        return;
+      }
       console.log("External data change detected for current note. Refreshing editor.");
       await updateEditorContent(noteId);
     }
@@ -173,6 +179,8 @@ export async function initNotebookEditor(noteId, searchQuery = null) {
     if (!currentNoteData.background) {
       currentNoteData.background = "none";
     }
+
+    noteEditedSinceOpen = false;
 
     // Initialize default pen settings
     currentPenColorIndex = 0;
@@ -378,6 +386,7 @@ function initTextEditor(noteData) {
   let saveTimeout;
   let resizeTimeout;
   textEditor.addEventListener("input", () => {
+    markNoteEdited();
     // Debounce canvas resize for better performance
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
@@ -1131,6 +1140,7 @@ function handleCanvasPointerUp(_e) {
     isTransforming = false;
     transformMode = null;
     initialStrokesData = [];
+    markNoteEdited();
     scheduleSave();
     return;
   }
@@ -1215,6 +1225,7 @@ function handleCanvasPointerUp(_e) {
       }
     }
 
+    markNoteEdited();
     scheduleSave();
   } else if (wasDrawing) {
     // Stroke was too short (a tap), clear the dynamic canvas
@@ -1226,6 +1237,14 @@ function handleCanvasPointerUp(_e) {
   dynamicStrokeDrawScheduled = false;
   dynamicStrokeLastDrawIndex = 0;
   dynamicStrokeLastY = null;
+
+  if (pendingExternalRefresh && !isDrawing && !isErasing && !isLassoing && !isTransforming) {
+    pendingExternalRefresh = false;
+    const noteId = getCurrentNoteId();
+    if (noteId && currentNoteData && noteId === currentNoteData.id) {
+      updateEditorContent(noteId).catch((err) => console.error("Deferred refresh failed:", err));
+    }
+  }
 }
 
 /**
@@ -1530,6 +1549,7 @@ function eraseStrokesAtPoint(x, y) {
   if (strokes.length < originalLength) {
     // Add erased stroke IDs to deletedStrokes list
     deletedStrokes.push(...erasedStrokeIds);
+    markNoteEdited();
     // Clear selection to avoid stale indices after mutation
     if (selectedStrokes.size > 0) {
       selectedStrokes.clear();
@@ -1855,6 +1875,7 @@ function setNoteBackground(backgroundType) {
   if (!currentNoteData) return;
 
   currentNoteData.background = backgroundType;
+  markNoteEdited();
   updateBackgroundSettingsUI();
   redrawBackground();
 
@@ -2004,6 +2025,7 @@ function attachToolbarListeners() {
  */
 function deleteSelectedStrokes() {
   if (selectedStrokes.size === 0) return;
+  markNoteEdited();
 
   // Track deleted stroke IDs
   const deletedStrokeIds = Array.from(selectedStrokes)
@@ -2061,6 +2083,7 @@ function copySelectedStrokes() {
  */
 function pasteStrokes() {
   if (!clipboardStrokes || clipboardStrokes.length === 0) return;
+  markNoteEdited();
 
   const offset = 30;
   const newStrokes = clipboardStrokes.map((stroke) => {
@@ -2347,6 +2370,10 @@ function scheduleSave() {
   }
 }
 
+function markNoteEdited() {
+  noteEditedSinceOpen = true;
+}
+
 /**
  * Save note content immediately (without debouncing)
  */
@@ -2528,6 +2555,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   if (isDrawing && currentStroke && currentStroke.x && currentStroke.x.length > 1) {
     console.log("[NotebookEditor] Committing in-progress stroke on cleanup.");
     strokes.push({ ...currentStroke });
+    markNoteEdited();
   }
 
   // Clear any pending debounced saves since we're doing an immediate save now
@@ -2538,7 +2566,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
 
   // SEQUENCE ON CLOSE:
   // 1. Persist strokes to storage (await to ensure completion)
-  if (noteId && currentEditor) {
+  if (noteId && currentEditor && noteEditedSinceOpen) {
     try {
       console.log("[NotebookEditor] Step 1: Persisting strokes on close...");
       await saveNoteContent(noteId);
@@ -2548,7 +2576,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   }
 
   // 2. Trigger handwriting recognition (await to ensure completion)
-  if (noteId && strokes && strokes.length > 0) {
+  if (noteId && strokes && strokes.length > 0 && noteEditedSinceOpen) {
     try {
       console.log(
         `[NotebookEditor] Step 2: Sending ${strokes.length} total strokes to recognition...`,
@@ -2570,7 +2598,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   }
 
   // 3. Trigger sync in background (don't await - let it run async)
-  if (noteId) {
+  if (noteId && noteEditedSinceOpen) {
     console.log("[NotebookEditor] Step 3: Triggering sync in background...");
     stopInactivityTimer();
     syncOnNoteClose(noteId).catch((err) => console.error("Background sync failed:", err));
@@ -2610,6 +2638,8 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   transformMode = null;
   clipboardStrokes = null;
   activeSearchQuery = null;
+  noteEditedSinceOpen = false;
+  pendingExternalRefresh = false;
 }
 /**
  * Highlight search terms in text and strokes
