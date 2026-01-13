@@ -55,6 +55,9 @@ const handleSize = 24; // Size of selection handles
 let currentStroke = [];
 let strokes = [];
 let deletedStrokes = []; // Track IDs of deleted strokes for sync
+let dynamicStrokeDrawScheduled = false;
+let dynamicStrokeLastDrawIndex = 0;
+let dynamicStrokeLastY = null;
 let lastExpansionTime = 0;
 const expansionCooldown = 500; // Minimum ms between expansions
 let autoSwitchedToDrawMode = false; // Track if draw mode was auto-activated by stylus
@@ -189,6 +192,13 @@ export async function initNotebookEditor(noteId, searchQuery = null) {
 
     // Initialize canvas layer
     initCanvasLayer(currentNoteData);
+
+    // Defensive: always default to text mode on open
+    autoSwitchedToDrawMode = false;
+    autoActivatedEraserMode = false;
+    isEraserMode = false;
+    isLassoMode = false;
+    switchToTextMode();
 
     // Initialize zoom to ensure transforms are applied on load
     setZoom(1.0);
@@ -921,6 +931,9 @@ function handleCanvasPointerDown(e) {
     isDrawing = true;
     needsCanvasExpansion = false; // Reset expansion flag at the start of a stroke
     currentStroke = [];
+    dynamicStrokeLastDrawIndex = 0;
+    dynamicStrokeLastY = null;
+    dynamicStrokeDrawScheduled = false;
 
     // Clear selection when starting a new drawing
     if (selectedStrokes.size > 0) {
@@ -953,8 +966,46 @@ function handleCanvasPointerDown(e) {
     dynamicCtx.lineWidth = currentStroke.width || 2;
     dynamicCtx.lineCap = "round";
     dynamicCtx.lineJoin = "round";
+    // Clear dynamic layer once per stroke instead of on every move.
+    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
   }
   return true;
+}
+
+/**
+ * Draw only the new stroke segments since the last frame.
+ */
+function drawDynamicStrokeSegments() {
+  dynamicStrokeDrawScheduled = false;
+
+  if (!isDrawing || !currentStroke?.x || !dynamicCtx) return;
+
+  const len = currentStroke.x.length;
+  const startIndex = Math.max(1, dynamicStrokeLastDrawIndex + 1);
+  if (startIndex >= len) {
+    if (dynamicStrokeLastY !== null) {
+      updateExpansionZoneIndicator(dynamicStrokeLastY);
+    }
+    return;
+  }
+
+  dynamicCtx.beginPath();
+  dynamicCtx.moveTo(currentStroke.x[startIndex - 1], currentStroke.y[startIndex - 1]);
+  for (let i = startIndex; i < len; i++) {
+    dynamicCtx.lineTo(currentStroke.x[i], currentStroke.y[i]);
+  }
+  dynamicCtx.stroke();
+
+  dynamicStrokeLastDrawIndex = len - 1;
+  if (dynamicStrokeLastY !== null) {
+    updateExpansionZoneIndicator(dynamicStrokeLastY);
+  }
+}
+
+function scheduleDynamicStrokeDraw() {
+  if (dynamicStrokeDrawScheduled) return;
+  dynamicStrokeDrawScheduled = true;
+  requestAnimationFrame(drawDynamicStrokeSegments);
 }
 
 /**
@@ -1046,12 +1097,8 @@ function handleCanvasPointerMove(e) {
     if (dynamicCanvas.height - y < 300) {
       needsCanvasExpansion = true;
     }
-
-    // Clear the dynamic (top) canvas and redraw the current stroke
-    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
-    sharedDrawStroke(dynamicCtx, currentStroke, null, false); // No need for palette, already set in context
-
-    updateExpansionZoneIndicator(y);
+    dynamicStrokeLastY = y;
+    scheduleDynamicStrokeDraw();
   }
 }
 
@@ -1174,6 +1221,11 @@ function handleCanvasPointerUp(_e) {
     dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
     currentStroke = [];
   }
+
+  // Reset dynamic stroke drawing state
+  dynamicStrokeDrawScheduled = false;
+  dynamicStrokeLastDrawIndex = 0;
+  dynamicStrokeLastY = null;
 }
 
 /**
