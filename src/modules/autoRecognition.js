@@ -68,7 +68,9 @@ async function performRecognition(noteId, strokes) {
       })),
     }));
 
-    console.log(`[Recognition] Sending ${formattedStrokes.length} of ${strokes.length} total strokes to recognition service.`);
+    console.log(
+      `[Recognition] Sending ${formattedStrokes.length} of ${strokes.length} total strokes to recognition service.`,
+    );
 
     // Call the web service
     let result;
@@ -83,7 +85,7 @@ async function performRecognition(noteId, strokes) {
       if (!response.ok) {
         const errorBody = await response.text(); // Try to get more details from the body
         throw new Error(
-          `Service returned ${response.status} ${response.statusText}. Body: ${errorBody}`
+          `Service returned ${response.status} ${response.statusText}. Body: ${errorBody}`,
         );
       }
       result = await response.json();
