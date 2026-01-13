@@ -1,0 +1,12 @@
+{
+  "identifier": "recognition",
+  "description": "Allow access to local recognition service",
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "http://localhost:5000/*" }],
+      "deny": []
+    }
+  ]
+}

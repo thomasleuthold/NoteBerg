@@ -7,7 +7,13 @@
       "Bash(npm run check:*)",
       "Bash(npm run format:check:*)",
       "Bash(npm run format-check:*)",
-      "Bash(npm run lint-check:*)"
+      "Bash(npm run lint-check:*)",
+      "Bash(npx biome:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo update:*)",
+      "Bash(npx @biomejs/biome check:*)",
+      "Bash(npx @biomejs/biome format:*)"
     ]
   }
 }

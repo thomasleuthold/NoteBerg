@@ -3,22 +3,22 @@
  * Handles sync status display and sync triggering
  */
 
-import { fullSync, isAuthenticated } from "./nextcloudSync.js";
-import { getAllNotebooksForSync, getAllNotesForSync, saveNote, saveNotebook } from "./storage.js";
-
-let isSyncing = false;
+import { APP_FULL_VERSION } from "../config.js";
+import { isAuthenticated } from "./nextcloudSync.js";
+import { getIsSyncing, onSyncStatusChange, performSync } from "./sync.js";
 
 /**
  * Update sync status display
  */
-export function updateSyncStatus() {
+export async function updateSyncStatus() {
   const syncStatus = document.querySelector(".sync-status");
   const syncIndicator = document.querySelector(".sync-indicator");
   const syncText = document.querySelector(".sync-text");
 
   if (!syncStatus || !syncIndicator || !syncText) return;
 
-  const authenticated = isAuthenticated();
+  const authenticated = await isAuthenticated();
+  const isSyncing = getIsSyncing();
 
   if (isSyncing) {
     syncStatus.dataset.status = "syncing";
@@ -39,91 +39,30 @@ export function updateSyncStatus() {
 }
 
 /**
- * Perform sync
+ * Perform manual sync (triggered by user clicking footer)
  */
-async function performSync() {
-  if (isSyncing || !isAuthenticated()) return;
-
-  isSyncing = true;
-  updateSyncStatus();
+async function handleManualSync() {
+  if (getIsSyncing() || !(await isAuthenticated())) return;
 
   try {
-    const notebooks = await getAllNotebooksForSync();
-    const notes = await getAllNotesForSync();
-
-    // Debug: Show unsynced items count
-    const unsyncedNotebooks = notebooks.filter((n) => n.synced === false);
-    const unsyncedNotes = notes.filter((n) => n.synced === false);
-    console.log(
-      `Before sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`,
-    );
-
-    const result = await fullSync(notebooks, notes);
-
-    // Mark uploaded items as synced in local storage
-    for (const id of result.uploaded.notebooks.uploadedIds || []) {
-      const notebook = notebooks.find((n) => n.id === id);
-      if (notebook) {
-        // Don't modify the 'modified' timestamp when marking as synced
-        console.log(`Marking notebook ${id} as synced (was: ${notebook.synced})`);
-        notebook.synced = true;
-        await saveNotebook(notebook);
-        console.log(`Saved notebook ${id} with synced=${notebook.synced}`);
-      }
-    }
-
-    for (const id of result.uploaded.notes.uploadedIds || []) {
-      const note = notes.find((n) => n.id === id);
-      if (note) {
-        // Don't modify the 'modified' timestamp when marking as synced
-        console.log(`Marking note ${id} as synced (was: ${note.synced})`);
-        note.synced = true;
-        await saveNote(note);
-        console.log(`Saved note ${id} with synced=${note.synced}`);
-      }
-    }
-
-    // Save downloaded notebooks to local storage
-    let downloadedNotebooks = 0;
-    let downloadedNotes = 0;
-
-    for (const notebook of result.downloaded.notebooks) {
-      await saveNotebook(notebook);
-      downloadedNotebooks++;
-    }
-
-    // Save downloaded notes to local storage
-    for (const note of result.downloaded.notes) {
-      await saveNote(note);
-      downloadedNotes++;
-    }
-
-    const syncSummary = `Sync complete!\nUploaded: ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes\nDownloaded: ${downloadedNotebooks} notebooks, ${downloadedNotes} notes\n\nBefore sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`;
-    console.log(syncSummary);
+    await performSync({ silent: false, skipConflictResolution: false });
 
     // Show success briefly
     const syncText = document.querySelector(".sync-text");
     if (syncText) {
       syncText.textContent = "Sync successful!";
       setTimeout(() => {
-        isSyncing = false;
         updateSyncStatus();
       }, 2000);
     }
-
-    // Trigger a UI refresh if notes/notebooks were downloaded
-    if (downloadedNotebooks > 0 || downloadedNotes > 0) {
-      window.dispatchEvent(new CustomEvent("notes-updated"));
-    }
   } catch (error) {
-    console.error("Sync failed:", error);
+    console.error("Manual sync failed:", error);
 
     // Show error briefly
     const syncText = document.querySelector(".sync-text");
     if (syncText) {
       syncText.textContent = "Sync failed!";
       setTimeout(() => {
-        isSyncing = false;
         updateSyncStatus();
       }, 3000);
     }
@@ -136,19 +75,54 @@ async function performSync() {
 export function initFooter() {
   const syncStatus = document.querySelector(".sync-status");
 
+  // Create recognition indicator
+  if (syncStatus?.parentElement) {
+    const recognitionIndicator = document.createElement("div");
+    recognitionIndicator.className = "recognition-indicator";
+    recognitionIndicator.style.display = "none";
+    recognitionIndicator.style.alignItems = "center";
+    recognitionIndicator.style.marginLeft = "16px";
+    recognitionIndicator.style.color = "#3b82f6"; // Blue
+    recognitionIndicator.title = "Handwriting recognition running...";
+    // Pen icon
+    recognitionIndicator.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
+
+    // Insert after sync status
+    syncStatus.insertAdjacentElement("afterend", recognitionIndicator);
+
+    // Listen for recognition events
+    window.addEventListener("recognition-start", () => {
+      recognitionIndicator.style.display = "flex";
+    });
+    window.addEventListener("recognition-end", () => {
+      recognitionIndicator.style.display = "none";
+    });
+  }
+
   if (syncStatus) {
-    syncStatus.addEventListener("click", () => {
-      if (isAuthenticated() && !isSyncing) {
-        performSync();
+    syncStatus.addEventListener("click", async () => {
+      if ((await isAuthenticated()) && !getIsSyncing()) {
+        handleManualSync();
       }
     });
   }
+
+  // Register callback to update status when sync state changes
+  onSyncStatusChange(() => {
+    updateSyncStatus();
+  });
 
   // Update status on load and when auth changes
   updateSyncStatus();
 
   // Listen for auth changes
   window.addEventListener("nextcloud-auth-changed", updateSyncStatus);
+
+  // Initialize version display
+  const versionEl = document.querySelector(".app-version");
+  if (versionEl) {
+    versionEl.textContent = `v${APP_FULL_VERSION}`;
+  }
 
   console.log("Footer initialized");
 }

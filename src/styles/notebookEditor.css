@@ -19,41 +19,136 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
+  flex-direction: column;
+  height: auto;
+  padding: 0;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  gap: var(--spacing-md);
+  gap: 6px;
   flex-shrink: 0;
+}
+
+.toolbar-row {
+  display: flex;
+  width: 100%;
+  padding: 4px 2px;
+}
+
+.toolbar-row-top {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 0px;
+  margin-bottom: 0px;
+}
+
+.toolbar-row-bottom {
+  min-height: 20px;
+  background-color: var(--bg-secondary);
+  margin-top: 2px;
+  margin-bottom: 4px;
+  padding-top: 0px;
+  margin-left: 5px;
 }
 
 .toolbar-section {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  gap: 4px;
+  padding-bottom: 0px;
+  margin-bottom: 0px;
+}
+
+.toolbar-tabs {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 2px 6px 0px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.toolbar-tab {
+  border: 1px solid var(--border-primary);
+  border-bottom: 0px;
+  border-radius: var(--radius-sm);
+  border-bottom-left-radius: 0px;
+  border-bottom-right-radius: 0px;
+  background: var(--bg-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  min-height: 28px;
+  min-width: 52px;
+  padding: 4px 1px 0px 1px;
+  margin-bottom: 0px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.toolbar-tab:hover {
+  background: var(--bg-hover);
+}
+
+.toolbar-tab.active {
+  background: var(--color-primary);
+  color: white;
+  min-height: 32px;
 }
 
 .toolbar-section-right {
   margin-left: auto;
 }
 
+.text-tools {
+  display: flex;
+}
+
+.pen-tools {
+  display: none;
+}
+
+/* Toolbar button container for dialogs */
+.toolbar-btn-container {
+  position: relative;
+  display: inline-block;
+}
+
 .toolbar-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: transparent;
-  border: 1px solid transparent;
+  width: auto;
+  height: auto;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px 1px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
 }
 
+.toolbar-btn-hidden {
+  display: none;
+}
+.toolbar-btn svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  padding: 4px;
+}
+
 .toolbar-btn-text {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -72,7 +167,7 @@
   width: 1px;
   height: 24px;
   background: var(--border-color);
-  margin: 0 var(--spacing-xs);
+  margin: 0 4px;
 }
 
 .zoom-indicator {
@@ -80,7 +175,7 @@
   align-items: center;
   justify-content: center;
   min-width: 45px;
-  padding: 0 var(--spacing-xs);
+  padding: 0 4px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -93,14 +188,18 @@
   flex: 1;
   overflow: auto;
   background: var(--bg-primary);
-  margin: 0 var(--spacing-md);
+  margin: 0 12px;
+  /* Enable smooth touch scrolling */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 /* Text editor layer */
 .text-editor {
   position: relative;
   min-height: 100%;
-  padding: var(--spacing-xl);
+  padding: 20px;
   font-family: var(--font-family);
   font-size: 16px;
   line-height: 1.6;
@@ -108,6 +207,12 @@
   outline: none;
   z-index: 1;
   background: transparent;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+#text-editor {
+  position: relative;
+  z-index: 1; /* Behind the canvases */
 }
 
 .text-editor:focus {
@@ -163,22 +268,46 @@
   margin: 0.25em 0;
 }
 
-/* Canvas drawing layer */
-.drawing-canvas {
+/* Background canvas layer (patterns/rules) */
+.background-canvas {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   pointer-events: none;
+  z-index: 0;
+  display: block;
+  touch-action: none;
+}
+
+/* Canvas drawing layer (strokes) */
+.drawing-canvas,
+.cursor-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10; /* On top of the text editor */
+  pointer-events: none; /* Default to none to allow text interaction */
+  touch-action: none; /* Prevent browser gesture handling */
+}
+
+.drawing-canvas {
+  width: 100%;
   z-index: 2;
   cursor: crosshair;
-  touch-action: none; /* Disable browser touch handling for better control */
   display: block;
 }
 
 /* When in draw mode, canvas gets pointer events */
 .drawing-canvas.active {
   pointer-events: auto;
+}
+
+/* Cursor canvas layer (eraser cursor, etc.) */
+.cursor-canvas {
+  width: 100%;
+  z-index: 3;
+  display: block;
 }
 
 /* Expansion zone indicator */
@@ -189,7 +318,7 @@
   height: 2px;
   background: linear-gradient(to right, transparent, var(--color-primary), transparent);
   pointer-events: none;
-  z-index: 3;
+  z-index: 4;
   display: none;
   opacity: 0.4;
   transition: opacity 0.2s ease;
@@ -213,28 +342,121 @@
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .editor-toolbar {
-    padding: var(--spacing-xs);
-    gap: var(--spacing-xs);
+    padding: 6px;
+    gap: 4px;
   }
 
   .toolbar-btn {
-    width: 36px;
-    height: 36px;
-    font-size: 16px;
+    padding: 6px;
+  }
+
+  .toolbar-btn svg {
+    width: 18px;
+    height: 18px;
   }
 
   .text-editor {
-    padding: var(--spacing-md);
+    padding: 12px;
     font-size: 14px;
   }
 
   .editor-content-wrapper {
-    margin: 0 var(--spacing-xs);
+    margin: 0 6px;
   }
 
   .mode-indicator {
     display: none;
   }
+}
+
+/* Pen settings dialog */
+.pen-settings-dialog {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  display: none;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: 200px;
+  margin-top: 5px;
+}
+
+.pen-settings-section {
+  margin-bottom: 12px;
+}
+
+.pen-settings-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.pen-color-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.pen-color-option {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+
+.pen-color-option.active {
+  border-color: var(--color-primary);
+  transform: scale(1.1);
+}
+
+.pen-width-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pen-width-slider {
+  width: 100%;
+}
+
+/* Background settings dialog */
+.background-settings-dialog {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  display: none;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: 200px;
+  margin-top: 5px;
+}
+
+.background-option {
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  border: 1px solid var(--border-primary);
+}
+
+.background-option:hover {
+  background-color: var(--bg-hover);
+}
+
+.background-option.active {
+  background-color: var(--color-primary-light);
+  border-color: var(--color-primary);
 }
 
 /* Print styles */

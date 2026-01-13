@@ -131,3 +131,175 @@
   font-size: 0.75rem;
   padding: var(--spacing-xs) var(--spacing-sm);
 }
+
+/* Overview Mode - Quick Notes List */
+.quick-notes-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+/* Overview Mode - Notes Grid */
+.notes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+/* Preview text layer - scaled down versions of text-editor styles */
+.preview-text-layer.text-editor h1 {
+  font-size: 16px; /* 2em of 8px */
+  font-weight: 700;
+  margin: 8px 0;
+}
+
+.preview-text-layer.text-editor h2 {
+  font-size: 12px; /* 1.5em of 8px */
+  font-weight: 700;
+  margin: 6px 0;
+}
+
+.preview-text-layer.text-editor h3 {
+  font-size: 10px; /* 1.25em of 8px */
+  font-weight: 700;
+  margin: 5px 0;
+}
+
+.preview-text-layer.text-editor p {
+  margin: 6px 0;
+}
+
+.preview-text-layer.text-editor ul,
+.preview-text-layer.text-editor ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.preview-text-layer.text-editor li {
+  margin: 2px 0;
+}
+
+/* Licenses Dialog */
+.licenses-intro {
+  margin-bottom: var(--spacing-lg);
+  color: var(--text-secondary);
+}
+
+.licenses-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.license-item {
+  padding: var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.license-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-xs);
+  gap: var(--spacing-sm);
+}
+
+.license-name {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.license-name a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.license-name a:hover {
+  text-decoration: underline;
+}
+
+.license-type {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.license-description {
+  margin: var(--spacing-xs) 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.license-link {
+  font-size: 0.875rem;
+  color: var(--color-primary);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.license-link:hover {
+  text-decoration: underline;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 24px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--border-secondary);
+  transition: 0.3s;
+  border-radius: 24px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+  background-color: var(--color-primary);
+}
+
+input:focus + .toggle-slider {
+  box-shadow: 0 0 0 2px var(--color-primary-light);
+}
+
+input:checked + .toggle-slider:before {
+  transform: translateX(24px);
+}
+
+input:disabled + .toggle-slider {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

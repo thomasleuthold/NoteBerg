@@ -9,6 +9,7 @@ import {
   restoreNote,
   restoreNotebook,
 } from "../modules/storage.js";
+import { getIcon } from "../utils/icons.js";
 
 /**
  * Render recycle bin UI
@@ -22,6 +23,10 @@ export async function renderRecycleBin(container) {
 
     const totalItems = deletedNotebooks.length + deletedNotes.length;
 
+    const notebookIcon = getIcon("notebook", 24);
+    const noteIcon = getIcon("note", 24);
+    const restoreIcon = getIcon("restore", 16);
+
     // Build HTML for notebooks
     const notebooksHtml =
       deletedNotebooks.length > 0
@@ -29,7 +34,9 @@ export async function renderRecycleBin(container) {
             .map(
               (notebook) => `
       <div class="recycle-item" data-type="notebook" data-id="${notebook.id}">
-        <div class="recycle-item-icon">📓</div>
+        <div class="recycle-item-icon">
+          ${notebookIcon}
+        </div>
         <div class="recycle-item-content">
           <div class="recycle-item-title">${escapeHtml(notebook.title)}</div>
           <div class="recycle-item-meta">
@@ -39,11 +46,7 @@ export async function renderRecycleBin(container) {
         </div>
         <div class="recycle-item-actions">
           <button class="btn-restore" data-type="notebook" data-id="${notebook.id}" title="Restore">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-              <path d="M21 3v5h-5"/>
-              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-            </svg>
+            ${restoreIcon}
             Restore
           </button>
         </div>
@@ -60,7 +63,9 @@ export async function renderRecycleBin(container) {
             .map(
               (note) => `
       <div class="recycle-item" data-type="note" data-id="${note.id}">
-        <div class="recycle-item-icon">📝</div>
+        <div class="recycle-item-icon">
+          ${noteIcon}
+        </div>
         <div class="recycle-item-content">
           <div class="recycle-item-title">${escapeHtml(note.title || "Untitled")}</div>
           <div class="recycle-item-meta">
@@ -70,11 +75,7 @@ export async function renderRecycleBin(container) {
         </div>
         <div class="recycle-item-actions">
           <button class="btn-restore" data-type="note" data-id="${note.id}" title="Restore">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-              <path d="M21 3v5h-5"/>
-              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-            </svg>
+            ${restoreIcon}
             Restore
           </button>
         </div>
@@ -94,7 +95,9 @@ export async function renderRecycleBin(container) {
           totalItems === 0
             ? `
           <div class="empty-state">
-            <div class="empty-state-icon" style="font-size: 4rem; margin-bottom: 1rem;">🗑️</div>
+            <div class="empty-state-icon" style="margin-bottom: 1rem; color: var(--text-secondary);">
+              ${getIcon("trash", 64)}
+            </div>
             <h3>Recycle Bin is Empty</h3>
             <p>Deleted notebooks and notes will appear here.</p>
           </div>

@@ -34,9 +34,17 @@ export function navigateTo(mode, params = {}) {
   currentMode = mode;
 
   // Clear notebook/note context when navigating to overview, settings, or recycle bin
-  if (mode === "overview" || mode === "settings" || mode === "recyclebin") {
+  if (mode === "settings" || mode === "recyclebin") {
     currentNotebookId = null;
     currentNoteId = null;
+  } else if (mode === "overview") {
+    currentNoteId = null;
+    // Only clear notebook ID if not provided in params (root overview)
+    if (params.notebookId !== undefined) {
+      currentNotebookId = params.notebookId;
+    } else {
+      currentNotebookId = null;
+    }
   } else {
     // Store params for notebook/note modes
     if (params.noteId !== undefined) {
@@ -108,12 +116,13 @@ function updateView(mode, params) {
 /**
  * Render overview mode
  */
-function renderOverview(container) {
+function renderOverview(container, params = {}) {
   // Create the overview content container
   container.innerHTML = '<div id="overview-content" class="overview-content"></div>';
 
   // Dispatch event for overview component to render itself
-  window.dispatchEvent(new CustomEvent("renderoverview"));
+  const notebookId = params.notebookId || currentNotebookId;
+  window.dispatchEvent(new CustomEvent("renderoverview", { detail: { notebookId } }));
 }
 
 /**

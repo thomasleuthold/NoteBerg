@@ -3,6 +3,7 @@
  * Manages breadcrumb navigation in the header
  */
 
+import { getIcon } from "../utils/icons.js";
 import { navigateTo } from "./router.js";
 import { getNote, getNotebook } from "./storage.js";
 
@@ -16,20 +17,37 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
   const breadcrumb = document.getElementById("breadcrumb");
   if (!breadcrumb) return;
 
+  const homeIcon = getIcon("home", 24);
+
   let breadcrumbHtml = `
     <button id="nav-overview" class="breadcrumb-item" aria-label="Home" title="Home">
-      🏠
+      ${homeIcon}
     </button>
   `;
 
-  // Add notebook if we're in a notebook
-  if (mode === "notebook" && notebookId) {
+  // If we have a noteId, get the notebookId from the note
+  let actualNotebookId = notebookId;
+  let note = null;
+
+  if (mode === "notebook" && noteId) {
     try {
-      const notebook = await getNotebook(notebookId);
+      note = await getNote(noteId);
+      if (note?.notebookId) {
+        actualNotebookId = note.notebookId;
+      }
+    } catch (error) {
+      console.error("Error loading note for breadcrumb:", error);
+    }
+  }
+
+  // Add notebook if we're in a notebook
+  if (mode === "notebook" && actualNotebookId) {
+    try {
+      const notebook = await getNotebook(actualNotebookId);
       if (notebook) {
         breadcrumbHtml += `
           <span class="breadcrumb-separator">→</span>
-          <button class="breadcrumb-item breadcrumb-notebook" data-notebook-id="${notebookId}">
+          <button class="breadcrumb-item breadcrumb-notebook" data-notebook-id="${actualNotebookId}">
             ${escapeHtml(notebook.title)}
           </button>
         `;
@@ -40,20 +58,13 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
   }
 
   // Add note if we have one open
-  if (mode === "notebook" && noteId) {
-    try {
-      const note = await getNote(noteId);
-      if (note) {
-        breadcrumbHtml += `
-          <span class="breadcrumb-separator">→</span>
-          <span class="breadcrumb-item breadcrumb-current">
-            ${escapeHtml(note.title || "Untitled")}
-          </span>
-        `;
-      }
-    } catch (error) {
-      console.error("Error loading note for breadcrumb:", error);
-    }
+  if (mode === "notebook" && noteId && note) {
+    breadcrumbHtml += `
+      <span class="breadcrumb-separator">→</span>
+      <span class="breadcrumb-item breadcrumb-current">
+        ${escapeHtml(note.title || "Untitled")}
+      </span>
+    `;
   }
 
   breadcrumb.innerHTML = breadcrumbHtml;
@@ -68,7 +79,7 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
   if (notebookBtn) {
     notebookBtn.addEventListener("click", () => {
       const nbId = notebookBtn.dataset.notebookId;
-      navigateTo("notebook", { notebookId: nbId });
+      navigateTo("overview", { notebookId: nbId });
     });
   }
 }
@@ -88,6 +99,12 @@ function escapeHtml(text) {
  * Initialize breadcrumb component
  */
 export function initBreadcrumb() {
+  // Initialize the home icon on page load
+  const navOverview = document.getElementById("nav-overview");
+  if (navOverview) {
+    navOverview.innerHTML = getIcon("home", 24);
+  }
+
   // Update breadcrumb on navigation
   window.addEventListener("navigate", async (e) => {
     const { mode } = e.detail;

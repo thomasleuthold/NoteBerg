@@ -8,6 +8,13 @@
 
 import { fetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { APP_NAME, APP_VERSION } from "../config.js";
+import {
+  deleteSecureCredential,
+  getSecureCredential,
+  saveSecureCredential,
+} from "./secureStorage.js";
+import { isNextcloudEncryptionEnabled } from "./storage.js";
 import {
   getAllRequiredFolders,
   getLegacyNotebookPath,
@@ -24,34 +31,217 @@ import {
 import { addNoteTombstone, cleanupOldTombstones, createEmptyTombstone } from "./tombstones.js";
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
+const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
 
 /**
- * Get stored Nextcloud credentials
+ * Encrypt note data for Nextcloud upload if encryption is enabled
+ * Handles conversion between local encryption and Nextcloud encryption formats
+ * @param {Object} note - Note object (may be locally encrypted)
+ * @returns {Promise<Object>} - Note object (in Nextcloud format)
  */
-export function getStoredCredentials() {
-  const stored = localStorage.getItem(NEXTCLOUD_STORAGE_KEY);
-  return stored ? JSON.parse(stored) : null;
+async function encryptNoteForNextcloud(note) {
+  const shouldEncryptForNextcloud = await isNextcloudEncryptionEnabled();
+  // Note is already decrypted by storage.js before reaching here
+  const decryptedNote = note;
+
+  // Step 2: Encrypt for Nextcloud if enabled
+  if (!shouldEncryptForNextcloud) {
+    // Nextcloud encryption disabled - return decrypted note
+    return decryptedNote;
+  }
+
+  // Nextcloud encryption enabled - encrypt the decrypted note
+  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+  const { encryptObject } = await import("./encryption.js");
+
+  if (!isAppUnlocked()) {
+    throw new Error("Cannot encrypt note for Nextcloud - app is locked");
+  }
+
+  try {
+    const encryptionKey = getEncryptionKey();
+
+    // Encrypt content and strokes for Nextcloud storage
+    const encryptedContent = await encryptObject(decryptedNote.content || "", encryptionKey);
+    const encryptedStrokes = await encryptObject(decryptedNote.strokes || [], encryptionKey);
+
+    return {
+      ...decryptedNote,
+      content: encryptedContent,
+      strokes: encryptedStrokes,
+      nextcloudEncrypted: true, // Mark as Nextcloud-encrypted
+    };
+  } catch (error) {
+    console.error("[NextcloudSync] Failed to encrypt note for Nextcloud:", error);
+    throw new Error(`Encryption failed: ${error.message}`);
+  }
 }
 
 /**
- * Save Nextcloud credentials
+ * Decrypt note data from Nextcloud and prepare it for local storage
+ * @param {Object} note - Note object (possibly encrypted for Nextcloud)
+ * @returns {Promise<Object>} - Note prepared for local storage (encrypted if local encryption enabled)
  */
-function saveCredentials(credentials) {
-  localStorage.setItem(NEXTCLOUD_STORAGE_KEY, JSON.stringify(credentials));
+async function decryptNoteFromNextcloud(note) {
+  // Step 1: Decrypt from Nextcloud format if needed
+  let decryptedNote = note;
+
+  if (note?.nextcloudEncrypted) {
+    // Import encryption modules
+    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+    const { decryptObject } = await import("./encryption.js");
+
+    if (!isAppUnlocked()) {
+      throw new Error("Cannot decrypt note - app is locked");
+    }
+
+    try {
+      const encryptionKey = getEncryptionKey();
+
+      // Decrypt content and strokes from Nextcloud encryption
+      const decryptedContent = await decryptObject(note.content, encryptionKey);
+      const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
+
+      decryptedNote = {
+        ...note,
+        content: decryptedContent,
+        strokes: decryptedStrokes,
+        nextcloudEncrypted: undefined, // Remove Nextcloud encryption flag
+      };
+    } catch (error) {
+      console.error("[NextcloudSync] Failed to decrypt note from Nextcloud:", error);
+      throw new Error("Failed to decrypt note from Nextcloud");
+    }
+  }
+
+  // Return plain text note (storage.js will handle local encryption on save)
+  return decryptedNote;
 }
 
 /**
- * Clear stored credentials
+ * Migrate credentials from localStorage to secure storage
+ * Called once on app startup
  */
-export function clearCredentials() {
-  localStorage.removeItem(NEXTCLOUD_STORAGE_KEY);
+export async function migrateCredentials() {
+  console.log("[MIGRATION] Starting credential migration check...");
+  try {
+    // Check if credentials exist in localStorage
+    const legacyCredString = localStorage.getItem(LEGACY_STORAGE_KEY);
+    console.log("[MIGRATION] localStorage credentials:", legacyCredString ? "found" : "not found");
+
+    if (!legacyCredString) {
+      console.log("[MIGRATION] No legacy credentials found, skipping migration");
+      return;
+    }
+
+    // Check if credentials already exist in secure storage
+    console.log("[MIGRATION] Checking if credentials already exist in secure storage...");
+    const existingCreds = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    console.log("[MIGRATION] Existing secure credentials:", existingCreds ? "found" : "not found");
+
+    if (existingCreds) {
+      console.log(
+        "[MIGRATION] Credentials already exist in secure storage, cleaning up localStorage",
+      );
+      // Clean up localStorage since migration already happened
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      return;
+    }
+
+    // Migrate to secure storage
+    console.log("[MIGRATION] Migrating credentials from localStorage to secure storage...");
+    console.log("[MIGRATION] Credentials to migrate:", `${legacyCredString.substring(0, 50)}...`);
+    await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, legacyCredString);
+    console.log("[MIGRATION] Credentials saved to secure storage");
+
+    // Remove from localStorage after successful migration
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    console.log("[MIGRATION] Migration complete, localStorage cleaned up");
+  } catch (error) {
+    console.error("[MIGRATION] Failed to migrate credentials:", error);
+    console.error("[MIGRATION] Error details:", error.message, error.stack);
+    // Don't throw - we don't want to break app startup if migration fails
+    // User can still log in again manually
+  }
+}
+
+/**
+ * Get stored Nextcloud credentials from secure storage
+ */
+export async function getStoredCredentials() {
+  try {
+    console.log("[NextcloudSync] Getting credentials from secure storage...");
+    const credString = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    console.log("[NextcloudSync] Credential string retrieved:", credString ? "YES" : "NO");
+
+    if (credString) {
+      const parsed = JSON.parse(credString);
+      console.log("[NextcloudSync] Parsed credentials:", {
+        hasServerUrl: !!parsed.serverUrl,
+        hasLoginName: !!parsed.loginName,
+        hasAppPassword: !!parsed.appPassword,
+      });
+      return parsed;
+    }
+
+    console.log("[NextcloudSync] No credentials found in secure storage");
+    return null;
+  } catch (error) {
+    console.error("[NextcloudSync] Failed to get credentials from secure storage:", error);
+    return null;
+  }
+}
+
+/**
+ * Save Nextcloud credentials to secure storage
+ */
+async function saveCredentials(credentials) {
+  try {
+    console.log("[NextcloudSync] Saving credentials to secure storage:", {
+      hasServerUrl: !!credentials.serverUrl,
+      hasLoginName: !!credentials.loginName,
+      hasAppPassword: !!credentials.appPassword,
+    });
+    const credString = JSON.stringify(credentials);
+    console.log("[NextcloudSync] Credential JSON length:", credString.length);
+    await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, credString);
+    console.log("[NextcloudSync] Credentials saved successfully to keyring");
+
+    // VERIFICATION: Immediately read back to verify save worked
+    console.log("[NextcloudSync] VERIFICATION: Reading back immediately after save...");
+    const verifyRead = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    console.log(
+      "[NextcloudSync] VERIFICATION: Read back result:",
+      verifyRead ? "SUCCESS" : "FAILED (null)",
+    );
+    if (!verifyRead) {
+      console.error(
+        "[NextcloudSync] CRITICAL: Credential save verification FAILED - credential not in keyring!",
+      );
+    }
+  } catch (error) {
+    console.error("[NextcloudSync] Failed to save credentials to secure storage:", error);
+    throw error;
+  }
+}
+
+/**
+ * Clear stored credentials from secure storage
+ */
+export async function clearCredentials() {
+  try {
+    await deleteSecureCredential(NEXTCLOUD_STORAGE_KEY);
+  } catch (error) {
+    console.error("Failed to clear credentials:", error);
+    throw error;
+  }
 }
 
 /**
  * Check if user is authenticated
  */
-export function isAuthenticated() {
-  const creds = getStoredCredentials();
+export async function isAuthenticated() {
+  const creds = await getStoredCredentials();
   return creds?.serverUrl && creds.loginName && creds.appPassword;
 }
 
@@ -99,7 +289,7 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
           "Content-Type": "application/x-www-form-urlencoded",
           Accept: "application/json",
           "OCS-APIRequest": "true",
-          "User-Agent": "oneJournal/1.0",
+          "User-Agent": `${APP_NAME}/${APP_VERSION}`,
         },
         body: "",
       });
@@ -185,7 +375,7 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
       appPassword: credentials.appPassword,
     };
 
-    saveCredentials(savedCreds);
+    await saveCredentials(savedCreds);
     console.log("Nextcloud authentication successful");
 
     return savedCreds;
@@ -266,7 +456,7 @@ async function pollForCredentials(endpoint, token, popup) {
  * Create a folder in Nextcloud using WebDAV
  */
 async function createFolder(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   console.log("Creating folder with credentials:", {
@@ -312,7 +502,7 @@ async function createFolder(path) {
  * Uses X-OC-Mtime to set the modification time to match local file
  */
 async function uploadFile(path, content, mtime = null, etag = null) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -332,14 +522,26 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     headers["If-Match"] = `"${etag}"`;
   }
 
-  const response = await fetch(webdavUrl, {
+  let response = await fetch(webdavUrl, {
     method: "PUT",
     headers,
     body: content,
   });
 
   if (response.status === 412) {
-    throw new Error("Sync conflict: Remote file has changed since download. Please sync again.");
+    console.warn(`[NextcloudSync] 412 Conflict detected for ${path}. Forcing overwrite.`);
+
+    // Remove If-Match to force overwrite (Brute force resolution)
+    if (headers["If-Match"]) {
+      delete headers["If-Match"];
+    }
+
+    // Retry upload without the version check
+    response = await fetch(webdavUrl, {
+      method: "PUT",
+      headers,
+      body: content,
+    });
   }
 
   if (!response.ok && response.status !== 201 && response.status !== 204) {
@@ -348,14 +550,35 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     throw new Error(`Failed to upload file: ${response.status} ${response.statusText}`);
   }
 
-  return true;
+  let newEtag = response.headers.get("etag")?.replace(/"/g, "");
+
+  // If ETag is missing (e.g. 204 response), try to fetch it via HEAD
+  if (!newEtag && response.ok) {
+    try {
+      const headResponse = await fetch(webdavUrl, {
+        method: "HEAD",
+        headers: {
+          Authorization: headers.Authorization,
+        },
+      });
+      newEtag = headResponse.headers.get("etag")?.replace(/"/g, "");
+    } catch (e) {
+      console.warn("Failed to fetch ETag after upload:", e);
+    }
+  }
+
+  if (!newEtag) {
+    throw new Error("Server did not return an ETag for the uploaded file");
+  }
+
+  return newEtag;
 }
 
 /**
  * Download a file from Nextcloud using WebDAV
  */
 async function downloadFile(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -368,21 +591,23 @@ async function downloadFile(path) {
   });
 
   if (response.status === 404) {
-    return null; // File doesn't exist
+    return { content: null, etag: null };
   }
 
   if (!response.ok) {
     throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
   }
 
-  return await response.text();
+  const content = await response.text();
+  const etag = response.headers.get("etag")?.replace(/"/g, "");
+  return { content, etag };
 }
 
 /**
  * List files in a folder using WebDAV PROPFIND
  */
 export async function listFiles(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -411,7 +636,7 @@ export async function listFiles(path) {
  * List folders in a folder using WebDAV PROPFIND
  */
 export async function listFolders(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -492,7 +717,7 @@ function parseWebDAVResponse(xmlText, includeCollections = false) {
  * Delete a file from Nextcloud using WebDAV
  */
 async function deleteFile(path) {
-  const creds = getStoredCredentials();
+  const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
@@ -540,7 +765,8 @@ export async function syncNotebooks(notebooks) {
     uploaded: 0,
     failed: 0,
     errors: [],
-    uploadedIds: [], // Track successfully uploaded IDs
+    uploadedIds: [],
+    metadata: {},
   };
 
   for (const notebook of notebooks) {
@@ -562,9 +788,15 @@ export async function syncNotebooks(notebooks) {
       };
       const content = JSON.stringify(syncedNotebook, null, 2);
 
-      await uploadFile(path, content, syncedNotebook.modified);
+      const etag = await uploadFile(
+        path,
+        content,
+        syncedNotebook.modified,
+        notebook.lastSyncedEtag,
+      );
       results.uploaded++;
       results.uploadedIds.push(notebook.id);
+      results.metadata[notebook.id] = { etag: typeof etag === "string" ? etag : null };
     } catch (error) {
       results.failed++;
       results.errors.push({ id: notebook.id, error: error.message });
@@ -590,7 +822,8 @@ export async function syncNotes(notes) {
     uploaded: 0,
     failed: 0,
     errors: [],
-    uploadedIds: [], // Track successfully uploaded IDs
+    uploadedIds: [],
+    metadata: {},
   };
 
   for (const note of notes) {
@@ -606,14 +839,25 @@ export async function syncNotes(notes) {
         // Keep original modified timestamp to preserve history
       };
 
-      // Prepare content (strip internal _etag before saving)
-      const noteToUpload = { ...syncedNote };
-      delete noteToUpload._etag;
-      const content = JSON.stringify(noteToUpload, null, 2);
+      // Encrypt note for Nextcloud if encryption is enabled
+      const encryptedNote = await encryptNoteForNextcloud(syncedNote);
 
-      await uploadFile(path, content, syncedNote.modified, note._etag);
+      // Strip internal sync tracking fields before uploading
+      const {
+        lastSyncedEtag: _,
+        synced: __,
+        encrypted: ___,
+        _currentFileEtag: ____,
+        ...noteForUpload
+      } = encryptedNote;
+
+      // Prepare content
+      const content = JSON.stringify(noteForUpload, null, 2);
+
+      const etag = await uploadFile(path, content, syncedNote.modified, note.lastSyncedEtag);
       results.uploaded++;
       results.uploadedIds.push(note.id);
+      results.metadata[note.id] = { etag: typeof etag === "string" ? etag : null };
       console.log(`Successfully uploaded note ${note.id}`);
     } catch (error) {
       results.failed++;
@@ -652,15 +896,17 @@ export async function downloadAllData() {
 
       // Download notebook metadata
       const notebookPath = getNotebookPath(notebookId);
-      const notebookContent = await downloadFile(notebookPath);
+      const { content: notebookContent, etag: notebookEtag } = await downloadFile(notebookPath);
 
       if (notebookContent) {
-        notebooks.push(JSON.parse(notebookContent));
+        const notebook = JSON.parse(notebookContent);
+        notebook.lastSyncedEtag = notebookEtag;
+        notebooks.push(notebook);
       }
 
       // Download tombstones for this notebook
       const tombstonePath = getNotebookTombstonePath(notebookId);
-      const tombstoneContent = await downloadFile(tombstonePath);
+      const { content: tombstoneContent } = await downloadFile(tombstonePath);
 
       if (tombstoneContent) {
         tombstones.set(notebookId, JSON.parse(tombstoneContent));
@@ -682,14 +928,18 @@ export async function downloadAllData() {
 
           const noteId = noteFile.name.replace(".json", "");
           const notePath = getNotePath(noteId, notebookId);
-          const noteContent = await downloadFile(notePath);
+          const { content: noteContent, etag: noteEtag } = await downloadFile(notePath);
 
           if (noteContent) {
             const note = JSON.parse(noteContent);
-            if (noteFile.etag) {
-              note._etag = noteFile.etag;
-            }
-            notes.push(note);
+            // Store both the etag from the note's JSON content (for conflict detection)
+            // and the current file etag (for upload conditional requests)
+            note._currentFileEtag = noteEtag || noteFile.etag;
+            // Keep the lastSyncedEtag from the note's JSON content (don't overwrite it)
+
+            // Decrypt note if it's encrypted for Nextcloud
+            const decryptedNote = await decryptNoteFromNextcloud(note);
+            notes.push(decryptedNote);
           }
         } catch (error) {
           console.error(`Failed to download note ${noteFile.name}:`, error);
@@ -717,14 +967,18 @@ export async function downloadAllData() {
 
         const noteId = noteFile.name.replace(".json", "");
         const notePath = getNotePath(noteId, null);
-        const noteContent = await downloadFile(notePath);
+        const { content: noteContent, etag: noteEtag } = await downloadFile(notePath);
 
         if (noteContent) {
           const note = JSON.parse(noteContent);
-          if (noteFile.etag) {
-            note._etag = noteFile.etag;
-          }
-          notes.push(note);
+          // Store both the etag from the note's JSON content (for conflict detection)
+          // and the current file etag (for upload conditional requests)
+          note._currentFileEtag = noteEtag || noteFile.etag;
+          // Keep the lastSyncedEtag from the note's JSON content (don't overwrite it)
+
+          // Decrypt note if it's encrypted for Nextcloud
+          const decryptedNote = await decryptNoteFromNextcloud(note);
+          notes.push(decryptedNote);
         }
       } catch (error) {
         console.error(`Failed to download quick note ${noteFile.name}:`, error);
@@ -733,7 +987,7 @@ export async function downloadAllData() {
 
     // Download quick notes tombstones
     const quickTombstonePath = getQuickNotesTombstonePath();
-    const quickTombstoneContent = await downloadFile(quickTombstonePath);
+    const { content: quickTombstoneContent } = await downloadFile(quickTombstonePath);
 
     if (quickTombstoneContent) {
       tombstones.set("quickNotes", JSON.parse(quickTombstoneContent));
@@ -743,6 +997,113 @@ export async function downloadAllData() {
   }
 
   return { notebooks, notes, tombstones };
+}
+
+/**
+ * Merge strokes while respecting deletions
+ * @param {Array} localStrokes - Local strokes array
+ * @param {Array} remoteStrokes - Remote strokes array
+ * @param {Array} localDeleted - Local deleted stroke IDs
+ * @param {Array} remoteDeleted - Remote deleted stroke IDs
+ * @returns {Object} Object with merged strokes and deletedStrokes arrays
+ */
+function mergeStrokes(localStrokes, remoteStrokes, localDeleted = [], remoteDeleted = []) {
+  // Combine all deleted stroke IDs from both sides
+  const allDeletedIds = new Set([...localDeleted, ...remoteDeleted]);
+
+  // Create a map of stroke ID to stroke for deduplication
+  const strokesById = new Map();
+
+  // Add remote strokes (but skip deleted ones)
+  for (const stroke of remoteStrokes) {
+    if (stroke.id && !allDeletedIds.has(stroke.id)) {
+      strokesById.set(stroke.id, stroke);
+    } else if (!stroke.id) {
+      // Legacy stroke without ID - keep it for now (will be migrated)
+      strokesById.set(JSON.stringify(stroke), stroke);
+    }
+  }
+
+  // Add local strokes (but skip deleted ones and duplicates)
+  for (const stroke of localStrokes) {
+    if (stroke.id) {
+      if (!allDeletedIds.has(stroke.id) && !strokesById.has(stroke.id)) {
+        strokesById.set(stroke.id, stroke);
+      }
+    } else {
+      // Legacy stroke without ID
+      const key = JSON.stringify(stroke);
+      if (!strokesById.has(key)) {
+        strokesById.set(key, stroke);
+      }
+    }
+  }
+
+  return {
+    strokes: Array.from(strokesById.values()),
+    deletedStrokes: Array.from(allDeletedIds),
+  };
+}
+
+/**
+ * Attempt to merge two versions of a note
+ */
+function attemptMerge(local, remote) {
+  // Merge strokes while respecting deletions from both sides
+  const mergedStrokeData = mergeStrokes(
+    local.strokes || [],
+    remote.strokes || [],
+    local.deletedStrokes || [],
+    remote.deletedStrokes || [],
+  );
+
+  // Determine which note is newer based on modification time.
+  const newerNote = remote.modified > local.modified ? remote : local;
+
+  // Attempt to merge text content.
+  let mergedContent;
+  if (local.content === remote.content) {
+    // Content is identical, no merge needed.
+    mergedContent = local.content;
+  } else if (remote.content.includes(local.content)) {
+    // The remote content contains the local content, so it's likely an append. Use remote.
+    mergedContent = remote.content;
+  } else if (local.content.includes(remote.content)) {
+    // The local content contains the remote content, so it's likely an append. Use local.
+    mergedContent = local.content;
+  } else {
+    // This is a true conflict where both texts have diverged.
+    // We apply a "last write wins" strategy based on the note's modified timestamp.
+    // This handles the case where one client changed text and another changed strokes,
+    // by picking the content from the more recent change.
+    mergedContent = newerNote.content;
+  }
+
+  // Merge title using "last write wins".
+  const mergedTitle = local.title !== remote.title ? newerNote.title : local.title;
+
+  // Merge tags by taking the union of both sets.
+  const mergedTags = [...new Set([...(local.tags || []), ...(remote.tags || [])])];
+
+  // Construct the merged note.
+  return {
+    id: local.id, // Keep original ID
+    notebookId: local.notebookId, // Keep original notebook ID
+    created: local.created, // Keep original creation timestamp
+
+    title: mergedTitle,
+    content: mergedContent,
+    strokes: mergedStrokeData.strokes,
+    deletedStrokes: mergedStrokeData.deletedStrokes,
+    tags: mergedTags,
+    deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
+
+    formatVersion: newerNote.formatVersion, // Use format from newer note
+    modified: Date.now(), // Set a new modification time for the merged version
+    version: Math.max(local.version, remote.version) + 1, // Increment version
+    synced: false, // Mark as unsynced to trigger upload
+    lastSyncedEtag: remote._currentFileEtag || remote.lastSyncedEtag, // Use current file ETag for If-Match
+  };
 }
 
 /**
@@ -764,6 +1125,9 @@ export async function fullSync(localNotebooks, localNotes) {
   // Step 2: Merge notebooks (newer wins)
   const notebooksToUpload = [];
   const notebooksToDownload = [];
+  const notebooksToDelete = [];
+  const notesToDelete = [];
+  const conflicts = { notebooks: [], notes: [] };
 
   // Create maps for quick lookup
   const localNotebookMap = new Map(localNotebooks.map((n) => [n.id, n]));
@@ -773,28 +1137,40 @@ export async function fullSync(localNotebooks, localNotes) {
   for (const local of localNotebooks) {
     const remote = remoteNotebookMap.get(local.id);
 
-    const remoteVersion = remote?.version || 0;
-    const localVersion = local?.version || 0;
+    if (!remote) {
+      // Check if deleted remotely (via tombstone) - Notebook tombstones are stored inside the notebook folder usually,
+      // but if the notebook folder is gone, we can't read it.
+      // However, deleteRemoteNotebook implementation currently just marks it in the tombstone inside the folder.
+      // If the folder is gone, we assume it's deleted.
+      // But here we rely on downloadAllData which lists folders.
+      // If a notebook is missing from remoteData, it means the folder is missing or empty/invalid.
 
-    const shouldUpload = local.synced === false && localVersion >= remoteVersion;
-
-    if (shouldUpload) {
-      if (remote?._etag) {
-        local._etag = remote._etag;
+      // For notebooks, if it's missing remotely and we are synced, we usually re-upload (self-heal).
+      // There isn't a global tombstone for notebooks currently.
+      if (local.synced === false) {
+        notebooksToUpload.push({ ...local, lastSyncedEtag: null });
+      } else {
+        console.log(`[Sync] Notebook ${local.id} missing on server. Re-uploading.`);
+        notebooksToUpload.push({ ...local, lastSyncedEtag: null });
       }
+      continue;
+    }
+
+    const isModifiedLocally = local.synced === false;
+    const isModifiedRemotely = local.lastSyncedEtag !== remote.lastSyncedEtag;
+
+    if (isModifiedLocally && isModifiedRemotely) {
+      conflicts.notebooks.push({ local, remote });
+    } else if (isModifiedLocally) {
       notebooksToUpload.push(local);
+    } else if (isModifiedRemotely) {
+      notebooksToDownload.push(remote);
     }
   }
 
   // Check which remote notebooks should be downloaded
   for (const remote of remoteData.notebooks) {
-    const local = localNotebookMap.get(remote.id);
-
-    const remoteVersion = remote.version || 0;
-    const localVersion = local?.version || 0;
-    const shouldDownload = !local || remoteVersion > localVersion;
-
-    if (shouldDownload) {
+    if (!localNotebookMap.has(remote.id)) {
       notebooksToDownload.push(remote);
     }
   }
@@ -810,26 +1186,58 @@ export async function fullSync(localNotebooks, localNotes) {
   for (const local of localNotes) {
     const remote = remoteNoteMap.get(local.id);
 
-    const remoteVersion = remote?.version || 0;
-    const localVersion = local?.version || 0;
+    if (!remote) {
+      // Check tombstones to see if it was deleted remotely
+      const tombstoneKey = local.notebookId || "quickNotes";
+      const tombstone = remoteData.tombstones.get(tombstoneKey);
+      const isDeletedRemotely = tombstone?.notes?.some((t) => t.id === local.id);
 
-    const shouldUpload = local.synced === false && localVersion >= remoteVersion;
+      if (isDeletedRemotely) {
+        if (local.synced === false) {
+          // Conflict: Deleted remotely, Modified locally. Strategy: Restore (re-upload).
+          console.log(
+            `[Sync] Note ${local.id} was deleted remotely but modified locally. Restoring.`,
+          );
+          notesToUpload.push({ ...local, lastSyncedEtag: null });
+        } else {
+          // Deleted remotely, no local changes. Delete locally.
+          console.log(`[Sync] Note ${local.id} was deleted remotely. Deleting locally.`);
+          notesToDelete.push(local.id);
+        }
+      } else {
+        // Not in tombstone -> Missing/Corrupted -> Re-upload (Self-healing)
+        if (local.synced === true) {
+          console.log(`[Sync] Note ${local.id} missing on server. Re-uploading.`);
+        }
+        notesToUpload.push({ ...local, lastSyncedEtag: null });
+      }
+      continue;
+    }
 
-    if (shouldUpload) {
+    const isModifiedLocally = local.synced === false;
+    // A note is modified remotely if the current file etag differs from our last synced etag
+    // Since we don't store lastSyncedEtag in Nextcloud JSON, we compare with _currentFileEtag
+    const isModifiedRemotely = local.lastSyncedEtag !== remote._currentFileEtag;
+
+    if (isModifiedLocally && isModifiedRemotely) {
+      const merged = attemptMerge(local, remote);
+      if (merged) {
+        // Use the remote's current file ETag for the upload to succeed via If-Match
+        const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
+        notesToUpload.push(mergedWithRemoteBase);
+      } else {
+        conflicts.notes.push({ local, remote });
+      }
+    } else if (isModifiedLocally) {
       notesToUpload.push(local);
+    } else if (isModifiedRemotely) {
+      notesToDownload.push(remote);
     }
   }
 
   // Check which remote notes should be downloaded
   for (const remote of remoteData.notes) {
-    const local = localNoteMap.get(remote.id);
-
-    const remoteVersion = remote.version || 0;
-    const localVersion = local?.version || 0;
-
-    const shouldDownload = !local || remoteVersion > localVersion;
-
-    if (shouldDownload) {
+    if (!localNoteMap.has(remote.id)) {
       notesToDownload.push(remote);
     }
   }
@@ -857,6 +1265,11 @@ export async function fullSync(localNotebooks, localNotes) {
       notebooks: notebooksToDownload,
       notes: notesToDownload,
     },
+    conflicts,
+    notebooksToUpload,
+    notesToUpload,
+    notebooksToDelete,
+    notesToDelete,
   };
 }
 
@@ -876,7 +1289,7 @@ export async function deleteRemoteNotebook(notebookId) {
 
     // Download current tombstone
     const tombstonePath = getNotebookTombstonePath(notebookId);
-    const tombstoneContent = await downloadFile(tombstonePath);
+    const { content: tombstoneContent } = await downloadFile(tombstonePath);
 
     const tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
 
@@ -910,7 +1323,7 @@ export async function deleteRemoteNote(noteId, notebookId) {
       : getQuickNotesTombstonePath();
 
     // Download current tombstone
-    const tombstoneContent = await downloadFile(tombstonePath);
+    const { content: tombstoneContent } = await downloadFile(tombstonePath);
     let tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
 
     // Add to tombstone
@@ -958,7 +1371,7 @@ export async function downloadTombstone(notebookId) {
 
   const path = notebookId ? getNotebookTombstonePath(notebookId) : getQuickNotesTombstonePath();
 
-  const content = await downloadFile(path);
+  const { content } = await downloadFile(path);
 
   if (!content) {
     return createEmptyTombstone();
@@ -990,7 +1403,7 @@ export async function migrateToHierarchical() {
         if (file.name.startsWith("notebook_") && file.name.endsWith(".json")) {
           const notebookId = file.name.replace("notebook_", "").replace(".json", "");
           const path = getLegacyNotebookPath(notebookId);
-          const content = await downloadFile(path);
+          const { content } = await downloadFile(path);
 
           if (content) {
             notebooks.push(JSON.parse(content));
@@ -998,7 +1411,7 @@ export async function migrateToHierarchical() {
         } else if (file.name.startsWith("note_") && file.name.endsWith(".json")) {
           const noteId = file.name.replace("note_", "").replace(".json", "");
           const path = getLegacyNotePath(noteId);
-          const content = await downloadFile(path);
+          const { content } = await downloadFile(path);
 
           if (content) {
             notes.push(JSON.parse(content));

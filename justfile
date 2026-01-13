@@ -50,3 +50,15 @@ install:
 # Open the built app in default browser (Windows)
 open-dist:
     Start-Process "dist/index.html"
+
+# Build the recognition backend (Release)
+build-backend:
+    dotnet build src-recognition-backend -c Release
+
+fix-build:
+    Remove-Item "src-tauri/capabilities/recognition.json" -ErrorAction SilentlyContinue
+
+# Package the recognition backend and installer script
+package-backend:
+    dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
+    Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"

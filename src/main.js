@@ -9,75 +9,122 @@ import "./styles/themes/dark.css";
 import "./styles/themes/epaper.css";
 import "./styles/layout.css";
 import "./styles/components.css";
-import "./styles/editor.css";
 import "./styles/notebookEditor.css";
 
-import { initModals, showCreateNoteModal } from "./components/modals.js";
+import { initModals } from "./components/modals.js";
 import { initNotebookEditorComponent } from "./components/notebookEditor.js";
 import { initOverview } from "./components/overviewMode.js";
 import { initRecycleBin } from "./components/recycleBinMode.js";
 import { initSettings } from "./components/settingsMode.js";
-import { initSidebar } from "./components/sidebar.js";
+import { initializeApp, setupAppLockListener } from "./modules/appInit.js";
+import { initAutoSync } from "./modules/autoSync.js";
 import { initBreadcrumb } from "./modules/breadcrumb.js";
 import { initFooter } from "./modules/footer.js";
-import { getCurrentNotebookId, initRouter, navigateTo } from "./modules/router.js";
+import { migrateCredentials } from "./modules/nextcloudSync.js";
+import { initRouter, navigateTo } from "./modules/router.js";
 import { initStorage } from "./modules/storage.js";
 // Import modules
 import { initTheme } from "./modules/theme.js";
+import { getIcon } from "./utils/icons.js";
+import { initLogger } from "./utils/logger.js";
 
 // Application state
 const app = {
   initialized: false,
   currentNote: null,
-  sidebarCollapsed: false,
 };
 
 /**
  * Initialize the application
  */
 async function init() {
+  const appStartTime = performance.now();
+
   console.log("oneJournal initializing...");
 
-  // Initialize storage (IndexedDB)
+  // Initialize storage FIRST (required for logger to load saved level)
+  const storageStart = performance.now();
   await initStorage();
+  console.log(`Storage initialized in ${Math.round(performance.now() - storageStart)}ms`);
 
-  // Initialize theme system
+  // Initialize logger (loads saved log level from storage)
+  const loggerStart = performance.now();
+  await initLogger();
+  console.log(`Logger initialized in ${Math.round(performance.now() - loggerStart)}ms`);
+
+  // Initialize theme system (before master password modal for proper styling)
+  const themeStart = performance.now();
   await initTheme();
+  console.log(`Theme initialized in ${Math.round(performance.now() - themeStart)}ms`);
+
+  // MASTER PASSWORD: Initialize and unlock app (shows modal if needed)
+  // This MUST happen before any data access
+  try {
+    const appInitStart = performance.now();
+    await initializeApp();
+    console.log(`App initialization took ${Math.round(performance.now() - appInitStart)}ms`);
+    setupAppLockListener();
+  } catch (error) {
+    console.error("Failed to initialize master password system:", error);
+    // Show error to user
+    document.body.innerHTML = `
+      <div style="display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px;">
+        <div style="text-align: center; max-width: 500px;">
+          <h1 style="color: #dc2626; margin-bottom: 16px;">Initialization Error</h1>
+          <p style="color: #6b7280; margin-bottom: 24px;">
+            Failed to initialize the encryption system. Please refresh the page and try again.
+          </p>
+          <p style="font-family: monospace; font-size: 12px; color: #9ca3af; background: #f3f4f6; padding: 12px; border-radius: 8px;">
+            ${error.message}
+          </p>
+          <button onclick="location.reload()" style="margin-top: 24px; padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">
+            Reload App
+          </button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // Migrate credentials from localStorage to secure storage (one-time migration)
+  // Note: This is the Phase 1 migration, not master password migration
+  const migrateStart = performance.now();
+  await migrateCredentials();
+  console.log(`Credential migration took ${Math.round(performance.now() - migrateStart)}ms`);
 
   // Initialize router
+  const componentsStart = performance.now();
   initRouter();
 
   // Initialize components
   initSettings();
   initOverview();
   initModals();
-  initSidebar();
   initRecycleBin();
   initNotebookEditorComponent();
   initBreadcrumb();
   initFooter();
+  initAutoSync();
+  console.log(`Components initialized in ${Math.round(performance.now() - componentsStart)}ms`);
 
   // Set up event listeners
   setupEventListeners();
 
   // Navigate to overview by default
+  const navStart = performance.now();
   navigateTo("overview");
+  console.log(`Navigation to overview took ${Math.round(performance.now() - navStart)}ms`);
 
   // Mark as initialized
   app.initialized = true;
-  console.log("oneJournal ready!");
+  const totalTime = Math.round(performance.now() - appStartTime);
+  console.log(`oneJournal ready! Total startup time: ${totalTime}ms`);
 }
 
 /**
  * Set up global event listeners
  */
 function setupEventListeners() {
-  // Menu button (toggle sidebar)
-  const menuBtn = document.getElementById("menu-btn");
-  if (menuBtn) {
-    menuBtn.addEventListener("click", toggleSidebar);
-  }
-
   // Overview button
   const overviewBtn = document.getElementById("nav-overview");
   if (overviewBtn) {
@@ -89,49 +136,10 @@ function setupEventListeners() {
   // Settings button
   const settingsBtn = document.getElementById("nav-settings");
   if (settingsBtn) {
-    settingsBtn.addEventListener("click", () => {
-      navigateTo("settings");
-    });
+    // Inject settings icon
+    settingsBtn.innerHTML = getIcon("settings", 24);
+    settingsBtn.addEventListener("click", () => navigateTo("settings"));
   }
-
-  // Recycle bin button
-  const recycleBinBtn = document.getElementById("recycle-bin-btn");
-  if (recycleBinBtn) {
-    recycleBinBtn.addEventListener("click", () => {
-      navigateTo("recyclebin");
-    });
-  }
-
-  // New note button
-  const newNoteBtn = document.getElementById("new-note-btn");
-  if (newNoteBtn) {
-    newNoteBtn.addEventListener("click", handleNewNote);
-  }
-}
-
-/**
- * Toggle sidebar visibility
- */
-function toggleSidebar() {
-  const sidebar = document.getElementById("sidebar");
-  if (sidebar) {
-    app.sidebarCollapsed = !app.sidebarCollapsed;
-    if (app.sidebarCollapsed) {
-      sidebar.style.display = "none";
-    } else {
-      sidebar.style.display = "flex";
-    }
-  }
-}
-
-/**
- * Handle new note creation
- */
-function handleNewNote() {
-  // Get current notebook ID if viewing a notebook
-  const notebookId = getCurrentNotebookId();
-  // Show modal with notebook context
-  showCreateNoteModal(notebookId);
 }
 
 // Initialize app when DOM is ready

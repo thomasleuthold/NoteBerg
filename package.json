@@ -1,10 +1,10 @@
 {
   "name": "onejournal",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -14,7 +14,9 @@
     "lint": "biome lint ./src",
     "format": "biome format --write ./src",
     "format-check": "biome format ./src",
-    "check": "biome check --write ./src"
+    "check": "biome check --write ./src",
+    "sync-version": "node scripts/sync-version.js",
+    "version": "npm run sync-version && git add src-tauri/tauri.conf.json"
   },
   "keywords": [
     "notes",
@@ -41,6 +43,7 @@
     "@tauri-apps/plugin-http": "^2.5.4",
     "@tauri-apps/plugin-opener": "^2.5.2",
     "@tauri-apps/plugin-shell": "^2.3.3",
+    "@tauri-apps/plugin-stronghold": "^2.3.1",
     "idb": "^8.0.0"
   }
 }

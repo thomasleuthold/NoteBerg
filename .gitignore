@@ -51,3 +51,5 @@ Cargo.lock
 *.jks
 key.properties
 *.apk
+/src-recognition-backend/bin
+/src-recognition-backend/obj

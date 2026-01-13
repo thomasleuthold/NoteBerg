@@ -22,41 +22,22 @@
       <!-- Top Toolbar -->
       <header id="toolbar" class="toolbar">
         <div class="toolbar-left">
-          <button id="menu-btn" class="btn-icon" aria-label="Menu" title="Toggle sidebar">
-            ☰
-          </button>
           <nav id="breadcrumb" class="breadcrumb" aria-label="Breadcrumb navigation">
             <button id="nav-overview" class="breadcrumb-item" aria-label="Home" title="Home">
-              🏠
+              <!-- Icon injected by breadcrumb.js -->
             </button>
           </nav>
         </div>
         <div class="toolbar-center">
         </div>
         <div class="toolbar-right">
-          <button id="recycle-bin-btn" class="btn-icon" aria-label="Recycle Bin" title="Recycle Bin">
-            🗑️
-          </button>
-          <button id="nav-settings" class="btn-icon" aria-label="Settings" title="Settings" data-mode="settings">
-            ⚙️
+          <button id="nav-settings" class="btn-icon" aria-label="Settings" title="Settings">
+            <!-- Icon injected by main.js -->
           </button>
         </div>
       </header>
 
       <div class="app-container">
-        <!-- Sidebar for notes list -->
-        <aside id="sidebar" class="sidebar">
-          <div class="sidebar-header" id="sidebar-header">
-            <!-- Dynamic header content -->
-          </div>
-          <div id="notes-list" class="notes-list">
-            <div class="empty-state">
-              <div class="empty-state-icon">📝</div>
-              <div class="empty-state-text">No notes yet</div>
-            </div>
-          </div>
-        </aside>
-
         <!-- Main content area -->
         <main id="main-content" class="main-content">
           <!-- Content will be rendered by router -->
