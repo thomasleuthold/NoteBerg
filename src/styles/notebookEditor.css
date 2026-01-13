@@ -74,8 +74,6 @@
   border-bottom-left-radius: 0px;
   border-bottom-right-radius: 0px;
   background: var(--bg-primary);
-  padding-bottom: 0px;
-  margin-bottom: 0px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -83,13 +81,13 @@
   height: auto;
   min-height: 28px;
   min-width: 52px;
-  padding: 4px 1px;
+  padding: 4px 1px 0px 1px;
+  margin-bottom: 0px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
   font-size: 16px;
   font-weight: 600;
-
 }
 
 .toolbar-tab:hover {
