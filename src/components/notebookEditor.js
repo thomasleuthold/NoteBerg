@@ -248,22 +248,27 @@ function renderEditor(container, _noteData) {
 
   container.innerHTML = `
     <div class="notebook-editor">
-      <div class="editor-toolbar" style="flex-direction: column; height: auto; padding: 0;">
+      <div class="editor-toolbar">
         
         <!-- Row 1 -->
-        <div class="toolbar-row" style="display: flex; justify-content: space-between; width: 100%; padding: 4px 8px; border-bottom: 1px solid var(--border-color);">
+        <div class="toolbar-row toolbar-row-top">
           <div class="toolbar-section">
-            <button class="toolbar-btn toolbar-btn-text" id="mode-text-btn" title="Text mode">
-              T
-            </button>
-            <button class="toolbar-btn" id="mode-draw-btn" title="Draw mode">
-              ${icons.pen}
-            </button>
+            <div class="toolbar-tabs" role="tablist" aria-label="Editor mode">
+              <button class="toolbar-tab" id="mode-text-btn" title="Text mode" role="tab" aria-selected="true">
+                T
+              </button>
+              <button class="toolbar-tab" id="mode-draw-btn" title="Draw mode" role="tab" aria-selected="false">
+                ${icons.pen}
+              </button>
+            </div>
+          </div>
+          
+          <div class="toolbar-section toolbar-section-right">
             <div class="toolbar-btn-container">
               <button class="toolbar-btn" id="background-btn" title="Background">
                 ${icons.background}
               </button>
-              <div id="background-settings-dialog" class="background-settings-dialog" style="display: none;">
+              <div id="background-settings-dialog" class="background-settings-dialog">
                 <div class="background-option" data-background="none">None</div>
                 <div class="background-option" data-background="ruled-narrow">Ruled - Narrow</div>
                 <div class="background-option" data-background="ruled-medium">Ruled - Medium</div>
@@ -273,9 +278,6 @@ function renderEditor(container, _noteData) {
                 <div class="background-option" data-background="grid-large">Grid - Large</div>
               </div>
             </div>
-          </div>
-          
-          <div class="toolbar-section toolbar-section-right">
             <button class="toolbar-btn" id="zoom-out-btn" title="Zoom out">
               ${icons.zoomOut}
             </button>
@@ -297,10 +299,10 @@ function renderEditor(container, _noteData) {
         </div>
 
         <!-- Row 2 -->
-        <div class="toolbar-row" id="toolbar-row-2" style="display: flex; width: 100%; padding: 4px 8px; min-height: 40px; background-color: var(--bg-secondary);">
+        <div class="toolbar-row toolbar-row-bottom" id="toolbar-row-2">
           
           <!-- Text Tools -->
-          <div id="text-tools" class="toolbar-section" style="display: flex;">
+          <div id="text-tools" class="toolbar-section text-tools">
             <button class="toolbar-btn toolbar-btn-text" id="format-bold-btn" title="Bold">
               <strong>B</strong>
             </button>
@@ -316,16 +318,16 @@ function renderEditor(container, _noteData) {
           </div>
 
           <!-- Pen Tools -->
-          <div id="pen-tools" class="toolbar-section" style="display: none;">
+          <div id="pen-tools" class="toolbar-section pen-tools">
             <div class="toolbar-btn-container">
               <button class="toolbar-btn" id="pen-settings-btn" title="Pen Settings">
                 ${icons.pen}
               </button>
-              <div id="pen-settings-dialog" class="pen-settings-dialog" style="display: none;">
+              <div id="pen-settings-dialog" class="pen-settings-dialog">
                 <div class="pen-settings-section">
                   <span class="pen-settings-label">Pen Width: <span id="pen-width-value">2</span>px</span>
                   <div class="pen-width-control">
-                    <input type="range" id="pen-width-slider" min="1" max="15" step="1" value="2" style="width: 100%;">
+                    <input type="range" id="pen-width-slider" class="pen-width-slider" min="1" max="15" step="1" value="2">
                   </div>
                 </div>
                 <div class="pen-settings-section">
@@ -342,10 +344,10 @@ function renderEditor(container, _noteData) {
             <button class="toolbar-btn" id="mode-lasso-btn" title="Lasso select">
               ${icons.lasso}
             </button>
-            <button class="toolbar-btn" id="delete-selection-btn" title="Delete selection" style="display: none;">
+            <button class="toolbar-btn toolbar-btn-hidden" id="delete-selection-btn" title="Delete selection">
               ${icons.trash}
             </button>
-            <button class="toolbar-btn" id="paste-btn" title="Paste" style="display: none;">
+            <button class="toolbar-btn toolbar-btn-hidden" id="paste-btn" title="Paste">
               ${icons.clipboard}
             </button>
           </div>
@@ -1760,9 +1762,11 @@ function updateToolbarButtons() {
 
   if (textBtn) {
     textBtn.classList.toggle("active", !isDrawMode);
+    textBtn.setAttribute("aria-selected", (!isDrawMode).toString());
   }
   if (drawBtn) {
-    drawBtn.classList.toggle("active", isDrawMode && !isEraserMode && !isLassoMode);
+    drawBtn.classList.toggle("active", isDrawMode);
+    drawBtn.setAttribute("aria-selected", isDrawMode.toString());
   }
   if (penBtn) {
     penBtn.classList.toggle("active", isDrawMode && !isEraserMode && !isLassoMode);

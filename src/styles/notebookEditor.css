@@ -19,21 +19,99 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  flex-direction: column;
+  height: auto;
+  padding: 0;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   gap: 6px;
   flex-shrink: 0;
 }
 
+.toolbar-row {
+  display: flex;
+  width: 100%;
+  padding: 4px 2px;
+}
+
+.toolbar-row-top {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 0px;
+  margin-bottom: 0px;
+}
+
+.toolbar-row-bottom {
+  min-height: 20px;
+  background-color: var(--bg-secondary);
+  margin-top: 2px;
+  margin-bottom: 4px;
+  padding-top: 0px;
+  margin-left: 5px;
+}
+
 .toolbar-section {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-bottom: 0px;
+  margin-bottom: 0px;
+}
+
+.toolbar-tabs {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 2px 6px 0px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.toolbar-tab {
+  border: 1px solid var(--border-primary);
+  border-bottom: 0px;
+  border-radius: var(--radius-sm);
+  border-bottom-left-radius: 0px;
+  border-bottom-right-radius: 0px;
+  background: var(--bg-primary);
+  padding-bottom: 0px;
+  margin-bottom: 0px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  min-height: 28px;
+  min-width: 52px;
+  padding: 4px 1px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 16px;
+  font-weight: 600;
+
+}
+
+.toolbar-tab:hover {
+  background: var(--bg-hover);
+}
+
+.toolbar-tab.active {
+  background: var(--color-primary);
+  color: white;
+  min-height: 32px;
 }
 
 .toolbar-section-right {
   margin-left: auto;
+}
+
+.text-tools {
+  display: flex;
+}
+
+.pen-tools {
+  display: none;
 }
 
 /* Toolbar button container for dialogs */
@@ -50,7 +128,7 @@
   height: auto;
   min-width: 28px;
   min-height: 28px;
-  padding: 4px;
+  padding: 4px 1px;
   background: var(--bg-primary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
@@ -61,6 +139,9 @@
   font-weight: 600;
 }
 
+.toolbar-btn-hidden {
+  display: none;
+}
 .toolbar-btn svg {
   width: 20px;
   height: 20px;
@@ -296,6 +377,7 @@
   top: 100%;
   left: 0;
   z-index: 100;
+  display: none;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
@@ -341,12 +423,17 @@
   gap: 10px;
 }
 
+.pen-width-slider {
+  width: 100%;
+}
+
 /* Background settings dialog */
 .background-settings-dialog {
   position: absolute;
   top: 100%;
   left: 0;
   z-index: 100;
+  display: none;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
