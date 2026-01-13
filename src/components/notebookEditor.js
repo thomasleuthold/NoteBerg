@@ -1478,6 +1478,15 @@ function eraseStrokesAtPoint(x, y) {
   if (strokes.length < originalLength) {
     // Add erased stroke IDs to deletedStrokes list
     deletedStrokes.push(...erasedStrokeIds);
+    // Clear selection to avoid stale indices after mutation
+    if (selectedStrokes.size > 0) {
+      selectedStrokes.clear();
+      selectionBounds = null;
+      const deleteBtn = document.getElementById("delete-selection-btn");
+      if (deleteBtn) {
+        deleteBtn.style.display = "none";
+      }
+    }
     redrawCanvas();
     updateContentBounds();
   }
@@ -2489,7 +2498,9 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   // 2. Trigger handwriting recognition (await to ensure completion)
   if (noteId && strokes && strokes.length > 0) {
     try {
-      console.log(`[NotebookEditor] Step 2: Sending ${strokes.length} total strokes to recognition...`);
+      console.log(
+        `[NotebookEditor] Step 2: Sending ${strokes.length} total strokes to recognition...`,
+      );
       await forceRecognition(noteId, strokes);
     } catch (err) {
       console.warn("Recognition on close failed. Reason:", err);
@@ -2514,7 +2525,7 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   }
 
   if (dynamicCanvas) {
-    window.removeEventListener("resize", resizeCanvas);
+    window.removeEventListener("resize", throttledResizeCanvas);
   }
 
   // Remove global listener
@@ -2563,6 +2574,8 @@ function highlightSearchTerms(query) {
  */
 function highlightText(query) {
   if (!query || !currentEditor) return;
+  // Clear prior highlights to avoid nested spans and DOM bloat.
+  removeTextHighlights();
   console.log("[NotebookEditor] Highlighting text for:", query);
   console.log("[NotebookEditor] Editor text content length:", currentEditor.innerText?.length || 0);
 
