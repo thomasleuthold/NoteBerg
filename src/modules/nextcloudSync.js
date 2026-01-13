@@ -61,14 +61,16 @@ async function encryptNoteForNextcloud(note) {
   try {
     const encryptionKey = getEncryptionKey();
 
-    // Encrypt content and strokes for Nextcloud storage
+    // Encrypt content, strokes, and media for Nextcloud storage
     const encryptedContent = await encryptObject(decryptedNote.content || "", encryptionKey);
     const encryptedStrokes = await encryptObject(decryptedNote.strokes || [], encryptionKey);
+    const encryptedMedia = await encryptObject(decryptedNote.media || [], encryptionKey);
 
     return {
       ...decryptedNote,
       content: encryptedContent,
       strokes: encryptedStrokes,
+      media: encryptedMedia,
       nextcloudEncrypted: true, // Mark as Nextcloud-encrypted
     };
   } catch (error) {
@@ -98,14 +100,22 @@ async function decryptNoteFromNextcloud(note) {
     try {
       const encryptionKey = getEncryptionKey();
 
-      // Decrypt content and strokes from Nextcloud encryption
+      // Decrypt content, strokes, and media from Nextcloud encryption
       const decryptedContent = await decryptObject(note.content, encryptionKey);
       const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
+
+      // Only decrypt media if it exists and has the encrypted structure
+      // (notes encrypted before media support won't have this field)
+      let decryptedMedia = [];
+      if (note.media && typeof note.media === 'object' && note.media.data && note.media.iv) {
+        decryptedMedia = await decryptObject(note.media, encryptionKey);
+      }
 
       decryptedNote = {
         ...note,
         content: decryptedContent,
         strokes: decryptedStrokes,
+        media: decryptedMedia,
         nextcloudEncrypted: undefined, // Remove Nextcloud encryption flag
       };
     } catch (error) {

@@ -51,6 +51,7 @@ export async function initStorage() {
 
   // Run migrations
   await migrateStrokeIds();
+  await migrateMediaFields();
 
   return db;
 }
@@ -96,6 +97,52 @@ async function migrateStrokeIds() {
     }
   } catch (error) {
     console.error("Failed to migrate stroke IDs:", error);
+  }
+}
+
+/**
+ * Migrate existing notes to add media fields
+ * This ensures all notes have media, deletedMedia, and mediaVersion fields
+ */
+async function migrateMediaFields() {
+  if (!db) return;
+
+  try {
+    const notes = await db.getAll("notes");
+    let migratedCount = 0;
+
+    for (const note of notes) {
+      let needsUpdate = false;
+
+      // Initialize media array if it doesn't exist
+      if (!note.media) {
+        note.media = [];
+        needsUpdate = true;
+      }
+
+      // Initialize deletedMedia array if it doesn't exist
+      if (!note.deletedMedia) {
+        note.deletedMedia = [];
+        needsUpdate = true;
+      }
+
+      // Initialize mediaVersion if it doesn't exist
+      if (!note.mediaVersion) {
+        note.mediaVersion = 1;
+        needsUpdate = true;
+      }
+
+      if (needsUpdate) {
+        await db.put("notes", note);
+        migratedCount++;
+      }
+    }
+
+    if (migratedCount > 0) {
+      console.log(`Migrated media fields for ${migratedCount} notes`);
+    }
+  } catch (error) {
+    console.error("Failed to migrate media fields:", error);
   }
 }
 
@@ -697,14 +744,16 @@ async function encryptNoteIfEnabled(note) {
   try {
     const encryptionKey = getEncryptionKey();
 
-    // Encrypt sensitive fields (content and strokes)
+    // Encrypt sensitive fields (content, strokes, and media)
     const encryptedContent = await encryptObject(note.content || "", encryptionKey);
     const encryptedStrokes = await encryptObject(note.strokes || [], encryptionKey);
+    const encryptedMedia = await encryptObject(note.media || [], encryptionKey);
 
     return {
       ...note,
       content: encryptedContent,
       strokes: encryptedStrokes,
+      media: encryptedMedia,
       encrypted: true, // Mark as encrypted
     };
   } catch (error) {
@@ -755,10 +804,18 @@ async function decryptNoteIfNeeded(note) {
     const decryptedContent = await decryptObject(note.content, encryptionKey);
     const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
 
+    // Only decrypt media if it exists and has the encrypted structure
+    // (notes encrypted before media support won't have this field)
+    let decryptedMedia = [];
+    if (note.media && typeof note.media === 'object' && note.media.data && note.media.iv) {
+      decryptedMedia = await decryptObject(note.media, encryptionKey);
+    }
+
     return {
       ...note,
       content: decryptedContent,
       strokes: decryptedStrokes,
+      media: decryptedMedia,
       encrypted: undefined, // Remove encrypted flag from decrypted version
     };
   } catch (error) {

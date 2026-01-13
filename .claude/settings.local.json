@@ -13,7 +13,9 @@
       "Bash(cargo build:*)",
       "Bash(cargo update:*)",
       "Bash(npx @biomejs/biome check:*)",
-      "Bash(npx @biomejs/biome format:*)"
+      "Bash(npx @biomejs/biome format:*)",
+      "Bash(git log:*)",
+      "Bash(npm run dev:*)"
     ]
   }
 }
