@@ -380,7 +380,7 @@ function renderEditor(container, _noteData) {
 
       <div class="editor-content-wrapper" style="position: relative;">
         <div id="text-editor" class="text-editor" contenteditable="true"></div>
-        <canvas id="background-canvas" class="background-canvas" style="position: absolute; top: 0; left: 0; z-index: 1;"></canvas>
+        <canvas id="background-canvas" class="background-canvas" style="position: absolute; top: 0; left: 0; z-index: 0;"></canvas>
         <canvas id="media-canvas" class="media-canvas" style="position: absolute; top: 0; left: 0; z-index: 1.5; pointer-events: none;"></canvas>
         <canvas id="static-canvas" class="static-canvas" style="position: absolute; top: 0; left: 0; z-index: 2;"></canvas>
         <canvas id="highlight-canvas" class="highlight-canvas" style="position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none;"></canvas>
@@ -2177,6 +2177,11 @@ function switchToDrawMode() {
   }
   if (currentEditor) {
     currentEditor.style.pointerEvents = "none";
+  }
+
+  // Clear media selection when switching to draw mode
+  if (selectedMediaId) {
+    selectMedia(null);
   }
 
   updateToolbarButtons();
