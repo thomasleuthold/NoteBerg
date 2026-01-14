@@ -60,6 +60,12 @@ let strokes = [];
 let deletedStrokes = []; // Track IDs of deleted strokes for sync
 let mediaItems = []; // Track media items (images)
 let deletedMedia = []; // Track IDs of deleted media for sync
+
+// Media manipulation state
+let selectedMediaId = null; // Currently selected media item ID
+let mediaTransformState = null; // { mode: 'move'|'resize', handle: 'nw'|'ne'|'sw'|'se', startX, startY, initialX, initialY, initialWidth, initialHeight }
+const mediaHandleSize = 20; // Size of media resize handles (increased from 12 for easier clicking)
+let _mediaHoverState = null; // { mediaId, handle: null|'nw'|'ne'|'sw'|'se' }
 let dynamicStrokeDrawScheduled = false;
 let dynamicStrokeLastDrawIndex = 0;
 let dynamicStrokeLastY = null;
@@ -329,6 +335,9 @@ function renderEditor(container, _noteData) {
             <button class="toolbar-btn" id="insert-camera-btn" title="Take photo">
               ${icons.camera}
             </button>
+            <button class="toolbar-btn" id="delete-media-btn" title="Delete image" style="display: none;">
+              ${icons.trash}
+            </button>
           </div>
 
           <!-- Pen Tools -->
@@ -436,7 +445,14 @@ function initCanvasLayer(noteData) {
   dynamicCanvas = document.getElementById("dynamic-canvas");
   cursorCanvas = document.getElementById("cursor-canvas");
 
-  if (!backgroundCanvas || !mediaCanvas || !staticCanvas || !highlightCanvas || !dynamicCanvas || !cursorCanvas) {
+  if (
+    !backgroundCanvas ||
+    !mediaCanvas ||
+    !staticCanvas ||
+    !highlightCanvas ||
+    !dynamicCanvas ||
+    !cursorCanvas
+  ) {
     console.error("One or more canvas layers are missing from the DOM.");
     return;
   }
@@ -632,7 +648,14 @@ function resizeCanvas() {
 
   if (widthChanged || heightChanged) {
     // Resize all canvases
-    const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas, mediaCanvas];
+    const canvases = [
+      dynamicCanvas,
+      staticCanvas,
+      backgroundCanvas,
+      cursorCanvas,
+      highlightCanvas,
+      mediaCanvas,
+    ];
     canvases.forEach((cvs) => {
       cvs.width = safeWidth;
       cvs.height = safeHeight;
@@ -758,6 +781,61 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
  * Handle pointer down for auto mode detection
  */
 function handlePointerDown(e) {
+  // Check for media clicks (mouse or touch in text mode)
+  if (!isDrawMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+    canvasRect = dynamicCanvas.getBoundingClientRect();
+    const { x, y } = getCanvasCoordinates(e);
+
+    console.log("[Media] handlePointerDown on textEditor - checking for media at:", x, y);
+
+    // Check if clicking on media
+    const clickedMedia = getMediaAtPoint(x, y);
+    console.log("[Media] Found media:", clickedMedia);
+
+    if (clickedMedia) {
+      console.log("[Media] Selecting media:", clickedMedia.id);
+      selectMedia(clickedMedia.id);
+
+      // Check if clicking on a resize handle
+      const handle = getMediaHandleAtPoint(x, y, clickedMedia);
+      if (handle) {
+        console.log("[Media] Starting resize with handle:", handle);
+        // Start resize operation
+        mediaTransformState = {
+          mode: "resize",
+          handle: handle,
+          startX: x,
+          startY: y,
+          initialX: clickedMedia.x,
+          initialY: clickedMedia.y,
+          initialWidth: clickedMedia.width,
+          initialHeight: clickedMedia.height,
+          aspectRatio: clickedMedia.width / clickedMedia.height,
+        };
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      } else {
+        console.log("[Media] Starting move");
+        // Start move operation
+        mediaTransformState = {
+          mode: "move",
+          startX: x,
+          startY: y,
+          initialX: clickedMedia.x,
+          initialY: clickedMedia.y,
+        };
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    } else if (selectedMediaId) {
+      console.log("[Media] Deselecting media");
+      // Clicked outside media, deselect
+      selectMedia(null);
+    }
+  }
+
   if (e.pointerType === "pen") {
     if (!isDrawMode && !isEraserMode && !isLassoMode) {
       switchToDrawMode();
@@ -801,6 +879,78 @@ function handlePointerDown(e) {
  * Handle pointer move
  */
 function handlePointerMove(e) {
+  // Handle media transformation (move/resize)
+  if (mediaTransformState && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+    const { x, y } = getCanvasCoordinates(e);
+    const selected = getSelectedMedia();
+    if (!selected) {
+      mediaTransformState = null;
+      return;
+    }
+
+    if (mediaTransformState.mode === "move") {
+      // Update position
+      const dx = x - mediaTransformState.startX;
+      const dy = y - mediaTransformState.startY;
+      selected.x = mediaTransformState.initialX + dx;
+      selected.y = mediaTransformState.initialY + dy;
+    } else if (mediaTransformState.mode === "resize") {
+      // Calculate new size based on handle
+      const dx = x - mediaTransformState.startX;
+      const handle = mediaTransformState.handle;
+
+      let newWidth = mediaTransformState.initialWidth;
+      let newHeight = mediaTransformState.initialHeight;
+      let newX = mediaTransformState.initialX;
+      let newY = mediaTransformState.initialY;
+
+      // Calculate based on which handle is being dragged
+      if (handle === "se") {
+        // Southeast (bottom-right) - increase both dimensions
+        newWidth = mediaTransformState.initialWidth + dx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+      } else if (handle === "sw") {
+        // Southwest (bottom-left) - change width (left) and height (bottom)
+        newWidth = mediaTransformState.initialWidth - dx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newX = mediaTransformState.initialX + dx;
+      } else if (handle === "ne") {
+        // Northeast (top-right) - change width (right) and height (top)
+        newWidth = mediaTransformState.initialWidth + dx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newY = mediaTransformState.initialY + mediaTransformState.initialHeight - newHeight;
+      } else if (handle === "nw") {
+        // Northwest (top-left) - decrease both from top-left
+        newWidth = mediaTransformState.initialWidth - dx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newX = mediaTransformState.initialX + dx;
+        newY = mediaTransformState.initialY + mediaTransformState.initialHeight - newHeight;
+      }
+
+      // Apply minimum size constraint
+      const minSize = 50;
+      if (newWidth >= minSize && newHeight >= minSize) {
+        selected.width = newWidth;
+        selected.height = newHeight;
+        selected.x = newX;
+        selected.y = newY;
+      }
+    }
+
+    // Redraw with updated position/size
+    redrawMedia();
+    markNoteEdited();
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+
+  // Update cursor when hovering over media (but not transforming)
+  if (!isDrawMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+    const { x, y } = getCanvasCoordinates(e);
+    updateMediaCursor(x, y);
+  }
+
   if (e.pointerType === "pen") {
     if (!isDrawMode && !isEraserMode && !isLassoMode) {
       switchToDrawMode();
@@ -832,6 +982,13 @@ function handlePointerMove(e) {
  * Handle pointer up
  */
 function handlePointerUp(e) {
+  // Handle media transformation end
+  if (mediaTransformState && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+    mediaTransformState = null;
+    scheduleSave();
+    return;
+  }
+
   // Forward up events to canvas when in draw mode
   if (e.pointerType === "pen" && dynamicCanvas && isDrawMode) {
     const canvasEvent = new PointerEvent("pointerup", {
@@ -915,15 +1072,64 @@ function handleCanvasPointerDown(e) {
     return false;
   }
 
-  if (!isDrawMode) return true;
-
-  // --- Cache canvas rect and context settings ---
+  // --- Cache canvas rect and coordinates ---
   canvasRect = dynamicCanvas.getBoundingClientRect();
+  const { x, y } = getCanvasCoordinates(e);
+
+  console.log("[Media] handleCanvasPointerDown - isDrawMode:", isDrawMode, "coords:", x, y);
+
+  // --- Media interaction (highest priority in non-draw modes) ---
+  if (!isDrawMode) {
+    console.log("[Media] Not in draw mode, checking for media at point");
+    // Check if clicking on media
+    const clickedMedia = getMediaAtPoint(x, y);
+    console.log("[Media] Clicked media:", clickedMedia);
+    if (clickedMedia) {
+      console.log("[Media] Selecting media:", clickedMedia.id);
+      selectMedia(clickedMedia.id);
+
+      // Check if clicking on a resize handle
+      const handle = getMediaHandleAtPoint(x, y, clickedMedia);
+      if (handle) {
+        // Start resize operation
+        mediaTransformState = {
+          mode: "resize",
+          handle: handle,
+          startX: x,
+          startY: y,
+          initialX: clickedMedia.x,
+          initialY: clickedMedia.y,
+          initialWidth: clickedMedia.width,
+          initialHeight: clickedMedia.height,
+          aspectRatio: clickedMedia.width / clickedMedia.height,
+        };
+        e.preventDefault();
+        return false;
+      } else {
+        // Start move operation
+        mediaTransformState = {
+          mode: "move",
+          startX: x,
+          startY: y,
+          initialX: clickedMedia.x,
+          initialY: clickedMedia.y,
+        };
+        e.preventDefault();
+        return false;
+      }
+    } else if (selectedMediaId) {
+      // Clicked outside media, deselect
+      selectMedia(null);
+    }
+
+    return true;
+  }
+
+  // --- Draw mode handling ---
   const palette = getThemePalette();
 
   // --- Eraser Activation (Stateful approach) ---
   const isEraser = isEraserMode || isEraserEvent(e);
-  const { x, y } = getCanvasCoordinates(e);
 
   if (isLassoMode) {
     // Check for transformation handles first
@@ -1054,6 +1260,70 @@ function scheduleDynamicStrokeDraw() {
  * Handle canvas pointer move
  */
 function handleCanvasPointerMove(e) {
+  // Handle media transformation (move/resize)
+  if (mediaTransformState) {
+    const { x, y } = getCanvasCoordinates(e);
+    const selected = getSelectedMedia();
+    if (!selected) {
+      mediaTransformState = null;
+      return;
+    }
+
+    if (mediaTransformState.mode === "move") {
+      // Update position
+      const dx = x - mediaTransformState.startX;
+      const dy = y - mediaTransformState.startY;
+      selected.x = mediaTransformState.initialX + dx;
+      selected.y = mediaTransformState.initialY + dy;
+    } else if (mediaTransformState.mode === "resize") {
+      // Calculate new size based on handle
+      const dx = x - mediaTransformState.startX;
+      const handle = mediaTransformState.handle;
+
+      let newWidth = mediaTransformState.initialWidth;
+      let newHeight = mediaTransformState.initialHeight;
+      let newX = mediaTransformState.initialX;
+      let newY = mediaTransformState.initialY;
+
+      // Calculate based on which handle is being dragged
+      if (handle === "se") {
+        // Southeast (bottom-right) - increase both dimensions
+        newWidth = mediaTransformState.initialWidth + dx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+      } else if (handle === "sw") {
+        // Southwest (bottom-left) - change width (left) and height (bottom)
+        newWidth = mediaTransformState.initialWidth - dx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newX = mediaTransformState.initialX + dx;
+      } else if (handle === "ne") {
+        // Northeast (top-right) - change width (right) and height (top)
+        newWidth = mediaTransformState.initialWidth + dx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newY = mediaTransformState.initialY + mediaTransformState.initialHeight - newHeight;
+      } else if (handle === "nw") {
+        // Northwest (top-left) - decrease both from top-left
+        newWidth = mediaTransformState.initialWidth - dx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newX = mediaTransformState.initialX + dx;
+        newY = mediaTransformState.initialY + mediaTransformState.initialHeight - newHeight;
+      }
+
+      // Apply minimum size constraint
+      const minSize = 50;
+      if (newWidth >= minSize && newHeight >= minSize) {
+        selected.width = newWidth;
+        selected.height = newHeight;
+        selected.x = newX;
+        selected.y = newY;
+      }
+    }
+
+    // Redraw with updated position/size
+    redrawMedia();
+    markNoteEdited();
+    return;
+  }
+
   if (!isDrawMode || (!isDrawing && !isErasing && !isLassoing && !isTransforming)) {
     return;
   }
@@ -1169,6 +1439,13 @@ function drawLassoPath() {
  * Handle canvas pointer up
  */
 function handleCanvasPointerUp(_e) {
+  // Handle media transformation end
+  if (mediaTransformState) {
+    mediaTransformState = null;
+    scheduleSave();
+    return;
+  }
+
   if (isTransforming) {
     isTransforming = false;
     transformMode = null;
@@ -1547,6 +1824,9 @@ function redrawMedia() {
   mediaItems.forEach((item) => {
     drawMediaItem(item);
   });
+
+  // Draw selection handles if a media item is selected
+  drawMediaSelection();
 }
 
 /**
@@ -1556,36 +1836,20 @@ function redrawMedia() {
 function drawMediaItem(item) {
   if (!mediaCtx || !item || !item.dataUrl) return;
 
-  console.log("[Media] drawMediaItem called for item:", {
-    hasImageElement: !!item.imageElement,
-    isHTMLImageElement: item.imageElement instanceof HTMLImageElement,
-    loading: item.loading,
-    x: item.x,
-    y: item.y,
-    width: item.width,
-    height: item.height
-  });
-
   // Check if image is already loaded and valid
   if (item.imageElement instanceof HTMLImageElement) {
     // Image already loaded, draw immediately
-    console.log("[Media] Image already loaded, drawing immediately");
     drawMediaItemImmediate(item);
     return;
   }
 
   // Load the image if not already loading
-  if (item.loading) {
-    console.log("[Media] Image is already loading, skipping");
-    return;
-  }
+  if (item.loading) return;
 
   // Start loading the image
-  console.log("[Media] Starting to load image from dataUrl");
   item.loading = true;
   const img = new Image();
   img.onload = () => {
-    console.log("[Media] Image loaded successfully, dimensions:", img.width, "x", img.height);
     item.imageElement = img;
     item.loading = false;
     // Redraw all media once the image is loaded
@@ -1604,23 +1868,15 @@ function drawMediaItem(item) {
 function redrawMediaImmediate() {
   if (!mediaCtx || !mediaCanvas) return;
 
-  console.log("[Media] redrawMediaImmediate called, mediaItems count:", mediaItems.length);
-
   // Clear the media canvas
   mediaCtx.clearRect(0, 0, mediaCanvas.width, mediaCanvas.height);
 
   // Draw all media items that have loaded images
-  let drawnCount = 0;
   mediaItems.forEach((item) => {
     if (item.imageElement && item.imageElement instanceof HTMLImageElement) {
       drawMediaItemImmediate(item);
-      drawnCount++;
-    } else {
-      console.log("[Media] Skipping item, imageElement:", !!item.imageElement, "isHTMLImageElement:", item.imageElement instanceof HTMLImageElement);
     }
   });
-
-  console.log("[Media] Drew", drawnCount, "images");
 }
 
 /**
@@ -1628,16 +1884,7 @@ function redrawMediaImmediate() {
  * @param {Object} item - Media item with loaded imageElement
  */
 function drawMediaItemImmediate(item) {
-  if (!mediaCtx || !item || !item.imageElement) {
-    console.warn("[Media] drawMediaItemImmediate: Missing required params:", {
-      hasCtx: !!mediaCtx,
-      hasItem: !!item,
-      hasImageElement: !!item?.imageElement
-    });
-    return;
-  }
-
-  console.log("[Media] Drawing image at:", item.x, item.y, "size:", item.width, item.height);
+  if (!mediaCtx || !item || !item.imageElement) return;
 
   mediaCtx.save();
 
@@ -1650,21 +1897,195 @@ function drawMediaItemImmediate(item) {
     mediaCtx.translate(-centerX, -centerY);
   }
 
-  try {
-    // Draw the image at the specified position and size
-    mediaCtx.drawImage(
-      item.imageElement,
-      item.x,
-      item.y,
-      item.width,
-      item.height
-    );
-    console.log("[Media] Successfully drew image");
-  } catch (error) {
-    console.error("[Media] Error drawing image:", error);
+  // Draw the image at the specified position and size
+  mediaCtx.drawImage(item.imageElement, item.x, item.y, item.width, item.height);
+
+  mediaCtx.restore();
+}
+
+/**
+ * Get the selected media item
+ * @returns {Object|null} The selected media item or null
+ */
+function getSelectedMedia() {
+  if (!selectedMediaId) return null;
+  return mediaItems.find((item) => item.id === selectedMediaId) || null;
+}
+
+/**
+ * Select a media item by ID
+ * @param {string|null} mediaId - Media item ID or null to deselect
+ */
+function selectMedia(mediaId) {
+  selectedMediaId = mediaId;
+
+  // Update delete button visibility
+  const deleteBtn = document.getElementById("delete-media-btn");
+  if (deleteBtn) {
+    deleteBtn.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  // Redraw to show/hide selection
+  redrawMedia();
+}
+
+/**
+ * Check if a point is inside a media item
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ * @param {Object} item - Media item
+ * @returns {boolean} True if point is inside
+ */
+function isPointInMedia(x, y, item) {
+  return x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height;
+}
+
+/**
+ * Find media item at point (returns topmost item)
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ * @returns {Object|null} Media item or null
+ */
+function getMediaAtPoint(x, y) {
+  // Iterate backwards to get topmost item first
+  for (let i = mediaItems.length - 1; i >= 0; i--) {
+    const item = mediaItems[i];
+    if (isPointInMedia(x, y, item)) {
+      return item;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if a point is on a media resize handle
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ * @param {Object} item - Media item
+ * @returns {string|null} Handle name ('nw', 'ne', 'sw', 'se') or null
+ */
+function getMediaHandleAtPoint(x, y, item) {
+  const handles = [
+    { name: "nw", x: item.x, y: item.y },
+    { name: "ne", x: item.x + item.width, y: item.y },
+    { name: "sw", x: item.x, y: item.y + item.height },
+    { name: "se", x: item.x + item.width, y: item.y + item.height },
+  ];
+
+  for (const handle of handles) {
+    const dx = x - handle.x;
+    const dy = y - handle.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance <= mediaHandleSize) {
+      return handle.name;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Draw selection border and resize handles for selected media
+ */
+function drawMediaSelection() {
+  const selected = getSelectedMedia();
+  if (!selected || !mediaCtx) return;
+
+  mediaCtx.save();
+
+  // Draw selection border
+  mediaCtx.strokeStyle = "#0066cc";
+  mediaCtx.lineWidth = 2;
+  mediaCtx.setLineDash([5, 5]);
+  mediaCtx.strokeRect(selected.x, selected.y, selected.width, selected.height);
+  mediaCtx.setLineDash([]);
+
+  // Draw resize handles
+  const handles = [
+    { x: selected.x, y: selected.y }, // nw
+    { x: selected.x + selected.width, y: selected.y }, // ne
+    { x: selected.x, y: selected.y + selected.height }, // sw
+    { x: selected.x + selected.width, y: selected.y + selected.height }, // se
+  ];
+
+  mediaCtx.fillStyle = "#0066cc";
+  mediaCtx.strokeStyle = "#ffffff";
+  mediaCtx.lineWidth = 2;
+
+  for (const handle of handles) {
+    mediaCtx.beginPath();
+    mediaCtx.arc(handle.x, handle.y, mediaHandleSize / 2, 0, Math.PI * 2);
+    mediaCtx.fill();
+    mediaCtx.stroke();
   }
 
   mediaCtx.restore();
+}
+
+/**
+ * Update cursor style based on media interaction state
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ */
+function updateMediaCursor(x, y) {
+  const textEditorEl = document.getElementById("text-editor");
+  if (!textEditorEl) return;
+
+  // Check if hovering over selected media's handle
+  const selected = getSelectedMedia();
+  if (selected) {
+    const handle = getMediaHandleAtPoint(x, y, selected);
+    if (handle) {
+      // Set resize cursor based on handle position
+      const cursors = {
+        nw: "nw-resize",
+        ne: "ne-resize",
+        sw: "sw-resize",
+        se: "se-resize",
+      };
+      textEditorEl.style.cursor = cursors[handle] || "move";
+      _mediaHoverState = { mediaId: selected.id, handle };
+      return;
+    }
+  }
+
+  // Check if hovering over any media item
+  const media = getMediaAtPoint(x, y);
+  if (media) {
+    textEditorEl.style.cursor = "move";
+    _mediaHoverState = { mediaId: media.id, handle: null };
+    return;
+  }
+
+  // No media hover - reset cursor to default
+  textEditorEl.style.cursor = "";
+  _mediaHoverState = null;
+}
+
+/**
+ * Delete the selected media item
+ */
+function deleteSelectedMedia() {
+  if (!selectedMediaId) return;
+
+  // Find and remove the item
+  const index = mediaItems.findIndex((item) => item.id === selectedMediaId);
+  if (index !== -1) {
+    // Add to deleted list for tombstone tracking
+    deletedMedia.push(selectedMediaId);
+
+    // Remove from media items
+    mediaItems.splice(index, 1);
+
+    // Deselect
+    selectMedia(null);
+
+    // Mark as edited and save
+    markNoteEdited();
+
+    // Redraw
+    redrawMedia();
+  }
 }
 
 /**
@@ -2167,9 +2588,10 @@ function attachToolbarListeners() {
     ?.addEventListener("click", () => formatText("heading"));
   document.getElementById("format-list-btn")?.addEventListener("click", () => formatText("list"));
 
-  // Image import
+  // Image import and manipulation
   document.getElementById("insert-image-btn")?.addEventListener("click", handleInsertImage);
   document.getElementById("insert-camera-btn")?.addEventListener("click", handleInsertCamera);
+  document.getElementById("delete-media-btn")?.addEventListener("click", deleteSelectedMedia);
 
   // Zoom controls
   document.getElementById("zoom-in-btn")?.addEventListener("click", () => adjustZoom(zoomStep));
@@ -2321,14 +2743,16 @@ async function handleInsertImage() {
     });
 
     // Filter successful results
-    const successful = results.filter(r => r.success);
+    const successful = results.filter((r) => r.success);
 
     if (successful.length > 0) {
       console.log(`[Image Import] Successfully processed ${successful.length} image(s)`);
 
       // Add images to note
-      successful.forEach(result => {
-        console.log(`[Image Import] ${result.fileName}: ${result.data.width}x${result.data.height}, ${result.data.size}KB`);
+      successful.forEach((result) => {
+        console.log(
+          `[Image Import] ${result.fileName}: ${result.data.width}x${result.data.height}, ${result.data.size}KB`,
+        );
 
         // Create media item
         const mediaItem = {
@@ -2353,10 +2777,10 @@ async function handleInsertImage() {
     }
 
     // Report failures
-    const failed = results.filter(r => !r.success);
+    const failed = results.filter((r) => !r.success);
     if (failed.length > 0) {
       console.error(`[Image Import] Failed to process ${failed.length} image(s)`);
-      failed.forEach(result => {
+      failed.forEach((result) => {
         console.error(`[Image Import] ${result.fileName}: ${result.error}`);
       });
     }
@@ -2379,7 +2803,9 @@ async function handleInsertCamera() {
     const results = await processImageFiles([file]);
 
     if (results[0]?.success) {
-      console.log(`[Camera] Successfully processed image: ${results[0].data.width}x${results[0].data.height}, ${results[0].data.size}KB`);
+      console.log(
+        `[Camera] Successfully processed image: ${results[0].data.width}x${results[0].data.height}, ${results[0].data.size}KB`,
+      );
 
       // Create media item
       const mediaItem = {
@@ -2445,7 +2871,14 @@ function setZoom(newZoom) {
   }
 
   // Apply same CSS transform to all canvases to keep them aligned
-  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas, mediaCanvas];
+  const canvases = [
+    dynamicCanvas,
+    staticCanvas,
+    backgroundCanvas,
+    cursorCanvas,
+    highlightCanvas,
+    mediaCanvas,
+  ];
   canvases.forEach((cvs) => {
     if (cvs) {
       cvs.style.transformOrigin = "top left";
@@ -2675,7 +3108,7 @@ async function saveNoteContent(noteIdOverride = null) {
     const markdownContent = htmlToMarkdown(htmlContent);
 
     // Prepare media items for storage (strip transient properties)
-    const mediaForStorage = mediaItems.map(item => ({
+    const mediaForStorage = mediaItems.map((item) => ({
       id: item.id,
       dataUrl: item.dataUrl,
       width: item.width,
@@ -2919,6 +3352,8 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   deletedStrokes = [];
   mediaItems = [];
   deletedMedia = [];
+  selectedMediaId = null;
+  mediaTransformState = null;
   currentStroke = [];
   isDrawing = false;
   isDrawMode = false;

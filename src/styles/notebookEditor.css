@@ -280,6 +280,38 @@
   touch-action: none;
 }
 
+/* Media canvas layer (images) */
+.media-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 1.5;
+  display: block;
+  touch-action: none;
+}
+
+/* Media interaction zones - overlays for cursor changes */
+.media-interaction-overlay {
+  position: absolute;
+  pointer-events: auto;
+  cursor: move;
+  z-index: 1.5;
+}
+
+.media-interaction-overlay:hover {
+  cursor: move;
+}
+
+.media-interaction-overlay.resize-handle {
+  cursor: nwse-resize;
+}
+
+.media-interaction-overlay.resize-handle:hover {
+  cursor: nwse-resize;
+}
+
 /* Canvas drawing layer (strokes) */
 .drawing-canvas,
 .cursor-canvas {

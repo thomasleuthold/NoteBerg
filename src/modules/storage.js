@@ -807,7 +807,7 @@ async function decryptNoteIfNeeded(note) {
     // Only decrypt media if it exists and has the encrypted structure
     // (notes encrypted before media support won't have this field)
     let decryptedMedia = [];
-    if (note.media && typeof note.media === 'object' && note.media.data && note.media.iv) {
+    if (note.media && typeof note.media === "object" && note.media.data && note.media.iv) {
       decryptedMedia = await decryptObject(note.media, encryptionKey);
     }
 
