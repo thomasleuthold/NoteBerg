@@ -37,6 +37,8 @@ let backgroundCanvas = null;
 let backgroundCtx = null;
 let cursorCanvas = null;
 let cursorCtx = null;
+let mediaCanvas = null; // For media items (images)
+let mediaCtx = null;
 let canvasRect = null; // Cached bounding client rect for performance
 
 let isDrawing = false;
@@ -56,6 +58,8 @@ const handleSize = 24; // Size of selection handles
 let currentStroke = [];
 let strokes = [];
 let deletedStrokes = []; // Track IDs of deleted strokes for sync
+let mediaItems = []; // Track media items (images)
+let deletedMedia = []; // Track IDs of deleted media for sync
 let dynamicStrokeDrawScheduled = false;
 let dynamicStrokeLastDrawIndex = 0;
 let dynamicStrokeLastY = null;
@@ -368,6 +372,7 @@ function renderEditor(container, _noteData) {
       <div class="editor-content-wrapper" style="position: relative;">
         <div id="text-editor" class="text-editor" contenteditable="true"></div>
         <canvas id="background-canvas" class="background-canvas" style="position: absolute; top: 0; left: 0; z-index: 1;"></canvas>
+        <canvas id="media-canvas" class="media-canvas" style="position: absolute; top: 0; left: 0; z-index: 1.5; pointer-events: none;"></canvas>
         <canvas id="static-canvas" class="static-canvas" style="position: absolute; top: 0; left: 0; z-index: 2;"></canvas>
         <canvas id="highlight-canvas" class="highlight-canvas" style="position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none;"></canvas>
         <canvas id="dynamic-canvas" class="dynamic-canvas" style="position: absolute; top: 0; left: 0; z-index: 4;"></canvas>
@@ -425,17 +430,19 @@ function initTextEditor(noteData) {
 function initCanvasLayer(noteData) {
   // Setup all canvas layers
   backgroundCanvas = document.getElementById("background-canvas");
+  mediaCanvas = document.getElementById("media-canvas");
   staticCanvas = document.getElementById("static-canvas");
   highlightCanvas = document.getElementById("highlight-canvas");
   dynamicCanvas = document.getElementById("dynamic-canvas");
   cursorCanvas = document.getElementById("cursor-canvas");
 
-  if (!backgroundCanvas || !staticCanvas || !highlightCanvas || !dynamicCanvas || !cursorCanvas) {
+  if (!backgroundCanvas || !mediaCanvas || !staticCanvas || !highlightCanvas || !dynamicCanvas || !cursorCanvas) {
     console.error("One or more canvas layers are missing from the DOM.");
     return;
   }
 
   backgroundCtx = backgroundCanvas.getContext("2d");
+  mediaCtx = mediaCanvas.getContext("2d");
   staticCtx = staticCanvas.getContext("2d");
   highlightCtx = highlightCanvas.getContext("2d");
   dynamicCtx = dynamicCanvas.getContext("2d");
@@ -467,9 +474,21 @@ function initCanvasLayer(noteData) {
     deletedStrokes = [];
   }
 
+  // Load existing media items and deleted media IDs
+  if (noteData.media && Array.isArray(noteData.media)) {
+    mediaItems = noteData.media;
+    console.log(`[NotebookEditor] Initial media items loaded: ${mediaItems.length}`);
+  }
+  if (noteData.deletedMedia && Array.isArray(noteData.deletedMedia)) {
+    deletedMedia = noteData.deletedMedia;
+  } else {
+    deletedMedia = [];
+  }
+
   requestAnimationFrame(() => {
     resizeCanvas();
     redrawCanvas(); // This will now draw to the static canvas
+    redrawMedia(); // Draw media items
   });
 
   // Add pen detection on the wrapper to enable canvas pointer-events for scrolled areas
@@ -578,6 +597,7 @@ function resizeCanvas() {
     !backgroundCanvas ||
     !cursorCanvas ||
     !highlightCanvas ||
+    !mediaCanvas ||
     !currentEditor
   )
     return;
@@ -612,7 +632,7 @@ function resizeCanvas() {
 
   if (widthChanged || heightChanged) {
     // Resize all canvases
-    const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
+    const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas, mediaCanvas];
     canvases.forEach((cvs) => {
       cvs.width = safeWidth;
       cvs.height = safeHeight;
@@ -628,6 +648,7 @@ function resizeCanvas() {
     // Redraw both background and strokes after resize (canvas is cleared when dimensions change)
     redrawBackground();
     redrawCanvas();
+    redrawMedia();
 
     // Re-apply stroke highlighting if active
     if (activeSearchQuery) {
@@ -1514,6 +1535,139 @@ function isPointNearLine(px, py, x1, y1, x2, y2, threshold) {
 }
 
 /**
+ * Redraw all media items on the media canvas
+ */
+function redrawMedia() {
+  if (!mediaCtx || !mediaCanvas) return;
+
+  // Clear the media canvas
+  mediaCtx.clearRect(0, 0, mediaCanvas.width, mediaCanvas.height);
+
+  // Draw all media items
+  mediaItems.forEach((item) => {
+    drawMediaItem(item);
+  });
+}
+
+/**
+ * Draw a single media item on the media canvas
+ * @param {Object} item - Media item with dataUrl, x, y, width, height properties
+ */
+function drawMediaItem(item) {
+  if (!mediaCtx || !item || !item.dataUrl) return;
+
+  console.log("[Media] drawMediaItem called for item:", {
+    hasImageElement: !!item.imageElement,
+    isHTMLImageElement: item.imageElement instanceof HTMLImageElement,
+    loading: item.loading,
+    x: item.x,
+    y: item.y,
+    width: item.width,
+    height: item.height
+  });
+
+  // Check if image is already loaded and valid
+  if (item.imageElement instanceof HTMLImageElement) {
+    // Image already loaded, draw immediately
+    console.log("[Media] Image already loaded, drawing immediately");
+    drawMediaItemImmediate(item);
+    return;
+  }
+
+  // Load the image if not already loading
+  if (item.loading) {
+    console.log("[Media] Image is already loading, skipping");
+    return;
+  }
+
+  // Start loading the image
+  console.log("[Media] Starting to load image from dataUrl");
+  item.loading = true;
+  const img = new Image();
+  img.onload = () => {
+    console.log("[Media] Image loaded successfully, dimensions:", img.width, "x", img.height);
+    item.imageElement = img;
+    item.loading = false;
+    // Redraw all media once the image is loaded
+    redrawMediaImmediate();
+  };
+  img.onerror = (error) => {
+    console.error("[Media] Failed to load image:", error);
+    item.loading = false;
+  };
+  img.src = item.dataUrl;
+}
+
+/**
+ * Redraw all media immediately (for loaded images only)
+ */
+function redrawMediaImmediate() {
+  if (!mediaCtx || !mediaCanvas) return;
+
+  console.log("[Media] redrawMediaImmediate called, mediaItems count:", mediaItems.length);
+
+  // Clear the media canvas
+  mediaCtx.clearRect(0, 0, mediaCanvas.width, mediaCanvas.height);
+
+  // Draw all media items that have loaded images
+  let drawnCount = 0;
+  mediaItems.forEach((item) => {
+    if (item.imageElement && item.imageElement instanceof HTMLImageElement) {
+      drawMediaItemImmediate(item);
+      drawnCount++;
+    } else {
+      console.log("[Media] Skipping item, imageElement:", !!item.imageElement, "isHTMLImageElement:", item.imageElement instanceof HTMLImageElement);
+    }
+  });
+
+  console.log("[Media] Drew", drawnCount, "images");
+}
+
+/**
+ * Draw a media item immediately (assumes image is loaded)
+ * @param {Object} item - Media item with loaded imageElement
+ */
+function drawMediaItemImmediate(item) {
+  if (!mediaCtx || !item || !item.imageElement) {
+    console.warn("[Media] drawMediaItemImmediate: Missing required params:", {
+      hasCtx: !!mediaCtx,
+      hasItem: !!item,
+      hasImageElement: !!item?.imageElement
+    });
+    return;
+  }
+
+  console.log("[Media] Drawing image at:", item.x, item.y, "size:", item.width, item.height);
+
+  mediaCtx.save();
+
+  // Apply rotation if present
+  if (item.rotation) {
+    const centerX = item.x + item.width / 2;
+    const centerY = item.y + item.height / 2;
+    mediaCtx.translate(centerX, centerY);
+    mediaCtx.rotate((item.rotation * Math.PI) / 180);
+    mediaCtx.translate(-centerX, -centerY);
+  }
+
+  try {
+    // Draw the image at the specified position and size
+    mediaCtx.drawImage(
+      item.imageElement,
+      item.x,
+      item.y,
+      item.width,
+      item.height
+    );
+    console.log("[Media] Successfully drew image");
+  } catch (error) {
+    console.error("[Media] Error drawing image:", error);
+  }
+
+  mediaCtx.restore();
+}
+
+/**
  * Check if a stroke intersects with eraser circle
  * @param {Object} stroke - Stroke object with x, y arrays
  * @param {number} eraserX - Eraser center x
@@ -2172,14 +2326,30 @@ async function handleInsertImage() {
     if (successful.length > 0) {
       console.log(`[Image Import] Successfully processed ${successful.length} image(s)`);
 
-      // Add images to note (will implement in Phase 3)
-      // For now, just log the results
+      // Add images to note
       successful.forEach(result => {
         console.log(`[Image Import] ${result.fileName}: ${result.data.width}x${result.data.height}, ${result.data.size}KB`);
+
+        // Create media item
+        const mediaItem = {
+          id: generateId(),
+          dataUrl: result.data.dataUrl,
+          width: result.data.width,
+          height: result.data.height,
+          x: 100, // Default position - will make this smarter in Phase 4
+          y: 100 + mediaItems.length * 50, // Stack images vertically
+          rotation: 0,
+          createdAt: Date.now(),
+        };
+
+        mediaItems.push(mediaItem);
       });
 
-      // TODO: Add images to currentNoteData.media array and render them
-      // markNoteEdited();
+      // Mark note as edited and save
+      markNoteEdited();
+
+      // Redraw media canvas
+      redrawMedia();
     }
 
     // Report failures
@@ -2211,9 +2381,25 @@ async function handleInsertCamera() {
     if (results[0]?.success) {
       console.log(`[Camera] Successfully processed image: ${results[0].data.width}x${results[0].data.height}, ${results[0].data.size}KB`);
 
-      // Add image to note (will implement in Phase 3)
-      // TODO: Add image to currentNoteData.media array and render it
-      // markNoteEdited();
+      // Create media item
+      const mediaItem = {
+        id: generateId(),
+        dataUrl: results[0].data.dataUrl,
+        width: results[0].data.width,
+        height: results[0].data.height,
+        x: 100, // Default position
+        y: 100 + mediaItems.length * 50, // Stack images vertically
+        rotation: 0,
+        createdAt: Date.now(),
+      };
+
+      mediaItems.push(mediaItem);
+
+      // Mark note as edited and save
+      markNoteEdited();
+
+      // Redraw media canvas
+      redrawMedia();
     } else {
       console.error(`[Camera] Failed to process image: ${results[0]?.error}`);
     }
@@ -2259,7 +2445,7 @@ function setZoom(newZoom) {
   }
 
   // Apply same CSS transform to all canvases to keep them aligned
-  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
+  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas, mediaCanvas];
   canvases.forEach((cvs) => {
     if (cvs) {
       cvs.style.transformOrigin = "top left";
@@ -2488,11 +2674,25 @@ async function saveNoteContent(noteIdOverride = null) {
     const htmlContent = currentEditor.innerHTML;
     const markdownContent = htmlToMarkdown(htmlContent);
 
-    // Update note with content, strokes, deleted stroke IDs, and background setting
+    // Prepare media items for storage (strip transient properties)
+    const mediaForStorage = mediaItems.map(item => ({
+      id: item.id,
+      dataUrl: item.dataUrl,
+      width: item.width,
+      height: item.height,
+      x: item.x,
+      y: item.y,
+      rotation: item.rotation,
+      createdAt: item.createdAt,
+    }));
+
+    // Update note with content, strokes, deleted stroke IDs, media, and background setting
     await updateNote(noteId, {
       content: markdownContent,
       strokes: strokes,
       deletedStrokes: deletedStrokes,
+      media: mediaForStorage,
+      deletedMedia: deletedMedia,
       background: currentNoteData?.background || "none",
       modified: Date.now(),
     });
@@ -2717,6 +2917,8 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
 
   strokes = [];
   deletedStrokes = [];
+  mediaItems = [];
+  deletedMedia = [];
   currentStroke = [];
   isDrawing = false;
   isDrawMode = false;
