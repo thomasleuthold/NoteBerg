@@ -814,6 +814,12 @@ function handlePointerDown(e) {
         };
         e.preventDefault();
         e.stopPropagation();
+
+        // Prevent scrolling on touch devices during media manipulation
+        if (e.pointerType === "touch") {
+          preventScrollDuringMediaManipulation(true);
+        }
+
         return;
       } else {
         console.log("[Media] Starting move");
@@ -827,6 +833,12 @@ function handlePointerDown(e) {
         };
         e.preventDefault();
         e.stopPropagation();
+
+        // Prevent scrolling on touch devices during media manipulation
+        if (e.pointerType === "touch") {
+          preventScrollDuringMediaManipulation(true);
+        }
+
         return;
       }
     } else if (selectedMediaId) {
@@ -985,6 +997,12 @@ function handlePointerUp(e) {
   // Handle media transformation end
   if (mediaTransformState && (e.pointerType === "mouse" || e.pointerType === "touch")) {
     mediaTransformState = null;
+
+    // Re-enable scrolling on touch devices
+    if (e.pointerType === "touch") {
+      preventScrollDuringMediaManipulation(false);
+    }
+
     scheduleSave();
     return;
   }
@@ -1438,10 +1456,16 @@ function drawLassoPath() {
 /**
  * Handle canvas pointer up
  */
-function handleCanvasPointerUp(_e) {
+function handleCanvasPointerUp(e) {
   // Handle media transformation end
   if (mediaTransformState) {
     mediaTransformState = null;
+
+    // Re-enable scrolling on touch devices
+    if (e.pointerType === "touch") {
+      preventScrollDuringMediaManipulation(false);
+    }
+
     scheduleSave();
     return;
   }
@@ -2060,6 +2084,29 @@ function updateMediaCursor(x, y) {
   // No media hover - reset cursor to default
   textEditorEl.style.cursor = "";
   _mediaHoverState = null;
+}
+
+/**
+ * Prevent or allow scrolling during media manipulation
+ * @param {boolean} prevent - True to prevent scrolling, false to allow
+ */
+function preventScrollDuringMediaManipulation(prevent) {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) return;
+
+  if (prevent) {
+    // Store original overflow style
+    wrapper.dataset.originalOverflow = wrapper.style.overflow || "";
+    // Prevent scrolling by setting overflow to hidden
+    wrapper.style.overflow = "hidden";
+    // Also set touch-action to none to prevent default touch behaviors
+    wrapper.style.touchAction = "none";
+  } else {
+    // Restore original overflow style
+    const originalOverflow = wrapper.dataset.originalOverflow || "";
+    wrapper.style.overflow = originalOverflow;
+    wrapper.style.touchAction = "";
+  }
 }
 
 /**
