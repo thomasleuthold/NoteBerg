@@ -10,7 +10,7 @@ import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, generateId, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
 import { getIcon } from "../utils/icons.js";
-import { pickImages, captureFromCamera, processImageFiles } from "../utils/imageUtils.js";
+import { captureFromCamera, pickImages, processImageFiles } from "../utils/imageUtils.js";
 import { htmlToMarkdown, markdownToHtml } from "../utils/markdown.js";
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
@@ -63,9 +63,10 @@ let deletedMedia = []; // Track IDs of deleted media for sync
 
 // Media manipulation state
 let selectedMediaId = null; // Currently selected media item ID
-let mediaTransformState = null; // { mode: 'move'|'resize', handle: 'nw'|'ne'|'sw'|'se', startX, startY, initialX, initialY, initialWidth, initialHeight }
+let mediaTransformState = null; // { mode: 'move'|'resize'|'rotate', handle: 'nw'|'ne'|'sw'|'se'|'rotate', startX, startY, initialX, initialY, initialWidth, initialHeight }
 const mediaHandleSize = 20; // Size of media resize handles (increased from 12 for easier clicking)
 let _mediaHoverState = null; // { mediaId, handle: null|'nw'|'ne'|'sw'|'se' }
+let isImageMode = false; // Track if in image manipulation mode
 let dynamicStrokeDrawScheduled = false;
 let dynamicStrokeLastDrawIndex = 0;
 let dynamicStrokeLastY = null;
@@ -257,6 +258,7 @@ function renderEditor(container, _noteData) {
     info: getIcon("info", 20),
     image: getIcon("image", 20),
     camera: getIcon("camera", 20),
+    crop: getIcon("crop", 20),
   };
 
   container.innerHTML = `
@@ -272,6 +274,9 @@ function renderEditor(container, _noteData) {
               </button>
               <button class="toolbar-tab" id="mode-draw-btn" title="Draw mode" role="tab" aria-selected="false">
                 ${icons.pen}
+              </button>
+              <button class="toolbar-tab" id="mode-image-btn" title="Image mode" role="tab" aria-selected="false">
+                ${icons.image}
               </button>
             </div>
           </div>
@@ -328,12 +333,19 @@ function renderEditor(container, _noteData) {
             <button class="toolbar-btn" id="format-list-btn" title="List">
               •
             </button>
-            <div class="toolbar-divider"></div>
+          </div>
+
+          <!-- Image Tools -->
+          <div id="image-tools" class="toolbar-section image-tools">
             <button class="toolbar-btn" id="insert-image-btn" title="Insert image">
               ${icons.image}
             </button>
             <button class="toolbar-btn" id="insert-camera-btn" title="Take photo">
               ${icons.camera}
+            </button>
+            <div class="toolbar-divider"></div>
+            <button class="toolbar-btn" id="crop-media-btn" title="Crop image" style="display: none;">
+              ${icons.crop}
             </button>
             <button class="toolbar-btn" id="delete-media-btn" title="Delete image" style="display: none;">
               ${icons.trash}
@@ -781,8 +793,8 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
  * Handle pointer down for auto mode detection
  */
 function handlePointerDown(e) {
-  // Check for media clicks (mouse or touch in text mode)
-  if (!isDrawMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+  // Check for media clicks (mouse or touch) - only in Image Mode
+  if (!isDrawMode && isImageMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
     canvasRect = dynamicCanvas.getBoundingClientRect();
     const { x, y } = getCanvasCoordinates(e);
 
@@ -796,22 +808,41 @@ function handlePointerDown(e) {
       console.log("[Media] Selecting media:", clickedMedia.id);
       selectMedia(clickedMedia.id);
 
-      // Check if clicking on a resize handle
+      // Check if clicking on a handle
       const handle = getMediaHandleAtPoint(x, y, clickedMedia);
       if (handle) {
-        console.log("[Media] Starting resize with handle:", handle);
-        // Start resize operation
-        mediaTransformState = {
-          mode: "resize",
-          handle: handle,
-          startX: x,
-          startY: y,
-          initialX: clickedMedia.x,
-          initialY: clickedMedia.y,
-          initialWidth: clickedMedia.width,
-          initialHeight: clickedMedia.height,
-          aspectRatio: clickedMedia.width / clickedMedia.height,
-        };
+        if (handle === "rotate") {
+          console.log("[Media] Starting rotation");
+          // Start rotation operation
+          const centerX = clickedMedia.x + clickedMedia.width / 2;
+          const centerY = clickedMedia.y + clickedMedia.height / 2;
+          const startAngle = Math.atan2(y - centerY, x - centerX);
+
+          mediaTransformState = {
+            mode: "rotate",
+            startX: x,
+            startY: y,
+            centerX: centerX,
+            centerY: centerY,
+            startAngle: startAngle,
+            initialRotation: clickedMedia.rotation || 0,
+          };
+        } else {
+          console.log("[Media] Starting resize with handle:", handle);
+          // Start resize operation
+          mediaTransformState = {
+            mode: "resize",
+            handle: handle,
+            startX: x,
+            startY: y,
+            initialX: clickedMedia.x,
+            initialY: clickedMedia.y,
+            initialWidth: clickedMedia.width,
+            initialHeight: clickedMedia.height,
+            aspectRatio: clickedMedia.width / clickedMedia.height,
+          };
+        }
+
         e.preventDefault();
         e.stopPropagation();
 
@@ -891,7 +922,7 @@ function handlePointerDown(e) {
  * Handle pointer move
  */
 function handlePointerMove(e) {
-  // Handle media transformation (move/resize)
+  // Handle media transformation (move/resize/rotate)
   if (mediaTransformState && (e.pointerType === "mouse" || e.pointerType === "touch")) {
     const { x, y } = getCanvasCoordinates(e);
     const selected = getSelectedMedia();
@@ -906,6 +937,20 @@ function handlePointerMove(e) {
       const dy = y - mediaTransformState.startY;
       selected.x = mediaTransformState.initialX + dx;
       selected.y = mediaTransformState.initialY + dy;
+    } else if (mediaTransformState.mode === "rotate") {
+      // Calculate rotation angle
+      const currentAngle = Math.atan2(
+        y - mediaTransformState.centerY,
+        x - mediaTransformState.centerX,
+      );
+      const angleDiff = currentAngle - mediaTransformState.startAngle;
+      const angleDegrees = (angleDiff * 180) / Math.PI;
+
+      // Update rotation (keep between 0-360)
+      let newRotation = mediaTransformState.initialRotation + angleDegrees;
+      newRotation = ((newRotation % 360) + 360) % 360; // Normalize to 0-360
+      selected.rotation = newRotation;
+      console.log("[Media] Rotating to:", newRotation.toFixed(1), "degrees");
     } else if (mediaTransformState.mode === "resize") {
       // Calculate new size based on handle
       const dx = x - mediaTransformState.startX;
@@ -1096,19 +1141,38 @@ function handleCanvasPointerDown(e) {
 
   console.log("[Media] handleCanvasPointerDown - isDrawMode:", isDrawMode, "coords:", x, y);
 
-  // --- Media interaction (highest priority in non-draw modes) ---
-  if (!isDrawMode) {
-    console.log("[Media] Not in draw mode, checking for media at point");
+  // --- Media interaction (only in Image Mode) ---
+  if (!isDrawMode && isImageMode) {
+    console.log("[Media] Image mode - checking for media at point");
     // Check if clicking on media
     const clickedMedia = getMediaAtPoint(x, y);
     console.log("[Media] Clicked media:", clickedMedia);
+
     if (clickedMedia) {
-      console.log("[Media] Selecting media:", clickedMedia.id);
+      // In Image Mode: immediate selection and manipulation
+      console.log("[Media] Image mode - immediate select:", clickedMedia.id);
       selectMedia(clickedMedia.id);
 
-      // Check if clicking on a resize handle
+      // Check if clicking on a resize/rotate handle
       const handle = getMediaHandleAtPoint(x, y, clickedMedia);
-      if (handle) {
+      if (handle === "rotate") {
+        console.log("[Media] Starting rotation");
+        const centerX = clickedMedia.x + clickedMedia.width / 2;
+        const centerY = clickedMedia.y + clickedMedia.height / 2;
+        const startAngle = Math.atan2(y - centerY, x - centerX);
+
+        mediaTransformState = {
+          mode: "rotate",
+          startX: x,
+          startY: y,
+          centerX: centerX,
+          centerY: centerY,
+          startAngle: startAngle,
+          initialRotation: clickedMedia.rotation || 0,
+        };
+        e.preventDefault();
+        return false;
+      } else if (handle) {
         // Start resize operation
         mediaTransformState = {
           mode: "resize",
@@ -1135,9 +1199,12 @@ function handleCanvasPointerDown(e) {
         e.preventDefault();
         return false;
       }
-    } else if (selectedMediaId) {
-      // Clicked outside media, deselect
-      selectMedia(null);
+    } else {
+      // Clicked outside media
+      if (selectedMediaId) {
+        // Deselect media
+        selectMedia(null);
+      }
     }
 
     return true;
@@ -1278,8 +1345,8 @@ function scheduleDynamicStrokeDraw() {
  * Handle canvas pointer move
  */
 function handleCanvasPointerMove(e) {
-  // Handle media transformation (move/resize)
-  if (mediaTransformState) {
+  // Handle media transformation (move/resize) - only in Image Mode
+  if (mediaTransformState && isImageMode) {
     const { x, y } = getCanvasCoordinates(e);
     const selected = getSelectedMedia();
     if (!selected) {
@@ -1912,8 +1979,8 @@ function drawMediaItemImmediate(item) {
 
   mediaCtx.save();
 
-  // Apply rotation if present
-  if (item.rotation) {
+  // Apply rotation if present (check for !== undefined to allow 0)
+  if (item.rotation !== undefined && item.rotation !== 0) {
     const centerX = item.x + item.width / 2;
     const centerY = item.y + item.height / 2;
     mediaCtx.translate(centerX, centerY);
@@ -1943,7 +2010,12 @@ function getSelectedMedia() {
 function selectMedia(mediaId) {
   selectedMediaId = mediaId;
 
-  // Update delete button visibility
+  // Update crop and delete button visibility
+  const cropBtn = document.getElementById("crop-media-btn");
+  if (cropBtn) {
+    cropBtn.style.display = selectedMediaId ? "block" : "none";
+  }
+
   const deleteBtn = document.getElementById("delete-media-btn");
   if (deleteBtn) {
     deleteBtn.style.display = selectedMediaId ? "block" : "none";
@@ -1961,7 +2033,32 @@ function selectMedia(mediaId) {
  * @returns {boolean} True if point is inside
  */
 function isPointInMedia(x, y, item) {
-  return x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height;
+  // If image is rotated, transform the point to the rotated coordinate space
+  let testX = x;
+  let testY = y;
+
+  if (item.rotation !== undefined && item.rotation !== 0) {
+    // Translate point to image center
+    const centerX = item.x + item.width / 2;
+    const centerY = item.y + item.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+
+    // Rotate point by negative rotation angle (inverse transformation)
+    const angle = (-item.rotation * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    testX = centerX + dx * cos - dy * sin;
+    testY = centerY + dx * sin + dy * cos;
+  }
+
+  return (
+    testX >= item.x &&
+    testX <= item.x + item.width &&
+    testY >= item.y &&
+    testY <= item.y + item.height
+  );
 }
 
 /**
@@ -1982,23 +2079,55 @@ function getMediaAtPoint(x, y) {
 }
 
 /**
- * Check if a point is on a media resize handle
+ * Check if a point is on a media resize or rotation handle
  * @param {number} x - X coordinate
  * @param {number} y - Y coordinate
  * @param {Object} item - Media item
- * @returns {string|null} Handle name ('nw', 'ne', 'sw', 'se') or null
+ * @returns {string|null} Handle name ('nw', 'ne', 'sw', 'se', 'rotate') or null
  */
 function getMediaHandleAtPoint(x, y, item) {
-  const handles = [
+  // If image is rotated, we need to transform the point to the rotated coordinate space
+  let testX = x;
+  let testY = y;
+
+  if (item.rotation !== undefined && item.rotation !== 0) {
+    // Translate point to image center
+    const centerX = item.x + item.width / 2;
+    const centerY = item.y + item.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+
+    // Rotate point by negative rotation angle (inverse transformation)
+    const angle = (-item.rotation * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    testX = centerX + dx * cos - dy * sin;
+    testY = centerY + dx * sin + dy * cos;
+  }
+
+  // Check rotation handle first (priority over resize handles)
+  // Rotation handle is at top-center, just inside the image bounds
+  const rotateHandleY = item.y + mediaHandleSize;
+  const rotateHandleX = item.x + item.width / 2;
+  const rotateDx = testX - rotateHandleX;
+  const rotateDy = testY - rotateHandleY;
+  const rotateDistance = Math.sqrt(rotateDx * rotateDx + rotateDy * rotateDy);
+  if (rotateDistance <= mediaHandleSize) {
+    return "rotate";
+  }
+
+  // Check resize handles (corners)
+  const resizeHandles = [
     { name: "nw", x: item.x, y: item.y },
     { name: "ne", x: item.x + item.width, y: item.y },
     { name: "sw", x: item.x, y: item.y + item.height },
     { name: "se", x: item.x + item.width, y: item.y + item.height },
   ];
 
-  for (const handle of handles) {
-    const dx = x - handle.x;
-    const dy = y - handle.y;
+  for (const handle of resizeHandles) {
+    const dx = testX - handle.x;
+    const dy = testY - handle.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     if (distance <= mediaHandleSize) {
       return handle.name;
@@ -2015,7 +2144,19 @@ function drawMediaSelection() {
   const selected = getSelectedMedia();
   if (!selected || !mediaCtx) return;
 
+  // Only draw selection in Image Mode
+  if (!isImageMode) return;
+
   mediaCtx.save();
+
+  // Apply rotation transformation if image is rotated
+  if (selected.rotation !== undefined && selected.rotation !== 0) {
+    const centerX = selected.x + selected.width / 2;
+    const centerY = selected.y + selected.height / 2;
+    mediaCtx.translate(centerX, centerY);
+    mediaCtx.rotate((selected.rotation * Math.PI) / 180);
+    mediaCtx.translate(-centerX, -centerY);
+  }
 
   // Draw selection border
   mediaCtx.strokeStyle = "#0066cc";
@@ -2024,21 +2165,37 @@ function drawMediaSelection() {
   mediaCtx.strokeRect(selected.x, selected.y, selected.width, selected.height);
   mediaCtx.setLineDash([]);
 
-  // Draw resize handles
-  const handles = [
-    { x: selected.x, y: selected.y }, // nw
-    { x: selected.x + selected.width, y: selected.y }, // ne
-    { x: selected.x, y: selected.y + selected.height }, // sw
-    { x: selected.x + selected.width, y: selected.y + selected.height }, // se
-  ];
+  // Only draw manipulation handles in Image Mode
+  if (isImageMode) {
+    // Draw resize handles (corners)
+    const resizeHandles = [
+      { x: selected.x, y: selected.y }, // nw
+      { x: selected.x + selected.width, y: selected.y }, // ne
+      { x: selected.x, y: selected.y + selected.height }, // sw
+      { x: selected.x + selected.width, y: selected.y + selected.height }, // se
+    ];
 
-  mediaCtx.fillStyle = "#0066cc";
-  mediaCtx.strokeStyle = "#ffffff";
-  mediaCtx.lineWidth = 2;
+    mediaCtx.fillStyle = "#0066cc";
+    mediaCtx.strokeStyle = "#ffffff";
+    mediaCtx.lineWidth = 2;
 
-  for (const handle of handles) {
+    for (const handle of resizeHandles) {
+      mediaCtx.beginPath();
+      mediaCtx.arc(handle.x, handle.y, mediaHandleSize / 2, 0, Math.PI * 2);
+      mediaCtx.fill();
+      mediaCtx.stroke();
+    }
+
+    // Draw rotation handle (at top-center, inside image bounds)
+    const rotateHandleY = selected.y + mediaHandleSize; // Just inside top edge
+    const rotateHandleX = selected.x + selected.width / 2; // Center horizontally
+
+    // Draw rotation handle circle with distinct color
+    mediaCtx.fillStyle = "#00cc66"; // Green color for rotation handle
+    mediaCtx.strokeStyle = "#ffffff";
+    mediaCtx.lineWidth = 2;
     mediaCtx.beginPath();
-    mediaCtx.arc(handle.x, handle.y, mediaHandleSize / 2, 0, Math.PI * 2);
+    mediaCtx.arc(rotateHandleX, rotateHandleY, mediaHandleSize / 2, 0, Math.PI * 2);
     mediaCtx.fill();
     mediaCtx.stroke();
   }
@@ -2055,17 +2212,25 @@ function updateMediaCursor(x, y) {
   const textEditorEl = document.getElementById("text-editor");
   if (!textEditorEl) return;
 
+  // Only change cursor in Image Mode
+  if (!isImageMode) {
+    textEditorEl.style.cursor = "";
+    _mediaHoverState = null;
+    return;
+  }
+
   // Check if hovering over selected media's handle
   const selected = getSelectedMedia();
   if (selected) {
     const handle = getMediaHandleAtPoint(x, y, selected);
     if (handle) {
-      // Set resize cursor based on handle position
+      // Set cursor based on handle type
       const cursors = {
         nw: "nw-resize",
         ne: "ne-resize",
         sw: "sw-resize",
         se: "se-resize",
+        rotate: "grab", // Rotation cursor
       };
       textEditorEl.style.cursor = cursors[handle] || "move";
       _mediaHoverState = { mediaId: selected.id, handle };
@@ -2133,6 +2298,282 @@ function deleteSelectedMedia() {
     // Redraw
     redrawMedia();
   }
+}
+
+/**
+ * Enter crop mode for the selected media item
+ */
+function enterCropMode() {
+  const selected = getSelectedMedia();
+  if (!selected || !selected.imageElement) {
+    console.warn("[Crop] No valid media selected");
+    return;
+  }
+
+  console.log("[Crop] Entering crop mode for media:", selected.id);
+
+  // Create crop overlay
+  const overlay = document.createElement("div");
+  overlay.id = "crop-overlay";
+  overlay.className = "crop-overlay active";
+
+  // Create crop container
+  const container = document.createElement("div");
+  container.className = "crop-container";
+
+  // Create image element for cropping
+  const img = document.createElement("img");
+  img.className = "crop-image";
+  img.src = selected.dataUrl;
+  img.style.maxWidth = "90vw";
+  img.style.maxHeight = "70vh";
+
+  // Create crop area (initially 80% of image size, centered)
+  const cropArea = document.createElement("div");
+  cropArea.className = "crop-area";
+  cropArea.id = "crop-area";
+
+  // Create crop handles
+  const handles = ["nw", "ne", "sw", "se"];
+  handles.forEach((pos) => {
+    const handle = document.createElement("div");
+    handle.className = `crop-handle crop-${pos}`;
+    handle.dataset.position = pos;
+    cropArea.appendChild(handle);
+  });
+
+  // Create crop controls
+  const controls = document.createElement("div");
+  controls.className = "crop-controls";
+
+  const applyBtn = document.createElement("button");
+  applyBtn.textContent = "Apply";
+  applyBtn.className = "crop-btn crop-apply-btn";
+  applyBtn.onclick = () => applyCrop(selected.id);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.className = "crop-btn crop-cancel-btn";
+  cancelBtn.onclick = exitCropMode;
+
+  controls.appendChild(cancelBtn);
+  controls.appendChild(applyBtn);
+
+  // Assemble the UI
+  container.appendChild(img);
+  container.appendChild(cropArea);
+  container.appendChild(controls);
+  overlay.appendChild(container);
+  document.body.appendChild(overlay);
+
+  // Initialize crop area after image loads
+  img.onload = () => {
+    const imgRect = img.getBoundingClientRect();
+    const cropWidth = imgRect.width * 0.8;
+    const cropHeight = imgRect.height * 0.8;
+    const cropLeft = (imgRect.width - cropWidth) / 2;
+    const cropTop = (imgRect.height - cropHeight) / 2;
+
+    cropArea.style.left = `${cropLeft}px`;
+    cropArea.style.top = `${cropTop}px`;
+    cropArea.style.width = `${cropWidth}px`;
+    cropArea.style.height = `${cropHeight}px`;
+
+    // Initialize crop area dragging
+    initCropAreaDrag(cropArea, img);
+  };
+}
+
+/**
+ * Exit crop mode
+ */
+function exitCropMode() {
+  const overlay = document.getElementById("crop-overlay");
+  if (overlay) {
+    overlay.remove();
+  }
+}
+
+/**
+ * Initialize crop area dragging and resizing
+ */
+function initCropAreaDrag(cropArea, img) {
+  let isDragging = false;
+  let isResizing = false;
+  let resizeHandle = null;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+
+  const imgRect = img.getBoundingClientRect();
+
+  // Handle drag on crop area
+  cropArea.addEventListener("pointerdown", (e) => {
+    if (e.target.classList.contains("crop-handle")) {
+      // Resize mode
+      isResizing = true;
+      resizeHandle = e.target.dataset.position;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = cropArea.offsetLeft;
+      startTop = cropArea.offsetTop;
+      startWidth = cropArea.offsetWidth;
+      startHeight = cropArea.offsetHeight;
+    } else {
+      // Drag mode
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = cropArea.offsetLeft;
+      startTop = cropArea.offsetTop;
+    }
+    e.preventDefault();
+  });
+
+  document.addEventListener("pointermove", (e) => {
+    if (isDragging) {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      let newLeft = startLeft + dx;
+      let newTop = startTop + dy;
+
+      // Constrain to image bounds
+      newLeft = Math.max(0, Math.min(newLeft, imgRect.width - cropArea.offsetWidth));
+      newTop = Math.max(0, Math.min(newTop, imgRect.height - cropArea.offsetHeight));
+
+      cropArea.style.left = `${newLeft}px`;
+      cropArea.style.top = `${newTop}px`;
+    } else if (isResizing) {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      let newLeft = startLeft;
+      let newTop = startTop;
+      let newWidth = startWidth;
+      let newHeight = startHeight;
+
+      if (resizeHandle === "se") {
+        newWidth = startWidth + dx;
+        newHeight = startHeight + dy;
+      } else if (resizeHandle === "sw") {
+        newWidth = startWidth - dx;
+        newHeight = startHeight + dy;
+        newLeft = startLeft + dx;
+      } else if (resizeHandle === "ne") {
+        newWidth = startWidth + dx;
+        newHeight = startHeight - dy;
+        newTop = startTop + dy;
+      } else if (resizeHandle === "nw") {
+        newWidth = startWidth - dx;
+        newHeight = startHeight - dy;
+        newLeft = startLeft + dx;
+        newTop = startTop + dy;
+      }
+
+      // Apply minimum size
+      const minSize = 50;
+      if (newWidth >= minSize && newHeight >= minSize) {
+        // Constrain to image bounds
+        newLeft = Math.max(0, Math.min(newLeft, imgRect.width - newWidth));
+        newTop = Math.max(0, Math.min(newTop, imgRect.height - newHeight));
+        newWidth = Math.min(newWidth, imgRect.width - newLeft);
+        newHeight = Math.min(newHeight, imgRect.height - newTop);
+
+        cropArea.style.left = `${newLeft}px`;
+        cropArea.style.top = `${newTop}px`;
+        cropArea.style.width = `${newWidth}px`;
+        cropArea.style.height = `${newHeight}px`;
+      }
+    }
+  });
+
+  document.addEventListener("pointerup", () => {
+    isDragging = false;
+    isResizing = false;
+    resizeHandle = null;
+  });
+}
+
+/**
+ * Apply crop to the selected media item
+ */
+async function applyCrop(mediaId) {
+  const item = mediaItems.find((m) => m.id === mediaId);
+  if (!item || !item.imageElement) {
+    console.error("[Crop] Media item not found");
+    exitCropMode();
+    return;
+  }
+
+  const cropArea = document.getElementById("crop-area");
+  const img = document.querySelector(".crop-image");
+  if (!cropArea || !img) {
+    console.error("[Crop] Crop UI elements not found");
+    exitCropMode();
+    return;
+  }
+
+  const imgRect = img.getBoundingClientRect();
+  const cropRect = cropArea.getBoundingClientRect();
+
+  // Calculate crop coordinates relative to the displayed image
+  const scaleX = item.imageElement.naturalWidth / imgRect.width;
+  const scaleY = item.imageElement.naturalHeight / imgRect.height;
+
+  const cropX = (cropRect.left - imgRect.left) * scaleX;
+  const cropY = (cropRect.top - imgRect.top) * scaleY;
+  const cropWidth = cropRect.width * scaleX;
+  const cropHeight = cropRect.height * scaleY;
+
+  console.log("[Crop] Cropping:", { cropX, cropY, cropWidth, cropHeight });
+
+  // Create a canvas to crop the image
+  const canvas = document.createElement("canvas");
+  canvas.width = cropWidth;
+  canvas.height = cropHeight;
+  const ctx = canvas.getContext("2d");
+
+  // Draw the cropped portion
+  ctx.drawImage(
+    item.imageElement,
+    cropX,
+    cropY,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    cropWidth,
+    cropHeight,
+  );
+
+  // Convert to data URL
+  const croppedDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+  // Calculate new displayed size (maintain current displayed aspect ratio scaling)
+  // The crop area's displayed size relative to original displayed size tells us the new dimensions
+  const displayScaleX = cropRect.width / imgRect.width;
+  const displayScaleY = cropRect.height / imgRect.height;
+  const newDisplayWidth = item.width * displayScaleX;
+  const newDisplayHeight = item.height * displayScaleY;
+
+  // Update the media item
+  item.dataUrl = croppedDataUrl;
+  item.imageElement = null; // Force reload
+  item.width = newDisplayWidth;
+  item.height = newDisplayHeight;
+
+  // Exit crop mode
+  exitCropMode();
+
+  // Mark as edited and redraw
+  markNoteEdited();
+  redrawMedia();
+  scheduleSave();
+
+  console.log("[Crop] Crop applied successfully");
 }
 
 /**
@@ -2218,17 +2659,22 @@ function drawEraserCursor(x, y) {
  */
 function switchToDrawMode() {
   isDrawMode = true;
+  isImageMode = false;
+
+  // Clear any active media transformation
+  mediaTransformState = null;
+
+  // Clear media selection when switching to draw mode
+  if (selectedMediaId) {
+    selectMedia(null);
+  }
+
   if (dynamicCanvas) {
     dynamicCanvas.classList.add("active");
     dynamicCanvas.style.pointerEvents = "auto";
   }
   if (currentEditor) {
     currentEditor.style.pointerEvents = "none";
-  }
-
-  // Clear media selection when switching to draw mode
-  if (selectedMediaId) {
-    selectMedia(null);
   }
 
   updateToolbarButtons();
@@ -2240,6 +2686,16 @@ function switchToDrawMode() {
  */
 function switchToTextMode() {
   isDrawMode = false;
+  isImageMode = false;
+
+  // Clear any active media transformation
+  mediaTransformState = null;
+
+  // Deselect any selected media
+  if (selectedMediaId) {
+    selectMedia(null);
+  }
+
   if (dynamicCanvas) {
     dynamicCanvas.classList.remove("active");
     dynamicCanvas.style.pointerEvents = "none";
@@ -2284,7 +2740,9 @@ function updateModeIndicator() {
   if (!modeText) return;
 
   let mode = "Text";
-  if (isDrawMode) {
+  if (isImageMode) {
+    mode = "Image";
+  } else if (isDrawMode) {
     mode = isEraserMode ? "Erase" : "Draw";
   }
 
@@ -2298,6 +2756,12 @@ function updateModeIndicator() {
 function manualSwitchToTextMode() {
   autoSwitchedToDrawMode = false; // Clear auto-switch flag
   isEraserMode = false; // Exit eraser mode when switching to text
+
+  // Deselect media when leaving Image Mode
+  if (isImageMode && selectedMediaId) {
+    selectMedia(null);
+  }
+
   switchToTextMode();
   updateToolbarButtons();
 }
@@ -2325,6 +2789,62 @@ function manualSwitchToDrawMode() {
   isLassoMode = false;
   switchToDrawMode();
   updateToolbarButtons();
+}
+
+/**
+ * Switch to image mode
+ */
+function switchToImageMode() {
+  isImageMode = true;
+  isDrawMode = false;
+  isEraserMode = false;
+  isLassoMode = false;
+  autoSwitchedToDrawMode = false;
+
+  // Disable drawing canvases
+  if (dynamicCanvas) {
+    dynamicCanvas.classList.remove("active");
+    dynamicCanvas.style.pointerEvents = "none";
+  }
+  if (staticCanvas) {
+    staticCanvas.style.pointerEvents = "none";
+  }
+  if (cursorCanvas) {
+    cursorCanvas.style.pointerEvents = "none";
+  }
+
+  // Enable text editor for scrolling on background
+  if (currentEditor) {
+    currentEditor.style.pointerEvents = "auto";
+  }
+
+  // Clear stroke selection
+  if (selectedStrokes.size > 0) {
+    selectedStrokes.clear();
+    selectionBounds = null;
+    const deleteBtn = document.getElementById("delete-selection-btn");
+    if (deleteBtn) deleteBtn.style.display = "none";
+    redrawCanvas();
+  }
+
+  updateToolbarButtons();
+  updateModeIndicator();
+}
+
+/**
+ * Exit image mode and return to text mode
+ */
+function _exitImageMode() {
+  isImageMode = false;
+  selectMedia(null); // Deselect any selected media
+  switchToTextMode();
+}
+
+/**
+ * Manually switch to image mode (user clicked button)
+ */
+function manualSwitchToImageMode() {
+  switchToImageMode();
 }
 
 /**
@@ -2393,17 +2913,22 @@ function toggleLassoMode() {
 function updateToolbarButtons() {
   const textBtn = document.getElementById("mode-text-btn");
   const drawBtn = document.getElementById("mode-draw-btn");
+  const imageBtn = document.getElementById("mode-image-btn");
   const penBtn = document.getElementById("pen-settings-btn");
   const eraseBtn = document.getElementById("mode-erase-btn");
   const lassoBtn = document.getElementById("mode-lasso-btn");
 
   if (textBtn) {
-    textBtn.classList.toggle("active", !isDrawMode);
-    textBtn.setAttribute("aria-selected", (!isDrawMode).toString());
+    textBtn.classList.toggle("active", !isDrawMode && !isImageMode);
+    textBtn.setAttribute("aria-selected", (!isDrawMode && !isImageMode).toString());
   }
   if (drawBtn) {
     drawBtn.classList.toggle("active", isDrawMode);
     drawBtn.setAttribute("aria-selected", isDrawMode.toString());
+  }
+  if (imageBtn) {
+    imageBtn.classList.toggle("active", isImageMode);
+    imageBtn.setAttribute("aria-selected", isImageMode.toString());
   }
   if (penBtn) {
     penBtn.classList.toggle("active", isDrawMode && !isEraserMode && !isLassoMode);
@@ -2417,14 +2942,24 @@ function updateToolbarButtons() {
 
   // Toggle Row 2 sections based on mode
   const textTools = document.getElementById("text-tools");
+  const imageTools = document.getElementById("image-tools");
   const penTools = document.getElementById("pen-tools");
 
-  if (textTools && penTools) {
+  if (textTools && imageTools && penTools) {
     if (isDrawMode) {
+      // Draw Mode: show pen tools only
       textTools.style.display = "none";
+      imageTools.style.display = "none";
       penTools.style.display = "flex";
+    } else if (isImageMode) {
+      // Image Mode: show image tools only
+      textTools.style.display = "none";
+      imageTools.style.display = "flex";
+      penTools.style.display = "none";
     } else {
+      // Text Mode: show text tools only
       textTools.style.display = "flex";
+      imageTools.style.display = "none";
       penTools.style.display = "none";
     }
   }
@@ -2594,6 +3129,7 @@ function attachToolbarListeners() {
   // Mode switching - use manual switch functions to clear auto-switch flag
   document.getElementById("mode-text-btn")?.addEventListener("click", manualSwitchToTextMode);
   document.getElementById("mode-draw-btn")?.addEventListener("click", manualSwitchToDrawMode);
+  document.getElementById("mode-image-btn")?.addEventListener("click", manualSwitchToImageMode);
   document.getElementById("mode-erase-btn")?.addEventListener("click", toggleEraserMode);
   document.getElementById("mode-lasso-btn")?.addEventListener("click", toggleLassoMode);
   document.getElementById("pen-settings-btn")?.addEventListener("click", () => {
@@ -2643,6 +3179,7 @@ function attachToolbarListeners() {
   // Image import and manipulation
   document.getElementById("insert-image-btn")?.addEventListener("click", handleInsertImage);
   document.getElementById("insert-camera-btn")?.addEventListener("click", handleInsertCamera);
+  document.getElementById("crop-media-btn")?.addEventListener("click", enterCropMode);
   document.getElementById("delete-media-btn")?.addEventListener("click", deleteSelectedMedia);
 
   // Zoom controls
@@ -3013,6 +3550,7 @@ function updateContentBounds() {
       highlightCanvas.width =
         Math.max(minCanvasWidth, rect.width);
 
+    redrawBackground(); // Redraw background after canvas resize clears it
     redrawCanvas();
   }
 }
