@@ -67,6 +67,7 @@ let mediaTransformState = null; // { mode: 'move'|'resize'|'rotate', handle: 'nw
 const mediaHandleSize = 20; // Size of media resize handles (increased from 12 for easier clicking)
 let _mediaHoverState = null; // { mediaId, handle: null|'nw'|'ne'|'sw'|'se' }
 let isImageMode = false; // Track if in image manipulation mode
+let mediaPanState = null;
 let dynamicStrokeDrawScheduled = false;
 let dynamicStrokeLastDrawIndex = 0;
 let dynamicStrokeLastY = null;
@@ -441,6 +442,7 @@ function initTextEditor(noteData) {
   textEditor.addEventListener("pointerdown", handlePointerDown);
   textEditor.addEventListener("pointermove", handlePointerMove);
   textEditor.addEventListener("pointerup", handlePointerUp);
+  textEditor.addEventListener("pointercancel", handlePointerUp);
 
   currentEditor = textEditor;
 }
@@ -793,8 +795,12 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
  * Handle pointer down for auto mode detection
  */
 function handlePointerDown(e) {
-  // Check for media clicks (mouse or touch) - only in Image Mode
-  if (!isDrawMode && isImageMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+  // In Image Mode: block all text editor interactions, handle only media
+  if (isImageMode && !isDrawMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+    // Prevent text selection and editing
+    e.preventDefault();
+    e.stopPropagation();
+
     canvasRect = dynamicCanvas.getBoundingClientRect();
     const { x, y } = getCanvasCoordinates(e);
 
@@ -849,6 +855,16 @@ function handlePointerDown(e) {
         // Prevent scrolling on touch devices during media manipulation
         if (e.pointerType === "touch") {
           preventScrollDuringMediaManipulation(true);
+          // Update canvasRect after changing overflow as it may shift viewport
+          canvasRect = dynamicCanvas.getBoundingClientRect();
+        }
+        const captureTarget = currentEditor || e.target;
+        if (captureTarget?.setPointerCapture) {
+          try {
+            captureTarget.setPointerCapture(e.pointerId);
+          } catch (err) {
+            console.warn("[Media] Could not set pointer capture:", err);
+          }
         }
 
         return;
@@ -868,15 +884,51 @@ function handlePointerDown(e) {
         // Prevent scrolling on touch devices during media manipulation
         if (e.pointerType === "touch") {
           preventScrollDuringMediaManipulation(true);
+          // Update canvasRect after changing overflow as it may shift viewport
+          canvasRect = dynamicCanvas.getBoundingClientRect();
+        }
+        const captureTarget = currentEditor || e.target;
+        if (captureTarget?.setPointerCapture) {
+          try {
+            captureTarget.setPointerCapture(e.pointerId);
+          } catch (err) {
+            console.warn("[Media] Could not set pointer capture:", err);
+          }
         }
 
         return;
       }
-    } else if (selectedMediaId) {
-      console.log("[Media] Deselecting media");
-      // Clicked outside media, deselect
-      selectMedia(null);
+    } else {
+      if (selectedMediaId) {
+        console.log("[Media] Deselecting media");
+        // Clicked outside media, deselect
+        selectMedia(null);
+      }
+      if (e.pointerType === "touch") {
+        const wrapper = document.querySelector(".editor-content-wrapper");
+        if (wrapper) {
+          mediaPanState = {
+            startX: e.clientX,
+            startY: e.clientY,
+            scrollLeft: wrapper.scrollLeft,
+            scrollTop: wrapper.scrollTop,
+          };
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const captureTarget = currentEditor || e.target;
+        if (captureTarget?.setPointerCapture) {
+          try {
+            captureTarget.setPointerCapture(e.pointerId);
+          } catch (err) {
+            console.warn("[Media] Could not set pointer capture:", err);
+          }
+        }
+      }
     }
+
+    // Always return early in Image Mode to prevent text editing
+    return;
   }
 
   if (e.pointerType === "pen") {
@@ -922,9 +974,16 @@ function handlePointerDown(e) {
  * Handle pointer move
  */
 function handlePointerMove(e) {
-  // Handle media transformation (move/resize/rotate)
-  if (mediaTransformState && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+  // Handle media transformation (move/resize/rotate) - only in Image Mode
+  if (
+    mediaTransformState &&
+    isImageMode &&
+    (e.pointerType === "mouse" || e.pointerType === "touch")
+  ) {
+    // Update canvasRect on every move to handle viewport changes
+    canvasRect = dynamicCanvas.getBoundingClientRect();
     const { x, y } = getCanvasCoordinates(e);
+    console.log("[Media] handlePointerMove - coords:", x, y, "mode:", mediaTransformState.mode);
     const selected = getSelectedMedia();
     if (!selected) {
       mediaTransformState = null;
@@ -952,36 +1011,58 @@ function handlePointerMove(e) {
       selected.rotation = newRotation;
       console.log("[Media] Rotating to:", newRotation.toFixed(1), "degrees");
     } else if (mediaTransformState.mode === "resize") {
-      // Calculate new size based on handle
+      // Calculate new size based on handle, accounting for rotation
       const dx = x - mediaTransformState.startX;
+      const dy = y - mediaTransformState.startY;
       const handle = mediaTransformState.handle;
+
+      // Get rotation angle in radians
+      const rotation = ((selected.rotation || 0) * Math.PI) / 180;
+      const cos = Math.cos(-rotation); // Negative to transform back to unrotated space
+      const sin = Math.sin(-rotation);
+
+      // Transform mouse delta into rotated coordinate space (we only need dx for proportional resize)
+      const rotatedDx = dx * cos - dy * sin;
 
       let newWidth = mediaTransformState.initialWidth;
       let newHeight = mediaTransformState.initialHeight;
       let newX = mediaTransformState.initialX;
       let newY = mediaTransformState.initialY;
 
-      // Calculate based on which handle is being dragged
+      // Calculate based on which handle is being dragged (in rotated space)
       if (handle === "se") {
-        // Southeast (bottom-right) - increase both dimensions
-        newWidth = mediaTransformState.initialWidth + dx;
+        // Southeast (bottom-right) - increase width right, height down
+        newWidth = mediaTransformState.initialWidth + rotatedDx;
         newHeight = newWidth / mediaTransformState.aspectRatio;
-      } else if (handle === "sw") {
-        // Southwest (bottom-left) - change width (left) and height (bottom)
-        newWidth = mediaTransformState.initialWidth - dx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
-        newX = mediaTransformState.initialX + dx;
-      } else if (handle === "ne") {
-        // Northeast (top-right) - change width (right) and height (top)
-        newWidth = mediaTransformState.initialWidth + dx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
-        newY = mediaTransformState.initialY + mediaTransformState.initialHeight - newHeight;
       } else if (handle === "nw") {
-        // Northwest (top-left) - decrease both from top-left
-        newWidth = mediaTransformState.initialWidth - dx;
+        // Northwest (top-left) - decrease width left, height up
+        newWidth = mediaTransformState.initialWidth - rotatedDx;
         newHeight = newWidth / mediaTransformState.aspectRatio;
-        newX = mediaTransformState.initialX + dx;
-        newY = mediaTransformState.initialY + mediaTransformState.initialHeight - newHeight;
+        // Transform position change back to screen space
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        const newCenterX = centerX;
+        const newCenterY = centerY;
+        newX = newCenterX - newWidth / 2;
+        newY = newCenterY - newHeight / 2;
+      } else if (handle === "ne") {
+        // Northeast (top-right) - increase width right, height up
+        newWidth = mediaTransformState.initialWidth + rotatedDx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        // Keep bottom-left corner fixed
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        newX = centerX - newWidth / 2;
+        newY = centerY - newHeight / 2;
+      } else if (handle === "sw") {
+        // Southwest (bottom-left) - decrease width left, height down
+        newWidth = mediaTransformState.initialWidth - rotatedDx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        // Keep top-right corner fixed
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        newX = centerX - newWidth / 2;
+        newY = centerY - newHeight / 2;
       }
 
       // Apply minimum size constraint
@@ -1002,8 +1083,21 @@ function handlePointerMove(e) {
     return;
   }
 
-  // Update cursor when hovering over media (but not transforming)
-  if (!isDrawMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+  if (mediaPanState && isImageMode && e.pointerType === "touch" && !mediaTransformState) {
+    const wrapper = document.querySelector(".editor-content-wrapper");
+    if (wrapper) {
+      const dx = e.clientX - mediaPanState.startX;
+      const dy = e.clientY - mediaPanState.startY;
+      wrapper.scrollLeft = mediaPanState.scrollLeft - dx;
+      wrapper.scrollTop = mediaPanState.scrollTop - dy;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+
+  // Update cursor when hovering over media (but not transforming) - only in Image Mode
+  if (!isDrawMode && isImageMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
     const { x, y } = getCanvasCoordinates(e);
     updateMediaCursor(x, y);
   }
@@ -1039,16 +1133,41 @@ function handlePointerMove(e) {
  * Handle pointer up
  */
 function handlePointerUp(e) {
-  // Handle media transformation end
-  if (mediaTransformState && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+  // Handle media transformation end - only in Image Mode
+  if (
+    mediaTransformState &&
+    isImageMode &&
+    (e.pointerType === "mouse" || e.pointerType === "touch")
+  ) {
     mediaTransformState = null;
 
     // Re-enable scrolling on touch devices
     if (e.pointerType === "touch") {
       preventScrollDuringMediaManipulation(false);
     }
+    const captureTarget = currentEditor || e.target;
+    if (captureTarget?.releasePointerCapture) {
+      try {
+        captureTarget.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("[Media] Could not release pointer capture:", err);
+      }
+    }
 
     scheduleSave();
+    return;
+  }
+
+  if (mediaPanState && isImageMode && e.pointerType === "touch") {
+    mediaPanState = null;
+    const captureTarget = currentEditor || e.target;
+    if (captureTarget?.releasePointerCapture) {
+      try {
+        captureTarget.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("[Media] Could not release pointer capture:", err);
+      }
+    }
     return;
   }
 
@@ -1347,6 +1466,8 @@ function scheduleDynamicStrokeDraw() {
 function handleCanvasPointerMove(e) {
   // Handle media transformation (move/resize) - only in Image Mode
   if (mediaTransformState && isImageMode) {
+    // Update canvasRect on every move to handle viewport changes
+    canvasRect = dynamicCanvas.getBoundingClientRect();
     const { x, y } = getCanvasCoordinates(e);
     const selected = getSelectedMedia();
     if (!selected) {
@@ -1361,36 +1482,58 @@ function handleCanvasPointerMove(e) {
       selected.x = mediaTransformState.initialX + dx;
       selected.y = mediaTransformState.initialY + dy;
     } else if (mediaTransformState.mode === "resize") {
-      // Calculate new size based on handle
+      // Calculate new size based on handle, accounting for rotation
       const dx = x - mediaTransformState.startX;
+      const dy = y - mediaTransformState.startY;
       const handle = mediaTransformState.handle;
+
+      // Get rotation angle in radians
+      const rotation = ((selected.rotation || 0) * Math.PI) / 180;
+      const cos = Math.cos(-rotation); // Negative to transform back to unrotated space
+      const sin = Math.sin(-rotation);
+
+      // Transform mouse delta into rotated coordinate space (we only need dx for proportional resize)
+      const rotatedDx = dx * cos - dy * sin;
 
       let newWidth = mediaTransformState.initialWidth;
       let newHeight = mediaTransformState.initialHeight;
       let newX = mediaTransformState.initialX;
       let newY = mediaTransformState.initialY;
 
-      // Calculate based on which handle is being dragged
+      // Calculate based on which handle is being dragged (in rotated space)
       if (handle === "se") {
-        // Southeast (bottom-right) - increase both dimensions
-        newWidth = mediaTransformState.initialWidth + dx;
+        // Southeast (bottom-right) - increase width right, height down
+        newWidth = mediaTransformState.initialWidth + rotatedDx;
         newHeight = newWidth / mediaTransformState.aspectRatio;
-      } else if (handle === "sw") {
-        // Southwest (bottom-left) - change width (left) and height (bottom)
-        newWidth = mediaTransformState.initialWidth - dx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
-        newX = mediaTransformState.initialX + dx;
-      } else if (handle === "ne") {
-        // Northeast (top-right) - change width (right) and height (top)
-        newWidth = mediaTransformState.initialWidth + dx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
-        newY = mediaTransformState.initialY + mediaTransformState.initialHeight - newHeight;
       } else if (handle === "nw") {
-        // Northwest (top-left) - decrease both from top-left
-        newWidth = mediaTransformState.initialWidth - dx;
+        // Northwest (top-left) - decrease width left, height up
+        newWidth = mediaTransformState.initialWidth - rotatedDx;
         newHeight = newWidth / mediaTransformState.aspectRatio;
-        newX = mediaTransformState.initialX + dx;
-        newY = mediaTransformState.initialY + mediaTransformState.initialHeight - newHeight;
+        // Transform position change back to screen space
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        const newCenterX = centerX;
+        const newCenterY = centerY;
+        newX = newCenterX - newWidth / 2;
+        newY = newCenterY - newHeight / 2;
+      } else if (handle === "ne") {
+        // Northeast (top-right) - increase width right, height up
+        newWidth = mediaTransformState.initialWidth + rotatedDx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        // Keep bottom-left corner fixed
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        newX = centerX - newWidth / 2;
+        newY = centerY - newHeight / 2;
+      } else if (handle === "sw") {
+        // Southwest (bottom-left) - decrease width left, height down
+        newWidth = mediaTransformState.initialWidth - rotatedDx;
+        newHeight = newWidth / mediaTransformState.aspectRatio;
+        // Keep top-right corner fixed
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        newX = centerX - newWidth / 2;
+        newY = centerY - newHeight / 2;
       }
 
       // Apply minimum size constraint
@@ -2106,30 +2249,52 @@ function getMediaHandleAtPoint(x, y, item) {
     testY = centerY + dx * sin + dy * cos;
   }
 
+  const handleRadius = mediaHandleSize * 1.5; // Match the drawing size
+
   // Check rotation handle first (priority over resize handles)
-  // Rotation handle is at top-center, just inside the image bounds
-  const rotateHandleY = item.y + mediaHandleSize;
+  // Rotation handle is a half circle at top-center edge, INSIDE the image
+  const rotateHandleY = item.y; // At top edge
   const rotateHandleX = item.x + item.width / 2;
   const rotateDx = testX - rotateHandleX;
   const rotateDy = testY - rotateHandleY;
   const rotateDistance = Math.sqrt(rotateDx * rotateDx + rotateDy * rotateDy);
-  if (rotateDistance <= mediaHandleSize) {
+  // Check if within radius AND in the lower half (y >= rotateHandleY) - inside the image
+  if (rotateDistance <= handleRadius && testY >= rotateHandleY) {
     return "rotate";
   }
 
-  // Check resize handles (corners)
-  const resizeHandles = [
-    { name: "nw", x: item.x, y: item.y },
-    { name: "ne", x: item.x + item.width, y: item.y },
-    { name: "sw", x: item.x, y: item.y + item.height },
-    { name: "se", x: item.x + item.width, y: item.y + item.height },
+  // Check resize handles (quarter circles INSIDE corners)
+  const cornerHandles = [
+    { name: "nw", x: item.x, y: item.y, checkX: (dx) => dx >= 0, checkY: (dy) => dy >= 0 }, // bottom-right quarter inside
+    {
+      name: "ne",
+      x: item.x + item.width,
+      y: item.y,
+      checkX: (dx) => dx <= 0,
+      checkY: (dy) => dy >= 0,
+    }, // bottom-left quarter inside
+    {
+      name: "sw",
+      x: item.x,
+      y: item.y + item.height,
+      checkX: (dx) => dx >= 0,
+      checkY: (dy) => dy <= 0,
+    }, // top-right quarter inside
+    {
+      name: "se",
+      x: item.x + item.width,
+      y: item.y + item.height,
+      checkX: (dx) => dx <= 0,
+      checkY: (dy) => dy <= 0,
+    }, // top-left quarter inside
   ];
 
-  for (const handle of resizeHandles) {
+  for (const handle of cornerHandles) {
     const dx = testX - handle.x;
     const dy = testY - handle.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    if (distance <= mediaHandleSize) {
+    // Check if within radius AND in the correct quadrant (INSIDE the image)
+    if (distance <= handleRadius && handle.checkX(dx) && handle.checkY(dy)) {
       return handle.name;
     }
   }
@@ -2167,35 +2332,55 @@ function drawMediaSelection() {
 
   // Only draw manipulation handles in Image Mode
   if (isImageMode) {
-    // Draw resize handles (corners)
-    const resizeHandles = [
-      { x: selected.x, y: selected.y }, // nw
-      { x: selected.x + selected.width, y: selected.y }, // ne
-      { x: selected.x, y: selected.y + selected.height }, // sw
-      { x: selected.x + selected.width, y: selected.y + selected.height }, // se
+    const handleRadius = mediaHandleSize * 1.5; // Bigger diameter for better touch targets
+
+    // Draw resize handles as quarter circles INSIDE corners
+    const cornerHandles = [
+      { x: selected.x, y: selected.y, startAngle: 0, endAngle: Math.PI * 0.5 }, // nw (bottom-right quarter inside)
+      {
+        x: selected.x + selected.width,
+        y: selected.y,
+        startAngle: Math.PI * 0.5,
+        endAngle: Math.PI,
+      }, // ne (bottom-left quarter inside)
+      {
+        x: selected.x,
+        y: selected.y + selected.height,
+        startAngle: Math.PI * 1.5,
+        endAngle: Math.PI * 2,
+      }, // sw (top-right quarter inside)
+      {
+        x: selected.x + selected.width,
+        y: selected.y + selected.height,
+        startAngle: Math.PI,
+        endAngle: Math.PI * 1.5,
+      }, // se (top-left quarter inside)
     ];
 
     mediaCtx.fillStyle = "#0066cc";
     mediaCtx.strokeStyle = "#ffffff";
     mediaCtx.lineWidth = 2;
 
-    for (const handle of resizeHandles) {
+    for (const handle of cornerHandles) {
       mediaCtx.beginPath();
-      mediaCtx.arc(handle.x, handle.y, mediaHandleSize / 2, 0, Math.PI * 2);
+      mediaCtx.arc(handle.x, handle.y, handleRadius, handle.startAngle, handle.endAngle);
+      mediaCtx.lineTo(handle.x, handle.y); // Line back to center to close the wedge
+      mediaCtx.closePath();
       mediaCtx.fill();
       mediaCtx.stroke();
     }
 
-    // Draw rotation handle (at top-center, inside image bounds)
-    const rotateHandleY = selected.y + mediaHandleSize; // Just inside top edge
+    // Draw rotation handle as half circle INSIDE top-center edge
+    const rotateHandleY = selected.y; // At top edge
     const rotateHandleX = selected.x + selected.width / 2; // Center horizontally
 
-    // Draw rotation handle circle with distinct color
+    // Draw rotation handle as half circle pointing down (inside the image)
     mediaCtx.fillStyle = "#00cc66"; // Green color for rotation handle
     mediaCtx.strokeStyle = "#ffffff";
     mediaCtx.lineWidth = 2;
     mediaCtx.beginPath();
-    mediaCtx.arc(rotateHandleX, rotateHandleY, mediaHandleSize / 2, 0, Math.PI * 2);
+    mediaCtx.arc(rotateHandleX, rotateHandleY, handleRadius, 0, Math.PI); // Bottom half (inside image)
+    mediaCtx.closePath();
     mediaCtx.fill();
     mediaCtx.stroke();
   }
@@ -2261,16 +2446,43 @@ function preventScrollDuringMediaManipulation(prevent) {
 
   if (prevent) {
     // Store original overflow style
-    wrapper.dataset.originalOverflow = wrapper.style.overflow || "";
+    if (!wrapper.dataset.originalOverflow) {
+      wrapper.dataset.originalOverflow = wrapper.style.overflow || "";
+    }
+    if (!wrapper.dataset.originalTouchAction) {
+      wrapper.dataset.originalTouchAction = wrapper.style.touchAction || "";
+    }
+    if (currentEditor && !currentEditor.dataset.originalTouchAction) {
+      currentEditor.dataset.originalTouchAction = currentEditor.style.touchAction || "";
+    }
     // Prevent scrolling by setting overflow to hidden
     wrapper.style.overflow = "hidden";
-    // Also set touch-action to none to prevent default touch behaviors
     wrapper.style.touchAction = "none";
+    if (currentEditor) {
+      currentEditor.style.touchAction = "none";
+    }
   } else {
     // Restore original overflow style
     const originalOverflow = wrapper.dataset.originalOverflow || "";
     wrapper.style.overflow = originalOverflow;
-    wrapper.style.touchAction = "";
+    if (isImageMode) {
+      wrapper.style.touchAction = "";
+      if (currentEditor) {
+        currentEditor.style.touchAction = "";
+        delete currentEditor.dataset.originalTouchAction;
+      }
+    } else {
+      const originalTouchAction = wrapper.dataset.originalTouchAction || "";
+      wrapper.style.touchAction = originalTouchAction;
+      if (currentEditor) {
+        const editorTouchAction = currentEditor.dataset.originalTouchAction || "";
+        currentEditor.style.touchAction = editorTouchAction;
+        delete currentEditor.dataset.originalTouchAction;
+      }
+    }
+    // Clear the stored value
+    delete wrapper.dataset.originalOverflow;
+    delete wrapper.dataset.originalTouchAction;
   }
 }
 
@@ -2664,6 +2876,9 @@ function switchToDrawMode() {
   // Clear any active media transformation
   mediaTransformState = null;
 
+  // Re-enable scrolling (in case it was disabled during media manipulation)
+  preventScrollDuringMediaManipulation(false);
+
   // Clear media selection when switching to draw mode
   if (selectedMediaId) {
     selectMedia(null);
@@ -2675,6 +2890,10 @@ function switchToDrawMode() {
   }
   if (currentEditor) {
     currentEditor.style.pointerEvents = "none";
+  }
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (wrapper) {
+    wrapper.classList.remove("image-mode-active");
   }
 
   updateToolbarButtons();
@@ -2690,6 +2909,9 @@ function switchToTextMode() {
 
   // Clear any active media transformation
   mediaTransformState = null;
+
+  // Re-enable scrolling (in case it was disabled during media manipulation)
+  preventScrollDuringMediaManipulation(false);
 
   // Deselect any selected media
   if (selectedMediaId) {
@@ -2726,6 +2948,10 @@ function switchToTextMode() {
 
   if (currentEditor) {
     currentEditor.style.pointerEvents = "auto";
+  }
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (wrapper) {
+    wrapper.classList.remove("image-mode-active");
   }
 
   updateToolbarButtons();
@@ -2817,7 +3043,10 @@ function switchToImageMode() {
   if (currentEditor) {
     currentEditor.style.pointerEvents = "auto";
   }
-
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (wrapper) {
+    wrapper.classList.add("image-mode-active");
+  }
   // Clear stroke selection
   if (selectedStrokes.size > 0) {
     selectedStrokes.clear();
@@ -2837,6 +3066,10 @@ function switchToImageMode() {
 function _exitImageMode() {
   isImageMode = false;
   selectMedia(null); // Deselect any selected media
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (wrapper) {
+    wrapper.classList.remove("image-mode-active");
+  }
   switchToTextMode();
 }
 
@@ -3922,6 +4155,9 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
 
   // Remove global listener
   document.removeEventListener("pointerdown", handleOutsideClick);
+
+  // Re-enable scrolling in case it was disabled
+  preventScrollDuringMediaManipulation(false);
 
   currentEditor = null;
   currentNoteData = null;

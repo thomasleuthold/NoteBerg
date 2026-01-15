@@ -195,6 +195,14 @@
   touch-action: pan-x pan-y pinch-zoom;
 }
 
+.editor-content-wrapper.image-mode-active {
+  touch-action: none;
+}
+
+.editor-content-wrapper.image-mode-active .text-editor {
+  touch-action: none;
+}
+
 /* Text editor layer */
 .text-editor {
   position: relative;
