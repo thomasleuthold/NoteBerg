@@ -3158,134 +3158,145 @@ async function applyPerspectiveCorrection(item, img, imgRect) {
       return;
     }
 
-  // Calculate scale from displayed image to natural image size
-  const scaleX = item.imageElement.naturalWidth / imgRect.width;
-  const scaleY = item.imageElement.naturalHeight / imgRect.height;
+    // Calculate scale from displayed image to natural image size
+    const scaleX = item.imageElement.naturalWidth / imgRect.width;
+    const scaleY = item.imageElement.naturalHeight / imgRect.height;
 
-  // Convert corner positions to natural image coordinates
-  const srcCorners = [
-    imgRelativeCorners.tl.x * scaleX,
-    imgRelativeCorners.tl.y * scaleY, // top-left
-    imgRelativeCorners.tr.x * scaleX,
-    imgRelativeCorners.tr.y * scaleY, // top-right
-    imgRelativeCorners.br.x * scaleX,
-    imgRelativeCorners.br.y * scaleY, // bottom-right
-    imgRelativeCorners.bl.x * scaleX,
-    imgRelativeCorners.bl.y * scaleY, // bottom-left
-  ];
+    // Convert corner positions to natural image coordinates
+    const srcCorners = [
+      imgRelativeCorners.tl.x * scaleX,
+      imgRelativeCorners.tl.y * scaleY, // top-left
+      imgRelativeCorners.tr.x * scaleX,
+      imgRelativeCorners.tr.y * scaleY, // top-right
+      imgRelativeCorners.br.x * scaleX,
+      imgRelativeCorners.br.y * scaleY, // bottom-right
+      imgRelativeCorners.bl.x * scaleX,
+      imgRelativeCorners.bl.y * scaleY, // bottom-left
+    ];
 
-  // Calculate output dimensions (use width/height of the quadrilateral)
-  const topWidth = Math.sqrt(
-    (imgRelativeCorners.tr.x - imgRelativeCorners.tl.x) ** 2 + (imgRelativeCorners.tr.y - imgRelativeCorners.tl.y) ** 2,
-  );
-  const bottomWidth = Math.sqrt(
-    (imgRelativeCorners.br.x - imgRelativeCorners.bl.x) ** 2 + (imgRelativeCorners.br.y - imgRelativeCorners.bl.y) ** 2,
-  );
-  const leftHeight = Math.sqrt(
-    (imgRelativeCorners.bl.x - imgRelativeCorners.tl.x) ** 2 + (imgRelativeCorners.bl.y - imgRelativeCorners.tl.y) ** 2,
-  );
-  const rightHeight = Math.sqrt(
-    (imgRelativeCorners.br.x - imgRelativeCorners.tr.x) ** 2 + (imgRelativeCorners.br.y - imgRelativeCorners.tr.y) ** 2,
-  );
+    // Calculate output dimensions (use width/height of the quadrilateral)
+    const topWidth = Math.sqrt(
+      (imgRelativeCorners.tr.x - imgRelativeCorners.tl.x) ** 2 +
+        (imgRelativeCorners.tr.y - imgRelativeCorners.tl.y) ** 2,
+    );
+    const bottomWidth = Math.sqrt(
+      (imgRelativeCorners.br.x - imgRelativeCorners.bl.x) ** 2 +
+        (imgRelativeCorners.br.y - imgRelativeCorners.bl.y) ** 2,
+    );
+    const leftHeight = Math.sqrt(
+      (imgRelativeCorners.bl.x - imgRelativeCorners.tl.x) ** 2 +
+        (imgRelativeCorners.bl.y - imgRelativeCorners.tl.y) ** 2,
+    );
+    const rightHeight = Math.sqrt(
+      (imgRelativeCorners.br.x - imgRelativeCorners.tr.x) ** 2 +
+        (imgRelativeCorners.br.y - imgRelativeCorners.tr.y) ** 2,
+    );
 
-  const outputWidth = Math.max(topWidth, bottomWidth) * scaleX;
-  const outputHeight = Math.max(leftHeight, rightHeight) * scaleY;
+    const outputWidth = Math.max(topWidth, bottomWidth) * scaleX;
+    const outputHeight = Math.max(leftHeight, rightHeight) * scaleY;
 
-  // Destination corners (perfect rectangle)
-  const dstCorners = [
-    0,
-    0, // top-left
-    outputWidth,
-    0, // top-right
-    outputWidth,
-    outputHeight, // bottom-right
-    0,
-    outputHeight, // bottom-left
-  ];
+    // Destination corners (perfect rectangle)
+    const dstCorners = [
+      0,
+      0, // top-left
+      outputWidth,
+      0, // top-right
+      outputWidth,
+      outputHeight, // bottom-right
+      0,
+      outputHeight, // bottom-left
+    ];
 
-  console.log("[Crop] Transform params:", {
-    outputWidth,
-    outputHeight,
-    scaleX,
-    scaleY,
-  });
+    console.log("[Crop] Transform params:", {
+      outputWidth,
+      outputHeight,
+      scaleX,
+      scaleY,
+    });
 
-  // Validate output dimensions
-  if (outputWidth <= 0 || outputHeight <= 0 || !Number.isFinite(outputWidth) || !Number.isFinite(outputHeight)) {
-    throw new Error(`Invalid output dimensions: ${outputWidth}x${outputHeight}`);
-  }
+    // Validate output dimensions
+    if (
+      outputWidth <= 0 ||
+      outputHeight <= 0 ||
+      !Number.isFinite(outputWidth) ||
+      !Number.isFinite(outputHeight)
+    ) {
+      throw new Error(`Invalid output dimensions: ${outputWidth}x${outputHeight}`);
+    }
 
-  // Use the perspective transform library (loaded globally in index.html)
-  if (!window.PerspT) {
-    throw new Error("Perspective transform library not loaded. Please refresh the page.");
-  }
+    // Use the perspective transform library (loaded globally in index.html)
+    if (!window.PerspT) {
+      throw new Error("Perspective transform library not loaded. Please refresh the page.");
+    }
 
-  // Create transformation
-  const perspT = window.PerspT(srcCorners, dstCorners);
+    // Create transformation
+    const perspT = window.PerspT(srcCorners, dstCorners);
 
-  // Create output canvas
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(outputWidth);
-  canvas.height = Math.round(outputHeight);
-  const ctx = canvas.getContext("2d");
+    // Create output canvas
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(outputWidth);
+    canvas.height = Math.round(outputHeight);
+    const ctx = canvas.getContext("2d");
 
-  console.log("[Crop] Canvas size:", canvas.width, "x", canvas.height);
+    console.log("[Crop] Canvas size:", canvas.width, "x", canvas.height);
 
-  // Create temporary canvas for source image
-  const srcCanvas = document.createElement("canvas");
-  srcCanvas.width = item.imageElement.naturalWidth;
-  srcCanvas.height = item.imageElement.naturalHeight;
-  const srcCtx = srcCanvas.getContext("2d");
-  srcCtx.drawImage(item.imageElement, 0, 0);
+    // Create temporary canvas for source image
+    const srcCanvas = document.createElement("canvas");
+    srcCanvas.width = item.imageElement.naturalWidth;
+    srcCanvas.height = item.imageElement.naturalHeight;
+    const srcCtx = srcCanvas.getContext("2d");
+    srcCtx.drawImage(item.imageElement, 0, 0);
 
-  const srcImageData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
-  const srcData = srcImageData.data;
+    const srcImageData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+    const srcData = srcImageData.data;
 
-  // Create output image data
-  const outputImageData = ctx.createImageData(canvas.width, canvas.height);
-  const outputData = outputImageData.data;
+    // Create output image data
+    const outputImageData = ctx.createImageData(canvas.width, canvas.height);
+    const outputData = outputImageData.data;
 
-  // Apply perspective transformation pixel by pixel
-  let pixelsTransformed = 0;
-  const totalPixels = canvas.width * canvas.height;
+    // Apply perspective transformation pixel by pixel
+    let pixelsTransformed = 0;
+    const totalPixels = canvas.width * canvas.height;
 
-  for (let y = 0; y < canvas.height; y++) {
-    for (let x = 0; x < canvas.width; x++) {
-      // Transform destination point to source point
-      const srcPoint = perspT.transformInverse(x, y);
-      const srcX = Math.round(srcPoint[0]);
-      const srcY = Math.round(srcPoint[1]);
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        // Transform destination point to source point
+        const srcPoint = perspT.transformInverse(x, y);
+        const srcX = Math.round(srcPoint[0]);
+        const srcY = Math.round(srcPoint[1]);
 
-      // Check if source point is within bounds
-      if (srcX >= 0 && srcX < srcCanvas.width && srcY >= 0 && srcY < srcCanvas.height) {
-        const srcIndex = (srcY * srcCanvas.width + srcX) * 4;
-        const dstIndex = (y * canvas.width + x) * 4;
+        // Check if source point is within bounds
+        if (srcX >= 0 && srcX < srcCanvas.width && srcY >= 0 && srcY < srcCanvas.height) {
+          const srcIndex = (srcY * srcCanvas.width + srcX) * 4;
+          const dstIndex = (y * canvas.width + x) * 4;
 
-        // Copy pixel
-        outputData[dstIndex] = srcData[srcIndex]; // R
-        outputData[dstIndex + 1] = srcData[srcIndex + 1]; // G
-        outputData[dstIndex + 2] = srcData[srcIndex + 2]; // B
-        outputData[dstIndex + 3] = 255; // A - force opaque
-        pixelsTransformed++;
+          // Copy pixel
+          outputData[dstIndex] = srcData[srcIndex]; // R
+          outputData[dstIndex + 1] = srcData[srcIndex + 1]; // G
+          outputData[dstIndex + 2] = srcData[srcIndex + 2]; // B
+          outputData[dstIndex + 3] = 255; // A - force opaque
+          pixelsTransformed++;
+        }
       }
     }
-  }
 
-  console.log(`[Crop] Transformed ${pixelsTransformed}/${totalPixels} pixels (${((pixelsTransformed / totalPixels) * 100).toFixed(1)}%)`);
+    console.log(
+      `[Crop] Transformed ${pixelsTransformed}/${totalPixels} pixels (${((pixelsTransformed / totalPixels) * 100).toFixed(1)}%)`,
+    );
 
-  // Put transformed image data on canvas
-  ctx.putImageData(outputImageData, 0, 0);
+    // Put transformed image data on canvas
+    ctx.putImageData(outputImageData, 0, 0);
 
-  // Convert to data URL
-  const transformedDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    // Convert to data URL
+    const transformedDataUrl = canvas.toDataURL("image/jpeg", 0.85);
 
-  // Update the media item
-  item.dataUrl = transformedDataUrl;
-  item.imageElement = null; // Force reload
-  item.width = outputWidth / scaleX; // Convert back to display coordinates
-  item.height = outputHeight / scaleY;
+    // Update the media item
+    item.dataUrl = transformedDataUrl;
+    item.imageElement = null; // Force reload
+    item.width = outputWidth / scaleX; // Convert back to display coordinates
+    item.height = outputHeight / scaleY;
 
-  console.log("[Crop] Perspective correction completed successfully");
+    console.log("[Crop] Perspective correction completed successfully");
   } catch (error) {
     console.error("[Crop] Perspective correction failed:", error);
     alert(`Failed to apply perspective correction: ${error.message}`);
@@ -4094,7 +4105,6 @@ async function handleInsertImage() {
     if (successful.length > 0) {
       // Add images to note
       successful.forEach((result) => {
-
         // Create media item
         const mediaItem = {
           id: generateId(),
@@ -4142,7 +4152,6 @@ async function handleInsertCamera() {
     const results = await processImageFiles([file]);
 
     if (results[0]?.success) {
-
       // Create media item
       const mediaItem = {
         id: generateId(),
