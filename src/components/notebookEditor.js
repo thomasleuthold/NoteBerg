@@ -3115,10 +3115,10 @@ async function applySimpleCrop(item, _img, imgRect) {
 /**
  * Apply perspective correction to straighten document photos
  * @param {Object} item - Media item to transform
- * @param {HTMLImageElement} img - Display image element
+ * @param {HTMLImageElement} _img - Display image element
  * @param {DOMRect} imgRect - Image bounding rectangle
  */
-async function applyPerspectiveCorrection(item, img, imgRect) {
+async function applyPerspectiveCorrection(item, _img, imgRect) {
   try {
     console.log("[Crop] Starting perspective correction...");
 
@@ -4089,6 +4089,60 @@ function formatText(format) {
 }
 
 /**
+ * Calculate initial position and size for a new image
+ * Centers the image in the visible viewport and scales it to fit if needed
+ * @param {number} imageWidth - Original image width
+ * @param {number} imageHeight - Original image height
+ * @returns {Object} {x, y, width, height} - Calculated position and size
+ */
+function calculateInitialImagePlacement(imageWidth, imageHeight) {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) {
+    // Fallback if wrapper not found
+    return {
+      x: 100,
+      y: 100,
+      width: imageWidth,
+      height: imageHeight,
+    };
+  }
+
+  // Get viewport dimensions
+  const viewportWidth = wrapper.clientWidth;
+  const viewportHeight = wrapper.clientHeight;
+  const scrollLeft = wrapper.scrollLeft;
+  const scrollTop = wrapper.scrollTop;
+
+  // Calculate maximum size (leave 20% margin on each side)
+  const maxWidth = viewportWidth * 0.6;
+  const maxHeight = viewportHeight * 0.6;
+
+  // Scale image to fit within max dimensions while maintaining aspect ratio
+  let finalWidth = imageWidth;
+  let finalHeight = imageHeight;
+
+  if (finalWidth > maxWidth || finalHeight > maxHeight) {
+    const widthRatio = maxWidth / finalWidth;
+    const heightRatio = maxHeight / finalHeight;
+    const scale = Math.min(widthRatio, heightRatio);
+
+    finalWidth = finalWidth * scale;
+    finalHeight = finalHeight * scale;
+  }
+
+  // Center in viewport
+  const centerX = scrollLeft + (viewportWidth - finalWidth) / 2;
+  const centerY = scrollTop + (viewportHeight - finalHeight) / 2;
+
+  return {
+    x: Math.max(0, centerX),
+    y: Math.max(0, centerY),
+    width: finalWidth,
+    height: finalHeight,
+  };
+}
+
+/**
  * Handle image import from file system
  */
 async function handleInsertImage() {
@@ -4104,15 +4158,21 @@ async function handleInsertImage() {
 
     if (successful.length > 0) {
       // Add images to note
-      successful.forEach((result) => {
+      successful.forEach((result, index) => {
+        // Calculate initial placement (centered in viewport, scaled to fit)
+        const placement = calculateInitialImagePlacement(result.data.width, result.data.height);
+
+        // Offset multiple images slightly so they don't stack exactly on top of each other
+        const offset = index * 30;
+
         // Create media item
         const mediaItem = {
           id: generateId(),
           dataUrl: result.data.dataUrl,
-          width: result.data.width,
-          height: result.data.height,
-          x: 100, // Default position - will make this smarter in Phase 4
-          y: 100 + mediaItems.length * 50, // Stack images vertically
+          width: placement.width,
+          height: placement.height,
+          x: placement.x + offset,
+          y: placement.y + offset,
           rotation: 0,
           createdAt: Date.now(),
         };
@@ -4152,14 +4212,20 @@ async function handleInsertCamera() {
     const results = await processImageFiles([file]);
 
     if (results[0]?.success) {
+      // Calculate initial placement (centered in viewport, scaled to fit)
+      const placement = calculateInitialImagePlacement(
+        results[0].data.width,
+        results[0].data.height,
+      );
+
       // Create media item
       const mediaItem = {
         id: generateId(),
         dataUrl: results[0].data.dataUrl,
-        width: results[0].data.width,
-        height: results[0].data.height,
-        x: 100, // Default position
-        y: 100 + mediaItems.length * 50, // Stack images vertically
+        width: placement.width,
+        height: placement.height,
+        x: placement.x,
+        y: placement.y,
         rotation: 0,
         createdAt: Date.now(),
       };
