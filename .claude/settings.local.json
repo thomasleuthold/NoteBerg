@@ -15,7 +15,8 @@
       "Bash(npx @biomejs/biome check:*)",
       "Bash(npx @biomejs/biome format:*)",
       "Bash(git log:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

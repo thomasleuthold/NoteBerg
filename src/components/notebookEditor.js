@@ -2,6 +2,8 @@
  * Notebook Editor Component
  * Layered canvas approach with text editor and drawing layer
  * Auto-detects input type (stylus vs mouse) for mode switching
+ *
+ * Note: PerspT (perspective-transform) is loaded globally via script tag in index.html
  */
 
 import { forceRecognition } from "../modules/autoRecognition.js";
@@ -804,21 +806,16 @@ function handlePointerDown(e) {
     canvasRect = dynamicCanvas.getBoundingClientRect();
     const { x, y } = getCanvasCoordinates(e);
 
-    console.log("[Media] handlePointerDown on textEditor - checking for media at:", x, y);
-
     // Check if clicking on media
     const clickedMedia = getMediaAtPoint(x, y);
-    console.log("[Media] Found media:", clickedMedia);
 
     if (clickedMedia) {
-      console.log("[Media] Selecting media:", clickedMedia.id);
       selectMedia(clickedMedia.id);
 
       // Check if clicking on a handle
       const handle = getMediaHandleAtPoint(x, y, clickedMedia);
       if (handle) {
         if (handle === "rotate") {
-          console.log("[Media] Starting rotation");
           // Start rotation operation
           const centerX = clickedMedia.x + clickedMedia.width / 2;
           const centerY = clickedMedia.y + clickedMedia.height / 2;
@@ -834,7 +831,6 @@ function handlePointerDown(e) {
             initialRotation: clickedMedia.rotation || 0,
           };
         } else {
-          console.log("[Media] Starting resize with handle:", handle);
           // Start resize operation
           mediaTransformState = {
             mode: "resize",
@@ -869,7 +865,6 @@ function handlePointerDown(e) {
 
         return;
       } else {
-        console.log("[Media] Starting move");
         // Start move operation
         mediaTransformState = {
           mode: "move",
@@ -900,7 +895,6 @@ function handlePointerDown(e) {
       }
     } else {
       if (selectedMediaId) {
-        console.log("[Media] Deselecting media");
         // Clicked outside media, deselect
         selectMedia(null);
       }
@@ -983,7 +977,6 @@ function handlePointerMove(e) {
     // Update canvasRect on every move to handle viewport changes
     canvasRect = dynamicCanvas.getBoundingClientRect();
     const { x, y } = getCanvasCoordinates(e);
-    console.log("[Media] handlePointerMove - coords:", x, y, "mode:", mediaTransformState.mode);
     const selected = getSelectedMedia();
     if (!selected) {
       mediaTransformState = null;
@@ -1009,7 +1002,6 @@ function handlePointerMove(e) {
       let newRotation = mediaTransformState.initialRotation + angleDegrees;
       newRotation = ((newRotation % 360) + 360) % 360; // Normalize to 0-360
       selected.rotation = newRotation;
-      console.log("[Media] Rotating to:", newRotation.toFixed(1), "degrees");
     } else if (mediaTransformState.mode === "resize") {
       // Calculate new size based on handle, accounting for rotation
       const dx = x - mediaTransformState.startX;
@@ -1262,20 +1254,16 @@ function handleCanvasPointerDown(e) {
 
   // --- Media interaction (only in Image Mode) ---
   if (!isDrawMode && isImageMode) {
-    console.log("[Media] Image mode - checking for media at point");
     // Check if clicking on media
     const clickedMedia = getMediaAtPoint(x, y);
-    console.log("[Media] Clicked media:", clickedMedia);
 
     if (clickedMedia) {
       // In Image Mode: immediate selection and manipulation
-      console.log("[Media] Image mode - immediate select:", clickedMedia.id);
       selectMedia(clickedMedia.id);
 
       // Check if clicking on a resize/rotate handle
       const handle = getMediaHandleAtPoint(x, y, clickedMedia);
       if (handle === "rotate") {
-        console.log("[Media] Starting rotation");
         const centerX = clickedMedia.x + clickedMedia.width / 2;
         const centerY = clickedMedia.y + clickedMedia.height / 2;
         const startAngle = Math.atan2(y - centerY, x - centerX);
@@ -2070,6 +2058,15 @@ function redrawMedia() {
 function drawMediaItem(item) {
   if (!mediaCtx || !item || !item.dataUrl) return;
 
+  // Check if image should be loaded (viewport-based lazy loading)
+  if (!shouldLoadMedia(item)) {
+    // Unload image if it's too far from viewport to save memory
+    if (item.imageElement) {
+      item.imageElement = null; // Release memory
+    }
+    return;
+  }
+
   // Check if image is already loaded and valid
   if (item.imageElement instanceof HTMLImageElement) {
     // Image already loaded, draw immediately
@@ -2094,6 +2091,102 @@ function drawMediaItem(item) {
     item.loading = false;
   };
   img.src = item.dataUrl;
+}
+
+/**
+ * Check if a media item should be loaded based on viewport position
+ * Uses a buffer zone to preload images before they enter viewport
+ * @param {Object} item - Media item with x, y, width, height
+ * @returns {boolean} True if item should be loaded
+ */
+function shouldLoadMedia(item) {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) return true; // Load by default if wrapper not found
+
+  // Get viewport dimensions and scroll position
+  const viewportWidth = wrapper.clientWidth;
+  const viewportHeight = wrapper.clientHeight;
+  const scrollLeft = wrapper.scrollLeft;
+  const scrollTop = wrapper.scrollTop;
+
+  // Define buffer zone (300px on all sides) for preloading
+  const buffer = 300;
+
+  // Calculate item bounds in canvas coordinates
+  const itemLeft = item.x * zoomScale;
+  const itemTop = item.y * zoomScale;
+  const itemRight = (item.x + item.width) * zoomScale;
+  const itemBottom = (item.y + item.height) * zoomScale;
+
+  // Calculate viewport bounds with buffer
+  const viewportLeft = scrollLeft - buffer;
+  const viewportTop = scrollTop - buffer;
+  const viewportRight = scrollLeft + viewportWidth + buffer;
+  const viewportBottom = scrollTop + viewportHeight + buffer;
+
+  // Check if item intersects with buffered viewport
+  const isVisible =
+    itemRight >= viewportLeft &&
+    itemLeft <= viewportRight &&
+    itemBottom >= viewportTop &&
+    itemTop <= viewportBottom;
+
+  return isVisible;
+}
+
+/**
+ * Clean up memory by unloading images that are far from viewport
+ * Uses a larger buffer (1000px) to avoid unloading images too aggressively
+ */
+function cleanupMediaMemory() {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) return;
+
+  // Get viewport dimensions and scroll position
+  const viewportWidth = wrapper.clientWidth;
+  const viewportHeight = wrapper.clientHeight;
+  const scrollLeft = wrapper.scrollLeft;
+  const scrollTop = wrapper.scrollTop;
+
+  // Define larger buffer zone for cleanup (1000px on all sides)
+  const cleanupBuffer = 1000;
+
+  // Calculate viewport bounds with cleanup buffer
+  const viewportLeft = scrollLeft - cleanupBuffer;
+  const viewportTop = scrollTop - cleanupBuffer;
+  const viewportRight = scrollLeft + viewportWidth + cleanupBuffer;
+  const viewportBottom = scrollTop + viewportHeight + cleanupBuffer;
+
+  let unloadedCount = 0;
+
+  // Check each media item
+  for (const item of mediaItems) {
+    // Skip if no image loaded
+    if (!item.imageElement) continue;
+
+    // Calculate item bounds in canvas coordinates
+    const itemLeft = item.x * zoomScale;
+    const itemTop = item.y * zoomScale;
+    const itemRight = (item.x + item.width) * zoomScale;
+    const itemBottom = (item.y + item.height) * zoomScale;
+
+    // Check if item is far outside viewport
+    const isFarAway =
+      itemRight < viewportLeft ||
+      itemLeft > viewportRight ||
+      itemBottom < viewportTop ||
+      itemTop > viewportBottom;
+
+    if (isFarAway) {
+      // Unload the image to free memory
+      item.imageElement = null;
+      unloadedCount++;
+    }
+  }
+
+  if (unloadedCount > 0) {
+    // Silently cleanup memory
+  }
 }
 
 /**
@@ -2522,16 +2615,32 @@ function enterCropMode() {
     return;
   }
 
-  console.log("[Crop] Entering crop mode for media:", selected.id);
-
   // Create crop overlay
   const overlay = document.createElement("div");
   overlay.id = "crop-overlay";
   overlay.className = "crop-overlay active";
+  overlay.dataset.cropMode = "simple"; // Default to simple crop mode
 
   // Create crop container
   const container = document.createElement("div");
   container.className = "crop-container";
+
+  // Create mode toggle buttons
+  const modeToggle = document.createElement("div");
+  modeToggle.className = "crop-mode-toggle";
+
+  const simpleModeBtn = document.createElement("button");
+  simpleModeBtn.textContent = "Simple Crop";
+  simpleModeBtn.className = "crop-mode-btn crop-mode-simple active";
+  simpleModeBtn.onclick = () => switchCropMode("simple");
+
+  const perspectiveModeBtn = document.createElement("button");
+  perspectiveModeBtn.textContent = "Perspective";
+  perspectiveModeBtn.className = "crop-mode-btn crop-mode-perspective";
+  perspectiveModeBtn.onclick = () => switchCropMode("perspective");
+
+  modeToggle.appendChild(simpleModeBtn);
+  modeToggle.appendChild(perspectiveModeBtn);
 
   // Create image element for cropping
   const img = document.createElement("img");
@@ -2545,13 +2654,33 @@ function enterCropMode() {
   cropArea.className = "crop-area";
   cropArea.id = "crop-area";
 
-  // Create crop handles
+  // Create crop handles (for simple crop mode)
   const handles = ["nw", "ne", "sw", "se"];
   handles.forEach((pos) => {
     const handle = document.createElement("div");
     handle.className = `crop-handle crop-${pos}`;
     handle.dataset.position = pos;
     cropArea.appendChild(handle);
+  });
+
+  // Create perspective corners (for perspective mode, hidden by default)
+  const perspectiveArea = document.createElement("div");
+  perspectiveArea.className = "perspective-area";
+  perspectiveArea.id = "perspective-area";
+  perspectiveArea.style.display = "none";
+
+  const corners = [
+    { name: "tl", label: "TL" },
+    { name: "tr", label: "TR" },
+    { name: "br", label: "BR" },
+    { name: "bl", label: "BL" },
+  ];
+  corners.forEach((corner) => {
+    const cornerHandle = document.createElement("div");
+    cornerHandle.className = `perspective-corner perspective-${corner.name}`;
+    cornerHandle.dataset.corner = corner.name;
+    cornerHandle.innerHTML = `<span class="corner-label">${corner.label}</span>`;
+    perspectiveArea.appendChild(cornerHandle);
   });
 
   // Create crop controls
@@ -2572,8 +2701,10 @@ function enterCropMode() {
   controls.appendChild(applyBtn);
 
   // Assemble the UI
+  container.appendChild(modeToggle);
   container.appendChild(img);
   container.appendChild(cropArea);
+  container.appendChild(perspectiveArea);
   container.appendChild(controls);
   overlay.appendChild(container);
   document.body.appendChild(overlay);
@@ -2593,6 +2724,14 @@ function enterCropMode() {
 
     // Initialize crop area dragging
     initCropAreaDrag(cropArea, img);
+
+    // Initialize perspective corners at crop area corners
+    initPerspectiveCorners(perspectiveArea, img, {
+      left: cropLeft,
+      top: cropTop,
+      width: cropWidth,
+      height: cropHeight,
+    });
   };
 }
 
@@ -2604,6 +2743,172 @@ function exitCropMode() {
   if (overlay) {
     overlay.remove();
   }
+}
+
+/**
+ * Switch between simple crop and perspective correction modes
+ * @param {string} mode - "simple" or "perspective"
+ */
+function switchCropMode(mode) {
+  const overlay = document.getElementById("crop-overlay");
+  const cropArea = document.getElementById("crop-area");
+  const perspectiveArea = document.getElementById("perspective-area");
+  const simpleModeBtn = overlay?.querySelector(".crop-mode-simple");
+  const perspectiveModeBtn = overlay?.querySelector(".crop-mode-perspective");
+
+  if (!overlay || !cropArea || !perspectiveArea) return;
+
+  overlay.dataset.cropMode = mode;
+
+  if (mode === "simple") {
+    // Show simple crop mode
+    cropArea.style.display = "block";
+    perspectiveArea.style.display = "none";
+    simpleModeBtn?.classList.add("active");
+    perspectiveModeBtn?.classList.remove("active");
+  } else if (mode === "perspective") {
+    // Show perspective mode
+    cropArea.style.display = "none";
+    perspectiveArea.style.display = "block";
+    simpleModeBtn?.classList.remove("active");
+    perspectiveModeBtn?.classList.add("active");
+  }
+}
+
+/**
+ * Initialize perspective corner handles
+ * @param {HTMLElement} perspectiveArea - Container for perspective corners
+ * @param {HTMLImageElement} img - The crop image element
+ * @param {Object} initialRect - Initial position {left, top, width, height}
+ */
+function initPerspectiveCorners(perspectiveArea, img, initialRect) {
+  // Position corners at the initial crop area corners
+  const corners = {
+    tl: { x: initialRect.left, y: initialRect.top },
+    tr: { x: initialRect.left + initialRect.width, y: initialRect.top },
+    br: { x: initialRect.left + initialRect.width, y: initialRect.top + initialRect.height },
+    bl: { x: initialRect.left, y: initialRect.top + initialRect.height },
+  };
+
+  // Position each corner handle
+  Object.entries(corners).forEach(([name, pos]) => {
+    const cornerHandle = perspectiveArea.querySelector(`.perspective-${name}`);
+    if (cornerHandle) {
+      cornerHandle.style.left = `${pos.x}px`;
+      cornerHandle.style.top = `${pos.y}px`;
+    }
+  });
+
+  // Make corners draggable
+  perspectiveArea.querySelectorAll(".perspective-corner").forEach((cornerHandle) => {
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    cornerHandle.addEventListener("pointerdown", (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = cornerHandle.offsetLeft;
+      startTop = cornerHandle.offsetTop;
+      cornerHandle.style.cursor = "grabbing";
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    document.addEventListener("pointermove", (e) => {
+      if (!isDragging) return;
+
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      let newLeft = startLeft + dx;
+      let newTop = startTop + dy;
+
+      // Get current image bounds (need to recalculate as img position may have changed)
+      const currentImgRect = img.getBoundingClientRect();
+      const containerRect = perspectiveArea.getBoundingClientRect();
+
+      // Calculate image bounds relative to container
+      const imgLeft = currentImgRect.left - containerRect.left;
+      const imgTop = currentImgRect.top - containerRect.top;
+      const imgRight = imgLeft + currentImgRect.width;
+      const imgBottom = imgTop + currentImgRect.height;
+
+      // Constrain to image bounds
+      newLeft = Math.max(imgLeft, Math.min(newLeft, imgRight));
+      newTop = Math.max(imgTop, Math.min(newTop, imgBottom));
+
+      cornerHandle.style.left = `${newLeft}px`;
+      cornerHandle.style.top = `${newTop}px`;
+
+      // Draw lines connecting corners
+      drawPerspectiveLines(perspectiveArea);
+    });
+
+    document.addEventListener("pointerup", () => {
+      if (isDragging) {
+        isDragging = false;
+        cornerHandle.style.cursor = "grab";
+      }
+    });
+  });
+
+  // Draw initial connecting lines
+  drawPerspectiveLines(perspectiveArea);
+}
+
+/**
+ * Draw lines connecting perspective corners
+ * @param {HTMLElement} perspectiveArea - Container for perspective corners
+ */
+function drawPerspectiveLines(perspectiveArea) {
+  // Remove existing lines
+  const existingLines = perspectiveArea.querySelectorAll(".perspective-line");
+  existingLines.forEach((line) => {
+    line.remove();
+  });
+
+  // Get corner positions
+  const corners = {};
+  perspectiveArea.querySelectorAll(".perspective-corner").forEach((corner) => {
+    const name = corner.dataset.corner;
+    corners[name] = {
+      x: corner.offsetLeft,
+      y: corner.offsetTop,
+    };
+  });
+
+  // Draw lines between corners (TL->TR, TR->BR, BR->BL, BL->TL)
+  const connections = [
+    ["tl", "tr"],
+    ["tr", "br"],
+    ["br", "bl"],
+    ["bl", "tl"],
+  ];
+
+  connections.forEach(([from, to]) => {
+    const fromPos = corners[from];
+    const toPos = corners[to];
+
+    const line = document.createElement("div");
+    line.className = "perspective-line";
+
+    // Calculate line position and rotation
+    const dx = toPos.x - fromPos.x;
+    const dy = toPos.y - fromPos.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+    line.style.left = `${fromPos.x}px`;
+    line.style.top = `${fromPos.y}px`;
+    line.style.width = `${length}px`;
+    line.style.transform = `rotate(${angle}deg)`;
+    line.style.transformOrigin = "0 0";
+
+    perspectiveArea.appendChild(line);
+  });
 }
 
 /**
@@ -2720,15 +3025,47 @@ async function applyCrop(mediaId) {
     return;
   }
 
-  const cropArea = document.getElementById("crop-area");
+  const overlay = document.getElementById("crop-overlay");
   const img = document.querySelector(".crop-image");
-  if (!cropArea || !img) {
+  if (!overlay || !img) {
     console.error("[Crop] Crop UI elements not found");
     exitCropMode();
     return;
   }
 
+  const cropMode = overlay.dataset.cropMode;
   const imgRect = img.getBoundingClientRect();
+
+  if (cropMode === "perspective") {
+    // Apply perspective correction
+    await applyPerspectiveCorrection(item, img, imgRect);
+  } else {
+    // Apply simple crop
+    await applySimpleCrop(item, img, imgRect);
+  }
+
+  // Exit crop mode
+  exitCropMode();
+
+  // Mark as edited and redraw
+  markNoteEdited();
+  redrawMedia();
+  scheduleSave();
+}
+
+/**
+ * Apply simple rectangular crop
+ * @param {Object} item - Media item to crop
+ * @param {HTMLImageElement} img - Display image element
+ * @param {DOMRect} imgRect - Image bounding rectangle
+ */
+async function applySimpleCrop(item, _img, imgRect) {
+  const cropArea = document.getElementById("crop-area");
+  if (!cropArea) {
+    console.error("[Crop] Crop area not found");
+    return;
+  }
+
   const cropRect = cropArea.getBoundingClientRect();
 
   // Calculate crop coordinates relative to the displayed image
@@ -2739,8 +3076,6 @@ async function applyCrop(mediaId) {
   const cropY = (cropRect.top - imgRect.top) * scaleY;
   const cropWidth = cropRect.width * scaleX;
   const cropHeight = cropRect.height * scaleY;
-
-  console.log("[Crop] Cropping:", { cropX, cropY, cropWidth, cropHeight });
 
   // Create a canvas to crop the image
   const canvas = document.createElement("canvas");
@@ -2764,8 +3099,7 @@ async function applyCrop(mediaId) {
   // Convert to data URL
   const croppedDataUrl = canvas.toDataURL("image/jpeg", 0.85);
 
-  // Calculate new displayed size (maintain current displayed aspect ratio scaling)
-  // The crop area's displayed size relative to original displayed size tells us the new dimensions
+  // Calculate new displayed size
   const displayScaleX = cropRect.width / imgRect.width;
   const displayScaleY = cropRect.height / imgRect.height;
   const newDisplayWidth = item.width * displayScaleX;
@@ -2776,16 +3110,210 @@ async function applyCrop(mediaId) {
   item.imageElement = null; // Force reload
   item.width = newDisplayWidth;
   item.height = newDisplayHeight;
+}
 
-  // Exit crop mode
-  exitCropMode();
+/**
+ * Apply perspective correction to straighten document photos
+ * @param {Object} item - Media item to transform
+ * @param {HTMLImageElement} img - Display image element
+ * @param {DOMRect} imgRect - Image bounding rectangle
+ */
+async function applyPerspectiveCorrection(item, img, imgRect) {
+  try {
+    console.log("[Crop] Starting perspective correction...");
 
-  // Mark as edited and redraw
-  markNoteEdited();
-  redrawMedia();
-  scheduleSave();
+    const perspectiveArea = document.getElementById("perspective-area");
+    if (!perspectiveArea) {
+      console.error("[Crop] Perspective area not found");
+      return;
+    }
 
-  console.log("[Crop] Crop applied successfully");
+    // Get corner positions (relative to perspectiveArea)
+    const corners = {};
+    perspectiveArea.querySelectorAll(".perspective-corner").forEach((corner) => {
+      const name = corner.dataset.corner;
+      corners[name] = {
+        x: corner.offsetLeft,
+        y: corner.offsetTop,
+      };
+    });
+
+    // Calculate image offset within perspectiveArea container
+    const containerRect = perspectiveArea.getBoundingClientRect();
+    const imgOffsetX = imgRect.left - containerRect.left;
+    const imgOffsetY = imgRect.top - containerRect.top;
+
+    // Adjust corner positions to be relative to the image (not the container)
+    const imgRelativeCorners = {};
+    for (const [name, pos] of Object.entries(corners)) {
+      imgRelativeCorners[name] = {
+        x: pos.x - imgOffsetX,
+        y: pos.y - imgOffsetY,
+      };
+    }
+
+    // Validate corners form a quadrilateral (no crossing lines)
+    if (!isValidQuadrilateral(imgRelativeCorners)) {
+      alert("Invalid corner positions. Lines cannot cross each other.");
+      return;
+    }
+
+  // Calculate scale from displayed image to natural image size
+  const scaleX = item.imageElement.naturalWidth / imgRect.width;
+  const scaleY = item.imageElement.naturalHeight / imgRect.height;
+
+  // Convert corner positions to natural image coordinates
+  const srcCorners = [
+    imgRelativeCorners.tl.x * scaleX,
+    imgRelativeCorners.tl.y * scaleY, // top-left
+    imgRelativeCorners.tr.x * scaleX,
+    imgRelativeCorners.tr.y * scaleY, // top-right
+    imgRelativeCorners.br.x * scaleX,
+    imgRelativeCorners.br.y * scaleY, // bottom-right
+    imgRelativeCorners.bl.x * scaleX,
+    imgRelativeCorners.bl.y * scaleY, // bottom-left
+  ];
+
+  // Calculate output dimensions (use width/height of the quadrilateral)
+  const topWidth = Math.sqrt(
+    (imgRelativeCorners.tr.x - imgRelativeCorners.tl.x) ** 2 + (imgRelativeCorners.tr.y - imgRelativeCorners.tl.y) ** 2,
+  );
+  const bottomWidth = Math.sqrt(
+    (imgRelativeCorners.br.x - imgRelativeCorners.bl.x) ** 2 + (imgRelativeCorners.br.y - imgRelativeCorners.bl.y) ** 2,
+  );
+  const leftHeight = Math.sqrt(
+    (imgRelativeCorners.bl.x - imgRelativeCorners.tl.x) ** 2 + (imgRelativeCorners.bl.y - imgRelativeCorners.tl.y) ** 2,
+  );
+  const rightHeight = Math.sqrt(
+    (imgRelativeCorners.br.x - imgRelativeCorners.tr.x) ** 2 + (imgRelativeCorners.br.y - imgRelativeCorners.tr.y) ** 2,
+  );
+
+  const outputWidth = Math.max(topWidth, bottomWidth) * scaleX;
+  const outputHeight = Math.max(leftHeight, rightHeight) * scaleY;
+
+  // Destination corners (perfect rectangle)
+  const dstCorners = [
+    0,
+    0, // top-left
+    outputWidth,
+    0, // top-right
+    outputWidth,
+    outputHeight, // bottom-right
+    0,
+    outputHeight, // bottom-left
+  ];
+
+  console.log("[Crop] Transform params:", {
+    outputWidth,
+    outputHeight,
+    scaleX,
+    scaleY,
+  });
+
+  // Validate output dimensions
+  if (outputWidth <= 0 || outputHeight <= 0 || !Number.isFinite(outputWidth) || !Number.isFinite(outputHeight)) {
+    throw new Error(`Invalid output dimensions: ${outputWidth}x${outputHeight}`);
+  }
+
+  // Use the perspective transform library (loaded globally in index.html)
+  if (!window.PerspT) {
+    throw new Error("Perspective transform library not loaded. Please refresh the page.");
+  }
+
+  // Create transformation
+  const perspT = window.PerspT(srcCorners, dstCorners);
+
+  // Create output canvas
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(outputWidth);
+  canvas.height = Math.round(outputHeight);
+  const ctx = canvas.getContext("2d");
+
+  console.log("[Crop] Canvas size:", canvas.width, "x", canvas.height);
+
+  // Create temporary canvas for source image
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = item.imageElement.naturalWidth;
+  srcCanvas.height = item.imageElement.naturalHeight;
+  const srcCtx = srcCanvas.getContext("2d");
+  srcCtx.drawImage(item.imageElement, 0, 0);
+
+  const srcImageData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+  const srcData = srcImageData.data;
+
+  // Create output image data
+  const outputImageData = ctx.createImageData(canvas.width, canvas.height);
+  const outputData = outputImageData.data;
+
+  // Apply perspective transformation pixel by pixel
+  let pixelsTransformed = 0;
+  const totalPixels = canvas.width * canvas.height;
+
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      // Transform destination point to source point
+      const srcPoint = perspT.transformInverse(x, y);
+      const srcX = Math.round(srcPoint[0]);
+      const srcY = Math.round(srcPoint[1]);
+
+      // Check if source point is within bounds
+      if (srcX >= 0 && srcX < srcCanvas.width && srcY >= 0 && srcY < srcCanvas.height) {
+        const srcIndex = (srcY * srcCanvas.width + srcX) * 4;
+        const dstIndex = (y * canvas.width + x) * 4;
+
+        // Copy pixel
+        outputData[dstIndex] = srcData[srcIndex]; // R
+        outputData[dstIndex + 1] = srcData[srcIndex + 1]; // G
+        outputData[dstIndex + 2] = srcData[srcIndex + 2]; // B
+        outputData[dstIndex + 3] = 255; // A - force opaque
+        pixelsTransformed++;
+      }
+    }
+  }
+
+  console.log(`[Crop] Transformed ${pixelsTransformed}/${totalPixels} pixels (${((pixelsTransformed / totalPixels) * 100).toFixed(1)}%)`);
+
+  // Put transformed image data on canvas
+  ctx.putImageData(outputImageData, 0, 0);
+
+  // Convert to data URL
+  const transformedDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+  // Update the media item
+  item.dataUrl = transformedDataUrl;
+  item.imageElement = null; // Force reload
+  item.width = outputWidth / scaleX; // Convert back to display coordinates
+  item.height = outputHeight / scaleY;
+
+  console.log("[Crop] Perspective correction completed successfully");
+  } catch (error) {
+    console.error("[Crop] Perspective correction failed:", error);
+    alert(`Failed to apply perspective correction: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Check if four corners form a valid quadrilateral (no crossing lines)
+ * @param {Object} corners - Corner positions {tl, tr, br, bl}
+ * @returns {boolean} True if valid
+ */
+function isValidQuadrilateral(corners) {
+  // Check if any lines cross each other
+  // We need to check if TL-TR crosses BL-BR, and if TL-BL crosses TR-BR
+
+  const linesCross = (p1, p2, p3, p4) => {
+    const ccw = (A, B, C) => (C.y - A.y) * (B.x - A.x) > (B.y - A.y) * (C.x - A.x);
+    return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
+  };
+
+  // Check if top-bottom lines cross
+  if (linesCross(corners.tl, corners.tr, corners.bl, corners.br)) return false;
+
+  // Check if left-right lines cross
+  if (linesCross(corners.tl, corners.bl, corners.tr, corners.br)) return false;
+
+  return true;
 }
 
 /**
@@ -3557,24 +4085,15 @@ async function handleInsertImage() {
     const files = await pickImages(true);
     if (files.length === 0) return;
 
-    console.log(`[Image Import] Processing ${files.length} image(s)...`);
-
-    // Process images with progress
-    const results = await processImageFiles(files, (current, total) => {
-      console.log(`[Image Import] Processing ${current}/${total}...`);
-    });
+    // Process images
+    const results = await processImageFiles(files);
 
     // Filter successful results
     const successful = results.filter((r) => r.success);
 
     if (successful.length > 0) {
-      console.log(`[Image Import] Successfully processed ${successful.length} image(s)`);
-
       // Add images to note
       successful.forEach((result) => {
-        console.log(
-          `[Image Import] ${result.fileName}: ${result.data.width}x${result.data.height}, ${result.data.size}KB`,
-        );
 
         // Create media item
         const mediaItem = {
@@ -3619,15 +4138,10 @@ async function handleInsertCamera() {
     const file = await captureFromCamera("environment");
     if (!file) return;
 
-    console.log("[Camera] Processing captured image...");
-
     // Process the captured image
     const results = await processImageFiles([file]);
 
     if (results[0]?.success) {
-      console.log(
-        `[Camera] Successfully processed image: ${results[0].data.width}x${results[0].data.height}, ${results[0].data.size}KB`,
-      );
 
       // Create media item
       const mediaItem = {
@@ -3795,6 +4309,27 @@ function initZoomListeners() {
   const wrapper = document.querySelector(".editor-content-wrapper");
   if (!wrapper) return;
 
+  // Debounced scroll handler for lazy loading media
+  let scrollTimeout = null;
+  let cleanupTimeout = null;
+  wrapper.addEventListener("scroll", () => {
+    if (scrollTimeout) {
+      clearTimeout(scrollTimeout);
+    }
+    scrollTimeout = setTimeout(() => {
+      // Trigger lazy loading check on scroll
+      redrawMedia();
+    }, 100); // 100ms debounce
+
+    // Cleanup memory less frequently (every 2 seconds of idle)
+    if (cleanupTimeout) {
+      clearTimeout(cleanupTimeout);
+    }
+    cleanupTimeout = setTimeout(() => {
+      cleanupMediaMemory();
+    }, 2000); // 2 second debounce for cleanup
+  });
+
   // CTRL + Mouse wheel zoom (Windows/Desktop)
   wrapper.addEventListener(
     "wheel",
@@ -3806,6 +4341,9 @@ function initZoomListeners() {
         // wheelDelta is positive for zoom in, negative for zoom out
         const delta = e.deltaY < 0 ? zoomStep : -zoomStep;
         adjustZoom(delta);
+
+        // Trigger lazy loading check after zoom
+        redrawMedia();
       }
     },
     { passive: false },
@@ -3862,6 +4400,10 @@ function initZoomListeners() {
   wrapper.addEventListener("touchend", (e) => {
     // Reset pinch tracking when fingers are lifted
     if (e.touches.length < 2) {
+      if (lastTouchDistance !== null) {
+        // Trigger lazy loading check after zoom ends
+        redrawMedia();
+      }
       lastTouchDistance = null;
       initialPinchZoom = null;
     }
@@ -3953,6 +4495,9 @@ async function saveNoteContent(noteIdOverride = null) {
       modified: Date.now(),
     });
 
+    // Check note size and warn if too large
+    checkNoteSizeAndWarn(markdownContent, strokes, mediaForStorage);
+
     // Reset inactivity timer after save
     resetInactivityTimer(noteId);
 
@@ -3969,6 +4514,54 @@ async function saveNoteContent(noteIdOverride = null) {
 }
 
 // Markdown conversion functions are now imported from ../utils/markdown.js
+
+/**
+ * Check note size and warn user if it's too large
+ * @param {string} content - Markdown content
+ * @param {Array} strokes - Drawing strokes
+ * @param {Array} media - Media items
+ */
+function checkNoteSizeAndWarn(content, strokes, media) {
+  // Calculate approximate size in bytes
+  const contentSize = new Blob([content]).size;
+  const strokesSize = new Blob([JSON.stringify(strokes)]).size;
+  const mediaSize = new Blob([JSON.stringify(media)]).size;
+  const totalSize = contentSize + strokesSize + mediaSize;
+
+  // Convert to MB
+  const totalSizeMB = totalSize / (1024 * 1024);
+
+  // Warn if note exceeds 50MB
+  const WARNING_SIZE_MB = 50;
+  const CRITICAL_SIZE_MB = 100;
+
+  if (totalSizeMB > CRITICAL_SIZE_MB) {
+    console.warn(
+      `[Media] ⚠️ CRITICAL: Note size is ${totalSizeMB.toFixed(1)}MB. This may cause sync issues and slow performance. Consider splitting into multiple notes.`,
+    );
+    // Show browser alert for critical size (only once per session per note)
+    if (!window._shownCriticalSizeWarning) {
+      window._shownCriticalSizeWarning = true;
+      setTimeout(() => {
+        alert(
+          `⚠️ Warning: This note is very large (${totalSizeMB.toFixed(1)}MB).\n\nLarge notes may:\n• Sync slowly\n• Cause performance issues\n• Exceed storage limits\n\nConsider splitting it into multiple notes.`,
+        );
+      }, 100);
+    }
+  } else if (totalSizeMB > WARNING_SIZE_MB) {
+    console.warn(
+      `[Media] ⚠️ Note size is ${totalSizeMB.toFixed(1)}MB (warning threshold). Consider optimizing images or splitting content.`,
+    );
+  }
+
+  // Log media breakdown if there are images
+  if (media.length > 0) {
+    const mediaSizeMB = mediaSize / (1024 * 1024);
+    console.log(
+      `[Media] Note contains ${media.length} image(s), total media size: ${mediaSizeMB.toFixed(1)}MB`,
+    );
+  }
+}
 
 /**
  * Removes highlight spans from the text editor, preserving the text.
