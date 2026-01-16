@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self' blob: data: mediastream:; connect-src 'self' http: https:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' blob: data: mediastream:;",
       "capabilities": ["default"]
     }
   },

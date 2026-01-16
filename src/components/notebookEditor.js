@@ -12,7 +12,12 @@ import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, generateId, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
 import { getIcon } from "../utils/icons.js";
-import { captureFromCamera, pickImages, processImageFiles } from "../utils/imageUtils.js";
+import {
+  captureFromCamera,
+  fileToDataUrl,
+  optimizeImageForDisplay,
+  pickImages,
+} from "../utils/imageUtils.js";
 import { htmlToMarkdown, markdownToHtml } from "../utils/markdown.js";
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
@@ -707,6 +712,117 @@ function resizeCanvas() {
 }
 
 /**
+ * Check if media items exceed canvas bounds and expand if needed
+ */
+function checkAndExpandCanvasForMedia() {
+  if (!mediaCanvas || mediaItems.length === 0) return;
+
+  // Find the maximum extents of all media items
+  let maxRight = 0;
+  let maxBottom = 0;
+
+  for (const item of mediaItems) {
+    const right = item.x + item.width;
+    const bottom = item.y + item.height;
+    maxRight = Math.max(maxRight, right);
+    maxBottom = Math.max(maxBottom, bottom);
+  }
+
+  // Add padding (100px) to avoid expanding too frequently
+  const padding = 100;
+  const requiredWidth = maxRight + padding;
+  const requiredHeight = maxBottom + padding;
+
+  // Check if expansion is needed
+  const needsWidthExpansion = requiredWidth > mediaCanvas.width;
+  const needsHeightExpansion = requiredHeight > mediaCanvas.height;
+
+  if (needsWidthExpansion || needsHeightExpansion) {
+    const newWidth = Math.max(mediaCanvas.width, requiredWidth);
+    const newHeight = Math.max(mediaCanvas.height, requiredHeight);
+    expandCanvasToSize(newWidth, newHeight);
+  }
+}
+
+/**
+ * Expand canvas to a specific width and height
+ * @param {number} newWidth - Target width in pixels (in unscaled space)
+ * @param {number} newHeight - Target height in pixels (in unscaled space)
+ */
+function expandCanvasToSize(newWidth, newHeight) {
+  const canvases = [
+    dynamicCanvas,
+    staticCanvas,
+    backgroundCanvas,
+    cursorCanvas,
+    highlightCanvas,
+    mediaCanvas,
+  ];
+  if (canvases.some((c) => !c)) return;
+
+  const now = Date.now();
+  if (now - lastExpansionTime < expansionCooldown) return;
+  lastExpansionTime = now;
+
+  // Create offscreen canvases to preserve current drawings
+  const tempCanvases = {
+    dynamic: document.createElement("canvas"),
+    static: document.createElement("canvas"),
+    background: document.createElement("canvas"),
+    highlight: document.createElement("canvas"),
+    media: document.createElement("canvas"),
+  };
+
+  tempCanvases.dynamic.width =
+    tempCanvases.static.width =
+    tempCanvases.background.width =
+    tempCanvases.highlight.width =
+    tempCanvases.media.width =
+      dynamicCanvas.width;
+  tempCanvases.dynamic.height =
+    tempCanvases.static.height =
+    tempCanvases.background.height =
+    tempCanvases.highlight.height =
+    tempCanvases.media.height =
+      dynamicCanvas.height;
+
+  tempCanvases.dynamic.getContext("2d").drawImage(dynamicCanvas, 0, 0);
+  tempCanvases.static.getContext("2d").drawImage(staticCanvas, 0, 0);
+  tempCanvases.background.getContext("2d").drawImage(backgroundCanvas, 0, 0);
+  tempCanvases.highlight.getContext("2d").drawImage(highlightCanvas, 0, 0);
+  tempCanvases.media.getContext("2d").drawImage(mediaCanvas, 0, 0);
+
+  const oldHeight = dynamicCanvas.height;
+
+  // Resize all canvases
+  canvases.forEach((cvs) => {
+    cvs.width = newWidth;
+    cvs.height = newHeight;
+    cvs.style.width = `${newWidth}px`;
+    cvs.style.height = `${newHeight}px`;
+  });
+
+  // Restore the content
+  dynamicCtx.drawImage(tempCanvases.dynamic, 0, 0);
+  staticCtx.drawImage(tempCanvases.static, 0, 0);
+  backgroundCtx.drawImage(tempCanvases.background, 0, 0);
+  highlightCtx.drawImage(tempCanvases.highlight, 0, 0);
+  mediaCtx.drawImage(tempCanvases.media, 0, 0);
+
+  // Draw background expansion if height increased
+  if (newHeight > oldHeight) {
+    drawBackgroundExpansion(oldHeight, newHeight);
+  }
+
+  // Update content editable area size
+  if (currentEditor) {
+    currentEditor.style.minHeight = `${newHeight}px`;
+  }
+
+  console.log(`[Canvas] Expanded to ${newWidth}x${newHeight}`);
+}
+
+/**
  * Expand canvas height by a specified amount
  * @param {number} additionalHeight - Height to add in pixels (in unscaled space)
  */
@@ -1022,8 +1138,9 @@ function handlePointerMove(e) {
       const cos = Math.cos(-rotation); // Negative to transform back to unrotated space
       const sin = Math.sin(-rotation);
 
-      // Transform mouse delta into rotated coordinate space (we only need dx for proportional resize)
+      // Transform mouse delta into rotated coordinate space
       const rotatedDx = dx * cos - dy * sin;
+      const rotatedDy = dx * sin + dy * cos;
 
       let newWidth = mediaTransformState.initialWidth;
       let newHeight = mediaTransformState.initialHeight;
@@ -1031,14 +1148,15 @@ function handlePointerMove(e) {
       let newY = mediaTransformState.initialY;
 
       // Calculate based on which handle is being dragged (in rotated space)
+      // Free resize - width and height can be adjusted independently
       if (handle === "se") {
         // Southeast (bottom-right) - increase width right, height down
         newWidth = mediaTransformState.initialWidth + rotatedDx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newHeight = mediaTransformState.initialHeight + rotatedDy;
       } else if (handle === "nw") {
         // Northwest (top-left) - decrease width left, height up
         newWidth = mediaTransformState.initialWidth - rotatedDx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newHeight = mediaTransformState.initialHeight - rotatedDy;
         // Transform position change back to screen space
         const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
         const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
@@ -1047,18 +1165,18 @@ function handlePointerMove(e) {
         newX = newCenterX - newWidth / 2;
         newY = newCenterY - newHeight / 2;
       } else if (handle === "ne") {
-        // Northeast (top-right) - increase width right, height up
+        // Northeast (top-right) - increase width right, decrease height up
         newWidth = mediaTransformState.initialWidth + rotatedDx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newHeight = mediaTransformState.initialHeight - rotatedDy;
         // Keep bottom-left corner fixed
         const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
         const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
         newX = centerX - newWidth / 2;
         newY = centerY - newHeight / 2;
       } else if (handle === "sw") {
-        // Southwest (bottom-left) - decrease width left, height down
+        // Southwest (bottom-left) - decrease width left, increase height down
         newWidth = mediaTransformState.initialWidth - rotatedDx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newHeight = mediaTransformState.initialHeight + rotatedDy;
         // Keep top-right corner fixed
         const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
         const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
@@ -1141,6 +1259,9 @@ function handlePointerUp(e) {
     (e.pointerType === "mouse" || e.pointerType === "touch")
   ) {
     mediaTransformState = null;
+
+    // Check if canvas needs expansion after transformation
+    checkAndExpandCanvasForMedia();
 
     // Re-enable scrolling on touch devices
     if (e.pointerType === "touch") {
@@ -1489,8 +1610,9 @@ function handleCanvasPointerMove(e) {
       const cos = Math.cos(-rotation); // Negative to transform back to unrotated space
       const sin = Math.sin(-rotation);
 
-      // Transform mouse delta into rotated coordinate space (we only need dx for proportional resize)
+      // Transform mouse delta into rotated coordinate space
       const rotatedDx = dx * cos - dy * sin;
+      const rotatedDy = dx * sin + dy * cos;
 
       let newWidth = mediaTransformState.initialWidth;
       let newHeight = mediaTransformState.initialHeight;
@@ -1498,14 +1620,15 @@ function handleCanvasPointerMove(e) {
       let newY = mediaTransformState.initialY;
 
       // Calculate based on which handle is being dragged (in rotated space)
+      // Free resize - width and height can be adjusted independently
       if (handle === "se") {
         // Southeast (bottom-right) - increase width right, height down
         newWidth = mediaTransformState.initialWidth + rotatedDx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newHeight = mediaTransformState.initialHeight + rotatedDy;
       } else if (handle === "nw") {
         // Northwest (top-left) - decrease width left, height up
         newWidth = mediaTransformState.initialWidth - rotatedDx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newHeight = mediaTransformState.initialHeight - rotatedDy;
         // Transform position change back to screen space
         const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
         const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
@@ -1514,18 +1637,18 @@ function handleCanvasPointerMove(e) {
         newX = newCenterX - newWidth / 2;
         newY = newCenterY - newHeight / 2;
       } else if (handle === "ne") {
-        // Northeast (top-right) - increase width right, height up
+        // Northeast (top-right) - increase width right, decrease height up
         newWidth = mediaTransformState.initialWidth + rotatedDx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newHeight = mediaTransformState.initialHeight - rotatedDy;
         // Keep bottom-left corner fixed
         const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
         const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
         newX = centerX - newWidth / 2;
         newY = centerY - newHeight / 2;
       } else if (handle === "sw") {
-        // Southwest (bottom-left) - decrease width left, height down
+        // Southwest (bottom-left) - decrease width left, increase height down
         newWidth = mediaTransformState.initialWidth - rotatedDx;
-        newHeight = newWidth / mediaTransformState.aspectRatio;
+        newHeight = mediaTransformState.initialHeight + rotatedDy;
         // Keep top-right corner fixed
         const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
         const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
@@ -1667,6 +1790,9 @@ function handleCanvasPointerUp(e) {
   // Handle media transformation end
   if (mediaTransformState) {
     mediaTransformState = null;
+
+    // Check if canvas needs expansion after transformation
+    checkAndExpandCanvasForMedia();
 
     // Re-enable scrolling on touch devices
     if (e.pointerType === "touch") {
@@ -2650,26 +2776,15 @@ function deleteSelectedMedia() {
  * Move selected media forward (increase z-index)
  */
 function moveMediaForward() {
-  console.log("moveMediaForward called", { selectedMediaId, mediaItemsCount: mediaItems.length });
-
   if (!selectedMediaId) return;
 
   const selected = getSelectedMedia();
-  if (!selected) {
-    console.log("No selected media found");
-    return;
-  }
+  if (!selected) return;
 
   // Initialize zIndex if not set
   if (selected.zIndex === undefined) {
     selected.zIndex = 0;
   }
-
-  console.log("Current zIndex:", selected.zIndex);
-  console.log(
-    "All media zIndexes:",
-    mediaItems.map((m) => ({ id: m.id, z: m.zIndex || 0 })),
-  );
 
   // Find the next higher zIndex among all media items
   const higherItems = mediaItems
@@ -2682,11 +2797,9 @@ function moveMediaForward() {
     const temp = selected.zIndex;
     selected.zIndex = nextItem.zIndex;
     nextItem.zIndex = temp;
-    console.log("Swapped with item", nextItem.id, "- new zIndex:", selected.zIndex);
   } else {
     // Already at the top, increment by 1
     selected.zIndex++;
-    console.log("Already at top, incremented to:", selected.zIndex);
   }
 
   // Mark as edited and redraw
@@ -2699,26 +2812,15 @@ function moveMediaForward() {
  * Move selected media backward (decrease z-index)
  */
 function moveMediaBackward() {
-  console.log("moveMediaBackward called", { selectedMediaId, mediaItemsCount: mediaItems.length });
-
   if (!selectedMediaId) return;
 
   const selected = getSelectedMedia();
-  if (!selected) {
-    console.log("No selected media found");
-    return;
-  }
+  if (!selected) return;
 
   // Initialize zIndex if not set
   if (selected.zIndex === undefined) {
     selected.zIndex = 0;
   }
-
-  console.log("Current zIndex:", selected.zIndex);
-  console.log(
-    "All media zIndexes:",
-    mediaItems.map((m) => ({ id: m.id, z: m.zIndex || 0 })),
-  );
 
   // Find the next lower zIndex among all media items
   const lowerItems = mediaItems
@@ -2731,11 +2833,9 @@ function moveMediaBackward() {
     const temp = selected.zIndex;
     selected.zIndex = nextItem.zIndex;
     nextItem.zIndex = temp;
-    console.log("Swapped with item", nextItem.id, "- new zIndex:", selected.zIndex);
   } else {
-    // Already at the bottom, decremented to:", selected.zIndex);
+    // Already at the bottom, decrement by 1
     selected.zIndex--;
-    console.log("Already at bottom, decremented to:", selected.zIndex);
   }
 
   // Mark as edited and redraw
@@ -4341,8 +4441,36 @@ async function handleInsertImage() {
     const files = await pickImages(true);
     if (files.length === 0) return;
 
-    // Process images
-    const results = await processImageFiles(files);
+    // Process images (get original data URLs without downsampling)
+    const results = await Promise.all(
+      files.map(async (file) => {
+        try {
+          const dataUrl = await fileToDataUrl(file);
+
+          // Load image to get original dimensions
+          const img = await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("Failed to load image"));
+            image.src = dataUrl;
+          });
+
+          return {
+            success: true,
+            dataUrl: dataUrl,
+            width: img.width,
+            height: img.height,
+            fileName: file.name,
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: error.message,
+            fileName: file.name,
+          };
+        }
+      }),
+    );
 
     // Filter successful results
     const successful = results.filter((r) => r.success);
@@ -4351,16 +4479,18 @@ async function handleInsertImage() {
       // Add images to note
       successful.forEach((result, index) => {
         // Calculate initial placement (centered in viewport, scaled to fit)
-        const placement = calculateInitialImagePlacement(result.data.width, result.data.height);
+        const placement = calculateInitialImagePlacement(result.width, result.height);
 
         // Offset multiple images slightly so they don't stack exactly on top of each other
         const offset = index * 30;
 
-        // Create media item
+        // Create media item with original full-resolution image
         const mediaItem = {
           id: generateId(),
-          dataUrl: result.data.dataUrl,
-          width: placement.width,
+          dataUrl: result.dataUrl, // Original full-resolution image
+          originalWidth: result.width, // Store original dimensions
+          originalHeight: result.height,
+          width: placement.width, // Display dimensions
           height: placement.height,
           x: placement.x + offset,
           y: placement.y + offset,
@@ -4399,38 +4529,41 @@ async function handleInsertCamera() {
     const file = await captureFromCamera("environment");
     if (!file) return;
 
-    // Process the captured image
-    const results = await processImageFiles([file]);
+    // Get original image data without downsampling
+    const dataUrl = await fileToDataUrl(file);
 
-    if (results[0]?.success) {
-      // Calculate initial placement (centered in viewport, scaled to fit)
-      const placement = calculateInitialImagePlacement(
-        results[0].data.width,
-        results[0].data.height,
-      );
+    // Load image to get original dimensions
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to load image"));
+      image.src = dataUrl;
+    });
 
-      // Create media item
-      const mediaItem = {
-        id: generateId(),
-        dataUrl: results[0].data.dataUrl,
-        width: placement.width,
-        height: placement.height,
-        x: placement.x,
-        y: placement.y,
-        rotation: 0,
-        createdAt: Date.now(),
-      };
+    // Calculate initial placement (centered in viewport, scaled to fit)
+    const placement = calculateInitialImagePlacement(img.width, img.height);
 
-      mediaItems.push(mediaItem);
+    // Create media item with original full-resolution image
+    const mediaItem = {
+      id: generateId(),
+      dataUrl: dataUrl, // Original full-resolution image
+      originalWidth: img.width, // Store original dimensions
+      originalHeight: img.height,
+      width: placement.width, // Display dimensions
+      height: placement.height,
+      x: placement.x,
+      y: placement.y,
+      rotation: 0,
+      createdAt: Date.now(),
+    };
 
-      // Mark note as edited and save
-      markNoteEdited();
+    mediaItems.push(mediaItem);
 
-      // Redraw media canvas
-      redrawMedia();
-    } else {
-      console.error(`[Camera] Failed to process image: ${results[0]?.error}`);
-    }
+    // Mark note as edited and save
+    markNoteEdited();
+
+    // Redraw media canvas
+    redrawMedia();
   } catch (error) {
     console.error("[Camera] Error:", error);
   }
@@ -4969,6 +5102,36 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   }
 
   // SEQUENCE ON CLOSE:
+  // 0. Optimize media images to 2x display size to reduce storage
+  if (noteId && mediaItems.length > 0) {
+    try {
+      console.log(
+        `[NotebookEditor] Step 0: Optimizing ${mediaItems.length} media items for storage...`,
+      );
+      let optimizedCount = 0;
+
+      for (const item of mediaItems) {
+        // Optimize to 2x display size
+        const optimized = await optimizeImageForDisplay(item.dataUrl, item.width, item.height);
+
+        // Only update if optimization actually changed the image
+        if (optimized.dataUrl !== item.dataUrl) {
+          item.dataUrl = optimized.dataUrl;
+          item.originalWidth = optimized.width;
+          item.originalHeight = optimized.height;
+          optimizedCount++;
+        }
+      }
+
+      if (optimizedCount > 0) {
+        console.log(`[NotebookEditor] Optimized ${optimizedCount} images for storage`);
+        markNoteEdited(); // Ensure optimized images get saved
+      }
+    } catch (error) {
+      console.error("Failed to optimize media during cleanup:", error);
+    }
+  }
+
   // 1. Persist strokes to storage (await to ensure completion)
   if (noteId && currentEditor && noteEditedSinceOpen) {
     try {
