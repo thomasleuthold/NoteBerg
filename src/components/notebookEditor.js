@@ -262,6 +262,8 @@ function renderEditor(container, _noteData) {
     image: getIcon("image", 20),
     camera: getIcon("camera", 20),
     crop: getIcon("crop", 20),
+    arrowUp: getIcon("arrowUp", 20),
+    arrowDown: getIcon("arrowDown", 20),
   };
 
   container.innerHTML = `
@@ -352,6 +354,13 @@ function renderEditor(container, _noteData) {
             </button>
             <button class="toolbar-btn" id="delete-media-btn" title="Delete image" style="display: none;">
               ${icons.trash}
+            </button>
+            <div class="toolbar-divider" id="layer-divider" style="display: none;"></div>
+            <button class="toolbar-btn" id="move-forward-btn" title="Move forward" style="display: none;">
+              ${icons.arrowUp}
+            </button>
+            <button class="toolbar-btn" id="move-backward-btn" title="Move backward" style="display: none;">
+              ${icons.arrowDown}
             </button>
           </div>
 
@@ -2042,8 +2051,16 @@ function redrawMedia() {
   // Clear the media canvas
   mediaCtx.clearRect(0, 0, mediaCanvas.width, mediaCanvas.height);
 
-  // Draw all media items
-  mediaItems.forEach((item) => {
+  // Sort media items by zIndex (lower first, higher last) to draw in correct order
+  const sortedItems = [...mediaItems].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+  console.log(
+    "Drawing media in order:",
+    sortedItems.map((m) => ({ id: m.id.slice(0, 8), z: m.zIndex || 0 })),
+  );
+
+  // Draw all media items in z-index order
+  sortedItems.forEach((item) => {
     drawMediaItem(item);
   });
 
@@ -2198,8 +2215,16 @@ function redrawMediaImmediate() {
   // Clear the media canvas
   mediaCtx.clearRect(0, 0, mediaCanvas.width, mediaCanvas.height);
 
-  // Draw all media items that have loaded images
-  mediaItems.forEach((item) => {
+  // Sort media items by zIndex (lower first, higher last) to draw in correct order
+  const sortedItems = [...mediaItems].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+  console.log(
+    "Drawing media in order:",
+    sortedItems.map((m) => ({ id: m.id.slice(0, 8), z: m.zIndex || 0 })),
+  );
+
+  // Draw all media items that have loaded images in z-index order
+  sortedItems.forEach((item) => {
     if (item.imageElement && item.imageElement instanceof HTMLImageElement) {
       drawMediaItemImmediate(item);
     }
@@ -2255,6 +2280,22 @@ function selectMedia(mediaId) {
   const deleteBtn = document.getElementById("delete-media-btn");
   if (deleteBtn) {
     deleteBtn.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  // Update layer control button visibility
+  const layerDivider = document.getElementById("layer-divider");
+  if (layerDivider) {
+    layerDivider.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  const moveForwardBtn = document.getElementById("move-forward-btn");
+  if (moveForwardBtn) {
+    moveForwardBtn.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  const moveBackwardBtn = document.getElementById("move-backward-btn");
+  if (moveBackwardBtn) {
+    moveBackwardBtn.style.display = selectedMediaId ? "block" : "none";
   }
 
   // Redraw to show/hide selection
@@ -2603,6 +2644,104 @@ function deleteSelectedMedia() {
     // Redraw
     redrawMedia();
   }
+}
+
+/**
+ * Move selected media forward (increase z-index)
+ */
+function moveMediaForward() {
+  console.log("moveMediaForward called", { selectedMediaId, mediaItemsCount: mediaItems.length });
+
+  if (!selectedMediaId) return;
+
+  const selected = getSelectedMedia();
+  if (!selected) {
+    console.log("No selected media found");
+    return;
+  }
+
+  // Initialize zIndex if not set
+  if (selected.zIndex === undefined) {
+    selected.zIndex = 0;
+  }
+
+  console.log("Current zIndex:", selected.zIndex);
+  console.log(
+    "All media zIndexes:",
+    mediaItems.map((m) => ({ id: m.id, z: m.zIndex || 0 })),
+  );
+
+  // Find the next higher zIndex among all media items
+  const higherItems = mediaItems
+    .filter((item) => item.id !== selectedMediaId && (item.zIndex || 0) > selected.zIndex)
+    .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+  if (higherItems.length > 0) {
+    // Swap with the next higher item
+    const nextItem = higherItems[0];
+    const temp = selected.zIndex;
+    selected.zIndex = nextItem.zIndex;
+    nextItem.zIndex = temp;
+    console.log("Swapped with item", nextItem.id, "- new zIndex:", selected.zIndex);
+  } else {
+    // Already at the top, increment by 1
+    selected.zIndex++;
+    console.log("Already at top, incremented to:", selected.zIndex);
+  }
+
+  // Mark as edited and redraw
+  markNoteEdited();
+  redrawMedia();
+  scheduleSave();
+}
+
+/**
+ * Move selected media backward (decrease z-index)
+ */
+function moveMediaBackward() {
+  console.log("moveMediaBackward called", { selectedMediaId, mediaItemsCount: mediaItems.length });
+
+  if (!selectedMediaId) return;
+
+  const selected = getSelectedMedia();
+  if (!selected) {
+    console.log("No selected media found");
+    return;
+  }
+
+  // Initialize zIndex if not set
+  if (selected.zIndex === undefined) {
+    selected.zIndex = 0;
+  }
+
+  console.log("Current zIndex:", selected.zIndex);
+  console.log(
+    "All media zIndexes:",
+    mediaItems.map((m) => ({ id: m.id, z: m.zIndex || 0 })),
+  );
+
+  // Find the next lower zIndex among all media items
+  const lowerItems = mediaItems
+    .filter((item) => item.id !== selectedMediaId && (item.zIndex || 0) < selected.zIndex)
+    .sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0));
+
+  if (lowerItems.length > 0) {
+    // Swap with the next lower item
+    const nextItem = lowerItems[0];
+    const temp = selected.zIndex;
+    selected.zIndex = nextItem.zIndex;
+    nextItem.zIndex = temp;
+    console.log("Swapped with item", nextItem.id, "- new zIndex:", selected.zIndex);
+  } else {
+    // Already at the bottom, decremented to:", selected.zIndex);
+    selected.zIndex--;
+    console.log("Already at bottom, decremented to:", selected.zIndex);
+  }
+
+  // Mark as edited and redraw
+  markNoteEdited();
+  redrawMedia();
+  scheduleSave();
 }
 
 /**
@@ -4003,6 +4142,8 @@ function attachToolbarListeners() {
   document.getElementById("insert-camera-btn")?.addEventListener("click", handleInsertCamera);
   document.getElementById("crop-media-btn")?.addEventListener("click", enterCropMode);
   document.getElementById("delete-media-btn")?.addEventListener("click", deleteSelectedMedia);
+  document.getElementById("move-forward-btn")?.addEventListener("click", moveMediaForward);
+  document.getElementById("move-backward-btn")?.addEventListener("click", moveMediaBackward);
 
   // Zoom controls
   document.getElementById("zoom-in-btn")?.addEventListener("click", () => adjustZoom(zoomStep));
