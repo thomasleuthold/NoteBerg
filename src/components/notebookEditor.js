@@ -2814,6 +2814,13 @@ function initPerspectiveCorners(perspectiveArea, img, initialRect) {
       startLeft = cornerHandle.offsetLeft;
       startTop = cornerHandle.offsetTop;
       cornerHandle.style.cursor = "grabbing";
+      if (cornerHandle.setPointerCapture) {
+        try {
+          cornerHandle.setPointerCapture(e.pointerId);
+        } catch (err) {
+          console.warn("[Crop] Could not set pointer capture:", err);
+        }
+      }
       e.preventDefault();
       e.stopPropagation();
     });
@@ -2845,14 +2852,24 @@ function initPerspectiveCorners(perspectiveArea, img, initialRect) {
 
       // Draw lines connecting corners
       drawPerspectiveLines(perspectiveArea);
+      e.preventDefault();
     });
 
-    document.addEventListener("pointerup", () => {
+    const endDrag = (e) => {
       if (isDragging) {
         isDragging = false;
         cornerHandle.style.cursor = "grab";
+        if (cornerHandle.releasePointerCapture) {
+          try {
+            cornerHandle.releasePointerCapture(e.pointerId);
+          } catch (err) {
+            console.warn("[Crop] Could not release pointer capture:", err);
+          }
+        }
       }
-    });
+    };
+    document.addEventListener("pointerup", endDrag);
+    document.addEventListener("pointercancel", endDrag);
   });
 
   // Draw initial connecting lines
@@ -2947,6 +2964,13 @@ function initCropAreaDrag(cropArea, img) {
       startLeft = cropArea.offsetLeft;
       startTop = cropArea.offsetTop;
     }
+    if (cropArea.setPointerCapture) {
+      try {
+        cropArea.setPointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("[Crop] Could not set pointer capture:", err);
+      }
+    }
     e.preventDefault();
   });
 
@@ -2963,6 +2987,7 @@ function initCropAreaDrag(cropArea, img) {
 
       cropArea.style.left = `${newLeft}px`;
       cropArea.style.top = `${newTop}px`;
+      e.preventDefault();
     } else if (isResizing) {
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
@@ -3004,14 +3029,24 @@ function initCropAreaDrag(cropArea, img) {
         cropArea.style.width = `${newWidth}px`;
         cropArea.style.height = `${newHeight}px`;
       }
+      e.preventDefault();
     }
   });
 
-  document.addEventListener("pointerup", () => {
+  const endInteraction = (e) => {
     isDragging = false;
     isResizing = false;
     resizeHandle = null;
-  });
+    if (e && cropArea.releasePointerCapture) {
+      try {
+        cropArea.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("[Crop] Could not release pointer capture:", err);
+      }
+    }
+  };
+  document.addEventListener("pointerup", endInteraction);
+  document.addEventListener("pointercancel", endInteraction);
 }
 
 /**
@@ -3174,26 +3209,41 @@ async function applyPerspectiveCorrection(item, _img, imgRect) {
       imgRelativeCorners.bl.y * scaleY, // bottom-left
     ];
 
-    // Calculate output dimensions (use width/height of the quadrilateral)
+    // Calculate output dimensions using natural image coordinates (after scaling)
+    // This ensures we use the actual pixel distances, not distorted display distances
     const topWidth = Math.sqrt(
-      (imgRelativeCorners.tr.x - imgRelativeCorners.tl.x) ** 2 +
-        (imgRelativeCorners.tr.y - imgRelativeCorners.tl.y) ** 2,
+      (srcCorners[2] - srcCorners[0]) ** 2 + (srcCorners[3] - srcCorners[1]) ** 2,
     );
     const bottomWidth = Math.sqrt(
-      (imgRelativeCorners.br.x - imgRelativeCorners.bl.x) ** 2 +
-        (imgRelativeCorners.br.y - imgRelativeCorners.bl.y) ** 2,
+      (srcCorners[4] - srcCorners[6]) ** 2 + (srcCorners[5] - srcCorners[7]) ** 2,
     );
     const leftHeight = Math.sqrt(
-      (imgRelativeCorners.bl.x - imgRelativeCorners.tl.x) ** 2 +
-        (imgRelativeCorners.bl.y - imgRelativeCorners.tl.y) ** 2,
+      (srcCorners[6] - srcCorners[0]) ** 2 + (srcCorners[7] - srcCorners[1]) ** 2,
     );
     const rightHeight = Math.sqrt(
-      (imgRelativeCorners.br.x - imgRelativeCorners.tr.x) ** 2 +
-        (imgRelativeCorners.br.y - imgRelativeCorners.tr.y) ** 2,
+      (srcCorners[4] - srcCorners[2]) ** 2 + (srcCorners[5] - srcCorners[3]) ** 2,
     );
 
-    const outputWidth = Math.max(topWidth, bottomWidth) * scaleX;
-    const outputHeight = Math.max(leftHeight, rightHeight) * scaleY;
+    // Calculate perspective distortion ratios
+    const widthRatio = Math.max(topWidth, bottomWidth) / Math.min(topWidth, bottomWidth);
+    const heightRatio = Math.max(leftHeight, rightHeight) / Math.min(leftHeight, rightHeight);
+
+    // For documents photographed at an angle, both edges are distorted
+    // Use the geometric mean (sqrt of product) to estimate the true dimension
+    // This balances between the longer and shorter edges
+    const outputWidth = Math.sqrt(topWidth * bottomWidth);
+    const outputHeight = Math.sqrt(leftHeight * rightHeight);
+
+    console.log("[Crop] Dimension calculation:", {
+      topWidth: topWidth.toFixed(1),
+      bottomWidth: bottomWidth.toFixed(1),
+      leftHeight: leftHeight.toFixed(1),
+      rightHeight: rightHeight.toFixed(1),
+      widthRatio: widthRatio.toFixed(2),
+      heightRatio: heightRatio.toFixed(2),
+      outputWidth: outputWidth.toFixed(1),
+      outputHeight: outputHeight.toFixed(1),
+    });
 
     // Destination corners (perfect rectangle)
     const dstCorners = [

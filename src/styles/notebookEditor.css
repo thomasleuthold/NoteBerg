@@ -515,6 +515,7 @@
 
 .crop-overlay.active {
   display: flex;
+  touch-action: none;
 }
 
 .crop-container {
@@ -538,6 +539,7 @@
   background: transparent;
   cursor: move;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+  touch-action: none;
 }
 
 .crop-handle {
