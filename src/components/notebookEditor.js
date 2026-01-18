@@ -33,19 +33,19 @@ let isDrawMode = false;
 let isEraserMode = false; // Manual eraser toggle
 let isLassoMode = false; // Manual lasso toggle
 
-// Layered Canvases
-let staticCanvas = null; // For completed strokes
+// Layered Canvases (4 canvases for memory efficiency)
+// - staticCanvas: background pattern + completed strokes (full zoom resolution)
+// - dynamicCanvas: active drawing stroke (full zoom resolution)
+// - mediaCanvas: images (full zoom resolution)
+// - overlayCanvas: cursor + highlights (base resolution only, no zoom scaling)
+let staticCanvas = null; // For background + completed strokes
 let staticCtx = null;
-let highlightCanvas = null; // For search highlights
-let highlightCtx = null;
 let dynamicCanvas = null; // For active drawing
 let dynamicCtx = null;
-let backgroundCanvas = null;
-let backgroundCtx = null;
-let cursorCanvas = null;
-let cursorCtx = null;
 let mediaCanvas = null; // For media items (images)
 let mediaCtx = null;
+let overlayCanvas = null; // For cursor + highlights (stays at base resolution)
+let overlayCtx = null;
 let canvasRect = null; // Cached bounding client rect for performance
 
 let isDrawing = false;
@@ -438,12 +438,10 @@ function renderEditor(container, _noteData) {
 
       <div class="editor-content-wrapper" style="position: relative;">
         <div id="text-editor" class="text-editor" contenteditable="true"></div>
-        <canvas id="background-canvas" class="background-canvas" style="position: absolute; top: 0; left: 0; z-index: 0;"></canvas>
-        <canvas id="media-canvas" class="media-canvas" style="position: absolute; top: 0; left: 0; z-index: 1.5; pointer-events: none;"></canvas>
-        <canvas id="static-canvas" class="static-canvas" style="position: absolute; top: 0; left: 0; z-index: 2;"></canvas>
-        <canvas id="highlight-canvas" class="highlight-canvas" style="position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none;"></canvas>
-        <canvas id="dynamic-canvas" class="dynamic-canvas" style="position: absolute; top: 0; left: 0; z-index: 4;"></canvas>
-        <canvas id="cursor-canvas" class="cursor-canvas" style="position: absolute; top: 0; left: 0; z-index: 5; pointer-events: none;"></canvas>
+        <canvas id="static-canvas" class="static-canvas" style="position: absolute; top: 0; left: 0; z-index: 1;"></canvas>
+        <canvas id="media-canvas" class="media-canvas" style="position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none;"></canvas>
+        <canvas id="dynamic-canvas" class="dynamic-canvas" style="position: absolute; top: 0; left: 0; z-index: 3;"></canvas>
+        <canvas id="overlay-canvas" class="overlay-canvas" style="position: absolute; top: 0; left: 0; z-index: 4; pointer-events: none;"></canvas>
       </div>
     </div>
   `;
@@ -496,32 +494,21 @@ function initTextEditor(noteData) {
  * Initialize canvas layer for drawing
  */
 function initCanvasLayer(noteData) {
-  // Setup all canvas layers
-  backgroundCanvas = document.getElementById("background-canvas");
-  mediaCanvas = document.getElementById("media-canvas");
+  // Setup all canvas layers (4 canvases for memory efficiency)
   staticCanvas = document.getElementById("static-canvas");
-  highlightCanvas = document.getElementById("highlight-canvas");
+  mediaCanvas = document.getElementById("media-canvas");
   dynamicCanvas = document.getElementById("dynamic-canvas");
-  cursorCanvas = document.getElementById("cursor-canvas");
+  overlayCanvas = document.getElementById("overlay-canvas");
 
-  if (
-    !backgroundCanvas ||
-    !mediaCanvas ||
-    !staticCanvas ||
-    !highlightCanvas ||
-    !dynamicCanvas ||
-    !cursorCanvas
-  ) {
+  if (!staticCanvas || !mediaCanvas || !dynamicCanvas || !overlayCanvas) {
     console.error("One or more canvas layers are missing from the DOM.");
     return;
   }
 
-  backgroundCtx = backgroundCanvas.getContext("2d");
-  mediaCtx = mediaCanvas.getContext("2d");
   staticCtx = staticCanvas.getContext("2d");
-  highlightCtx = highlightCanvas.getContext("2d");
+  mediaCtx = mediaCanvas.getContext("2d");
   dynamicCtx = dynamicCanvas.getContext("2d");
-  cursorCtx = cursorCanvas.getContext("2d");
+  overlayCtx = overlayCanvas.getContext("2d");
 
   // Initial canvas sizing with throttling
   window.addEventListener("resize", throttledResizeCanvas);
@@ -666,16 +653,7 @@ function throttledResizeCanvas() {
  * Resize canvas to match container
  */
 function resizeCanvas() {
-  if (
-    !dynamicCanvas ||
-    !staticCanvas ||
-    !backgroundCanvas ||
-    !cursorCanvas ||
-    !highlightCanvas ||
-    !mediaCanvas ||
-    !currentEditor
-  )
-    return;
+  if (!dynamicCanvas || !staticCanvas || !mediaCanvas || !overlayCanvas || !currentEditor) return;
 
   const wrapper = dynamicCanvas.parentElement;
   const rect = wrapper.getBoundingClientRect();
@@ -683,17 +661,14 @@ function resizeCanvas() {
   // Cache the bounding rect for coordinate calculations
   canvasRect = dynamicCanvas.getBoundingClientRect();
 
-  // Calculate base dimensions (unzoomed coordinate space)
-  // The viewport shows zoomed content, so base size = viewport / zoom
-  const viewportBaseWidth = rect.width / zoomScale;
-  const viewportBaseHeight = rect.height / zoomScale;
-
+  // Calculate base dimensions (the content coordinate space, independent of zoom)
   // Base canvas should be large enough to show:
-  // 1. The viewport (at base zoom level)
+  // 1. The viewport at 100% zoom (not scaled by current zoom)
   // 2. All existing content (strokes, media)
   // 3. A minimum size for usability
-  const requiredHeight = Math.max(viewportBaseHeight, minCanvasHeight, 800);
-  const requiredWidth = Math.max(viewportBaseWidth, minCanvasWidth, 800);
+  // Note: Don't divide by zoomScale - that inflates base size when zoomed out
+  const requiredHeight = Math.max(rect.height, minCanvasHeight, 800);
+  const requiredWidth = Math.max(rect.width, minCanvasWidth, 800);
 
   // Prevent excessive canvas sizes that could cause performance issues
   // Optimized for vertical scrolling: narrow width, tall height
@@ -740,16 +715,9 @@ function resizeCanvas() {
   const baseChanged = prevBaseWidth !== baseCanvasWidth || prevBaseHeight !== baseCanvasHeight;
 
   if (bitmapChanged || baseChanged) {
-    // Resize all canvases
-    const canvases = [
-      dynamicCanvas,
-      staticCanvas,
-      backgroundCanvas,
-      cursorCanvas,
-      highlightCanvas,
-      mediaCanvas,
-    ];
-    canvases.forEach((cvs) => {
+    // Resize full-resolution canvases (static, dynamic, media)
+    const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+    fullResCanvases.forEach((cvs) => {
       cvs.width = bitmapWidth;
       cvs.height = bitmapHeight;
       cvs.style.width = `${cssWidth}px`;
@@ -763,12 +731,26 @@ function resizeCanvas() {
       }
     });
 
-    // Set context transforms for resolution scaling
-    [staticCtx, dynamicCtx, backgroundCtx, cursorCtx, highlightCtx, mediaCtx].forEach((ctx) => {
+    // Overlay canvas stays at base resolution (no zoom scaling) for memory efficiency
+    // This canvas is used for cursor and highlights which don't need high resolution
+    overlayCanvas.width = baseCanvasWidth;
+    overlayCanvas.height = baseCanvasHeight;
+    overlayCanvas.style.width = `${baseCanvasWidth}px`;
+    overlayCanvas.style.height = `${baseCanvasHeight}px`;
+    // Overlay uses CSS transform to match visual size of other canvases
+    overlayCanvas.style.transformOrigin = "top left";
+    overlayCanvas.style.transform = `scale(${zoomScale})`;
+
+    // Set context transforms for resolution scaling on full-res canvases
+    [staticCtx, dynamicCtx, mediaCtx].forEach((ctx) => {
       if (ctx) {
         ctx.setTransform(actualResolutionScale, 0, 0, actualResolutionScale, 0, 0);
       }
     });
+    // Overlay context uses identity transform (no scaling)
+    if (overlayCtx) {
+      overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+    }
 
     // Calculate visual size (what user sees after CSS transform)
     const visualWidth = Math.round(cssWidth * cssTransformScale);
@@ -831,15 +813,8 @@ function checkAndExpandCanvasForMedia() {
  * @param {number} newHeight - Target height in pixels (in unscaled space)
  */
 function expandCanvasToSize(newWidth, newHeight) {
-  const canvases = [
-    dynamicCanvas,
-    staticCanvas,
-    backgroundCanvas,
-    cursorCanvas,
-    highlightCanvas,
-    mediaCanvas,
-  ];
-  if (canvases.some((c) => !c)) return;
+  const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+  if (fullResCanvases.some((c) => !c) || !overlayCanvas) return;
 
   const now = Date.now();
   if (now - lastExpansionTime < expansionCooldown) return;
@@ -849,48 +824,38 @@ function expandCanvasToSize(newWidth, newHeight) {
   const tempCanvases = {
     dynamic: document.createElement("canvas"),
     static: document.createElement("canvas"),
-    background: document.createElement("canvas"),
-    highlight: document.createElement("canvas"),
     media: document.createElement("canvas"),
   };
 
-  tempCanvases.dynamic.width =
-    tempCanvases.static.width =
-    tempCanvases.background.width =
-    tempCanvases.highlight.width =
-    tempCanvases.media.width =
-      dynamicCanvas.width;
-  tempCanvases.dynamic.height =
-    tempCanvases.static.height =
-    tempCanvases.background.height =
-    tempCanvases.highlight.height =
-    tempCanvases.media.height =
-      dynamicCanvas.height;
+  tempCanvases.dynamic.width = tempCanvases.static.width = tempCanvases.media.width = dynamicCanvas.width;
+  tempCanvases.dynamic.height = tempCanvases.static.height = tempCanvases.media.height = dynamicCanvas.height;
 
   tempCanvases.dynamic.getContext("2d").drawImage(dynamicCanvas, 0, 0);
   tempCanvases.static.getContext("2d").drawImage(staticCanvas, 0, 0);
-  tempCanvases.background.getContext("2d").drawImage(backgroundCanvas, 0, 0);
-  tempCanvases.highlight.getContext("2d").drawImage(highlightCanvas, 0, 0);
   tempCanvases.media.getContext("2d").drawImage(mediaCanvas, 0, 0);
 
   const oldHeight = dynamicCanvas.height;
 
-  // Resize all canvases
-  canvases.forEach((cvs) => {
+  // Resize full-resolution canvases
+  fullResCanvases.forEach((cvs) => {
     cvs.width = newWidth;
     cvs.height = newHeight;
     cvs.style.width = `${newWidth}px`;
     cvs.style.height = `${newHeight}px`;
   });
 
+  // Resize overlay canvas (base resolution only)
+  overlayCanvas.width = baseCanvasWidth;
+  overlayCanvas.height = baseCanvasHeight;
+  overlayCanvas.style.width = `${baseCanvasWidth}px`;
+  overlayCanvas.style.height = `${baseCanvasHeight}px`;
+
   // Restore the content
   dynamicCtx.drawImage(tempCanvases.dynamic, 0, 0);
   staticCtx.drawImage(tempCanvases.static, 0, 0);
-  backgroundCtx.drawImage(tempCanvases.background, 0, 0);
-  highlightCtx.drawImage(tempCanvases.highlight, 0, 0);
   mediaCtx.drawImage(tempCanvases.media, 0, 0);
 
-  // Draw background expansion if height increased
+  // Draw background expansion if height increased (background is now on staticCanvas)
   if (newHeight > oldHeight) {
     drawBackgroundExpansion(oldHeight, newHeight);
   }
@@ -908,8 +873,8 @@ function expandCanvasToSize(newWidth, newHeight) {
  * @param {number} additionalHeight - Height to add in pixels (in unscaled space)
  */
 function expandCanvas(additionalHeight) {
-  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
-  if (canvases.some((c) => !c)) return;
+  const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+  if (fullResCanvases.some((c) => !c) || !overlayCanvas) return;
 
   const now = Date.now();
   if (now - lastExpansionTime < expansionCooldown) return;
@@ -925,42 +890,34 @@ function expandCanvas(additionalHeight) {
   const tempCanvases = {
     dynamic: document.createElement("canvas"),
     static: document.createElement("canvas"),
-    background: document.createElement("canvas"),
-    highlight: document.createElement("canvas"),
   };
 
-  tempCanvases.dynamic.width =
-    tempCanvases.static.width =
-    tempCanvases.background.width =
-    tempCanvases.highlight.width =
-      dynamicCanvas.width;
-  tempCanvases.dynamic.height =
-    tempCanvases.static.height =
-    tempCanvases.background.height =
-    tempCanvases.highlight.height =
-      dynamicCanvas.height;
+  tempCanvases.dynamic.width = tempCanvases.static.width = dynamicCanvas.width;
+  tempCanvases.dynamic.height = tempCanvases.static.height = dynamicCanvas.height;
 
   tempCanvases.dynamic.getContext("2d").drawImage(dynamicCanvas, 0, 0);
   tempCanvases.static.getContext("2d").drawImage(staticCanvas, 0, 0);
-  tempCanvases.background.getContext("2d").drawImage(backgroundCanvas, 0, 0);
-  tempCanvases.highlight.getContext("2d").drawImage(highlightCanvas, 0, 0);
 
-  // Resize all canvases
-  canvases.forEach((cvs) => {
+  const oldHeight = dynamicCanvas.height;
+
+  // Resize full-resolution canvases
+  fullResCanvases.forEach((cvs) => {
     cvs.width = newWidth;
     cvs.height = newHeight;
     cvs.style.width = `${newWidth}px`;
     cvs.style.height = `${newHeight}px`;
   });
 
+  // Overlay canvas stays at base resolution
+  overlayCanvas.width = baseCanvasWidth;
+  overlayCanvas.height = baseCanvasHeight;
+
   // Restore the content without expensive redraw
   dynamicCtx.drawImage(tempCanvases.dynamic, 0, 0);
   staticCtx.drawImage(tempCanvases.static, 0, 0);
-  backgroundCtx.drawImage(tempCanvases.background, 0, 0);
-  highlightCtx.drawImage(tempCanvases.highlight, 0, 0);
 
   // Draw background pattern on newly expanded area
-  drawBackgroundExpansion(tempCanvases.background.height, newHeight);
+  drawBackgroundExpansion(oldHeight, newHeight);
 
   if (currentEditor) {
     currentEditor.style.minHeight = `${newHeight}px`;
@@ -1849,24 +1806,24 @@ function handleCanvasPointerMove(e) {
 }
 
 /**
- * Draw the lasso path on the cursor canvas
+ * Draw the lasso path on the overlay canvas
  */
 function drawLassoPath() {
-  if (!cursorCtx || lassoPoints.length < 2) return;
+  if (!overlayCtx || lassoPoints.length < 2) return;
 
-  clearCanvas(cursorCtx, cursorCanvas);
-  cursorCtx.strokeStyle = "rgba(0, 100, 255, 0.8)";
-  cursorCtx.lineWidth = 2;
-  cursorCtx.setLineDash([5, 5]); // Dashed line for selection
-  cursorCtx.beginPath();
-  cursorCtx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+  clearCanvas(overlayCtx, overlayCanvas);
+  overlayCtx.strokeStyle = "rgba(0, 100, 255, 0.8)";
+  overlayCtx.lineWidth = 2;
+  overlayCtx.setLineDash([5, 5]); // Dashed line for selection
+  overlayCtx.beginPath();
+  overlayCtx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
 
   for (let i = 1; i < lassoPoints.length; i++) {
-    cursorCtx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+    overlayCtx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
   }
 
-  cursorCtx.stroke();
-  cursorCtx.setLineDash([]); // Reset line dash
+  overlayCtx.stroke();
+  overlayCtx.setLineDash([]); // Reset line dash
 }
 
 /**
@@ -1905,9 +1862,9 @@ function handleCanvasPointerUp(e) {
     updateToolbarButtons();
   }
 
-  // Clear the cursor canvas of any transient indicators like the eraser cursor
-  if (cursorCtx) {
-    clearCanvas(cursorCtx, cursorCanvas);
+  // Clear the overlay canvas of any transient indicators like the eraser cursor
+  if (overlayCtx) {
+    clearCanvas(overlayCtx, overlayCanvas);
   }
 
   const wasLassoing = isLassoing;
@@ -2134,26 +2091,24 @@ function getStrokeBounds(stroke) {
  * @param {number} endY - Ending Y coordinate (for partial redraws)
  */
 function drawBackgroundPattern(backgroundType, startY = 0, endY = null) {
-  if (!backgroundCtx || !backgroundCanvas || backgroundType === "none") return;
+  if (!staticCtx || !staticCanvas || backgroundType === "none") return;
 
   // Use BASE dimensions, not bitmap dimensions, because context transform handles scaling
   // The context has a transform applied (resolutionScale) that scales drawing operations
   const height = endY || baseCanvasHeight;
   const width = baseCanvasWidth;
 
-  sharedDrawBackgroundPattern(backgroundCtx, backgroundType, width, height, startY);
+  // Background pattern is now drawn on staticCanvas (merged for memory efficiency)
+  sharedDrawBackgroundPattern(staticCtx, backgroundType, width, height, startY);
 }
 
 /**
- * Redraw entire background canvas
+ * Redraw entire background on static canvas
+ * Since background and strokes share staticCanvas, this redraws everything
  */
 function redrawBackground() {
-  if (!backgroundCtx || !backgroundCanvas || !currentNoteData) return;
-  clearCanvas(backgroundCtx, backgroundCanvas);
-
-  if (currentNoteData.background && currentNoteData.background !== "none") {
-    drawBackgroundPattern(currentNoteData.background);
-  }
+  // Background is now on staticCanvas with strokes, so redraw both together
+  redrawCanvas();
 }
 
 /**
@@ -2178,6 +2133,11 @@ function redrawCanvas() {
   clearCanvas(staticCtx, staticCanvas);
   if (dynamicCtx) {
     clearCanvas(dynamicCtx, dynamicCanvas);
+  }
+
+  // Draw background pattern first (background is now merged into staticCanvas)
+  if (currentNoteData?.background && currentNoteData.background !== "none") {
+    drawBackgroundPattern(currentNoteData.background);
   }
 
   // Draw all completed strokes to the static canvas
@@ -3776,18 +3736,18 @@ function eraseStrokesAtPoint(x, y) {
 }
 
 /**
- * Draw eraser cursor indicator on the top canvas
+ * Draw eraser cursor indicator on the overlay canvas
  * @param {number} x - X coordinate
  * @param {number} y - Y coordinate
  */
 function drawEraserCursor(x, y) {
-  if (!cursorCtx) return;
-  clearCanvas(cursorCtx, cursorCanvas);
-  cursorCtx.strokeStyle = "red";
-  cursorCtx.lineWidth = 1;
-  cursorCtx.beginPath();
-  cursorCtx.arc(x, y, eraserRadius, 0, 2 * Math.PI);
-  cursorCtx.stroke();
+  if (!overlayCtx) return;
+  clearCanvas(overlayCtx, overlayCanvas);
+  overlayCtx.strokeStyle = "red";
+  overlayCtx.lineWidth = 1;
+  overlayCtx.beginPath();
+  overlayCtx.arc(x, y, eraserRadius, 0, 2 * Math.PI);
+  overlayCtx.stroke();
 }
 
 /**
@@ -3850,8 +3810,8 @@ function switchToTextMode() {
   if (staticCanvas) {
     staticCanvas.style.pointerEvents = "none";
   }
-  if (cursorCanvas) {
-    cursorCanvas.style.pointerEvents = "none";
+  if (overlayCanvas) {
+    overlayCanvas.style.pointerEvents = "none";
   }
 
   // Hide pen settings dialog
@@ -3959,8 +3919,8 @@ function switchToImageMode() {
   if (staticCanvas) {
     staticCanvas.style.pointerEvents = "none";
   }
-  if (cursorCanvas) {
-    cursorCanvas.style.pointerEvents = "none";
+  if (overlayCanvas) {
+    overlayCanvas.style.pointerEvents = "none";
   }
 
   // Enable text editor for scrolling on background
@@ -4769,21 +4729,20 @@ function setZoom(newZoom, options = {}) {
     // To achieve visual zoom of zoomScale, we need CSS transform of: zoomScale / currentResolutionScale
     const previewTransformScale = zoomScale / currentResolutionScale;
 
-    const canvases = [
-      dynamicCanvas,
-      staticCanvas,
-      backgroundCanvas,
-      cursorCanvas,
-      highlightCanvas,
-      mediaCanvas,
-    ];
-
-    canvases.forEach((cvs) => {
+    // Full-resolution canvases use preview transform based on their current resolution
+    const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+    fullResCanvases.forEach((cvs) => {
       if (cvs) {
         cvs.style.transformOrigin = "top left";
         cvs.style.transform = `scale(${previewTransformScale})`;
       }
     });
+
+    // Overlay canvas is always at base resolution, so it scales by zoomScale directly
+    if (overlayCanvas) {
+      overlayCanvas.style.transformOrigin = "top left";
+      overlayCanvas.style.transform = `scale(${zoomScale})`;
+    }
 
     // Apply zoom to text editor using CSS transform (text editor is always at base size)
     if (currentEditor) {
@@ -4890,17 +4849,10 @@ function rerenderCanvasAtNativeZoom() {
     cssTransformScale,
   );
 
-  // Update canvas dimensions
-  const canvases = [
-    dynamicCanvas,
-    staticCanvas,
-    backgroundCanvas,
-    cursorCanvas,
-    highlightCanvas,
-    mediaCanvas,
-  ];
+  // Update full-resolution canvas dimensions
+  const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
 
-  canvases.forEach((cvs) => {
+  fullResCanvases.forEach((cvs) => {
     if (cvs) {
       // Update bitmap resolution
       cvs.width = bitmapWidth;
@@ -4920,6 +4872,17 @@ function rerenderCanvasAtNativeZoom() {
     }
   });
 
+  // Overlay canvas stays at base resolution (no zoom scaling on bitmap)
+  if (overlayCanvas) {
+    overlayCanvas.width = baseCanvasWidth;
+    overlayCanvas.height = baseCanvasHeight;
+    overlayCanvas.style.width = `${baseCanvasWidth}px`;
+    overlayCanvas.style.height = `${baseCanvasHeight}px`;
+    // Overlay uses CSS transform to match visual size
+    overlayCanvas.style.transformOrigin = "top left";
+    overlayCanvas.style.transform = `scale(${zoomScale})`;
+  }
+
   // Text editor still uses CSS transform for scaling (it doesn't have bitmap resolution)
   if (currentEditor) {
     currentEditor.style.transformOrigin = "top left";
@@ -4929,11 +4892,16 @@ function rerenderCanvasAtNativeZoom() {
   // Context transform scales drawing from base coordinates to bitmap coordinates
   const contextScale = actualResolutionScale;
 
-  [staticCtx, dynamicCtx, backgroundCtx, cursorCtx, highlightCtx, mediaCtx].forEach((ctx) => {
+  [staticCtx, dynamicCtx, mediaCtx].forEach((ctx) => {
     if (ctx) {
       ctx.setTransform(contextScale, 0, 0, contextScale, 0, 0);
     }
   });
+
+  // Overlay context uses identity transform (always at base resolution)
+  if (overlayCtx) {
+    overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+  }
 
   // Redraw all canvas content at the new resolution
   redrawBackground();
@@ -5015,12 +4983,8 @@ function updateContentBounds() {
     const wrapper = dynamicCanvas.parentElement;
     const rect = wrapper.getBoundingClientRect();
 
-    dynamicCanvas.width =
-      staticCanvas.width =
-      backgroundCanvas.width =
-      cursorCanvas.width =
-      highlightCanvas.width =
-        Math.max(minCanvasWidth, rect.width);
+    const newWidth = Math.max(minCanvasWidth, rect.width);
+    dynamicCanvas.width = staticCanvas.width = mediaCanvas.width = newWidth;
 
     redrawBackground(); // Redraw background after canvas resize clears it
     redrawCanvas();
@@ -5555,12 +5519,10 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   dynamicCtx = null;
   staticCanvas = null;
   staticCtx = null;
-  backgroundCanvas = null;
-  backgroundCtx = null;
-  cursorCanvas = null;
-  cursorCtx = null;
-  highlightCanvas = null;
-  highlightCtx = null;
+  mediaCanvas = null;
+  mediaCtx = null;
+  overlayCanvas = null;
+  overlayCtx = null;
   canvasRect = null;
 
   strokes = [];
@@ -5649,14 +5611,14 @@ function highlightText(query) {
 }
 
 /**
- * Highlight search terms in strokes (canvas)
+ * Highlight search terms in strokes (on overlay canvas)
  * @param {string} query - Search query
  */
 function highlightStrokes(query) {
-  if (!query || !currentNoteData?.recognition?.words || !highlightCtx) {
+  if (!query || !currentNoteData?.recognition?.words || !overlayCtx) {
     // Clear previous highlights if query is cleared
-    if (highlightCtx) {
-      clearCanvas(highlightCtx, highlightCanvas);
+    if (overlayCtx) {
+      clearCanvas(overlayCtx, overlayCanvas);
     }
     return;
   }
@@ -5672,14 +5634,14 @@ function highlightStrokes(query) {
   const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
   const regex = new RegExp(pattern, "gi");
 
-  // Clear previous highlights
-  clearCanvas(highlightCtx, highlightCanvas);
+  // Clear previous highlights (overlay canvas is shared with cursor)
+  clearCanvas(overlayCtx, overlayCanvas);
 
   let matchCount = 0;
-  highlightCtx.save();
-  highlightCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
-  highlightCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
-  highlightCtx.lineWidth = 2;
+  overlayCtx.save();
+  overlayCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
+  overlayCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
+  overlayCtx.lineWidth = 2;
 
   currentNoteData.recognition.words.forEach((word) => {
     regex.lastIndex = 0; // Ensure regex is reset before test
@@ -5704,8 +5666,8 @@ function highlightStrokes(query) {
 
       if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
         console.log("[NotebookEditor] Highlighting match:", word.text, { x, y, w, h });
-        highlightCtx.fillRect(x, y, w, h);
-        highlightCtx.strokeRect(x, y, w, h);
+        overlayCtx.fillRect(x, y, w, h);
+        overlayCtx.strokeRect(x, y, w, h);
       } else {
         console.warn(
           "[NotebookEditor] Could not determine bounding box dimensions for word:",
@@ -5716,6 +5678,6 @@ function highlightStrokes(query) {
       }
     }
   });
-  highlightCtx.restore();
+  overlayCtx.restore();
   console.log(`[NotebookEditor] Finished highlighting. Matches found: ${matchCount}`);
 }
