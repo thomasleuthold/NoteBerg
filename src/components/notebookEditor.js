@@ -7,7 +7,7 @@
  */
 
 import { forceRecognition } from "../modules/autoRecognition.js";
-import { resetInactivityTimer, stopInactivityTimer, syncOnNoteClose } from "../modules/autoSync.js";
+import { stopInactivityTimer, syncOnNoteClose } from "../modules/autoSync.js";
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, generateId, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
@@ -95,15 +95,26 @@ let currentPenColorIndex = 0;
 let minCanvasWidth = 0; // Minimum width needed to show all content
 let minCanvasHeight = 0; // Minimum height needed to show all content
 
+// Base canvas dimensions (unscaled, before zoom resolution multiplier)
+let baseCanvasWidth = 0;
+let baseCanvasHeight = 0;
+
 // Zoom state
 let zoomScale = 1.0; // Current zoom level (1.0 = 100%)
-const minZoom = 0.5; // Minimum zoom (50%)
-const maxZoom = 3.0; // Maximum zoom (300%)
+const minZoom = 0.25; // Minimum zoom (25%)
+const maxZoom = 2.0; // Maximum zoom (200%)
 const zoomStep = 0.1; // Zoom increment per step
 
 // Gesture tracking for pinch-to-zoom
 let lastTouchDistance = null;
 let initialPinchZoom = null;
+let pinchCenter = null; // Store the center point of pinch gesture
+
+// Zoom re-render state
+let zoomRerenderTimer = null;
+const ZOOM_RERENDER_DEBOUNCE = 300; // ms to wait after zoom gesture ends before re-rendering
+let isZoomingGesture = false; // Track if currently performing zoom gesture
+let currentResolutionScale = 1.0; // The resolution scale currently applied to the canvas bitmap
 
 // Resize throttling
 let resizeThrottleTimer = null;
@@ -119,6 +130,20 @@ let saveDebounceTimer = null;
 const SAVE_DEBOUNCE_MS = 1500; // Save after 1.5s of inactivity
 let lastSaveTime = 0;
 const SAVE_THROTTLE_MS = 3000; // Also save at least every 3s during writing
+
+/**
+ * Helper function to clear a canvas properly regardless of transform state
+ * Resets transform, clears the full bitmap, then restores transform
+ * @param {CanvasRenderingContext2D} ctx - Canvas context to clear
+ * @param {HTMLCanvasElement} canvas - Canvas element
+ */
+function clearCanvas(ctx, canvas) {
+  if (!ctx || !canvas) return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
 
 /**
  * Initialize notebook editor component
@@ -150,8 +175,12 @@ export function initNotebookEditorComponent() {
     }
     const noteId = getCurrentNoteId();
     if (noteId && currentNoteData && noteId === currentNoteData.id) {
-      if (isDrawing || isErasing || isLassoing || isTransforming) {
+      // Defer refresh if user is actively interacting with the note
+      if (isDrawing || isErasing || isLassoing || isTransforming || noteEditedSinceOpen) {
         pendingExternalRefresh = true;
+        console.log(
+          "External data change detected but note has unsaved changes. Deferring refresh until note is closed.",
+        );
         return;
       }
       console.log("External data change detected for current note. Refreshing editor.");
@@ -229,7 +258,7 @@ export async function initNotebookEditor(noteId, searchQuery = null) {
     switchToTextMode();
 
     // Initialize zoom to ensure transforms are applied on load
-    setZoom(1.0);
+    setZoom(1.0, { immediate: true });
 
     // Initialize save timer
     lastSaveTime = Date.now();
@@ -654,29 +683,63 @@ function resizeCanvas() {
   // Cache the bounding rect for coordinate calculations
   canvasRect = dynamicCanvas.getBoundingClientRect();
 
-  const baseWidth = rect.width / zoomScale;
-  const baseHeight = rect.height / zoomScale;
+  // Calculate base dimensions (unzoomed coordinate space)
+  // The viewport shows zoomed content, so base size = viewport / zoom
+  const viewportBaseWidth = rect.width / zoomScale;
+  const viewportBaseHeight = rect.height / zoomScale;
 
-  // Don't use scrollHeight with CSS transforms - it's unreliable
-  // Instead, use the wrapper dimensions and minimum bounds from content
-  const requiredHeight = Math.max(
-    baseHeight,
-    minCanvasHeight,
-    dynamicCanvas.height, // Keep current canvas height to prevent shrinking
-    800,
-  );
-  const requiredWidth = Math.max(baseWidth, minCanvasWidth, 800);
+  // Base canvas should be large enough to show:
+  // 1. The viewport (at base zoom level)
+  // 2. All existing content (strokes, media)
+  // 3. A minimum size for usability
+  const requiredHeight = Math.max(viewportBaseHeight, minCanvasHeight, 800);
+  const requiredWidth = Math.max(viewportBaseWidth, minCanvasWidth, 800);
 
   // Prevent excessive canvas sizes that could cause performance issues
-  const maxCanvasSize = 10000;
-  const safeWidth = Math.min(requiredWidth, maxCanvasSize);
-  const safeHeight = Math.min(requiredHeight, maxCanvasSize);
+  // Optimized for vertical scrolling: narrow width, tall height
+  const maxCanvasWidth = 2000;
+  const maxCanvasHeight = 25000;
+  const safeWidth = Math.min(requiredWidth, maxCanvasWidth);
+  const safeHeight = Math.min(requiredHeight, maxCanvasHeight);
+
+  // Update base dimensions - allow both growing and shrinking
+  // based on actual content needs
+  const prevBaseWidth = baseCanvasWidth;
+  const prevBaseHeight = baseCanvasHeight;
+  baseCanvasWidth = safeWidth;
+  baseCanvasHeight = safeHeight;
+
+  // Calculate the maximum resolution scale we can use without exceeding canvas limits
+  const maxResolutionScaleW = maxCanvasWidth / baseCanvasWidth;
+  const maxResolutionScaleH = maxCanvasHeight / baseCanvasHeight;
+  const maxResolutionScale = Math.min(maxResolutionScaleW, maxResolutionScaleH);
+
+  // Desired resolution scale is the zoom level, capped at maxResolutionScale
+  const desiredResolutionScale = Math.max(1.0, zoomScale);
+  const actualResolutionScale = Math.min(desiredResolutionScale, maxResolutionScale);
+
+  // Store the resolution scale for preview zoom calculations
+  currentResolutionScale = actualResolutionScale;
+
+  // Calculate bitmap dimensions
+  const bitmapWidth = Math.round(baseCanvasWidth * actualResolutionScale);
+  const bitmapHeight = Math.round(baseCanvasHeight * actualResolutionScale);
+
+  // CSS size = bitmap size (no stretching)
+  const cssWidth = bitmapWidth;
+  const cssHeight = bitmapHeight;
+
+  // CSS transform handles visual zoom (both scaling up and down)
+  const cssTransformScale = zoomScale / actualResolutionScale;
+  const needsCssTransform = Math.abs(cssTransformScale - 1.0) > 0.001;
 
   // Only resize if dimensions actually changed significantly
-  const widthChanged = Math.abs(dynamicCanvas.width - safeWidth) > 1;
-  const heightChanged = Math.abs(dynamicCanvas.height - safeHeight) > 1;
+  const bitmapChanged =
+    Math.abs(dynamicCanvas.width - bitmapWidth) > 1 ||
+    Math.abs(dynamicCanvas.height - bitmapHeight) > 1;
+  const baseChanged = prevBaseWidth !== baseCanvasWidth || prevBaseHeight !== baseCanvasHeight;
 
-  if (widthChanged || heightChanged) {
+  if (bitmapChanged || baseChanged) {
     // Resize all canvases
     const canvases = [
       dynamicCanvas,
@@ -687,15 +750,33 @@ function resizeCanvas() {
       mediaCanvas,
     ];
     canvases.forEach((cvs) => {
-      cvs.width = safeWidth;
-      cvs.height = safeHeight;
-      cvs.style.width = `${safeWidth}px`;
-      cvs.style.height = `${safeHeight}px`;
+      cvs.width = bitmapWidth;
+      cvs.height = bitmapHeight;
+      cvs.style.width = `${cssWidth}px`;
+      cvs.style.height = `${cssHeight}px`;
+      // Apply CSS transform for visual zoom (both scaling up and down)
+      cvs.style.transformOrigin = "top left";
+      if (needsCssTransform) {
+        cvs.style.transform = `scale(${cssTransformScale})`;
+      } else {
+        cvs.style.transform = "none";
+      }
     });
 
+    // Set context transforms for resolution scaling
+    [staticCtx, dynamicCtx, backgroundCtx, cursorCtx, highlightCtx, mediaCtx].forEach((ctx) => {
+      if (ctx) {
+        ctx.setTransform(actualResolutionScale, 0, 0, actualResolutionScale, 0, 0);
+      }
+    });
+
+    // Calculate visual size (what user sees after CSS transform)
+    const visualWidth = Math.round(cssWidth * cssTransformScale);
+    const visualHeight = Math.round(cssHeight * cssTransformScale);
+
     if (currentEditor) {
-      currentEditor.style.minWidth = `${safeWidth}px`;
-      currentEditor.style.minHeight = `${safeHeight}px`;
+      currentEditor.style.minWidth = `${visualWidth}px`;
+      currentEditor.style.minHeight = `${visualHeight}px`;
     }
 
     // Redraw both background and strokes after resize (canvas is cleared when dimensions change)
@@ -1329,12 +1410,17 @@ function getCanvasCoordinates(e) {
     clientY = e.touches[0].clientY;
   }
 
-  const x = clientX - canvasRect.left;
-  const y = clientY - canvasRect.top;
-  const scaleX = dynamicCanvas.width / canvasRect.width;
-  const scaleY = dynamicCanvas.height / canvasRect.height;
+  // Get position relative to canvas CSS bounding box
+  const screenX = clientX - canvasRect.left;
+  const screenY = clientY - canvasRect.top;
 
-  return { x: x * scaleX, y: y * scaleY };
+  // Convert screen coordinates to base coordinates
+  // CSS size = baseCanvasWidth * zoomScale, so base = screen / zoomScale
+  // The context transform handles scaling from base to bitmap coordinates
+  const x = screenX / zoomScale;
+  const y = screenY / zoomScale;
+
+  return { x, y };
 }
 
 function isEraserEvent(e) {
@@ -1537,7 +1623,7 @@ function handleCanvasPointerDown(e) {
     dynamicCtx.lineCap = "round";
     dynamicCtx.lineJoin = "round";
     // Clear dynamic layer once per stroke instead of on every move.
-    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+    clearCanvas(dynamicCtx, dynamicCanvas);
   }
   return true;
 }
@@ -1768,7 +1854,7 @@ function handleCanvasPointerMove(e) {
 function drawLassoPath() {
   if (!cursorCtx || lassoPoints.length < 2) return;
 
-  cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  clearCanvas(cursorCtx, cursorCanvas);
   cursorCtx.strokeStyle = "rgba(0, 100, 255, 0.8)";
   cursorCtx.lineWidth = 2;
   cursorCtx.setLineDash([5, 5]); // Dashed line for selection
@@ -1821,7 +1907,7 @@ function handleCanvasPointerUp(e) {
 
   // Clear the cursor canvas of any transient indicators like the eraser cursor
   if (cursorCtx) {
-    cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+    clearCanvas(cursorCtx, cursorCanvas);
   }
 
   const wasLassoing = isLassoing;
@@ -1878,7 +1964,7 @@ function handleCanvasPointerUp(e) {
       sharedDrawStroke(staticCtx, currentStroke, palette, false);
 
       // Clear the dynamic canvas
-      dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+      clearCanvas(dynamicCtx, dynamicCanvas);
 
       strokes.push({ ...currentStroke });
       currentStroke = [];
@@ -1896,7 +1982,7 @@ function handleCanvasPointerUp(e) {
     scheduleSave();
   } else if (wasDrawing) {
     // Stroke was too short (a tap), clear the dynamic canvas
-    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+    clearCanvas(dynamicCtx, dynamicCanvas);
     currentStroke = [];
   }
 
@@ -1905,7 +1991,15 @@ function handleCanvasPointerUp(e) {
   dynamicStrokeLastDrawIndex = 0;
   dynamicStrokeLastY = null;
 
-  if (pendingExternalRefresh && !isDrawing && !isErasing && !isLassoing && !isTransforming) {
+  // Only refresh if user has stopped all interactions AND note has no unsaved changes
+  if (
+    pendingExternalRefresh &&
+    !isDrawing &&
+    !isErasing &&
+    !isLassoing &&
+    !isTransforming &&
+    !noteEditedSinceOpen
+  ) {
     pendingExternalRefresh = false;
     const noteId = getCurrentNoteId();
     if (noteId && currentNoteData && noteId === currentNoteData.id) {
@@ -2042,8 +2136,10 @@ function getStrokeBounds(stroke) {
 function drawBackgroundPattern(backgroundType, startY = 0, endY = null) {
   if (!backgroundCtx || !backgroundCanvas || backgroundType === "none") return;
 
-  const height = endY || backgroundCanvas.height;
-  const width = backgroundCanvas.width;
+  // Use BASE dimensions, not bitmap dimensions, because context transform handles scaling
+  // The context has a transform applied (resolutionScale) that scales drawing operations
+  const height = endY || baseCanvasHeight;
+  const width = baseCanvasWidth;
 
   sharedDrawBackgroundPattern(backgroundCtx, backgroundType, width, height, startY);
 }
@@ -2053,7 +2149,7 @@ function drawBackgroundPattern(backgroundType, startY = 0, endY = null) {
  */
 function redrawBackground() {
   if (!backgroundCtx || !backgroundCanvas || !currentNoteData) return;
-  backgroundCtx.clearRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+  clearCanvas(backgroundCtx, backgroundCanvas);
 
   if (currentNoteData.background && currentNoteData.background !== "none") {
     drawBackgroundPattern(currentNoteData.background);
@@ -2079,9 +2175,9 @@ function redrawCanvas() {
   if (!staticCtx || !staticCanvas) return;
 
   // Clear both canvases
-  staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
+  clearCanvas(staticCtx, staticCanvas);
   if (dynamicCtx) {
-    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+    clearCanvas(dynamicCtx, dynamicCanvas);
   }
 
   // Draw all completed strokes to the static canvas
@@ -2175,7 +2271,7 @@ function redrawMedia() {
   if (!mediaCtx || !mediaCanvas) return;
 
   // Clear the media canvas
-  mediaCtx.clearRect(0, 0, mediaCanvas.width, mediaCanvas.height);
+  clearCanvas(mediaCtx, mediaCanvas);
 
   // Sort media items by zIndex (lower first, higher last) to draw in correct order
   const sortedItems = [...mediaItems].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
@@ -2339,7 +2435,7 @@ function redrawMediaImmediate() {
   if (!mediaCtx || !mediaCanvas) return;
 
   // Clear the media canvas
-  mediaCtx.clearRect(0, 0, mediaCanvas.width, mediaCanvas.height);
+  clearCanvas(mediaCtx, mediaCanvas);
 
   // Sort media items by zIndex (lower first, higher last) to draw in correct order
   const sortedItems = [...mediaItems].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
@@ -3686,7 +3782,7 @@ function eraseStrokesAtPoint(x, y) {
  */
 function drawEraserCursor(x, y) {
   if (!cursorCtx) return;
-  cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  clearCanvas(cursorCtx, cursorCanvas);
   cursorCtx.strokeStyle = "red";
   cursorCtx.lineWidth = 1;
   cursorCtx.beginPath();
@@ -4245,10 +4341,16 @@ function attachToolbarListeners() {
   document.getElementById("move-forward-btn")?.addEventListener("click", moveMediaForward);
   document.getElementById("move-backward-btn")?.addEventListener("click", moveMediaBackward);
 
-  // Zoom controls
-  document.getElementById("zoom-in-btn")?.addEventListener("click", () => adjustZoom(zoomStep));
-  document.getElementById("zoom-out-btn")?.addEventListener("click", () => adjustZoom(-zoomStep));
-  document.getElementById("zoom-reset-btn")?.addEventListener("click", () => setZoom(1.0));
+  // Zoom controls (use immediate rendering for button clicks)
+  document
+    .getElementById("zoom-in-btn")
+    ?.addEventListener("click", () => adjustZoom(zoomStep, { immediate: true }));
+  document
+    .getElementById("zoom-out-btn")
+    ?.addEventListener("click", () => adjustZoom(-zoomStep, { immediate: true }));
+  document
+    .getElementById("zoom-reset-btn")
+    ?.addEventListener("click", () => setZoom(1.0, { immediate: true, preserveViewport: true }));
 
   // Delete note
   document.getElementById("delete-note-btn")?.addEventListener("click", deleteCurrentNote);
@@ -4594,18 +4696,201 @@ async function deleteCurrentNote() {
 /**
  * Set zoom level
  * @param {number} newZoom - New zoom scale (e.g., 1.0 = 100%, 1.5 = 150%)
+ * @param {Object} options - Options for zoom behavior
+ * @param {boolean} options.immediate - If true, skip debounced re-render and render immediately (default: false)
+ * @param {Object} options.fixedPoint - Point to keep fixed during zoom (in viewport coordinates)
+ * @param {number} options.fixedPoint.clientX - X coordinate in viewport
+ * @param {number} options.fixedPoint.clientY - Y coordinate in viewport
+ * @param {boolean} options.preserveViewport - If true, scale scroll to keep same content visible (for reset zoom)
  */
-function setZoom(newZoom) {
+function setZoom(newZoom, options = {}) {
+  const { immediate = false, fixedPoint = null, preserveViewport = false } = options;
+
+  // Store old zoom for calculating scroll adjustment
+  const oldZoom = zoomScale;
+
   // Clamp zoom to valid range
   zoomScale = Math.max(minZoom, Math.min(maxZoom, newZoom));
 
-  // Apply zoom to text editor using CSS transform
-  if (currentEditor) {
-    currentEditor.style.transformOrigin = "top left";
-    currentEditor.style.transform = `scale(${zoomScale})`;
+  // Skip if zoom hasn't changed
+  if (zoomScale === oldZoom && !immediate) {
+    return;
   }
 
-  // Apply same CSS transform to all canvases to keep them aligned
+  // Get wrapper for scroll calculations
+  const wrapper = document.querySelector(".editor-content-wrapper");
+
+  // Calculate scroll adjustment
+  let newScrollLeft = wrapper ? wrapper.scrollLeft : 0;
+  let newScrollTop = wrapper ? wrapper.scrollTop : 0;
+
+  if (preserveViewport && wrapper && oldZoom !== 0) {
+    // Scale scroll position proportionally to keep the same content visible at top-left
+    // Content at scroll position S at zoom Z is at base coordinate S/Z
+    // To show the same base content at new zoom, scroll to S * (newZoom/oldZoom)
+    const zoomRatio = zoomScale / oldZoom;
+    newScrollLeft = wrapper.scrollLeft * zoomRatio;
+    newScrollTop = wrapper.scrollTop * zoomRatio;
+  } else if (fixedPoint && wrapper) {
+    // Get the fixed point's position relative to the wrapper viewport
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const viewportX = fixedPoint.clientX - wrapperRect.left;
+    const viewportY = fixedPoint.clientY - wrapperRect.top;
+
+    // Calculate the point in content space (base coordinates, unzoomed)
+    // Content position = (scroll + viewport offset) / zoom
+    const contentX = (wrapper.scrollLeft + viewportX) / oldZoom;
+    const contentY = (wrapper.scrollTop + viewportY) / oldZoom;
+
+    // Calculate new scroll position to keep the content point at the same viewport position
+    // New scroll = content position * new zoom - viewport offset
+    newScrollLeft = contentX * zoomScale - viewportX;
+    newScrollTop = contentY * zoomScale - viewportY;
+  }
+
+  // Update zoom indicator
+  updateZoomIndicator();
+
+  // Handle canvas re-rendering
+  if (immediate || !isZoomingGesture) {
+    // Immediate re-render: properly sets bitmap, CSS size, and CSS transform
+    rerenderCanvasAtNativeZoom();
+
+    // Apply scroll after re-render (dimensions have changed)
+    if (wrapper) {
+      wrapper.scrollLeft = newScrollLeft;
+      wrapper.scrollTop = newScrollTop;
+    }
+  } else {
+    // Preview zoom during gesture: use CSS transform on existing bitmap
+    // This is smooth but may be blurry; proper re-render happens after gesture ends
+    //
+    // The canvas bitmap is currently at: baseSize * currentResolutionScale
+    // To achieve visual zoom of zoomScale, we need CSS transform of: zoomScale / currentResolutionScale
+    const previewTransformScale = zoomScale / currentResolutionScale;
+
+    const canvases = [
+      dynamicCanvas,
+      staticCanvas,
+      backgroundCanvas,
+      cursorCanvas,
+      highlightCanvas,
+      mediaCanvas,
+    ];
+
+    canvases.forEach((cvs) => {
+      if (cvs) {
+        cvs.style.transformOrigin = "top left";
+        cvs.style.transform = `scale(${previewTransformScale})`;
+      }
+    });
+
+    // Apply zoom to text editor using CSS transform (text editor is always at base size)
+    if (currentEditor) {
+      currentEditor.style.transformOrigin = "top left";
+      currentEditor.style.transform = `scale(${zoomScale})`;
+    }
+
+    // Apply scroll position adjustment
+    if (wrapper) {
+      wrapper.scrollLeft = newScrollLeft;
+      wrapper.scrollTop = newScrollTop;
+    }
+
+    // Schedule proper re-render after gesture ends
+    scheduleZoomRerender();
+  }
+}
+
+/**
+ * Schedule a debounced canvas re-render at native zoom resolution
+ * Called during zoom gestures to avoid re-rendering on every frame
+ */
+function scheduleZoomRerender() {
+  // Clear any existing timer
+  if (zoomRerenderTimer) {
+    clearTimeout(zoomRerenderTimer);
+  }
+
+  // Schedule re-render after debounce period
+  zoomRerenderTimer = setTimeout(() => {
+    rerenderCanvasAtNativeZoom();
+    zoomRerenderTimer = null;
+  }, ZOOM_RERENDER_DEBOUNCE);
+}
+
+/**
+ * Re-render canvas at native zoom resolution
+ * This is called after zoom changes to ensure crisp rendering
+ *
+ * Strategy:
+ * 1. During preview zoom: CSS transform handles scaling visually (smooth but blurry)
+ * 2. After gesture: Re-render canvas at higher bitmap resolution, then REMOVE CSS transform
+ *
+ * The key insight is that preview zoom uses CSS transform, but final rendering
+ * uses bitmap resolution scaling. We must remove the CSS transform after re-rendering
+ * to avoid double-scaling.
+ *
+ * CSS size of canvas = baseCanvasWidth * zoomScale (to match the zoomed view)
+ * Bitmap resolution = baseCanvasWidth * resolutionScale (for crisp rendering)
+ * Context transform = resolutionScale (to draw at higher resolution)
+ * CSS transform = none (removed after re-render, handled by CSS size)
+ */
+function rerenderCanvasAtNativeZoom() {
+  if (!dynamicCanvas || !staticCtx || baseCanvasWidth === 0 || baseCanvasHeight === 0) {
+    console.warn("[Zoom] Cannot re-render: base canvas dimensions not initialized");
+    return;
+  }
+
+  console.log("[Zoom] Re-rendering canvas at native resolution for zoom:", zoomScale);
+
+  // Optimized for vertical scrolling: narrow width, tall height
+  const maxCanvasWidth = 2000;
+  const maxCanvasHeight = 25000;
+
+  // Calculate the maximum resolution scale we can use without exceeding canvas limits
+  const maxResolutionScaleW = maxCanvasWidth / baseCanvasWidth;
+  const maxResolutionScaleH = maxCanvasHeight / baseCanvasHeight;
+  const maxResolutionScale = Math.min(maxResolutionScaleW, maxResolutionScaleH);
+
+  // For zoom > 1.0: increase bitmap resolution for crisp rendering (up to max)
+  // For zoom <= 1.0: use base resolution (bitmap stays at base size)
+  // In both cases, CSS transform handles the final visual scaling
+  const desiredResolutionScale = Math.max(1.0, zoomScale);
+  const actualResolutionScale = Math.min(desiredResolutionScale, maxResolutionScale);
+
+  // Store the resolution scale for preview zoom calculations
+  currentResolutionScale = actualResolutionScale;
+
+  // Calculate bitmap dimensions (always >= base size)
+  const bitmapWidth = Math.round(baseCanvasWidth * actualResolutionScale);
+  const bitmapHeight = Math.round(baseCanvasHeight * actualResolutionScale);
+
+  // CSS transform handles the visual zoom:
+  // - For zoom > 1 and within bitmap capacity: cssTransformScale ≈ 1 (bitmap handles it)
+  // - For zoom > 1 beyond bitmap capacity: cssTransformScale > 1 (CSS scales up)
+  // - For zoom < 1: cssTransformScale < 1 (CSS scales down)
+  const cssTransformScale = zoomScale / actualResolutionScale;
+
+  // CSS size = bitmap size (no stretching between bitmap and CSS)
+  const cssWidth = bitmapWidth;
+  const cssHeight = bitmapHeight;
+
+  // Apply CSS transform if scale is not 1.0 (either scaling up or down)
+  const needsCssTransform = Math.abs(cssTransformScale - 1.0) > 0.001;
+
+  console.log("[Zoom] Base canvas dimensions:", baseCanvasWidth, "x", baseCanvasHeight);
+  console.log("[Zoom] Zoom scale:", zoomScale, "Resolution scale:", actualResolutionScale);
+  console.log(
+    "[Zoom] Bitmap:",
+    bitmapWidth,
+    "x",
+    bitmapHeight,
+    "CSS transform:",
+    cssTransformScale,
+  );
+
+  // Update canvas dimensions
   const canvases = [
     dynamicCanvas,
     staticCanvas,
@@ -4614,40 +4899,72 @@ function setZoom(newZoom) {
     highlightCanvas,
     mediaCanvas,
   ];
+
   canvases.forEach((cvs) => {
     if (cvs) {
+      // Update bitmap resolution
+      cvs.width = bitmapWidth;
+      cvs.height = bitmapHeight;
+
+      // Set CSS size to match bitmap (1:1, no stretching)
+      cvs.style.width = `${cssWidth}px`;
+      cvs.style.height = `${cssHeight}px`;
+
+      // Apply CSS transform for visual zoom (both scaling up and down)
       cvs.style.transformOrigin = "top left";
-      cvs.style.transform = `scale(${zoomScale})`;
+      if (needsCssTransform) {
+        cvs.style.transform = `scale(${cssTransformScale})`;
+      } else {
+        cvs.style.transform = "none";
+      }
     }
   });
 
-  // Resize and redraw canvas with new zoom scale
-  if (dynamicCanvas && staticCtx) {
-    // Store current scroll position
-    const wrapper = document.querySelector(".editor-content-wrapper");
-    const scrollLeft = wrapper ? wrapper.scrollLeft : 0;
-    const scrollTop = wrapper ? wrapper.scrollTop : 0;
-
-    // Resize canvas to account for new zoom scale, then redraw
-    resizeCanvas();
-
-    // Restore scroll position
-    if (wrapper) {
-      wrapper.scrollLeft = scrollLeft;
-      wrapper.scrollTop = scrollTop;
-    }
+  // Text editor still uses CSS transform for scaling (it doesn't have bitmap resolution)
+  if (currentEditor) {
+    currentEditor.style.transformOrigin = "top left";
+    currentEditor.style.transform = `scale(${zoomScale})`;
   }
 
-  // Update zoom indicator
-  updateZoomIndicator();
+  // Context transform scales drawing from base coordinates to bitmap coordinates
+  const contextScale = actualResolutionScale;
+
+  [staticCtx, dynamicCtx, backgroundCtx, cursorCtx, highlightCtx, mediaCtx].forEach((ctx) => {
+    if (ctx) {
+      ctx.setTransform(contextScale, 0, 0, contextScale, 0, 0);
+    }
+  });
+
+  // Redraw all canvas content at the new resolution
+  redrawBackground();
+  redrawCanvas();
+  redrawMedia();
+
+  // Re-apply stroke highlighting if active
+  if (activeSearchQuery) {
+    console.log("[NotebookEditor] Re-applying highlights after zoom re-render");
+    highlightStrokes(activeSearchQuery);
+  }
+
+  console.log(
+    "[Zoom] Canvas re-rendered - bitmap:",
+    bitmapWidth,
+    "x",
+    bitmapHeight,
+    "CSS:",
+    cssWidth,
+    "x",
+    cssHeight,
+  );
 }
 
 /**
  * Adjust zoom by a delta amount
  * @param {number} delta - Amount to change zoom (e.g., 0.1 for +10%, -0.1 for -10%)
+ * @param {Object} options - Options passed to setZoom
  */
-function adjustZoom(delta) {
-  setZoom(zoomScale + delta);
+function adjustZoom(delta, options = {}) {
+  setZoom(zoomScale + delta, options);
 }
 
 /**
@@ -4667,8 +4984,9 @@ function updateContentBounds() {
   if (!dynamicCanvas || !currentEditor) return;
 
   // Calculate minimum canvas dimensions needed to show all content
-  let maxX = dynamicCanvas.width;
-  let maxY = dynamicCanvas.height;
+  // Start from 0 and find the actual content bounds
+  let maxX = 0;
+  let maxY = 0;
 
   // Check all strokes to find the extent
   for (const stroke of strokes) {
@@ -4680,7 +4998,15 @@ function updateContentBounds() {
     }
   }
 
-  // Update minimum dimensions
+  // Check all media items to find the extent
+  for (const media of mediaItems) {
+    if (media.position && media.size) {
+      maxX = Math.max(maxX, media.position.x + media.size.width + 50);
+      maxY = Math.max(maxY, media.position.y + media.size.height + 50);
+    }
+  }
+
+  // Update minimum dimensions (the actual content bounds)
   minCanvasWidth = maxX;
   minCanvasHeight = maxY;
 
@@ -4730,6 +5056,7 @@ function initZoomListeners() {
   });
 
   // CTRL + Mouse wheel zoom (Windows/Desktop)
+  let wheelZoomEndTimer = null;
   wrapper.addEventListener(
     "wheel",
     (e) => {
@@ -4737,12 +5064,31 @@ function initZoomListeners() {
       if (e.ctrlKey) {
         e.preventDefault();
 
+        // Mark as zooming gesture for debounced re-render
+        isZoomingGesture = true;
+
         // wheelDelta is positive for zoom in, negative for zoom out
         const delta = e.deltaY < 0 ? zoomStep : -zoomStep;
-        adjustZoom(delta);
+        const newZoom = zoomScale + delta;
 
-        // Trigger lazy loading check after zoom
-        redrawMedia();
+        // Zoom around mouse cursor position
+        setZoom(newZoom, {
+          fixedPoint: {
+            clientX: e.clientX,
+            clientY: e.clientY,
+          },
+        });
+
+        // Clear existing end timer and set new one
+        if (wheelZoomEndTimer) {
+          clearTimeout(wheelZoomEndTimer);
+        }
+        wheelZoomEndTimer = setTimeout(() => {
+          isZoomingGesture = false;
+          // Trigger lazy loading check after zoom
+          redrawMedia();
+          wheelZoomEndTimer = null;
+        }, ZOOM_RERENDER_DEBOUNCE + 50);
       }
     },
     { passive: false },
@@ -4756,6 +5102,9 @@ function initZoomListeners() {
       if (e.touches.length === 2) {
         e.preventDefault();
 
+        // Mark as zooming gesture for debounced re-render
+        isZoomingGesture = true;
+
         // Calculate initial distance between fingers
         const touch1 = e.touches[0];
         const touch2 = e.touches[1];
@@ -4764,7 +5113,13 @@ function initZoomListeners() {
         lastTouchDistance = Math.sqrt(dx * dx + dy * dy);
         initialPinchZoom = zoomScale;
 
-        console.log("Pinch zoom started:", { lastTouchDistance, initialPinchZoom });
+        // Store the center point between fingers
+        pinchCenter = {
+          clientX: (touch1.clientX + touch2.clientX) / 2,
+          clientY: (touch1.clientY + touch2.clientY) / 2,
+        };
+
+        console.log("Pinch zoom started:", { lastTouchDistance, initialPinchZoom, pinchCenter });
       }
     },
     { passive: false },
@@ -4788,7 +5143,10 @@ function initZoomListeners() {
         const pinchScale = currentDistance / lastTouchDistance;
         const newZoom = initialPinchZoom * pinchScale;
 
-        setZoom(newZoom);
+        // Zoom around the center point between fingers
+        setZoom(newZoom, {
+          fixedPoint: pinchCenter,
+        });
       }
       // Single finger scroll - allow default behavior (scrolling)
       // This is handled by the browser automatically
@@ -4800,11 +5158,18 @@ function initZoomListeners() {
     // Reset pinch tracking when fingers are lifted
     if (e.touches.length < 2) {
       if (lastTouchDistance !== null) {
+        // Mark gesture as ended
+        isZoomingGesture = false;
+
+        // Trigger final re-render at native resolution
+        rerenderCanvasAtNativeZoom();
+
         // Trigger lazy loading check after zoom ends
         redrawMedia();
       }
       lastTouchDistance = null;
       initialPinchZoom = null;
+      pinchCenter = null;
     }
   });
 
@@ -4812,6 +5177,8 @@ function initZoomListeners() {
     // Reset pinch tracking on cancel
     lastTouchDistance = null;
     initialPinchZoom = null;
+    pinchCenter = null;
+    isZoomingGesture = false;
   });
 }
 
@@ -4897,8 +5264,8 @@ async function saveNoteContent(noteIdOverride = null) {
     // Check note size and warn if too large
     checkNoteSizeAndWarn(markdownContent, strokes, mediaForStorage);
 
-    // Reset inactivity timer after save
-    resetInactivityTimer(noteId);
+    // Note: We no longer trigger sync while note is open
+    // Sync will happen when the note is closed via cleanupNotebookEditor()
 
     console.log("Note saved");
   } catch (error) {
@@ -5289,7 +5656,7 @@ function highlightStrokes(query) {
   if (!query || !currentNoteData?.recognition?.words || !highlightCtx) {
     // Clear previous highlights if query is cleared
     if (highlightCtx) {
-      highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+      clearCanvas(highlightCtx, highlightCanvas);
     }
     return;
   }
@@ -5306,7 +5673,7 @@ function highlightStrokes(query) {
   const regex = new RegExp(pattern, "gi");
 
   // Clear previous highlights
-  highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+  clearCanvas(highlightCtx, highlightCanvas);
 
   let matchCount = 0;
   highlightCtx.save();
