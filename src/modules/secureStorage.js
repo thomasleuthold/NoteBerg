@@ -134,8 +134,6 @@ async function decryptData(encryptedBase64) {
  * @param {string} value - Credential value
  */
 export async function saveSecureCredential(key, value) {
-  console.log("[SecureStorage] Saving credential:", key);
-
   if (!isCryptoAvailable()) {
     console.warn("[SecureStorage] Web Crypto API not available - storing in plain localStorage");
     localStorage.setItem(`secure_${key}`, value);
@@ -143,10 +141,9 @@ export async function saveSecureCredential(key, value) {
   }
 
   try {
-    // Encrypt and store
     const encrypted = await encryptData(value);
     localStorage.setItem(`secure_${key}`, encrypted);
-    console.log("[SecureStorage] Credential saved and encrypted:", key);
+    console.info("[SecureStorage] Credential saved:", key);
   } catch (error) {
     console.error("[SecureStorage] Encryption failed, falling back to plain storage:", error);
     localStorage.setItem(`secure_${key}`, value);
@@ -159,11 +156,8 @@ export async function saveSecureCredential(key, value) {
  * @returns {Promise<string|null>} Credential value or null
  */
 export async function getSecureCredential(key) {
-  console.log("[SecureStorage] Retrieving credential:", key);
-
   const stored = localStorage.getItem(`secure_${key}`);
   if (!stored) {
-    console.log("[SecureStorage] Credential not found:", key);
     return null;
   }
 
@@ -173,13 +167,9 @@ export async function getSecureCredential(key) {
   }
 
   try {
-    // Try to decrypt
-    const decrypted = await decryptData(stored);
-    console.log("[SecureStorage] Credential retrieved and decrypted:", key);
-    return decrypted;
+    return await decryptData(stored);
   } catch (error) {
     console.warn("[SecureStorage] Decryption failed, assuming plain storage:", error);
-    // Might be a plain value from before encryption was enabled
     return stored;
   }
 }
@@ -189,6 +179,5 @@ export async function getSecureCredential(key) {
  * @param {string} key - Credential key
  */
 export async function deleteSecureCredential(key) {
-  console.log("[SecureStorage] Deleting credential:", key);
   localStorage.removeItem(`secure_${key}`);
 }

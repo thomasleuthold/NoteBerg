@@ -132,6 +132,7 @@ export async function syncOnNotebookCreate(notebookId) {
 
 /**
  * Sync on app startup
+ * Uses smart conflict resolution - prefers the version with newer timestamp
  */
 export async function syncOnAppStart() {
   if (!isAuthenticated()) {
@@ -139,12 +140,12 @@ export async function syncOnAppStart() {
     return;
   }
 
-  console.log("Auto-sync: App started, performing initial sync...");
+  console.log("Auto-sync: App started, performing initial sync with smart conflict resolution...");
 
   lastSyncTime = Date.now();
 
   try {
-    await performSync({ silent: true, skipConflictResolution: true });
+    await performSync({ silent: true, skipConflictResolution: true, preferNewer: true });
   } catch (error) {
     console.error("Auto-sync: Startup sync failed", error);
   }

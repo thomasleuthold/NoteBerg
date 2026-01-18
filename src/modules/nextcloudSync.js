@@ -133,45 +133,23 @@ async function decryptNoteFromNextcloud(note) {
  * Called once on app startup
  */
 export async function migrateCredentials() {
-  console.log("[MIGRATION] Starting credential migration check...");
   try {
-    // Check if credentials exist in localStorage
     const legacyCredString = localStorage.getItem(LEGACY_STORAGE_KEY);
-    console.log("[MIGRATION] localStorage credentials:", legacyCredString ? "found" : "not found");
-
     if (!legacyCredString) {
-      console.log("[MIGRATION] No legacy credentials found, skipping migration");
       return;
     }
 
-    // Check if credentials already exist in secure storage
-    console.log("[MIGRATION] Checking if credentials already exist in secure storage...");
     const existingCreds = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
-    console.log("[MIGRATION] Existing secure credentials:", existingCreds ? "found" : "not found");
-
     if (existingCreds) {
-      console.log(
-        "[MIGRATION] Credentials already exist in secure storage, cleaning up localStorage",
-      );
-      // Clean up localStorage since migration already happened
       localStorage.removeItem(LEGACY_STORAGE_KEY);
       return;
     }
 
-    // Migrate to secure storage
-    console.log("[MIGRATION] Migrating credentials from localStorage to secure storage...");
-    console.log("[MIGRATION] Credentials to migrate:", `${legacyCredString.substring(0, 50)}...`);
     await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, legacyCredString);
-    console.log("[MIGRATION] Credentials saved to secure storage");
-
-    // Remove from localStorage after successful migration
     localStorage.removeItem(LEGACY_STORAGE_KEY);
-    console.log("[MIGRATION] Migration complete, localStorage cleaned up");
+    console.info("[NextcloudSync] Migrated credentials to secure storage");
   } catch (error) {
-    console.error("[MIGRATION] Failed to migrate credentials:", error);
-    console.error("[MIGRATION] Error details:", error.message, error.stack);
-    // Don't throw - we don't want to break app startup if migration fails
-    // User can still log in again manually
+    console.error("[NextcloudSync] Failed to migrate credentials:", error);
   }
 }
 
@@ -180,24 +158,13 @@ export async function migrateCredentials() {
  */
 export async function getStoredCredentials() {
   try {
-    console.log("[NextcloudSync] Getting credentials from secure storage...");
     const credString = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
-    console.log("[NextcloudSync] Credential string retrieved:", credString ? "YES" : "NO");
-
     if (credString) {
-      const parsed = JSON.parse(credString);
-      console.log("[NextcloudSync] Parsed credentials:", {
-        hasServerUrl: !!parsed.serverUrl,
-        hasLoginName: !!parsed.loginName,
-        hasAppPassword: !!parsed.appPassword,
-      });
-      return parsed;
+      return JSON.parse(credString);
     }
-
-    console.log("[NextcloudSync] No credentials found in secure storage");
     return null;
   } catch (error) {
-    console.error("[NextcloudSync] Failed to get credentials from secure storage:", error);
+    console.error("[NextcloudSync] Failed to get credentials:", error);
     return null;
   }
 }
@@ -207,30 +174,16 @@ export async function getStoredCredentials() {
  */
 async function saveCredentials(credentials) {
   try {
-    console.log("[NextcloudSync] Saving credentials to secure storage:", {
-      hasServerUrl: !!credentials.serverUrl,
-      hasLoginName: !!credentials.loginName,
-      hasAppPassword: !!credentials.appPassword,
-    });
     const credString = JSON.stringify(credentials);
-    console.log("[NextcloudSync] Credential JSON length:", credString.length);
     await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, credString);
-    console.log("[NextcloudSync] Credentials saved successfully to keyring");
 
-    // VERIFICATION: Immediately read back to verify save worked
-    console.log("[NextcloudSync] VERIFICATION: Reading back immediately after save...");
+    // Verify save worked
     const verifyRead = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
-    console.log(
-      "[NextcloudSync] VERIFICATION: Read back result:",
-      verifyRead ? "SUCCESS" : "FAILED (null)",
-    );
     if (!verifyRead) {
-      console.error(
-        "[NextcloudSync] CRITICAL: Credential save verification FAILED - credential not in keyring!",
-      );
+      console.error("[NextcloudSync] Credential save verification failed");
     }
   } catch (error) {
-    console.error("[NextcloudSync] Failed to save credentials to secure storage:", error);
+    console.error("[NextcloudSync] Failed to save credentials:", error);
     throw error;
   }
 }
@@ -469,16 +422,8 @@ async function createFolder(path) {
   const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
-  console.log("Creating folder with credentials:", {
-    serverUrl: creds.serverUrl,
-    loginName: creds.loginName,
-    hasAppPassword: !!creds.appPassword,
-  });
-
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
-
   const authHeader = `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`;
-  console.log("Auth header preview:", `${authHeader.substring(0, 20)}...`);
 
   const response = await fetch(webdavUrl, {
     method: "MKCOL",
@@ -487,13 +432,6 @@ async function createFolder(path) {
       "OCS-APIRequest": "true",
     },
   });
-
-  console.log("MKCOL response status:", response.status);
-
-  if (!response.ok && response.status !== 201 && response.status !== 405) {
-    const responseText = await response.text();
-    console.log("MKCOL error response:", responseText);
-  }
 
   if (response.status === 405) {
     // Folder already exists
