@@ -8,7 +8,7 @@ default:
 
 # Development
 dev:
-    npm run dev
+    npm run tauri dev
 
 build:
     npm run build
@@ -27,18 +27,13 @@ preview:
     npm run preview
 
 # Code Quality
-lint:
+check:
     npm run lint
+    npm run check
+    npm run format
 
 format:
     npm run format
-
-format-check:
-    npm run format-check
-
-# Run Biome check (format + lint with auto-fix)
-check:
-    npm run check --write --unsafe
 
 # Utilities
 clean:

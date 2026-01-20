@@ -12,7 +12,7 @@ import "./styles/components.css";
 import "./styles/notebookEditor.css";
 
 import { initModals } from "./components/modals.js";
-import { initNotebookEditorComponent } from "./components/notebookEditor.js";
+import { initNoteCanvasComponent } from "./components/NoteCanvas/index.js";
 import { initOverview } from "./components/overviewMode.js";
 import { initRecycleBin } from "./components/recycleBinMode.js";
 import { initSettings } from "./components/settingsMode.js";
@@ -101,7 +101,7 @@ async function init() {
   initOverview();
   initModals();
   initRecycleBin();
-  initNotebookEditorComponent();
+  initNoteCanvasComponent();
   initBreadcrumb();
   initFooter();
   initAutoSync();

@@ -827,8 +827,14 @@ function expandCanvasToSize(newWidth, newHeight) {
     media: document.createElement("canvas"),
   };
 
-  tempCanvases.dynamic.width = tempCanvases.static.width = tempCanvases.media.width = dynamicCanvas.width;
-  tempCanvases.dynamic.height = tempCanvases.static.height = tempCanvases.media.height = dynamicCanvas.height;
+  tempCanvases.dynamic.width =
+    tempCanvases.static.width =
+    tempCanvases.media.width =
+      dynamicCanvas.width;
+  tempCanvases.dynamic.height =
+    tempCanvases.static.height =
+    tempCanvases.media.height =
+      dynamicCanvas.height;
 
   tempCanvases.dynamic.getContext("2d").drawImage(dynamicCanvas, 0, 0);
   tempCanvases.static.getContext("2d").drawImage(staticCanvas, 0, 0);
