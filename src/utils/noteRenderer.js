@@ -110,7 +110,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
   switch (backgroundType) {
     case "ruled-narrow":
       // Draw horizontal lines every 20px
-      for (let y = Math.max(20, startY); y < height; y += 20) {
+      for (let y = Math.max(20, Math.ceil(startY / 20) * 20); y < height; y += 20) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -118,7 +118,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "ruled-medium":
       // Draw horizontal lines every 30px
-      for (let y = Math.max(30, startY); y < height; y += 30) {
+      for (let y = Math.max(30, Math.ceil(startY / 30) * 30); y < height; y += 30) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -126,7 +126,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "ruled-wide":
       // Draw horizontal lines every 40px
-      for (let y = Math.max(40, startY); y < height; y += 40) {
+      for (let y = Math.max(40, Math.ceil(startY / 40) * 40); y < height; y += 40) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -134,7 +134,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "grid-small":
       // Draw grid with 20px squares
-      for (let y = Math.max(20, startY); y < height; y += 20) {
+      for (let y = Math.max(20, Math.ceil(startY / 20) * 20); y < height; y += 20) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -146,7 +146,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "grid-medium":
       // Draw grid with 30px squares
-      for (let y = Math.max(30, startY); y < height; y += 30) {
+      for (let y = Math.max(30, Math.ceil(startY / 30) * 30); y < height; y += 30) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -158,7 +158,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "grid-large":
       // Draw grid with 40px squares
-      for (let y = Math.max(40, startY); y < height; y += 40) {
+      for (let y = Math.max(40, Math.ceil(startY / 40) * 40); y < height; y += 40) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }

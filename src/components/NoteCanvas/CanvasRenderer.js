@@ -126,8 +126,8 @@ export class CanvasRenderer {
    */
   resize(width, height) {
     this.screenViewportWidth = width;
-    // Content width is capped at maxContentWidth
-    this.viewportWidth = Math.min(width, this.maxContentWidth);
+    // Canvas width should match content width to allow horizontal scrolling
+    this.viewportWidth = this.maxContentWidth;
     this.viewportHeight = height;
     this.bufferHeight = height * this.bufferMultiplier;
 
@@ -193,13 +193,15 @@ export class CanvasRenderer {
     const contentScrollTop = scrollTop / this.zoomScale;
     const contentViewportHeight = viewportHeight / this.zoomScale;
 
+    let resized = false;
     // Update viewport height if changed significantly
     if (Math.abs(contentViewportHeight - this.viewportHeight) > 1) {
       this.resize(this.screenViewportWidth, contentViewportHeight);
+      resized = true;
     }
 
     // Check if we need to leapfrog (reposition buffer)
-    if (this._shouldLeapfrog(contentScrollTop)) {
+    if (resized || this._shouldLeapfrog(contentScrollTop)) {
       this._repositionBuffer(contentScrollTop);
     }
     // Always slide the canvas to match scroll position
@@ -339,9 +341,19 @@ export class CanvasRenderer {
    * @param {boolean} options.immediate - Skip debounce and render immediately
    * @param {number} options.scrollTop - Current scroll position for re-render
    * @param {number} options.scrollLeft - Current scroll left position
+   * @param {number} options.viewportHeight - Current viewport height (screen pixels)
    */
   setZoom(scale, options = {}) {
     this.zoomScale = scale;
+
+    // Update viewport dimensions if height is provided (handles zoom out buffer expansion)
+    // Only do this for immediate renders to avoid clearing canvas during gestures
+    if (options.viewportHeight && options.immediate) {
+      const contentViewportHeight = options.viewportHeight / scale;
+      if (Math.abs(contentViewportHeight - this.viewportHeight) > 1) {
+        this.resize(this.screenViewportWidth, contentViewportHeight);
+      }
+    }
 
     // Update canvas position (centering)
     this._updateCanvasPosition();

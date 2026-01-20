@@ -34,13 +34,14 @@ export class NoteCanvas {
 
     // Zoom state
     this.zoomScale = 1.0;
-    this.minZoom = 0.25;
-    this.maxZoom = 2.0;
-    this.zoomStep = 0.1;
+    this.minZoom = 0.5;
+    this.maxZoom = 4.0;
+    this.zoomStep = 0.05;
 
     // Gesture tracking
     this.lastTouchDistance = null;
     this.initialPinchZoom = null;
+    this._isZooming = false; // Flag to suppress scroll events during zoom
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -143,6 +144,7 @@ export class NoteCanvas {
    * @private
    */
   _onScroll(scrollTop, scrollLeft, viewportHeight) {
+    if (this._isZooming) return;
     if (!this.renderer) return;
     this.renderer.render(scrollTop, viewportHeight, scrollLeft);
   }
@@ -207,6 +209,7 @@ export class NoteCanvas {
    */
   _onTouchStart(e) {
     if (e.touches.length === 2) {
+      this._isZooming = true;
       e.preventDefault();
       this.lastTouchDistance = this._getTouchDistance(e.touches);
       this.initialPinchZoom = this.zoomScale;
@@ -249,6 +252,7 @@ export class NoteCanvas {
       this.lastTouchDistance = null;
       this.initialPinchZoom = null;
 
+      this._isZooming = false;
       // Trigger final zoom render
       if (this.renderer) {
         this.setZoom(this.zoomScale, { immediate: true });
