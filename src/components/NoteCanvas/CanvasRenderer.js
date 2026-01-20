@@ -75,6 +75,7 @@ export class CanvasRenderer {
       left: 0;
       transform-origin: top left;
       will-change: transform;
+      background-color: var(--bg-primary);
     `;
 
     this.ctx = this.canvas.getContext("2d");
@@ -145,11 +146,13 @@ export class CanvasRenderer {
       // Canvas is smaller than viewport - center it
       // Use relative positioning within flexbox parent
       this.canvas.style.position = "relative";
-      this.canvas.style.left = "0";
+      this.canvas.style.left = "auto";
+      this.canvas.style.transformOrigin = "top center";
     } else {
       // Canvas fills or exceeds viewport - position absolutely
       this.canvas.style.position = "absolute";
       this.canvas.style.left = "0";
+      this.canvas.style.transformOrigin = "top left";
     }
   }
 
