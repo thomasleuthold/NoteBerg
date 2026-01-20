@@ -15,9 +15,12 @@ import { VirtualScroller } from "./VirtualScroller.js";
 export class NoteCanvas {
   /**
    * @param {HTMLElement} containerElement - Container to mount into
+   * @param {Object} options
+   * @param {number} options.maxContentWidth - Maximum content width (default 1200)
    */
-  constructor(containerElement) {
+  constructor(containerElement, options = {}) {
     this.containerElement = containerElement;
+    this.maxContentWidth = options.maxContentWidth || 1200;
 
     // Modules
     this.scroller = null;
@@ -69,6 +72,7 @@ export class NoteCanvas {
     this.scroller = new VirtualScroller(this.containerElement, {
       onScroll: this._onScroll,
       onViewportResize: this._onViewportResize,
+      maxContentWidth: this.maxContentWidth,
     });
 
     // Get initial viewport dimensions
@@ -78,21 +82,24 @@ export class NoteCanvas {
     this.spatialIndex = new SpatialIndex(height || 800);
     this.spatialIndex.build(this.noteData.strokes || []);
 
-    // Calculate content height
+    // Calculate content dimensions
     const contentBounds = this.spatialIndex.getContentBounds();
     const contentHeight = contentBounds
       ? Math.max(contentBounds.maxY + 100, height) // Add padding below content
       : height;
+    const contentWidth = this.maxContentWidth;
 
     // Initialize renderer
-    this.renderer = new CanvasRenderer(this.scroller.getViewportElement());
+    this.renderer = new CanvasRenderer(this.scroller.getViewportElement(), {
+      maxContentWidth: this.maxContentWidth,
+    });
     this.renderer.setData(this.noteData.strokes || [], this.noteData.background);
     this.renderer.setSpatialIndex(this.spatialIndex);
-    this.renderer.setContentHeight(contentHeight);
+    this.renderer.setContentSize(contentWidth, contentHeight);
     this.renderer.resize(width, height);
 
-    // Set content height in scroller
-    this.scroller.setContentHeight(contentHeight);
+    // Set content size in scroller
+    this.scroller.setContentSize(contentWidth, contentHeight);
 
     // Initial render
     this.renderer.render(0, height);
@@ -135,9 +142,9 @@ export class NoteCanvas {
    * Handle scroll events from VirtualScroller
    * @private
    */
-  _onScroll(scrollTop, viewportHeight) {
+  _onScroll(scrollTop, scrollLeft, viewportHeight) {
     if (!this.renderer) return;
-    this.renderer.render(scrollTop, viewportHeight);
+    this.renderer.render(scrollTop, viewportHeight, scrollLeft);
   }
 
   /**
@@ -155,7 +162,8 @@ export class NoteCanvas {
 
     // Re-render
     const scrollTop = this.scroller.getScrollTop();
-    this.renderer.render(scrollTop, height);
+    const scrollLeft = this.scroller.getScrollLeft();
+    this.renderer.render(scrollTop, height, scrollLeft);
   }
 
   /**
@@ -257,9 +265,11 @@ export class NoteCanvas {
 
     if (this.renderer) {
       const scrollTop = this.scroller?.getScrollTop() || 0;
+      const scrollLeft = this.scroller?.getScrollLeft() || 0;
       this.renderer.setZoom(scale, {
         ...options,
         scrollTop,
+        scrollLeft,
       });
     }
   }

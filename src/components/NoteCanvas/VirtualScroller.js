@@ -10,20 +10,25 @@ export class VirtualScroller {
   /**
    * @param {HTMLElement} parentElement - Container element to mount into
    * @param {Object} options
-   * @param {function} options.onScroll - Callback: (scrollTop, viewportHeight) => void
+   * @param {function} options.onScroll - Callback: (scrollTop, scrollLeft, viewportHeight) => void
    * @param {function} options.onViewportResize - Callback: (width, height) => void
+   * @param {number} options.maxContentWidth - Maximum content width (default 1200)
+   * @param {number} options.zoom - Initial zoom scale (default 1.0)
    */
   constructor(parentElement, options = {}) {
     this.parentElement = parentElement;
     this.onScroll = options.onScroll || (() => {});
     this.onViewportResize = options.onViewportResize || (() => {});
+    this.maxContentWidth = options.maxContentWidth || 1200;
 
     // State
     this.scrollTop = 0;
+    this.scrollLeft = 0;
     this.viewportWidth = 0;
     this.viewportHeight = 0;
+    this.contentWidth = 0;
     this.contentHeight = 0;
-    this.zoomScale = 1.0;
+    this.zoomScale = options.zoom || options.zoomScale || 1.0;
 
     // DOM elements (created in _createDOM)
     this.container = null;
@@ -52,20 +57,18 @@ export class VirtualScroller {
     this.container.className = "virtual-scroll-container";
     this.container.style.cssText = `
       position: relative;
-      overflow-y: auto;
-      overflow-x: hidden;
+      overflow: auto;
       height: 100%;
       width: 100%;
     `;
 
-    // Phantom div that establishes scroll height
+    // Phantom div that establishes scroll dimensions
     this.phantomDiv = document.createElement("div");
-    this.phantomDiv.className = "phantom-height";
+    this.phantomDiv.className = "phantom-size";
     this.phantomDiv.style.cssText = `
       position: absolute;
       top: 0;
       left: 0;
-      width: 1px;
       pointer-events: none;
       visibility: hidden;
     `;
@@ -77,9 +80,9 @@ export class VirtualScroller {
       position: sticky;
       top: 0;
       left: 0;
-      width: 100%;
-      height: 100%;
       overflow: hidden;
+      display: flex;
+      align-items: flex-start;
     `;
 
     // Assemble
@@ -91,6 +94,11 @@ export class VirtualScroller {
     const rect = this.container.getBoundingClientRect();
     this.viewportWidth = rect.width;
     this.viewportHeight = rect.height;
+
+    // Apply initial size and alignment
+    this.viewport.style.width = `${this.viewportWidth}px`;
+    this.viewport.style.height = `${this.viewportHeight}px`;
+    this._updateViewportAlignment();
   }
 
   /**
@@ -112,7 +120,8 @@ export class VirtualScroller {
    */
   _handleScroll() {
     this.scrollTop = this.container.scrollTop;
-    this.onScroll(this.scrollTop, this.viewportHeight);
+    this.scrollLeft = this.container.scrollLeft;
+    this.onScroll(this.scrollTop, this.scrollLeft, this.viewportHeight);
   }
 
   /**
@@ -129,58 +138,97 @@ export class VirtualScroller {
     if (width !== this.viewportWidth || height !== this.viewportHeight) {
       this.viewportWidth = width;
       this.viewportHeight = height;
+      this.viewport.style.width = `${width}px`;
+      this.viewport.style.height = `${height}px`;
+      this._updatePhantomSize();
+      this._updateViewportAlignment();
       this.onViewportResize(width, height);
     }
   }
 
   /**
-   * Set the total content height
+   * Set the total content dimensions
+   * @param {number} width - Content width in pixels (before zoom)
    * @param {number} height - Content height in pixels (before zoom)
    */
-  setContentHeight(height) {
+  setContentSize(width, height) {
+    this.contentWidth = width;
     this.contentHeight = height;
-    this._updatePhantomHeight();
+    this._updatePhantomSize();
   }
 
   /**
-   * Set the zoom scale (affects phantom height)
+   * Set the total content height (convenience method)
+   * @param {number} height - Content height in pixels (before zoom)
+   */
+  setContentHeight(height) {
+    this.setContentSize(this.contentWidth || this.maxContentWidth, height);
+  }
+
+  /**
+   * Set the zoom scale (affects phantom size)
    * @param {number} scale - Zoom scale (1.0 = 100%)
    */
   setZoom(scale) {
     this.zoomScale = scale;
-    this._updatePhantomHeight();
+    this._updatePhantomSize();
   }
 
   /**
-   * Update the phantom div height based on content and zoom
+   * Update the phantom div size based on content and zoom
    * @private
    */
-  _updatePhantomHeight() {
+  _updatePhantomSize() {
+    const scaledWidth = this.contentWidth * this.zoomScale;
     const scaledHeight = this.contentHeight * this.zoomScale;
-    this.phantomDiv.style.height = `${scaledHeight}px`;
+
+    // Phantom needs to be at least as big as viewport to allow scrolling
+    // When content is smaller than viewport, we don't need phantom to be larger
+    const phantomWidth = Math.max(scaledWidth, 1);
+    const phantomHeight = Math.max(scaledHeight, 1);
+
+    this.phantomDiv.style.width = `${phantomWidth}px`;
+    this.phantomDiv.style.height = `${phantomHeight}px`;
+    this._updateViewportAlignment();
+  }
+
+  /**
+   * Update viewport alignment (center vs start) based on content size
+   * @private
+   */
+  _updateViewportAlignment() {
+    if (!this.viewport) return;
+    // If content is smaller than viewport, center it.
+    // If content is larger, align start so we can scroll to see the rest.
+    this.viewport.style.justifyContent = this.shouldCenterCanvas() ? "center" : "flex-start";
   }
 
   /**
    * Get the current viewport bounds
-   * @returns {{ top: number, bottom: number, height: number, width: number }}
+   * @returns {{ top: number, bottom: number, left: number, right: number, height: number, width: number }}
    */
   getViewportBounds() {
     return {
       top: this.scrollTop / this.zoomScale,
       bottom: (this.scrollTop + this.viewportHeight) / this.zoomScale,
+      left: this.scrollLeft / this.zoomScale,
+      right: (this.scrollLeft + this.viewportWidth) / this.zoomScale,
       height: this.viewportHeight / this.zoomScale,
       width: this.viewportWidth / this.zoomScale,
     };
   }
 
   /**
-   * Scroll to a specific Y position
+   * Scroll to a specific position
+   * @param {number} x - Target X position in content coordinates (before zoom)
    * @param {number} y - Target Y position in content coordinates (before zoom)
    * @param {boolean} smooth - Whether to use smooth scrolling
    */
-  scrollTo(y, smooth = false) {
+  scrollTo(x, y, smooth = false) {
+    const scaledX = x * this.zoomScale;
     const scaledY = y * this.zoomScale;
     this.container.scrollTo({
+      left: scaledX,
       top: scaledY,
       behavior: smooth ? "smooth" : "instant",
     });
@@ -196,10 +244,29 @@ export class VirtualScroller {
 
   /**
    * Get current scroll position
+   * @returns {{ top: number, left: number }}
+   */
+  getScrollPosition() {
+    return {
+      top: this.scrollTop,
+      left: this.scrollLeft,
+    };
+  }
+
+  /**
+   * Get current scroll top (convenience method)
    * @returns {number}
    */
   getScrollTop() {
     return this.scrollTop;
+  }
+
+  /**
+   * Get current scroll left
+   * @returns {number}
+   */
+  getScrollLeft() {
+    return this.scrollLeft;
   }
 
   /**
@@ -211,6 +278,15 @@ export class VirtualScroller {
       width: this.viewportWidth,
       height: this.viewportHeight,
     };
+  }
+
+  /**
+   * Check if canvas should be centered (when smaller than viewport)
+   * @returns {boolean}
+   */
+  shouldCenterCanvas() {
+    const scaledWidth = this.contentWidth * this.zoomScale;
+    return scaledWidth < this.viewportWidth;
   }
 
   /**

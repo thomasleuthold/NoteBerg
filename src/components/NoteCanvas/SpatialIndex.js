@@ -84,21 +84,25 @@ export class SpatialIndex {
   }
 
   /**
-   * Get the content bounds (min/max Y of all strokes)
-   * @returns {{ minY: number, maxY: number } | null}
+   * Get the content bounds (min/max X and Y of all strokes)
+   * @returns {{ minX: number, maxX: number, minY: number, maxY: number } | null}
    */
   getContentBounds() {
     if (this.strokeBounds.size === 0) return null;
 
+    let minX = Infinity;
+    let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
 
     for (const bounds of this.strokeBounds.values()) {
+      minX = Math.min(minX, bounds.minX);
+      maxX = Math.max(maxX, bounds.maxX);
       minY = Math.min(minY, bounds.minY);
       maxY = Math.max(maxY, bounds.maxY);
     }
 
-    return { minY, maxY };
+    return { minX, maxX, minY, maxY };
   }
 
   /**

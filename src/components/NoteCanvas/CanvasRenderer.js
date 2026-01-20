@@ -15,9 +15,12 @@ import {
 export class CanvasRenderer {
   /**
    * @param {HTMLElement} viewportElement - Element to mount canvas into
+   * @param {Object} options
+   * @param {number} options.maxContentWidth - Maximum content width (default 1200)
    */
-  constructor(viewportElement) {
+  constructor(viewportElement, options = {}) {
     this.viewportElement = viewportElement;
+    this.maxContentWidth = options.maxContentWidth || 1200;
 
     // Canvas elements
     this.canvas = null;
@@ -31,6 +34,7 @@ export class CanvasRenderer {
     // Viewport state
     this.viewportWidth = 0;
     this.viewportHeight = 0;
+    this.screenViewportWidth = 0; // Actual screen viewport width
 
     // Zoom state
     this.zoomScale = 1.0;
@@ -44,6 +48,7 @@ export class CanvasRenderer {
     this.palette = null;
 
     // Content bounds
+    this.contentWidth = 0;
     this.contentHeight = 0;
 
     // Performance tracking
@@ -96,7 +101,17 @@ export class CanvasRenderer {
   }
 
   /**
-   * Set the total content height
+   * Set the total content dimensions
+   * @param {number} width
+   * @param {number} height
+   */
+  setContentSize(width, height) {
+    this.contentWidth = width;
+    this.contentHeight = height;
+  }
+
+  /**
+   * Set the total content height (convenience method)
    * @param {number} height
    */
   setContentHeight(height) {
@@ -105,15 +120,37 @@ export class CanvasRenderer {
 
   /**
    * Resize the canvas for the given viewport dimensions
-   * @param {number} width - Viewport width
-   * @param {number} height - Viewport height
+   * @param {number} width - Viewport width (screen pixels)
+   * @param {number} height - Viewport height (screen pixels)
    */
   resize(width, height) {
-    this.viewportWidth = width;
+    this.screenViewportWidth = width;
+    // Content width is capped at maxContentWidth
+    this.viewportWidth = Math.min(width, this.maxContentWidth);
     this.viewportHeight = height;
     this.bufferHeight = height * this.bufferMultiplier;
 
     this._resizeCanvasBitmap();
+    this._updateCanvasPosition();
+  }
+
+  /**
+   * Update canvas position (centering when needed)
+   * @private
+   */
+  _updateCanvasPosition() {
+    const scaledContentWidth = this.viewportWidth * this.zoomScale;
+
+    if (scaledContentWidth < this.screenViewportWidth) {
+      // Canvas is smaller than viewport - center it
+      // Use relative positioning within flexbox parent
+      this.canvas.style.position = "relative";
+      this.canvas.style.left = "0";
+    } else {
+      // Canvas fills or exceeds viewport - position absolutely
+      this.canvas.style.position = "absolute";
+      this.canvas.style.left = "0";
+    }
   }
 
   /**
@@ -133,7 +170,7 @@ export class CanvasRenderer {
       this.canvas.width = bitmapWidth;
       this.canvas.height = bitmapHeight;
 
-      // CSS size matches buffer dimensions (before zoom transform)
+      // CSS size matches content dimensions (before zoom transform)
       this.canvas.style.width = `${this.viewportWidth}px`;
       this.canvas.style.height = `${this.bufferHeight}px`;
     }
@@ -146,24 +183,24 @@ export class CanvasRenderer {
    * Main render method - called on every scroll
    * @param {number} scrollTop - Current scroll position (in screen pixels)
    * @param {number} viewportHeight - Current viewport height
+   * @param {number} scrollLeft - Current scroll left position (in screen pixels)
    */
-  render(scrollTop, viewportHeight) {
+  render(scrollTop, viewportHeight, scrollLeft = 0) {
     // Convert to content coordinates (account for zoom)
     const contentScrollTop = scrollTop / this.zoomScale;
     const contentViewportHeight = viewportHeight / this.zoomScale;
 
-    // Update viewport height if changed
-    if (contentViewportHeight !== this.viewportHeight) {
-      this.resize(this.viewportWidth, contentViewportHeight);
+    // Update viewport height if changed significantly
+    if (Math.abs(contentViewportHeight - this.viewportHeight) > 1) {
+      this.resize(this.screenViewportWidth, contentViewportHeight);
     }
 
     // Check if we need to leapfrog (reposition buffer)
     if (this._shouldLeapfrog(contentScrollTop)) {
       this._repositionBuffer(contentScrollTop);
-    } else {
-      // Just slide the canvas using CSS transform
-      this._slideCanvas(contentScrollTop);
     }
+    // Always slide the canvas to match scroll position
+    this._slideCanvas(contentScrollTop, scrollLeft);
   }
 
   /**
@@ -189,14 +226,17 @@ export class CanvasRenderer {
    * Slide the canvas using CSS transform (no redraw)
    * @private
    * @param {number} scrollTop - Scroll position in content coordinates
+   * @param {number} scrollLeft - Scroll left position in screen coordinates
    */
-  _slideCanvas(scrollTop) {
+  _slideCanvas(scrollTop, scrollLeft = 0) {
     // Calculate offset from buffer top
     const offset = this.bufferTop - scrollTop;
 
     // Apply CSS transform (scaled by zoom for screen pixels)
-    const screenOffset = offset * this.zoomScale;
-    this.canvas.style.transform = `translateY(${screenOffset}px) scale(${this.zoomScale / this.resolutionScale})`;
+    const screenOffsetY = offset * this.zoomScale;
+    const screenOffsetX = -scrollLeft;
+    const cssScale = this.zoomScale;
+    this.canvas.style.transform = `translate(${screenOffsetX}px, ${screenOffsetY}px) scale(${cssScale})`;
   }
 
   /**
@@ -214,9 +254,6 @@ export class CanvasRenderer {
 
     // Redraw the buffer
     this._drawBuffer();
-
-    // Update CSS transform
-    this._slideCanvas(scrollTop);
   }
 
   /**
@@ -298,33 +335,40 @@ export class CanvasRenderer {
    * @param {Object} options
    * @param {boolean} options.immediate - Skip debounce and render immediately
    * @param {number} options.scrollTop - Current scroll position for re-render
+   * @param {number} options.scrollLeft - Current scroll left position
    */
   setZoom(scale, options = {}) {
     this.zoomScale = scale;
+
+    // Update canvas position (centering)
+    this._updateCanvasPosition();
+
+    const contentScrollTop = (options.scrollTop || 0) / scale;
+    const screenScrollLeft = options.scrollLeft || 0;
 
     if (options.immediate) {
       // Immediate full re-render at new resolution
       this._resizeCanvasBitmap();
       if (options.scrollTop !== undefined) {
-        this._repositionBuffer(options.scrollTop / scale);
+        this._repositionBuffer(contentScrollTop);
       }
     } else {
-      // Instant CSS preview
-      const cssScale = scale / this.resolutionScale;
-      const offset = (this.bufferTop - (options.scrollTop || 0) / scale) * scale;
-      this.canvas.style.transform = `translateY(${offset}px) scale(${cssScale})`;
-
-      // Debounced full re-render
+      // Debounced full re-render - capture current scale
+      const targetScale = scale;
       if (this.zoomRenderTimeout) {
         clearTimeout(this.zoomRenderTimeout);
       }
       this.zoomRenderTimeout = setTimeout(() => {
+        // Use the captured targetScale, not this.zoomScale which may have changed
         this._resizeCanvasBitmap();
         if (options.scrollTop !== undefined) {
-          this._repositionBuffer(options.scrollTop / scale);
+          this._repositionBuffer(options.scrollTop / targetScale);
         }
       }, this.zoomRenderDebounce);
     }
+
+    // Always update visual transform immediately
+    this._slideCanvas(contentScrollTop, screenScrollLeft);
   }
 
   /**
@@ -343,7 +387,10 @@ export class CanvasRenderer {
     return {
       bufferTop: this.bufferTop,
       bufferHeight: this.bufferHeight,
+      viewportWidth: this.viewportWidth,
       viewportHeight: this.viewportHeight,
+      contentWidth: this.contentWidth,
+      contentHeight: this.contentHeight,
       zoomScale: this.zoomScale,
       resolutionScale: this.resolutionScale,
       lastRenderTime: this.lastRenderTime,
