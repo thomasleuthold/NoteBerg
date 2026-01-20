@@ -48,9 +48,14 @@ export function getIsSyncing() {
  * @param {Object} options - Sync options
  * @param {boolean} options.silent - If true, don't show UI notifications or prompt for conflicts
  * @param {boolean} options.skipConflictResolution - If true, skip manual conflict resolution
+ * @param {boolean} options.preferNewer - If true, automatically resolve conflicts by preferring the version with newer timestamp
  * @returns {Promise<Object|null>} Sync result or null if sync was skipped
  */
-export async function performSync({ silent = false, skipConflictResolution = false } = {}) {
+export async function performSync({
+  silent = false,
+  skipConflictResolution = false,
+  preferNewer = false,
+} = {}) {
   if (isSyncing || !(await isAuthenticated())) {
     console.log("Sync: Skipping (already syncing or not authenticated)");
     return null;
@@ -78,6 +83,43 @@ export async function performSync({ silent = false, skipConflictResolution = fal
     // which we need for updating status later.
     const notesForSync = notes.map((n) => ({ ...n }));
     const result = await fullSync(notebooks, notesForSync);
+
+    // Handle automatic timestamp-based conflict resolution (for app startup)
+    if (preferNewer && result.conflicts?.notes?.length > 0) {
+      for (const conflict of result.conflicts.notes) {
+        const localTime = conflict.local.modified || 0;
+        const remoteTime = conflict.remote.modified || 0;
+
+        if (remoteTime > localTime) {
+          // Remote is newer, use remote version
+          console.log(
+            `[Sync] Auto-resolving conflict for note ${conflict.local.id}: remote is newer (${new Date(remoteTime).toISOString()} > ${new Date(localTime).toISOString()})`,
+          );
+          await saveNote({
+            ...conflict.remote,
+            lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+            synced: true,
+            _currentFileEtag: undefined, // Remove internal field
+          });
+        } else {
+          // Local is newer or same timestamp, keep local version
+          console.log(
+            `[Sync] Auto-resolving conflict for note ${conflict.local.id}: local is newer or equal (${new Date(localTime).toISOString()} >= ${new Date(remoteTime).toISOString()})`,
+          );
+          await saveNote({
+            ...conflict.local,
+            lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+            synced: false,
+            version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
+            modified: Date.now(),
+          });
+        }
+      }
+      // Re-trigger sync to process resolutions
+      isSyncing = false;
+      notifySyncStatusChange();
+      return await performSync({ silent, skipConflictResolution, preferNewer: false });
+    }
 
     // Handle manual conflict resolution (only for manual syncs)
     if (!skipConflictResolution && !silent && result.conflicts?.notes?.length > 0) {

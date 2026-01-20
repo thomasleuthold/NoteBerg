@@ -2,14 +2,22 @@
  * Notebook Editor Component
  * Layered canvas approach with text editor and drawing layer
  * Auto-detects input type (stylus vs mouse) for mode switching
+ *
+ * Note: PerspT (perspective-transform) is loaded globally via script tag in index.html
  */
 
 import { forceRecognition } from "../modules/autoRecognition.js";
-import { resetInactivityTimer, stopInactivityTimer, syncOnNoteClose } from "../modules/autoSync.js";
+import { stopInactivityTimer, syncOnNoteClose } from "../modules/autoSync.js";
 import { getCurrentNoteId, navigateTo } from "../modules/router.js";
 import { deleteNote, generateId, getNote, updateNote } from "../modules/storage.js";
 import { getTheme } from "../modules/theme.js";
 import { getIcon } from "../utils/icons.js";
+import {
+  captureFromCamera,
+  fileToDataUrl,
+  optimizeImageForDisplay,
+  pickImages,
+} from "../utils/imageUtils.js";
 import { htmlToMarkdown, markdownToHtml } from "../utils/markdown.js";
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
@@ -25,17 +33,19 @@ let isDrawMode = false;
 let isEraserMode = false; // Manual eraser toggle
 let isLassoMode = false; // Manual lasso toggle
 
-// Layered Canvases
-let staticCanvas = null; // For completed strokes
+// Layered Canvases (4 canvases for memory efficiency)
+// - staticCanvas: background pattern + completed strokes (full zoom resolution)
+// - dynamicCanvas: active drawing stroke (full zoom resolution)
+// - mediaCanvas: images (full zoom resolution)
+// - overlayCanvas: cursor + highlights (base resolution only, no zoom scaling)
+let staticCanvas = null; // For background + completed strokes
 let staticCtx = null;
-let highlightCanvas = null; // For search highlights
-let highlightCtx = null;
 let dynamicCanvas = null; // For active drawing
 let dynamicCtx = null;
-let backgroundCanvas = null;
-let backgroundCtx = null;
-let cursorCanvas = null;
-let cursorCtx = null;
+let mediaCanvas = null; // For media items (images)
+let mediaCtx = null;
+let overlayCanvas = null; // For cursor + highlights (stays at base resolution)
+let overlayCtx = null;
 let canvasRect = null; // Cached bounding client rect for performance
 
 let isDrawing = false;
@@ -55,6 +65,16 @@ const handleSize = 24; // Size of selection handles
 let currentStroke = [];
 let strokes = [];
 let deletedStrokes = []; // Track IDs of deleted strokes for sync
+let mediaItems = []; // Track media items (images)
+let deletedMedia = []; // Track IDs of deleted media for sync
+
+// Media manipulation state
+let selectedMediaId = null; // Currently selected media item ID
+let mediaTransformState = null; // { mode: 'move'|'resize'|'rotate', handle: 'nw'|'ne'|'sw'|'se'|'rotate', startX, startY, initialX, initialY, initialWidth, initialHeight }
+const mediaHandleSize = 20; // Size of media resize handles (increased from 12 for easier clicking)
+let _mediaHoverState = null; // { mediaId, handle: null|'nw'|'ne'|'sw'|'se' }
+let isImageMode = false; // Track if in image manipulation mode
+let mediaPanState = null;
 let dynamicStrokeDrawScheduled = false;
 let dynamicStrokeLastDrawIndex = 0;
 let dynamicStrokeLastY = null;
@@ -75,15 +95,26 @@ let currentPenColorIndex = 0;
 let minCanvasWidth = 0; // Minimum width needed to show all content
 let minCanvasHeight = 0; // Minimum height needed to show all content
 
+// Base canvas dimensions (unscaled, before zoom resolution multiplier)
+let baseCanvasWidth = 0;
+let baseCanvasHeight = 0;
+
 // Zoom state
 let zoomScale = 1.0; // Current zoom level (1.0 = 100%)
-const minZoom = 0.5; // Minimum zoom (50%)
-const maxZoom = 3.0; // Maximum zoom (300%)
+const minZoom = 0.25; // Minimum zoom (25%)
+const maxZoom = 2.0; // Maximum zoom (200%)
 const zoomStep = 0.1; // Zoom increment per step
 
 // Gesture tracking for pinch-to-zoom
 let lastTouchDistance = null;
 let initialPinchZoom = null;
+let pinchCenter = null; // Store the center point of pinch gesture
+
+// Zoom re-render state
+let zoomRerenderTimer = null;
+const ZOOM_RERENDER_DEBOUNCE = 300; // ms to wait after zoom gesture ends before re-rendering
+let isZoomingGesture = false; // Track if currently performing zoom gesture
+let currentResolutionScale = 1.0; // The resolution scale currently applied to the canvas bitmap
 
 // Resize throttling
 let resizeThrottleTimer = null;
@@ -99,6 +130,20 @@ let saveDebounceTimer = null;
 const SAVE_DEBOUNCE_MS = 1500; // Save after 1.5s of inactivity
 let lastSaveTime = 0;
 const SAVE_THROTTLE_MS = 3000; // Also save at least every 3s during writing
+
+/**
+ * Helper function to clear a canvas properly regardless of transform state
+ * Resets transform, clears the full bitmap, then restores transform
+ * @param {CanvasRenderingContext2D} ctx - Canvas context to clear
+ * @param {HTMLCanvasElement} canvas - Canvas element
+ */
+function clearCanvas(ctx, canvas) {
+  if (!ctx || !canvas) return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
 
 /**
  * Initialize notebook editor component
@@ -130,8 +175,12 @@ export function initNotebookEditorComponent() {
     }
     const noteId = getCurrentNoteId();
     if (noteId && currentNoteData && noteId === currentNoteData.id) {
-      if (isDrawing || isErasing || isLassoing || isTransforming) {
+      // Defer refresh if user is actively interacting with the note
+      if (isDrawing || isErasing || isLassoing || isTransforming || noteEditedSinceOpen) {
         pendingExternalRefresh = true;
+        console.log(
+          "External data change detected but note has unsaved changes. Deferring refresh until note is closed.",
+        );
         return;
       }
       console.log("External data change detected for current note. Refreshing editor.");
@@ -209,7 +258,7 @@ export async function initNotebookEditor(noteId, searchQuery = null) {
     switchToTextMode();
 
     // Initialize zoom to ensure transforms are applied on load
-    setZoom(1.0);
+    setZoom(1.0, { immediate: true });
 
     // Initialize save timer
     lastSaveTime = Date.now();
@@ -244,6 +293,11 @@ function renderEditor(container, _noteData) {
     zoomIn: getIcon("zoomIn", 20),
     zoomReset: getIcon("zoomReset", 20),
     info: getIcon("info", 20),
+    image: getIcon("image", 20),
+    camera: getIcon("camera", 20),
+    crop: getIcon("crop", 20),
+    arrowUp: getIcon("arrowUp", 20),
+    arrowDown: getIcon("arrowDown", 20),
   };
 
   container.innerHTML = `
@@ -259,6 +313,9 @@ function renderEditor(container, _noteData) {
               </button>
               <button class="toolbar-tab" id="mode-draw-btn" title="Draw mode" role="tab" aria-selected="false">
                 ${icons.pen}
+              </button>
+              <button class="toolbar-tab" id="mode-image-btn" title="Image mode" role="tab" aria-selected="false">
+                ${icons.image}
               </button>
             </div>
           </div>
@@ -317,6 +374,30 @@ function renderEditor(container, _noteData) {
             </button>
           </div>
 
+          <!-- Image Tools -->
+          <div id="image-tools" class="toolbar-section image-tools">
+            <button class="toolbar-btn" id="insert-image-btn" title="Insert image">
+              ${icons.image}
+            </button>
+            <button class="toolbar-btn" id="insert-camera-btn" title="Take photo">
+              ${icons.camera}
+            </button>
+            <div class="toolbar-divider"></div>
+            <button class="toolbar-btn" id="crop-media-btn" title="Crop image" style="display: none;">
+              ${icons.crop}
+            </button>
+            <button class="toolbar-btn" id="delete-media-btn" title="Delete image" style="display: none;">
+              ${icons.trash}
+            </button>
+            <div class="toolbar-divider" id="layer-divider" style="display: none;"></div>
+            <button class="toolbar-btn" id="move-forward-btn" title="Move forward" style="display: none;">
+              ${icons.arrowUp}
+            </button>
+            <button class="toolbar-btn" id="move-backward-btn" title="Move backward" style="display: none;">
+              ${icons.arrowDown}
+            </button>
+          </div>
+
           <!-- Pen Tools -->
           <div id="pen-tools" class="toolbar-section pen-tools">
             <div class="toolbar-btn-container">
@@ -357,11 +438,10 @@ function renderEditor(container, _noteData) {
 
       <div class="editor-content-wrapper" style="position: relative;">
         <div id="text-editor" class="text-editor" contenteditable="true"></div>
-        <canvas id="background-canvas" class="background-canvas" style="position: absolute; top: 0; left: 0; z-index: 1;"></canvas>
-        <canvas id="static-canvas" class="static-canvas" style="position: absolute; top: 0; left: 0; z-index: 2;"></canvas>
-        <canvas id="highlight-canvas" class="highlight-canvas" style="position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none;"></canvas>
-        <canvas id="dynamic-canvas" class="dynamic-canvas" style="position: absolute; top: 0; left: 0; z-index: 4;"></canvas>
-        <canvas id="cursor-canvas" class="cursor-canvas" style="position: absolute; top: 0; left: 0; z-index: 5; pointer-events: none;"></canvas>
+        <canvas id="static-canvas" class="static-canvas" style="position: absolute; top: 0; left: 0; z-index: 1;"></canvas>
+        <canvas id="media-canvas" class="media-canvas" style="position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none;"></canvas>
+        <canvas id="dynamic-canvas" class="dynamic-canvas" style="position: absolute; top: 0; left: 0; z-index: 3;"></canvas>
+        <canvas id="overlay-canvas" class="overlay-canvas" style="position: absolute; top: 0; left: 0; z-index: 4; pointer-events: none;"></canvas>
       </div>
     </div>
   `;
@@ -405,6 +485,7 @@ function initTextEditor(noteData) {
   textEditor.addEventListener("pointerdown", handlePointerDown);
   textEditor.addEventListener("pointermove", handlePointerMove);
   textEditor.addEventListener("pointerup", handlePointerUp);
+  textEditor.addEventListener("pointercancel", handlePointerUp);
 
   currentEditor = textEditor;
 }
@@ -413,23 +494,21 @@ function initTextEditor(noteData) {
  * Initialize canvas layer for drawing
  */
 function initCanvasLayer(noteData) {
-  // Setup all canvas layers
-  backgroundCanvas = document.getElementById("background-canvas");
+  // Setup all canvas layers (4 canvases for memory efficiency)
   staticCanvas = document.getElementById("static-canvas");
-  highlightCanvas = document.getElementById("highlight-canvas");
+  mediaCanvas = document.getElementById("media-canvas");
   dynamicCanvas = document.getElementById("dynamic-canvas");
-  cursorCanvas = document.getElementById("cursor-canvas");
+  overlayCanvas = document.getElementById("overlay-canvas");
 
-  if (!backgroundCanvas || !staticCanvas || !highlightCanvas || !dynamicCanvas || !cursorCanvas) {
+  if (!staticCanvas || !mediaCanvas || !dynamicCanvas || !overlayCanvas) {
     console.error("One or more canvas layers are missing from the DOM.");
     return;
   }
 
-  backgroundCtx = backgroundCanvas.getContext("2d");
   staticCtx = staticCanvas.getContext("2d");
-  highlightCtx = highlightCanvas.getContext("2d");
+  mediaCtx = mediaCanvas.getContext("2d");
   dynamicCtx = dynamicCanvas.getContext("2d");
-  cursorCtx = cursorCanvas.getContext("2d");
+  overlayCtx = overlayCanvas.getContext("2d");
 
   // Initial canvas sizing with throttling
   window.addEventListener("resize", throttledResizeCanvas);
@@ -457,9 +536,21 @@ function initCanvasLayer(noteData) {
     deletedStrokes = [];
   }
 
+  // Load existing media items and deleted media IDs
+  if (noteData.media && Array.isArray(noteData.media)) {
+    mediaItems = noteData.media;
+    console.log(`[NotebookEditor] Initial media items loaded: ${mediaItems.length}`);
+  }
+  if (noteData.deletedMedia && Array.isArray(noteData.deletedMedia)) {
+    deletedMedia = noteData.deletedMedia;
+  } else {
+    deletedMedia = [];
+  }
+
   requestAnimationFrame(() => {
     resizeCanvas();
     redrawCanvas(); // This will now draw to the static canvas
+    redrawMedia(); // Draw media items
   });
 
   // Add pen detection on the wrapper to enable canvas pointer-events for scrolled areas
@@ -562,15 +653,7 @@ function throttledResizeCanvas() {
  * Resize canvas to match container
  */
 function resizeCanvas() {
-  if (
-    !dynamicCanvas ||
-    !staticCanvas ||
-    !backgroundCanvas ||
-    !cursorCanvas ||
-    !highlightCanvas ||
-    !currentEditor
-  )
-    return;
+  if (!dynamicCanvas || !staticCanvas || !mediaCanvas || !overlayCanvas || !currentEditor) return;
 
   const wrapper = dynamicCanvas.parentElement;
   const rect = wrapper.getBoundingClientRect();
@@ -578,46 +661,110 @@ function resizeCanvas() {
   // Cache the bounding rect for coordinate calculations
   canvasRect = dynamicCanvas.getBoundingClientRect();
 
-  const baseWidth = rect.width / zoomScale;
-  const baseHeight = rect.height / zoomScale;
-
-  // Don't use scrollHeight with CSS transforms - it's unreliable
-  // Instead, use the wrapper dimensions and minimum bounds from content
-  const requiredHeight = Math.max(
-    baseHeight,
-    minCanvasHeight,
-    dynamicCanvas.height, // Keep current canvas height to prevent shrinking
-    800,
-  );
-  const requiredWidth = Math.max(baseWidth, minCanvasWidth, 800);
+  // Calculate base dimensions (the content coordinate space, independent of zoom)
+  // Base canvas should be large enough to show:
+  // 1. The viewport at 100% zoom (not scaled by current zoom)
+  // 2. All existing content (strokes, media)
+  // 3. A minimum size for usability
+  // Note: Don't divide by zoomScale - that inflates base size when zoomed out
+  const requiredHeight = Math.max(rect.height, minCanvasHeight, 800);
+  const requiredWidth = Math.max(rect.width, minCanvasWidth, 800);
 
   // Prevent excessive canvas sizes that could cause performance issues
-  const maxCanvasSize = 10000;
-  const safeWidth = Math.min(requiredWidth, maxCanvasSize);
-  const safeHeight = Math.min(requiredHeight, maxCanvasSize);
+  // Optimized for vertical scrolling: narrow width, tall height
+  const maxCanvasWidth = 2000;
+  const maxCanvasHeight = 25000;
+  const safeWidth = Math.min(requiredWidth, maxCanvasWidth);
+  const safeHeight = Math.min(requiredHeight, maxCanvasHeight);
+
+  // Update base dimensions - allow both growing and shrinking
+  // based on actual content needs
+  const prevBaseWidth = baseCanvasWidth;
+  const prevBaseHeight = baseCanvasHeight;
+  baseCanvasWidth = safeWidth;
+  baseCanvasHeight = safeHeight;
+
+  // Calculate the maximum resolution scale we can use without exceeding canvas limits
+  const maxResolutionScaleW = maxCanvasWidth / baseCanvasWidth;
+  const maxResolutionScaleH = maxCanvasHeight / baseCanvasHeight;
+  const maxResolutionScale = Math.min(maxResolutionScaleW, maxResolutionScaleH);
+
+  // Desired resolution scale is the zoom level, capped at maxResolutionScale
+  const desiredResolutionScale = Math.max(1.0, zoomScale);
+  const actualResolutionScale = Math.min(desiredResolutionScale, maxResolutionScale);
+
+  // Store the resolution scale for preview zoom calculations
+  currentResolutionScale = actualResolutionScale;
+
+  // Calculate bitmap dimensions
+  const bitmapWidth = Math.round(baseCanvasWidth * actualResolutionScale);
+  const bitmapHeight = Math.round(baseCanvasHeight * actualResolutionScale);
+
+  // CSS size = bitmap size (no stretching)
+  const cssWidth = bitmapWidth;
+  const cssHeight = bitmapHeight;
+
+  // CSS transform handles visual zoom (both scaling up and down)
+  const cssTransformScale = zoomScale / actualResolutionScale;
+  const needsCssTransform = Math.abs(cssTransformScale - 1.0) > 0.001;
 
   // Only resize if dimensions actually changed significantly
-  const widthChanged = Math.abs(dynamicCanvas.width - safeWidth) > 1;
-  const heightChanged = Math.abs(dynamicCanvas.height - safeHeight) > 1;
+  const bitmapChanged =
+    Math.abs(dynamicCanvas.width - bitmapWidth) > 1 ||
+    Math.abs(dynamicCanvas.height - bitmapHeight) > 1;
+  const baseChanged = prevBaseWidth !== baseCanvasWidth || prevBaseHeight !== baseCanvasHeight;
 
-  if (widthChanged || heightChanged) {
-    // Resize all canvases
-    const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
-    canvases.forEach((cvs) => {
-      cvs.width = safeWidth;
-      cvs.height = safeHeight;
-      cvs.style.width = `${safeWidth}px`;
-      cvs.style.height = `${safeHeight}px`;
+  if (bitmapChanged || baseChanged) {
+    // Resize full-resolution canvases (static, dynamic, media)
+    const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+    fullResCanvases.forEach((cvs) => {
+      cvs.width = bitmapWidth;
+      cvs.height = bitmapHeight;
+      cvs.style.width = `${cssWidth}px`;
+      cvs.style.height = `${cssHeight}px`;
+      // Apply CSS transform for visual zoom (both scaling up and down)
+      cvs.style.transformOrigin = "top left";
+      if (needsCssTransform) {
+        cvs.style.transform = `scale(${cssTransformScale})`;
+      } else {
+        cvs.style.transform = "none";
+      }
     });
 
+    // Overlay canvas stays at base resolution (no zoom scaling) for memory efficiency
+    // This canvas is used for cursor and highlights which don't need high resolution
+    overlayCanvas.width = baseCanvasWidth;
+    overlayCanvas.height = baseCanvasHeight;
+    overlayCanvas.style.width = `${baseCanvasWidth}px`;
+    overlayCanvas.style.height = `${baseCanvasHeight}px`;
+    // Overlay uses CSS transform to match visual size of other canvases
+    overlayCanvas.style.transformOrigin = "top left";
+    overlayCanvas.style.transform = `scale(${zoomScale})`;
+
+    // Set context transforms for resolution scaling on full-res canvases
+    [staticCtx, dynamicCtx, mediaCtx].forEach((ctx) => {
+      if (ctx) {
+        ctx.setTransform(actualResolutionScale, 0, 0, actualResolutionScale, 0, 0);
+      }
+    });
+    // Overlay context uses identity transform (no scaling)
+    if (overlayCtx) {
+      overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    // Calculate visual size (what user sees after CSS transform)
+    const visualWidth = Math.round(cssWidth * cssTransformScale);
+    const visualHeight = Math.round(cssHeight * cssTransformScale);
+
     if (currentEditor) {
-      currentEditor.style.minWidth = `${safeWidth}px`;
-      currentEditor.style.minHeight = `${safeHeight}px`;
+      currentEditor.style.minWidth = `${visualWidth}px`;
+      currentEditor.style.minHeight = `${visualHeight}px`;
     }
 
     // Redraw both background and strokes after resize (canvas is cleared when dimensions change)
     redrawBackground();
     redrawCanvas();
+    redrawMedia();
 
     // Re-apply stroke highlighting if active
     if (activeSearchQuery) {
@@ -628,12 +775,106 @@ function resizeCanvas() {
 }
 
 /**
+ * Check if media items exceed canvas bounds and expand if needed
+ */
+function checkAndExpandCanvasForMedia() {
+  if (!mediaCanvas || mediaItems.length === 0) return;
+
+  // Find the maximum extents of all media items
+  let maxRight = 0;
+  let maxBottom = 0;
+
+  for (const item of mediaItems) {
+    const right = item.x + item.width;
+    const bottom = item.y + item.height;
+    maxRight = Math.max(maxRight, right);
+    maxBottom = Math.max(maxBottom, bottom);
+  }
+
+  // Add padding (100px) to avoid expanding too frequently
+  const padding = 100;
+  const requiredWidth = maxRight + padding;
+  const requiredHeight = maxBottom + padding;
+
+  // Check if expansion is needed
+  const needsWidthExpansion = requiredWidth > mediaCanvas.width;
+  const needsHeightExpansion = requiredHeight > mediaCanvas.height;
+
+  if (needsWidthExpansion || needsHeightExpansion) {
+    const newWidth = Math.max(mediaCanvas.width, requiredWidth);
+    const newHeight = Math.max(mediaCanvas.height, requiredHeight);
+    expandCanvasToSize(newWidth, newHeight);
+  }
+}
+
+/**
+ * Expand canvas to a specific width and height
+ * @param {number} newWidth - Target width in pixels (in unscaled space)
+ * @param {number} newHeight - Target height in pixels (in unscaled space)
+ */
+function expandCanvasToSize(newWidth, newHeight) {
+  const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+  if (fullResCanvases.some((c) => !c) || !overlayCanvas) return;
+
+  const now = Date.now();
+  if (now - lastExpansionTime < expansionCooldown) return;
+  lastExpansionTime = now;
+
+  // Create offscreen canvases to preserve current drawings
+  const tempCanvases = {
+    dynamic: document.createElement("canvas"),
+    static: document.createElement("canvas"),
+    media: document.createElement("canvas"),
+  };
+
+  tempCanvases.dynamic.width = tempCanvases.static.width = tempCanvases.media.width = dynamicCanvas.width;
+  tempCanvases.dynamic.height = tempCanvases.static.height = tempCanvases.media.height = dynamicCanvas.height;
+
+  tempCanvases.dynamic.getContext("2d").drawImage(dynamicCanvas, 0, 0);
+  tempCanvases.static.getContext("2d").drawImage(staticCanvas, 0, 0);
+  tempCanvases.media.getContext("2d").drawImage(mediaCanvas, 0, 0);
+
+  const oldHeight = dynamicCanvas.height;
+
+  // Resize full-resolution canvases
+  fullResCanvases.forEach((cvs) => {
+    cvs.width = newWidth;
+    cvs.height = newHeight;
+    cvs.style.width = `${newWidth}px`;
+    cvs.style.height = `${newHeight}px`;
+  });
+
+  // Resize overlay canvas (base resolution only)
+  overlayCanvas.width = baseCanvasWidth;
+  overlayCanvas.height = baseCanvasHeight;
+  overlayCanvas.style.width = `${baseCanvasWidth}px`;
+  overlayCanvas.style.height = `${baseCanvasHeight}px`;
+
+  // Restore the content
+  dynamicCtx.drawImage(tempCanvases.dynamic, 0, 0);
+  staticCtx.drawImage(tempCanvases.static, 0, 0);
+  mediaCtx.drawImage(tempCanvases.media, 0, 0);
+
+  // Draw background expansion if height increased (background is now on staticCanvas)
+  if (newHeight > oldHeight) {
+    drawBackgroundExpansion(oldHeight, newHeight);
+  }
+
+  // Update content editable area size
+  if (currentEditor) {
+    currentEditor.style.minHeight = `${newHeight}px`;
+  }
+
+  console.log(`[Canvas] Expanded to ${newWidth}x${newHeight}`);
+}
+
+/**
  * Expand canvas height by a specified amount
  * @param {number} additionalHeight - Height to add in pixels (in unscaled space)
  */
 function expandCanvas(additionalHeight) {
-  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
-  if (canvases.some((c) => !c)) return;
+  const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+  if (fullResCanvases.some((c) => !c) || !overlayCanvas) return;
 
   const now = Date.now();
   if (now - lastExpansionTime < expansionCooldown) return;
@@ -649,42 +890,34 @@ function expandCanvas(additionalHeight) {
   const tempCanvases = {
     dynamic: document.createElement("canvas"),
     static: document.createElement("canvas"),
-    background: document.createElement("canvas"),
-    highlight: document.createElement("canvas"),
   };
 
-  tempCanvases.dynamic.width =
-    tempCanvases.static.width =
-    tempCanvases.background.width =
-    tempCanvases.highlight.width =
-      dynamicCanvas.width;
-  tempCanvases.dynamic.height =
-    tempCanvases.static.height =
-    tempCanvases.background.height =
-    tempCanvases.highlight.height =
-      dynamicCanvas.height;
+  tempCanvases.dynamic.width = tempCanvases.static.width = dynamicCanvas.width;
+  tempCanvases.dynamic.height = tempCanvases.static.height = dynamicCanvas.height;
 
   tempCanvases.dynamic.getContext("2d").drawImage(dynamicCanvas, 0, 0);
   tempCanvases.static.getContext("2d").drawImage(staticCanvas, 0, 0);
-  tempCanvases.background.getContext("2d").drawImage(backgroundCanvas, 0, 0);
-  tempCanvases.highlight.getContext("2d").drawImage(highlightCanvas, 0, 0);
 
-  // Resize all canvases
-  canvases.forEach((cvs) => {
+  const oldHeight = dynamicCanvas.height;
+
+  // Resize full-resolution canvases
+  fullResCanvases.forEach((cvs) => {
     cvs.width = newWidth;
     cvs.height = newHeight;
     cvs.style.width = `${newWidth}px`;
     cvs.style.height = `${newHeight}px`;
   });
 
+  // Overlay canvas stays at base resolution
+  overlayCanvas.width = baseCanvasWidth;
+  overlayCanvas.height = baseCanvasHeight;
+
   // Restore the content without expensive redraw
   dynamicCtx.drawImage(tempCanvases.dynamic, 0, 0);
   staticCtx.drawImage(tempCanvases.static, 0, 0);
-  backgroundCtx.drawImage(tempCanvases.background, 0, 0);
-  highlightCtx.drawImage(tempCanvases.highlight, 0, 0);
 
   // Draw background pattern on newly expanded area
-  drawBackgroundExpansion(tempCanvases.background.height, newHeight);
+  drawBackgroundExpansion(oldHeight, newHeight);
 
   if (currentEditor) {
     currentEditor.style.minHeight = `${newHeight}px`;
@@ -727,6 +960,134 @@ function updateExpansionZoneIndicator(currentY = null, forceUpdate = false) {
  * Handle pointer down for auto mode detection
  */
 function handlePointerDown(e) {
+  // In Image Mode: block all text editor interactions, handle only media
+  if (isImageMode && !isDrawMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+    // Prevent text selection and editing
+    e.preventDefault();
+    e.stopPropagation();
+
+    canvasRect = dynamicCanvas.getBoundingClientRect();
+    const { x, y } = getCanvasCoordinates(e);
+
+    // Check if clicking on media
+    const clickedMedia = getMediaAtPoint(x, y);
+
+    if (clickedMedia) {
+      selectMedia(clickedMedia.id);
+
+      // Check if clicking on a handle
+      const handle = getMediaHandleAtPoint(x, y, clickedMedia);
+      if (handle) {
+        if (handle === "rotate") {
+          // Start rotation operation
+          const centerX = clickedMedia.x + clickedMedia.width / 2;
+          const centerY = clickedMedia.y + clickedMedia.height / 2;
+          const startAngle = Math.atan2(y - centerY, x - centerX);
+
+          mediaTransformState = {
+            mode: "rotate",
+            startX: x,
+            startY: y,
+            centerX: centerX,
+            centerY: centerY,
+            startAngle: startAngle,
+            initialRotation: clickedMedia.rotation || 0,
+          };
+        } else {
+          // Start resize operation
+          mediaTransformState = {
+            mode: "resize",
+            handle: handle,
+            startX: x,
+            startY: y,
+            initialX: clickedMedia.x,
+            initialY: clickedMedia.y,
+            initialWidth: clickedMedia.width,
+            initialHeight: clickedMedia.height,
+            aspectRatio: clickedMedia.width / clickedMedia.height,
+          };
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Prevent scrolling on touch devices during media manipulation
+        if (e.pointerType === "touch") {
+          preventScrollDuringMediaManipulation(true);
+          // Update canvasRect after changing overflow as it may shift viewport
+          canvasRect = dynamicCanvas.getBoundingClientRect();
+        }
+        const captureTarget = currentEditor || e.target;
+        if (captureTarget?.setPointerCapture) {
+          try {
+            captureTarget.setPointerCapture(e.pointerId);
+          } catch (err) {
+            console.warn("[Media] Could not set pointer capture:", err);
+          }
+        }
+
+        return;
+      } else {
+        // Start move operation
+        mediaTransformState = {
+          mode: "move",
+          startX: x,
+          startY: y,
+          initialX: clickedMedia.x,
+          initialY: clickedMedia.y,
+        };
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Prevent scrolling on touch devices during media manipulation
+        if (e.pointerType === "touch") {
+          preventScrollDuringMediaManipulation(true);
+          // Update canvasRect after changing overflow as it may shift viewport
+          canvasRect = dynamicCanvas.getBoundingClientRect();
+        }
+        const captureTarget = currentEditor || e.target;
+        if (captureTarget?.setPointerCapture) {
+          try {
+            captureTarget.setPointerCapture(e.pointerId);
+          } catch (err) {
+            console.warn("[Media] Could not set pointer capture:", err);
+          }
+        }
+
+        return;
+      }
+    } else {
+      if (selectedMediaId) {
+        // Clicked outside media, deselect
+        selectMedia(null);
+      }
+      if (e.pointerType === "touch") {
+        const wrapper = document.querySelector(".editor-content-wrapper");
+        if (wrapper) {
+          mediaPanState = {
+            startX: e.clientX,
+            startY: e.clientY,
+            scrollLeft: wrapper.scrollLeft,
+            scrollTop: wrapper.scrollTop,
+          };
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const captureTarget = currentEditor || e.target;
+        if (captureTarget?.setPointerCapture) {
+          try {
+            captureTarget.setPointerCapture(e.pointerId);
+          } catch (err) {
+            console.warn("[Media] Could not set pointer capture:", err);
+          }
+        }
+      }
+    }
+
+    // Always return early in Image Mode to prevent text editing
+    return;
+  }
+
   if (e.pointerType === "pen") {
     if (!isDrawMode && !isEraserMode && !isLassoMode) {
       switchToDrawMode();
@@ -770,6 +1131,134 @@ function handlePointerDown(e) {
  * Handle pointer move
  */
 function handlePointerMove(e) {
+  // Handle media transformation (move/resize/rotate) - only in Image Mode
+  if (
+    mediaTransformState &&
+    isImageMode &&
+    (e.pointerType === "mouse" || e.pointerType === "touch")
+  ) {
+    // Update canvasRect on every move to handle viewport changes
+    canvasRect = dynamicCanvas.getBoundingClientRect();
+    const { x, y } = getCanvasCoordinates(e);
+    const selected = getSelectedMedia();
+    if (!selected) {
+      mediaTransformState = null;
+      return;
+    }
+
+    if (mediaTransformState.mode === "move") {
+      // Update position
+      const dx = x - mediaTransformState.startX;
+      const dy = y - mediaTransformState.startY;
+      selected.x = mediaTransformState.initialX + dx;
+      selected.y = mediaTransformState.initialY + dy;
+    } else if (mediaTransformState.mode === "rotate") {
+      // Calculate rotation angle
+      const currentAngle = Math.atan2(
+        y - mediaTransformState.centerY,
+        x - mediaTransformState.centerX,
+      );
+      const angleDiff = currentAngle - mediaTransformState.startAngle;
+      const angleDegrees = (angleDiff * 180) / Math.PI;
+
+      // Update rotation (keep between 0-360)
+      let newRotation = mediaTransformState.initialRotation + angleDegrees;
+      newRotation = ((newRotation % 360) + 360) % 360; // Normalize to 0-360
+      selected.rotation = newRotation;
+    } else if (mediaTransformState.mode === "resize") {
+      // Calculate new size based on handle, accounting for rotation
+      const dx = x - mediaTransformState.startX;
+      const dy = y - mediaTransformState.startY;
+      const handle = mediaTransformState.handle;
+
+      // Get rotation angle in radians
+      const rotation = ((selected.rotation || 0) * Math.PI) / 180;
+      const cos = Math.cos(-rotation); // Negative to transform back to unrotated space
+      const sin = Math.sin(-rotation);
+
+      // Transform mouse delta into rotated coordinate space
+      const rotatedDx = dx * cos - dy * sin;
+      const rotatedDy = dx * sin + dy * cos;
+
+      let newWidth = mediaTransformState.initialWidth;
+      let newHeight = mediaTransformState.initialHeight;
+      let newX = mediaTransformState.initialX;
+      let newY = mediaTransformState.initialY;
+
+      // Calculate based on which handle is being dragged (in rotated space)
+      // Free resize - width and height can be adjusted independently
+      if (handle === "se") {
+        // Southeast (bottom-right) - increase width right, height down
+        newWidth = mediaTransformState.initialWidth + rotatedDx;
+        newHeight = mediaTransformState.initialHeight + rotatedDy;
+      } else if (handle === "nw") {
+        // Northwest (top-left) - decrease width left, height up
+        newWidth = mediaTransformState.initialWidth - rotatedDx;
+        newHeight = mediaTransformState.initialHeight - rotatedDy;
+        // Transform position change back to screen space
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        const newCenterX = centerX;
+        const newCenterY = centerY;
+        newX = newCenterX - newWidth / 2;
+        newY = newCenterY - newHeight / 2;
+      } else if (handle === "ne") {
+        // Northeast (top-right) - increase width right, decrease height up
+        newWidth = mediaTransformState.initialWidth + rotatedDx;
+        newHeight = mediaTransformState.initialHeight - rotatedDy;
+        // Keep bottom-left corner fixed
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        newX = centerX - newWidth / 2;
+        newY = centerY - newHeight / 2;
+      } else if (handle === "sw") {
+        // Southwest (bottom-left) - decrease width left, increase height down
+        newWidth = mediaTransformState.initialWidth - rotatedDx;
+        newHeight = mediaTransformState.initialHeight + rotatedDy;
+        // Keep top-right corner fixed
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        newX = centerX - newWidth / 2;
+        newY = centerY - newHeight / 2;
+      }
+
+      // Apply minimum size constraint
+      const minSize = 50;
+      if (newWidth >= minSize && newHeight >= minSize) {
+        selected.width = newWidth;
+        selected.height = newHeight;
+        selected.x = newX;
+        selected.y = newY;
+      }
+    }
+
+    // Redraw with updated position/size
+    redrawMedia();
+    markNoteEdited();
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+
+  if (mediaPanState && isImageMode && e.pointerType === "touch" && !mediaTransformState) {
+    const wrapper = document.querySelector(".editor-content-wrapper");
+    if (wrapper) {
+      const dx = e.clientX - mediaPanState.startX;
+      const dy = e.clientY - mediaPanState.startY;
+      wrapper.scrollLeft = mediaPanState.scrollLeft - dx;
+      wrapper.scrollTop = mediaPanState.scrollTop - dy;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+
+  // Update cursor when hovering over media (but not transforming) - only in Image Mode
+  if (!isDrawMode && isImageMode && (e.pointerType === "mouse" || e.pointerType === "touch")) {
+    const { x, y } = getCanvasCoordinates(e);
+    updateMediaCursor(x, y);
+  }
+
   if (e.pointerType === "pen") {
     if (!isDrawMode && !isEraserMode && !isLassoMode) {
       switchToDrawMode();
@@ -801,6 +1290,47 @@ function handlePointerMove(e) {
  * Handle pointer up
  */
 function handlePointerUp(e) {
+  // Handle media transformation end - only in Image Mode
+  if (
+    mediaTransformState &&
+    isImageMode &&
+    (e.pointerType === "mouse" || e.pointerType === "touch")
+  ) {
+    mediaTransformState = null;
+
+    // Check if canvas needs expansion after transformation
+    checkAndExpandCanvasForMedia();
+
+    // Re-enable scrolling on touch devices
+    if (e.pointerType === "touch") {
+      preventScrollDuringMediaManipulation(false);
+    }
+    const captureTarget = currentEditor || e.target;
+    if (captureTarget?.releasePointerCapture) {
+      try {
+        captureTarget.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("[Media] Could not release pointer capture:", err);
+      }
+    }
+
+    scheduleSave();
+    return;
+  }
+
+  if (mediaPanState && isImageMode && e.pointerType === "touch") {
+    mediaPanState = null;
+    const captureTarget = currentEditor || e.target;
+    if (captureTarget?.releasePointerCapture) {
+      try {
+        captureTarget.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("[Media] Could not release pointer capture:", err);
+      }
+    }
+    return;
+  }
+
   // Forward up events to canvas when in draw mode
   if (e.pointerType === "pen" && dynamicCanvas && isDrawMode) {
     const canvasEvent = new PointerEvent("pointerup", {
@@ -837,12 +1367,17 @@ function getCanvasCoordinates(e) {
     clientY = e.touches[0].clientY;
   }
 
-  const x = clientX - canvasRect.left;
-  const y = clientY - canvasRect.top;
-  const scaleX = dynamicCanvas.width / canvasRect.width;
-  const scaleY = dynamicCanvas.height / canvasRect.height;
+  // Get position relative to canvas CSS bounding box
+  const screenX = clientX - canvasRect.left;
+  const screenY = clientY - canvasRect.top;
 
-  return { x: x * scaleX, y: y * scaleY };
+  // Convert screen coordinates to base coordinates
+  // CSS size = baseCanvasWidth * zoomScale, so base = screen / zoomScale
+  // The context transform handles scaling from base to bitmap coordinates
+  const x = screenX / zoomScale;
+  const y = screenY / zoomScale;
+
+  return { x, y };
 }
 
 function isEraserEvent(e) {
@@ -884,15 +1419,82 @@ function handleCanvasPointerDown(e) {
     return false;
   }
 
-  if (!isDrawMode) return true;
-
-  // --- Cache canvas rect and context settings ---
+  // --- Cache canvas rect and coordinates ---
   canvasRect = dynamicCanvas.getBoundingClientRect();
+  const { x, y } = getCanvasCoordinates(e);
+
+  console.log("[Media] handleCanvasPointerDown - isDrawMode:", isDrawMode, "coords:", x, y);
+
+  // --- Media interaction (only in Image Mode) ---
+  if (!isDrawMode && isImageMode) {
+    // Check if clicking on media
+    const clickedMedia = getMediaAtPoint(x, y);
+
+    if (clickedMedia) {
+      // In Image Mode: immediate selection and manipulation
+      selectMedia(clickedMedia.id);
+
+      // Check if clicking on a resize/rotate handle
+      const handle = getMediaHandleAtPoint(x, y, clickedMedia);
+      if (handle === "rotate") {
+        const centerX = clickedMedia.x + clickedMedia.width / 2;
+        const centerY = clickedMedia.y + clickedMedia.height / 2;
+        const startAngle = Math.atan2(y - centerY, x - centerX);
+
+        mediaTransformState = {
+          mode: "rotate",
+          startX: x,
+          startY: y,
+          centerX: centerX,
+          centerY: centerY,
+          startAngle: startAngle,
+          initialRotation: clickedMedia.rotation || 0,
+        };
+        e.preventDefault();
+        return false;
+      } else if (handle) {
+        // Start resize operation
+        mediaTransformState = {
+          mode: "resize",
+          handle: handle,
+          startX: x,
+          startY: y,
+          initialX: clickedMedia.x,
+          initialY: clickedMedia.y,
+          initialWidth: clickedMedia.width,
+          initialHeight: clickedMedia.height,
+          aspectRatio: clickedMedia.width / clickedMedia.height,
+        };
+        e.preventDefault();
+        return false;
+      } else {
+        // Start move operation
+        mediaTransformState = {
+          mode: "move",
+          startX: x,
+          startY: y,
+          initialX: clickedMedia.x,
+          initialY: clickedMedia.y,
+        };
+        e.preventDefault();
+        return false;
+      }
+    } else {
+      // Clicked outside media
+      if (selectedMediaId) {
+        // Deselect media
+        selectMedia(null);
+      }
+    }
+
+    return true;
+  }
+
+  // --- Draw mode handling ---
   const palette = getThemePalette();
 
   // --- Eraser Activation (Stateful approach) ---
   const isEraser = isEraserMode || isEraserEvent(e);
-  const { x, y } = getCanvasCoordinates(e);
 
   if (isLassoMode) {
     // Check for transformation handles first
@@ -978,7 +1580,7 @@ function handleCanvasPointerDown(e) {
     dynamicCtx.lineCap = "round";
     dynamicCtx.lineJoin = "round";
     // Clear dynamic layer once per stroke instead of on every move.
-    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+    clearCanvas(dynamicCtx, dynamicCanvas);
   }
   return true;
 }
@@ -1023,6 +1625,96 @@ function scheduleDynamicStrokeDraw() {
  * Handle canvas pointer move
  */
 function handleCanvasPointerMove(e) {
+  // Handle media transformation (move/resize) - only in Image Mode
+  if (mediaTransformState && isImageMode) {
+    // Update canvasRect on every move to handle viewport changes
+    canvasRect = dynamicCanvas.getBoundingClientRect();
+    const { x, y } = getCanvasCoordinates(e);
+    const selected = getSelectedMedia();
+    if (!selected) {
+      mediaTransformState = null;
+      return;
+    }
+
+    if (mediaTransformState.mode === "move") {
+      // Update position
+      const dx = x - mediaTransformState.startX;
+      const dy = y - mediaTransformState.startY;
+      selected.x = mediaTransformState.initialX + dx;
+      selected.y = mediaTransformState.initialY + dy;
+    } else if (mediaTransformState.mode === "resize") {
+      // Calculate new size based on handle, accounting for rotation
+      const dx = x - mediaTransformState.startX;
+      const dy = y - mediaTransformState.startY;
+      const handle = mediaTransformState.handle;
+
+      // Get rotation angle in radians
+      const rotation = ((selected.rotation || 0) * Math.PI) / 180;
+      const cos = Math.cos(-rotation); // Negative to transform back to unrotated space
+      const sin = Math.sin(-rotation);
+
+      // Transform mouse delta into rotated coordinate space
+      const rotatedDx = dx * cos - dy * sin;
+      const rotatedDy = dx * sin + dy * cos;
+
+      let newWidth = mediaTransformState.initialWidth;
+      let newHeight = mediaTransformState.initialHeight;
+      let newX = mediaTransformState.initialX;
+      let newY = mediaTransformState.initialY;
+
+      // Calculate based on which handle is being dragged (in rotated space)
+      // Free resize - width and height can be adjusted independently
+      if (handle === "se") {
+        // Southeast (bottom-right) - increase width right, height down
+        newWidth = mediaTransformState.initialWidth + rotatedDx;
+        newHeight = mediaTransformState.initialHeight + rotatedDy;
+      } else if (handle === "nw") {
+        // Northwest (top-left) - decrease width left, height up
+        newWidth = mediaTransformState.initialWidth - rotatedDx;
+        newHeight = mediaTransformState.initialHeight - rotatedDy;
+        // Transform position change back to screen space
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        const newCenterX = centerX;
+        const newCenterY = centerY;
+        newX = newCenterX - newWidth / 2;
+        newY = newCenterY - newHeight / 2;
+      } else if (handle === "ne") {
+        // Northeast (top-right) - increase width right, decrease height up
+        newWidth = mediaTransformState.initialWidth + rotatedDx;
+        newHeight = mediaTransformState.initialHeight - rotatedDy;
+        // Keep bottom-left corner fixed
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        newX = centerX - newWidth / 2;
+        newY = centerY - newHeight / 2;
+      } else if (handle === "sw") {
+        // Southwest (bottom-left) - decrease width left, increase height down
+        newWidth = mediaTransformState.initialWidth - rotatedDx;
+        newHeight = mediaTransformState.initialHeight + rotatedDy;
+        // Keep top-right corner fixed
+        const centerX = mediaTransformState.initialX + mediaTransformState.initialWidth / 2;
+        const centerY = mediaTransformState.initialY + mediaTransformState.initialHeight / 2;
+        newX = centerX - newWidth / 2;
+        newY = centerY - newHeight / 2;
+      }
+
+      // Apply minimum size constraint
+      const minSize = 50;
+      if (newWidth >= minSize && newHeight >= minSize) {
+        selected.width = newWidth;
+        selected.height = newHeight;
+        selected.x = newX;
+        selected.y = newY;
+      }
+    }
+
+    // Redraw with updated position/size
+    redrawMedia();
+    markNoteEdited();
+    return;
+  }
+
   if (!isDrawMode || (!isDrawing && !isErasing && !isLassoing && !isTransforming)) {
     return;
   }
@@ -1114,30 +1806,46 @@ function handleCanvasPointerMove(e) {
 }
 
 /**
- * Draw the lasso path on the cursor canvas
+ * Draw the lasso path on the overlay canvas
  */
 function drawLassoPath() {
-  if (!cursorCtx || lassoPoints.length < 2) return;
+  if (!overlayCtx || lassoPoints.length < 2) return;
 
-  cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
-  cursorCtx.strokeStyle = "rgba(0, 100, 255, 0.8)";
-  cursorCtx.lineWidth = 2;
-  cursorCtx.setLineDash([5, 5]); // Dashed line for selection
-  cursorCtx.beginPath();
-  cursorCtx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+  clearCanvas(overlayCtx, overlayCanvas);
+  overlayCtx.strokeStyle = "rgba(0, 100, 255, 0.8)";
+  overlayCtx.lineWidth = 2;
+  overlayCtx.setLineDash([5, 5]); // Dashed line for selection
+  overlayCtx.beginPath();
+  overlayCtx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
 
   for (let i = 1; i < lassoPoints.length; i++) {
-    cursorCtx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+    overlayCtx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
   }
 
-  cursorCtx.stroke();
-  cursorCtx.setLineDash([]); // Reset line dash
+  overlayCtx.stroke();
+  overlayCtx.setLineDash([]); // Reset line dash
 }
 
 /**
  * Handle canvas pointer up
  */
-function handleCanvasPointerUp(_e) {
+function handleCanvasPointerUp(e) {
+  // Handle media transformation end
+  if (mediaTransformState) {
+    mediaTransformState = null;
+
+    // Check if canvas needs expansion after transformation
+    checkAndExpandCanvasForMedia();
+
+    // Re-enable scrolling on touch devices
+    if (e.pointerType === "touch") {
+      preventScrollDuringMediaManipulation(false);
+    }
+
+    scheduleSave();
+    return;
+  }
+
   if (isTransforming) {
     isTransforming = false;
     transformMode = null;
@@ -1154,9 +1862,9 @@ function handleCanvasPointerUp(_e) {
     updateToolbarButtons();
   }
 
-  // Clear the cursor canvas of any transient indicators like the eraser cursor
-  if (cursorCtx) {
-    cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  // Clear the overlay canvas of any transient indicators like the eraser cursor
+  if (overlayCtx) {
+    clearCanvas(overlayCtx, overlayCanvas);
   }
 
   const wasLassoing = isLassoing;
@@ -1213,7 +1921,7 @@ function handleCanvasPointerUp(_e) {
       sharedDrawStroke(staticCtx, currentStroke, palette, false);
 
       // Clear the dynamic canvas
-      dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+      clearCanvas(dynamicCtx, dynamicCanvas);
 
       strokes.push({ ...currentStroke });
       currentStroke = [];
@@ -1231,7 +1939,7 @@ function handleCanvasPointerUp(_e) {
     scheduleSave();
   } else if (wasDrawing) {
     // Stroke was too short (a tap), clear the dynamic canvas
-    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+    clearCanvas(dynamicCtx, dynamicCanvas);
     currentStroke = [];
   }
 
@@ -1240,7 +1948,15 @@ function handleCanvasPointerUp(_e) {
   dynamicStrokeLastDrawIndex = 0;
   dynamicStrokeLastY = null;
 
-  if (pendingExternalRefresh && !isDrawing && !isErasing && !isLassoing && !isTransforming) {
+  // Only refresh if user has stopped all interactions AND note has no unsaved changes
+  if (
+    pendingExternalRefresh &&
+    !isDrawing &&
+    !isErasing &&
+    !isLassoing &&
+    !isTransforming &&
+    !noteEditedSinceOpen
+  ) {
     pendingExternalRefresh = false;
     const noteId = getCurrentNoteId();
     if (noteId && currentNoteData && noteId === currentNoteData.id) {
@@ -1375,24 +2091,24 @@ function getStrokeBounds(stroke) {
  * @param {number} endY - Ending Y coordinate (for partial redraws)
  */
 function drawBackgroundPattern(backgroundType, startY = 0, endY = null) {
-  if (!backgroundCtx || !backgroundCanvas || backgroundType === "none") return;
+  if (!staticCtx || !staticCanvas || backgroundType === "none") return;
 
-  const height = endY || backgroundCanvas.height;
-  const width = backgroundCanvas.width;
+  // Use BASE dimensions, not bitmap dimensions, because context transform handles scaling
+  // The context has a transform applied (resolutionScale) that scales drawing operations
+  const height = endY || baseCanvasHeight;
+  const width = baseCanvasWidth;
 
-  sharedDrawBackgroundPattern(backgroundCtx, backgroundType, width, height, startY);
+  // Background pattern is now drawn on staticCanvas (merged for memory efficiency)
+  sharedDrawBackgroundPattern(staticCtx, backgroundType, width, height, startY);
 }
 
 /**
- * Redraw entire background canvas
+ * Redraw entire background on static canvas
+ * Since background and strokes share staticCanvas, this redraws everything
  */
 function redrawBackground() {
-  if (!backgroundCtx || !backgroundCanvas || !currentNoteData) return;
-  backgroundCtx.clearRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
-
-  if (currentNoteData.background && currentNoteData.background !== "none") {
-    drawBackgroundPattern(currentNoteData.background);
-  }
+  // Background is now on staticCanvas with strokes, so redraw both together
+  redrawCanvas();
 }
 
 /**
@@ -1414,9 +2130,14 @@ function redrawCanvas() {
   if (!staticCtx || !staticCanvas) return;
 
   // Clear both canvases
-  staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
+  clearCanvas(staticCtx, staticCanvas);
   if (dynamicCtx) {
-    dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+    clearCanvas(dynamicCtx, dynamicCanvas);
+  }
+
+  // Draw background pattern first (background is now merged into staticCanvas)
+  if (currentNoteData?.background && currentNoteData.background !== "none") {
+    drawBackgroundPattern(currentNoteData.background);
   }
 
   // Draw all completed strokes to the static canvas
@@ -1504,6 +2225,1454 @@ function isPointNearLine(px, py, x1, y1, x2, y2, threshold) {
 }
 
 /**
+ * Redraw all media items on the media canvas
+ */
+function redrawMedia() {
+  if (!mediaCtx || !mediaCanvas) return;
+
+  // Clear the media canvas
+  clearCanvas(mediaCtx, mediaCanvas);
+
+  // Sort media items by zIndex (lower first, higher last) to draw in correct order
+  const sortedItems = [...mediaItems].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+  console.log(
+    "Drawing media in order:",
+    sortedItems.map((m) => ({ id: m.id.slice(0, 8), z: m.zIndex || 0 })),
+  );
+
+  // Draw all media items in z-index order
+  sortedItems.forEach((item) => {
+    drawMediaItem(item);
+  });
+
+  // Draw selection handles if a media item is selected
+  drawMediaSelection();
+}
+
+/**
+ * Draw a single media item on the media canvas
+ * @param {Object} item - Media item with dataUrl, x, y, width, height properties
+ */
+function drawMediaItem(item) {
+  if (!mediaCtx || !item || !item.dataUrl) return;
+
+  // Check if image should be loaded (viewport-based lazy loading)
+  if (!shouldLoadMedia(item)) {
+    // Unload image if it's too far from viewport to save memory
+    if (item.imageElement) {
+      item.imageElement = null; // Release memory
+    }
+    return;
+  }
+
+  // Check if image is already loaded and valid
+  if (item.imageElement instanceof HTMLImageElement) {
+    // Image already loaded, draw immediately
+    drawMediaItemImmediate(item);
+    return;
+  }
+
+  // Load the image if not already loading
+  if (item.loading) return;
+
+  // Start loading the image
+  item.loading = true;
+  const img = new Image();
+  img.onload = () => {
+    item.imageElement = img;
+    item.loading = false;
+    // Redraw all media once the image is loaded
+    redrawMediaImmediate();
+  };
+  img.onerror = (error) => {
+    console.error("[Media] Failed to load image:", error);
+    item.loading = false;
+  };
+  img.src = item.dataUrl;
+}
+
+/**
+ * Check if a media item should be loaded based on viewport position
+ * Uses a buffer zone to preload images before they enter viewport
+ * @param {Object} item - Media item with x, y, width, height
+ * @returns {boolean} True if item should be loaded
+ */
+function shouldLoadMedia(item) {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) return true; // Load by default if wrapper not found
+
+  // Get viewport dimensions and scroll position
+  const viewportWidth = wrapper.clientWidth;
+  const viewportHeight = wrapper.clientHeight;
+  const scrollLeft = wrapper.scrollLeft;
+  const scrollTop = wrapper.scrollTop;
+
+  // Define buffer zone (300px on all sides) for preloading
+  const buffer = 300;
+
+  // Calculate item bounds in canvas coordinates
+  const itemLeft = item.x * zoomScale;
+  const itemTop = item.y * zoomScale;
+  const itemRight = (item.x + item.width) * zoomScale;
+  const itemBottom = (item.y + item.height) * zoomScale;
+
+  // Calculate viewport bounds with buffer
+  const viewportLeft = scrollLeft - buffer;
+  const viewportTop = scrollTop - buffer;
+  const viewportRight = scrollLeft + viewportWidth + buffer;
+  const viewportBottom = scrollTop + viewportHeight + buffer;
+
+  // Check if item intersects with buffered viewport
+  const isVisible =
+    itemRight >= viewportLeft &&
+    itemLeft <= viewportRight &&
+    itemBottom >= viewportTop &&
+    itemTop <= viewportBottom;
+
+  return isVisible;
+}
+
+/**
+ * Clean up memory by unloading images that are far from viewport
+ * Uses a larger buffer (1000px) to avoid unloading images too aggressively
+ */
+function cleanupMediaMemory() {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) return;
+
+  // Get viewport dimensions and scroll position
+  const viewportWidth = wrapper.clientWidth;
+  const viewportHeight = wrapper.clientHeight;
+  const scrollLeft = wrapper.scrollLeft;
+  const scrollTop = wrapper.scrollTop;
+
+  // Define larger buffer zone for cleanup (1000px on all sides)
+  const cleanupBuffer = 1000;
+
+  // Calculate viewport bounds with cleanup buffer
+  const viewportLeft = scrollLeft - cleanupBuffer;
+  const viewportTop = scrollTop - cleanupBuffer;
+  const viewportRight = scrollLeft + viewportWidth + cleanupBuffer;
+  const viewportBottom = scrollTop + viewportHeight + cleanupBuffer;
+
+  let unloadedCount = 0;
+
+  // Check each media item
+  for (const item of mediaItems) {
+    // Skip if no image loaded
+    if (!item.imageElement) continue;
+
+    // Calculate item bounds in canvas coordinates
+    const itemLeft = item.x * zoomScale;
+    const itemTop = item.y * zoomScale;
+    const itemRight = (item.x + item.width) * zoomScale;
+    const itemBottom = (item.y + item.height) * zoomScale;
+
+    // Check if item is far outside viewport
+    const isFarAway =
+      itemRight < viewportLeft ||
+      itemLeft > viewportRight ||
+      itemBottom < viewportTop ||
+      itemTop > viewportBottom;
+
+    if (isFarAway) {
+      // Unload the image to free memory
+      item.imageElement = null;
+      unloadedCount++;
+    }
+  }
+
+  if (unloadedCount > 0) {
+    // Silently cleanup memory
+  }
+}
+
+/**
+ * Redraw all media immediately (for loaded images only)
+ */
+function redrawMediaImmediate() {
+  if (!mediaCtx || !mediaCanvas) return;
+
+  // Clear the media canvas
+  clearCanvas(mediaCtx, mediaCanvas);
+
+  // Sort media items by zIndex (lower first, higher last) to draw in correct order
+  const sortedItems = [...mediaItems].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+  console.log(
+    "Drawing media in order:",
+    sortedItems.map((m) => ({ id: m.id.slice(0, 8), z: m.zIndex || 0 })),
+  );
+
+  // Draw all media items that have loaded images in z-index order
+  sortedItems.forEach((item) => {
+    if (item.imageElement && item.imageElement instanceof HTMLImageElement) {
+      drawMediaItemImmediate(item);
+    }
+  });
+}
+
+/**
+ * Draw a media item immediately (assumes image is loaded)
+ * @param {Object} item - Media item with loaded imageElement
+ */
+function drawMediaItemImmediate(item) {
+  if (!mediaCtx || !item || !item.imageElement) return;
+
+  mediaCtx.save();
+
+  // Apply rotation if present (check for !== undefined to allow 0)
+  if (item.rotation !== undefined && item.rotation !== 0) {
+    const centerX = item.x + item.width / 2;
+    const centerY = item.y + item.height / 2;
+    mediaCtx.translate(centerX, centerY);
+    mediaCtx.rotate((item.rotation * Math.PI) / 180);
+    mediaCtx.translate(-centerX, -centerY);
+  }
+
+  // Draw the image at the specified position and size
+  mediaCtx.drawImage(item.imageElement, item.x, item.y, item.width, item.height);
+
+  mediaCtx.restore();
+}
+
+/**
+ * Get the selected media item
+ * @returns {Object|null} The selected media item or null
+ */
+function getSelectedMedia() {
+  if (!selectedMediaId) return null;
+  return mediaItems.find((item) => item.id === selectedMediaId) || null;
+}
+
+/**
+ * Select a media item by ID
+ * @param {string|null} mediaId - Media item ID or null to deselect
+ */
+function selectMedia(mediaId) {
+  selectedMediaId = mediaId;
+
+  // Update crop and delete button visibility
+  const cropBtn = document.getElementById("crop-media-btn");
+  if (cropBtn) {
+    cropBtn.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  const deleteBtn = document.getElementById("delete-media-btn");
+  if (deleteBtn) {
+    deleteBtn.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  // Update layer control button visibility
+  const layerDivider = document.getElementById("layer-divider");
+  if (layerDivider) {
+    layerDivider.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  const moveForwardBtn = document.getElementById("move-forward-btn");
+  if (moveForwardBtn) {
+    moveForwardBtn.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  const moveBackwardBtn = document.getElementById("move-backward-btn");
+  if (moveBackwardBtn) {
+    moveBackwardBtn.style.display = selectedMediaId ? "block" : "none";
+  }
+
+  // Redraw to show/hide selection
+  redrawMedia();
+}
+
+/**
+ * Check if a point is inside a media item
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ * @param {Object} item - Media item
+ * @returns {boolean} True if point is inside
+ */
+function isPointInMedia(x, y, item) {
+  // If image is rotated, transform the point to the rotated coordinate space
+  let testX = x;
+  let testY = y;
+
+  if (item.rotation !== undefined && item.rotation !== 0) {
+    // Translate point to image center
+    const centerX = item.x + item.width / 2;
+    const centerY = item.y + item.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+
+    // Rotate point by negative rotation angle (inverse transformation)
+    const angle = (-item.rotation * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    testX = centerX + dx * cos - dy * sin;
+    testY = centerY + dx * sin + dy * cos;
+  }
+
+  return (
+    testX >= item.x &&
+    testX <= item.x + item.width &&
+    testY >= item.y &&
+    testY <= item.y + item.height
+  );
+}
+
+/**
+ * Find media item at point (returns topmost item)
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ * @returns {Object|null} Media item or null
+ */
+function getMediaAtPoint(x, y) {
+  // Iterate backwards to get topmost item first
+  for (let i = mediaItems.length - 1; i >= 0; i--) {
+    const item = mediaItems[i];
+    if (isPointInMedia(x, y, item)) {
+      return item;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if a point is on a media resize or rotation handle
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ * @param {Object} item - Media item
+ * @returns {string|null} Handle name ('nw', 'ne', 'sw', 'se', 'rotate') or null
+ */
+function getMediaHandleAtPoint(x, y, item) {
+  // If image is rotated, we need to transform the point to the rotated coordinate space
+  let testX = x;
+  let testY = y;
+
+  if (item.rotation !== undefined && item.rotation !== 0) {
+    // Translate point to image center
+    const centerX = item.x + item.width / 2;
+    const centerY = item.y + item.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+
+    // Rotate point by negative rotation angle (inverse transformation)
+    const angle = (-item.rotation * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    testX = centerX + dx * cos - dy * sin;
+    testY = centerY + dx * sin + dy * cos;
+  }
+
+  const handleRadius = mediaHandleSize * 1.5; // Match the drawing size
+
+  // Check rotation handle first (priority over resize handles)
+  // Rotation handle is a half circle at top-center edge, INSIDE the image
+  const rotateHandleY = item.y; // At top edge
+  const rotateHandleX = item.x + item.width / 2;
+  const rotateDx = testX - rotateHandleX;
+  const rotateDy = testY - rotateHandleY;
+  const rotateDistance = Math.sqrt(rotateDx * rotateDx + rotateDy * rotateDy);
+  // Check if within radius AND in the lower half (y >= rotateHandleY) - inside the image
+  if (rotateDistance <= handleRadius && testY >= rotateHandleY) {
+    return "rotate";
+  }
+
+  // Check resize handles (quarter circles INSIDE corners)
+  const cornerHandles = [
+    { name: "nw", x: item.x, y: item.y, checkX: (dx) => dx >= 0, checkY: (dy) => dy >= 0 }, // bottom-right quarter inside
+    {
+      name: "ne",
+      x: item.x + item.width,
+      y: item.y,
+      checkX: (dx) => dx <= 0,
+      checkY: (dy) => dy >= 0,
+    }, // bottom-left quarter inside
+    {
+      name: "sw",
+      x: item.x,
+      y: item.y + item.height,
+      checkX: (dx) => dx >= 0,
+      checkY: (dy) => dy <= 0,
+    }, // top-right quarter inside
+    {
+      name: "se",
+      x: item.x + item.width,
+      y: item.y + item.height,
+      checkX: (dx) => dx <= 0,
+      checkY: (dy) => dy <= 0,
+    }, // top-left quarter inside
+  ];
+
+  for (const handle of cornerHandles) {
+    const dx = testX - handle.x;
+    const dy = testY - handle.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    // Check if within radius AND in the correct quadrant (INSIDE the image)
+    if (distance <= handleRadius && handle.checkX(dx) && handle.checkY(dy)) {
+      return handle.name;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Draw selection border and resize handles for selected media
+ */
+function drawMediaSelection() {
+  const selected = getSelectedMedia();
+  if (!selected || !mediaCtx) return;
+
+  // Only draw selection in Image Mode
+  if (!isImageMode) return;
+
+  mediaCtx.save();
+
+  // Apply rotation transformation if image is rotated
+  if (selected.rotation !== undefined && selected.rotation !== 0) {
+    const centerX = selected.x + selected.width / 2;
+    const centerY = selected.y + selected.height / 2;
+    mediaCtx.translate(centerX, centerY);
+    mediaCtx.rotate((selected.rotation * Math.PI) / 180);
+    mediaCtx.translate(-centerX, -centerY);
+  }
+
+  // Draw selection border
+  mediaCtx.strokeStyle = "#0066cc";
+  mediaCtx.lineWidth = 2;
+  mediaCtx.setLineDash([5, 5]);
+  mediaCtx.strokeRect(selected.x, selected.y, selected.width, selected.height);
+  mediaCtx.setLineDash([]);
+
+  // Only draw manipulation handles in Image Mode
+  if (isImageMode) {
+    const handleRadius = mediaHandleSize * 1.5; // Bigger diameter for better touch targets
+
+    // Draw resize handles as quarter circles INSIDE corners
+    const cornerHandles = [
+      { x: selected.x, y: selected.y, startAngle: 0, endAngle: Math.PI * 0.5 }, // nw (bottom-right quarter inside)
+      {
+        x: selected.x + selected.width,
+        y: selected.y,
+        startAngle: Math.PI * 0.5,
+        endAngle: Math.PI,
+      }, // ne (bottom-left quarter inside)
+      {
+        x: selected.x,
+        y: selected.y + selected.height,
+        startAngle: Math.PI * 1.5,
+        endAngle: Math.PI * 2,
+      }, // sw (top-right quarter inside)
+      {
+        x: selected.x + selected.width,
+        y: selected.y + selected.height,
+        startAngle: Math.PI,
+        endAngle: Math.PI * 1.5,
+      }, // se (top-left quarter inside)
+    ];
+
+    mediaCtx.fillStyle = "#0066cc";
+    mediaCtx.strokeStyle = "#ffffff";
+    mediaCtx.lineWidth = 2;
+
+    for (const handle of cornerHandles) {
+      mediaCtx.beginPath();
+      mediaCtx.arc(handle.x, handle.y, handleRadius, handle.startAngle, handle.endAngle);
+      mediaCtx.lineTo(handle.x, handle.y); // Line back to center to close the wedge
+      mediaCtx.closePath();
+      mediaCtx.fill();
+      mediaCtx.stroke();
+    }
+
+    // Draw rotation handle as half circle INSIDE top-center edge
+    const rotateHandleY = selected.y; // At top edge
+    const rotateHandleX = selected.x + selected.width / 2; // Center horizontally
+
+    // Draw rotation handle as half circle pointing down (inside the image)
+    mediaCtx.fillStyle = "#00cc66"; // Green color for rotation handle
+    mediaCtx.strokeStyle = "#ffffff";
+    mediaCtx.lineWidth = 2;
+    mediaCtx.beginPath();
+    mediaCtx.arc(rotateHandleX, rotateHandleY, handleRadius, 0, Math.PI); // Bottom half (inside image)
+    mediaCtx.closePath();
+    mediaCtx.fill();
+    mediaCtx.stroke();
+  }
+
+  mediaCtx.restore();
+}
+
+/**
+ * Update cursor style based on media interaction state
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ */
+function updateMediaCursor(x, y) {
+  const textEditorEl = document.getElementById("text-editor");
+  if (!textEditorEl) return;
+
+  // Only change cursor in Image Mode
+  if (!isImageMode) {
+    textEditorEl.style.cursor = "";
+    _mediaHoverState = null;
+    return;
+  }
+
+  // Check if hovering over selected media's handle
+  const selected = getSelectedMedia();
+  if (selected) {
+    const handle = getMediaHandleAtPoint(x, y, selected);
+    if (handle) {
+      // Set cursor based on handle type
+      const cursors = {
+        nw: "nw-resize",
+        ne: "ne-resize",
+        sw: "sw-resize",
+        se: "se-resize",
+        rotate: "grab", // Rotation cursor
+      };
+      textEditorEl.style.cursor = cursors[handle] || "move";
+      _mediaHoverState = { mediaId: selected.id, handle };
+      return;
+    }
+  }
+
+  // Check if hovering over any media item
+  const media = getMediaAtPoint(x, y);
+  if (media) {
+    textEditorEl.style.cursor = "move";
+    _mediaHoverState = { mediaId: media.id, handle: null };
+    return;
+  }
+
+  // No media hover - reset cursor to default
+  textEditorEl.style.cursor = "";
+  _mediaHoverState = null;
+}
+
+/**
+ * Prevent or allow scrolling during media manipulation
+ * @param {boolean} prevent - True to prevent scrolling, false to allow
+ */
+function preventScrollDuringMediaManipulation(prevent) {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) return;
+
+  if (prevent) {
+    // Store original overflow style
+    if (!wrapper.dataset.originalOverflow) {
+      wrapper.dataset.originalOverflow = wrapper.style.overflow || "";
+    }
+    if (!wrapper.dataset.originalTouchAction) {
+      wrapper.dataset.originalTouchAction = wrapper.style.touchAction || "";
+    }
+    if (currentEditor && !currentEditor.dataset.originalTouchAction) {
+      currentEditor.dataset.originalTouchAction = currentEditor.style.touchAction || "";
+    }
+    // Prevent scrolling by setting overflow to hidden
+    wrapper.style.overflow = "hidden";
+    wrapper.style.touchAction = "none";
+    if (currentEditor) {
+      currentEditor.style.touchAction = "none";
+    }
+  } else {
+    // Restore original overflow style
+    const originalOverflow = wrapper.dataset.originalOverflow || "";
+    wrapper.style.overflow = originalOverflow;
+    if (isImageMode) {
+      wrapper.style.touchAction = "";
+      if (currentEditor) {
+        currentEditor.style.touchAction = "";
+        delete currentEditor.dataset.originalTouchAction;
+      }
+    } else {
+      const originalTouchAction = wrapper.dataset.originalTouchAction || "";
+      wrapper.style.touchAction = originalTouchAction;
+      if (currentEditor) {
+        const editorTouchAction = currentEditor.dataset.originalTouchAction || "";
+        currentEditor.style.touchAction = editorTouchAction;
+        delete currentEditor.dataset.originalTouchAction;
+      }
+    }
+    // Clear the stored value
+    delete wrapper.dataset.originalOverflow;
+    delete wrapper.dataset.originalTouchAction;
+  }
+}
+
+/**
+ * Delete the selected media item
+ */
+function deleteSelectedMedia() {
+  if (!selectedMediaId) return;
+
+  // Find and remove the item
+  const index = mediaItems.findIndex((item) => item.id === selectedMediaId);
+  if (index !== -1) {
+    // Add to deleted list for tombstone tracking
+    deletedMedia.push(selectedMediaId);
+
+    // Remove from media items
+    mediaItems.splice(index, 1);
+
+    // Deselect
+    selectMedia(null);
+
+    // Mark as edited and save
+    markNoteEdited();
+
+    // Redraw
+    redrawMedia();
+  }
+}
+
+/**
+ * Move selected media forward (increase z-index)
+ */
+function moveMediaForward() {
+  if (!selectedMediaId) return;
+
+  const selected = getSelectedMedia();
+  if (!selected) return;
+
+  // Initialize zIndex if not set
+  if (selected.zIndex === undefined) {
+    selected.zIndex = 0;
+  }
+
+  // Find the next higher zIndex among all media items
+  const higherItems = mediaItems
+    .filter((item) => item.id !== selectedMediaId && (item.zIndex || 0) > selected.zIndex)
+    .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+  if (higherItems.length > 0) {
+    // Swap with the next higher item
+    const nextItem = higherItems[0];
+    const temp = selected.zIndex;
+    selected.zIndex = nextItem.zIndex;
+    nextItem.zIndex = temp;
+  } else {
+    // Already at the top, increment by 1
+    selected.zIndex++;
+  }
+
+  // Mark as edited and redraw
+  markNoteEdited();
+  redrawMedia();
+  scheduleSave();
+}
+
+/**
+ * Move selected media backward (decrease z-index)
+ */
+function moveMediaBackward() {
+  if (!selectedMediaId) return;
+
+  const selected = getSelectedMedia();
+  if (!selected) return;
+
+  // Initialize zIndex if not set
+  if (selected.zIndex === undefined) {
+    selected.zIndex = 0;
+  }
+
+  // Find the next lower zIndex among all media items
+  const lowerItems = mediaItems
+    .filter((item) => item.id !== selectedMediaId && (item.zIndex || 0) < selected.zIndex)
+    .sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0));
+
+  if (lowerItems.length > 0) {
+    // Swap with the next lower item
+    const nextItem = lowerItems[0];
+    const temp = selected.zIndex;
+    selected.zIndex = nextItem.zIndex;
+    nextItem.zIndex = temp;
+  } else {
+    // Already at the bottom, decrement by 1
+    selected.zIndex--;
+  }
+
+  // Mark as edited and redraw
+  markNoteEdited();
+  redrawMedia();
+  scheduleSave();
+}
+
+/**
+ * Enter crop mode for the selected media item
+ */
+function enterCropMode() {
+  const selected = getSelectedMedia();
+  if (!selected || !selected.imageElement) {
+    console.warn("[Crop] No valid media selected");
+    return;
+  }
+
+  // Create crop overlay
+  const overlay = document.createElement("div");
+  overlay.id = "crop-overlay";
+  overlay.className = "crop-overlay active";
+  overlay.dataset.cropMode = "simple"; // Default to simple crop mode
+
+  // Create crop container
+  const container = document.createElement("div");
+  container.className = "crop-container";
+
+  // Create mode toggle buttons
+  const modeToggle = document.createElement("div");
+  modeToggle.className = "crop-mode-toggle";
+
+  const simpleModeBtn = document.createElement("button");
+  simpleModeBtn.textContent = "Simple Crop";
+  simpleModeBtn.className = "crop-mode-btn crop-mode-simple active";
+  simpleModeBtn.onclick = () => switchCropMode("simple");
+
+  const perspectiveModeBtn = document.createElement("button");
+  perspectiveModeBtn.textContent = "Perspective";
+  perspectiveModeBtn.className = "crop-mode-btn crop-mode-perspective";
+  perspectiveModeBtn.onclick = () => switchCropMode("perspective");
+
+  modeToggle.appendChild(simpleModeBtn);
+  modeToggle.appendChild(perspectiveModeBtn);
+
+  // Create image element for cropping
+  const img = document.createElement("img");
+  img.className = "crop-image";
+  img.src = selected.dataUrl;
+  img.style.maxWidth = "90vw";
+  img.style.maxHeight = "70vh";
+
+  // Create crop area (initially 80% of image size, centered)
+  const cropArea = document.createElement("div");
+  cropArea.className = "crop-area";
+  cropArea.id = "crop-area";
+
+  // Create crop handles (for simple crop mode)
+  const handles = ["nw", "ne", "sw", "se"];
+  handles.forEach((pos) => {
+    const handle = document.createElement("div");
+    handle.className = `crop-handle crop-${pos}`;
+    handle.dataset.position = pos;
+    cropArea.appendChild(handle);
+  });
+
+  // Create perspective corners (for perspective mode, hidden by default)
+  const perspectiveArea = document.createElement("div");
+  perspectiveArea.className = "perspective-area";
+  perspectiveArea.id = "perspective-area";
+  perspectiveArea.style.display = "none";
+
+  const corners = [
+    { name: "tl", label: "TL" },
+    { name: "tr", label: "TR" },
+    { name: "br", label: "BR" },
+    { name: "bl", label: "BL" },
+  ];
+  corners.forEach((corner) => {
+    const cornerHandle = document.createElement("div");
+    cornerHandle.className = `perspective-corner perspective-${corner.name}`;
+    cornerHandle.dataset.corner = corner.name;
+    cornerHandle.innerHTML = `<span class="corner-label">${corner.label}</span>`;
+    perspectiveArea.appendChild(cornerHandle);
+  });
+
+  // Create crop controls
+  const controls = document.createElement("div");
+  controls.className = "crop-controls";
+
+  const applyBtn = document.createElement("button");
+  applyBtn.textContent = "Apply";
+  applyBtn.className = "crop-btn crop-apply-btn";
+  applyBtn.onclick = () => applyCrop(selected.id);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.className = "crop-btn crop-cancel-btn";
+  cancelBtn.onclick = exitCropMode;
+
+  controls.appendChild(cancelBtn);
+  controls.appendChild(applyBtn);
+
+  // Assemble the UI
+  container.appendChild(modeToggle);
+  container.appendChild(img);
+  container.appendChild(cropArea);
+  container.appendChild(perspectiveArea);
+  container.appendChild(controls);
+  overlay.appendChild(container);
+  document.body.appendChild(overlay);
+
+  // Initialize crop area after image loads
+  img.onload = () => {
+    const imgRect = img.getBoundingClientRect();
+    const cropWidth = imgRect.width * 0.8;
+    const cropHeight = imgRect.height * 0.8;
+    const cropLeft = (imgRect.width - cropWidth) / 2;
+    const cropTop = (imgRect.height - cropHeight) / 2;
+
+    cropArea.style.left = `${cropLeft}px`;
+    cropArea.style.top = `${cropTop}px`;
+    cropArea.style.width = `${cropWidth}px`;
+    cropArea.style.height = `${cropHeight}px`;
+
+    // Initialize crop area dragging
+    initCropAreaDrag(cropArea, img);
+
+    // Initialize perspective corners at crop area corners
+    initPerspectiveCorners(perspectiveArea, img, {
+      left: cropLeft,
+      top: cropTop,
+      width: cropWidth,
+      height: cropHeight,
+    });
+  };
+}
+
+/**
+ * Exit crop mode
+ */
+function exitCropMode() {
+  const overlay = document.getElementById("crop-overlay");
+  if (overlay) {
+    overlay.remove();
+  }
+}
+
+/**
+ * Switch between simple crop and perspective correction modes
+ * @param {string} mode - "simple" or "perspective"
+ */
+function switchCropMode(mode) {
+  const overlay = document.getElementById("crop-overlay");
+  const cropArea = document.getElementById("crop-area");
+  const perspectiveArea = document.getElementById("perspective-area");
+  const simpleModeBtn = overlay?.querySelector(".crop-mode-simple");
+  const perspectiveModeBtn = overlay?.querySelector(".crop-mode-perspective");
+
+  if (!overlay || !cropArea || !perspectiveArea) return;
+
+  overlay.dataset.cropMode = mode;
+
+  if (mode === "simple") {
+    // Show simple crop mode
+    cropArea.style.display = "block";
+    perspectiveArea.style.display = "none";
+    simpleModeBtn?.classList.add("active");
+    perspectiveModeBtn?.classList.remove("active");
+  } else if (mode === "perspective") {
+    // Show perspective mode
+    cropArea.style.display = "none";
+    perspectiveArea.style.display = "block";
+    simpleModeBtn?.classList.remove("active");
+    perspectiveModeBtn?.classList.add("active");
+  }
+}
+
+/**
+ * Initialize perspective corner handles
+ * @param {HTMLElement} perspectiveArea - Container for perspective corners
+ * @param {HTMLImageElement} img - The crop image element
+ * @param {Object} initialRect - Initial position {left, top, width, height}
+ */
+function initPerspectiveCorners(perspectiveArea, img, initialRect) {
+  // Position corners at the initial crop area corners
+  const corners = {
+    tl: { x: initialRect.left, y: initialRect.top },
+    tr: { x: initialRect.left + initialRect.width, y: initialRect.top },
+    br: { x: initialRect.left + initialRect.width, y: initialRect.top + initialRect.height },
+    bl: { x: initialRect.left, y: initialRect.top + initialRect.height },
+  };
+
+  // Position each corner handle
+  Object.entries(corners).forEach(([name, pos]) => {
+    const cornerHandle = perspectiveArea.querySelector(`.perspective-${name}`);
+    if (cornerHandle) {
+      cornerHandle.style.left = `${pos.x}px`;
+      cornerHandle.style.top = `${pos.y}px`;
+    }
+  });
+
+  // Make corners draggable
+  perspectiveArea.querySelectorAll(".perspective-corner").forEach((cornerHandle) => {
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    cornerHandle.addEventListener("pointerdown", (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = cornerHandle.offsetLeft;
+      startTop = cornerHandle.offsetTop;
+      cornerHandle.style.cursor = "grabbing";
+      if (cornerHandle.setPointerCapture) {
+        try {
+          cornerHandle.setPointerCapture(e.pointerId);
+        } catch (err) {
+          console.warn("[Crop] Could not set pointer capture:", err);
+        }
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    document.addEventListener("pointermove", (e) => {
+      if (!isDragging) return;
+
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      let newLeft = startLeft + dx;
+      let newTop = startTop + dy;
+
+      // Get current image bounds (need to recalculate as img position may have changed)
+      const currentImgRect = img.getBoundingClientRect();
+      const containerRect = perspectiveArea.getBoundingClientRect();
+
+      // Calculate image bounds relative to container
+      const imgLeft = currentImgRect.left - containerRect.left;
+      const imgTop = currentImgRect.top - containerRect.top;
+      const imgRight = imgLeft + currentImgRect.width;
+      const imgBottom = imgTop + currentImgRect.height;
+
+      // Constrain to image bounds
+      newLeft = Math.max(imgLeft, Math.min(newLeft, imgRight));
+      newTop = Math.max(imgTop, Math.min(newTop, imgBottom));
+
+      cornerHandle.style.left = `${newLeft}px`;
+      cornerHandle.style.top = `${newTop}px`;
+
+      // Draw lines connecting corners
+      drawPerspectiveLines(perspectiveArea);
+      e.preventDefault();
+    });
+
+    const endDrag = (e) => {
+      if (isDragging) {
+        isDragging = false;
+        cornerHandle.style.cursor = "grab";
+        if (cornerHandle.releasePointerCapture) {
+          try {
+            cornerHandle.releasePointerCapture(e.pointerId);
+          } catch (err) {
+            console.warn("[Crop] Could not release pointer capture:", err);
+          }
+        }
+      }
+    };
+    document.addEventListener("pointerup", endDrag);
+    document.addEventListener("pointercancel", endDrag);
+  });
+
+  // Draw initial connecting lines
+  drawPerspectiveLines(perspectiveArea);
+}
+
+/**
+ * Draw lines connecting perspective corners
+ * @param {HTMLElement} perspectiveArea - Container for perspective corners
+ */
+function drawPerspectiveLines(perspectiveArea) {
+  // Remove existing lines
+  const existingLines = perspectiveArea.querySelectorAll(".perspective-line");
+  existingLines.forEach((line) => {
+    line.remove();
+  });
+
+  // Get corner positions
+  const corners = {};
+  perspectiveArea.querySelectorAll(".perspective-corner").forEach((corner) => {
+    const name = corner.dataset.corner;
+    corners[name] = {
+      x: corner.offsetLeft,
+      y: corner.offsetTop,
+    };
+  });
+
+  // Draw lines between corners (TL->TR, TR->BR, BR->BL, BL->TL)
+  const connections = [
+    ["tl", "tr"],
+    ["tr", "br"],
+    ["br", "bl"],
+    ["bl", "tl"],
+  ];
+
+  connections.forEach(([from, to]) => {
+    const fromPos = corners[from];
+    const toPos = corners[to];
+
+    const line = document.createElement("div");
+    line.className = "perspective-line";
+
+    // Calculate line position and rotation
+    const dx = toPos.x - fromPos.x;
+    const dy = toPos.y - fromPos.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+    line.style.left = `${fromPos.x}px`;
+    line.style.top = `${fromPos.y}px`;
+    line.style.width = `${length}px`;
+    line.style.transform = `rotate(${angle}deg)`;
+    line.style.transformOrigin = "0 0";
+
+    perspectiveArea.appendChild(line);
+  });
+}
+
+/**
+ * Initialize crop area dragging and resizing
+ */
+function initCropAreaDrag(cropArea, img) {
+  let isDragging = false;
+  let isResizing = false;
+  let resizeHandle = null;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+
+  const imgRect = img.getBoundingClientRect();
+
+  // Handle drag on crop area
+  cropArea.addEventListener("pointerdown", (e) => {
+    if (e.target.classList.contains("crop-handle")) {
+      // Resize mode
+      isResizing = true;
+      resizeHandle = e.target.dataset.position;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = cropArea.offsetLeft;
+      startTop = cropArea.offsetTop;
+      startWidth = cropArea.offsetWidth;
+      startHeight = cropArea.offsetHeight;
+    } else {
+      // Drag mode
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = cropArea.offsetLeft;
+      startTop = cropArea.offsetTop;
+    }
+    if (cropArea.setPointerCapture) {
+      try {
+        cropArea.setPointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("[Crop] Could not set pointer capture:", err);
+      }
+    }
+    e.preventDefault();
+  });
+
+  document.addEventListener("pointermove", (e) => {
+    if (isDragging) {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      let newLeft = startLeft + dx;
+      let newTop = startTop + dy;
+
+      // Constrain to image bounds
+      newLeft = Math.max(0, Math.min(newLeft, imgRect.width - cropArea.offsetWidth));
+      newTop = Math.max(0, Math.min(newTop, imgRect.height - cropArea.offsetHeight));
+
+      cropArea.style.left = `${newLeft}px`;
+      cropArea.style.top = `${newTop}px`;
+      e.preventDefault();
+    } else if (isResizing) {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      let newLeft = startLeft;
+      let newTop = startTop;
+      let newWidth = startWidth;
+      let newHeight = startHeight;
+
+      if (resizeHandle === "se") {
+        newWidth = startWidth + dx;
+        newHeight = startHeight + dy;
+      } else if (resizeHandle === "sw") {
+        newWidth = startWidth - dx;
+        newHeight = startHeight + dy;
+        newLeft = startLeft + dx;
+      } else if (resizeHandle === "ne") {
+        newWidth = startWidth + dx;
+        newHeight = startHeight - dy;
+        newTop = startTop + dy;
+      } else if (resizeHandle === "nw") {
+        newWidth = startWidth - dx;
+        newHeight = startHeight - dy;
+        newLeft = startLeft + dx;
+        newTop = startTop + dy;
+      }
+
+      // Apply minimum size
+      const minSize = 50;
+      if (newWidth >= minSize && newHeight >= minSize) {
+        // Constrain to image bounds
+        newLeft = Math.max(0, Math.min(newLeft, imgRect.width - newWidth));
+        newTop = Math.max(0, Math.min(newTop, imgRect.height - newHeight));
+        newWidth = Math.min(newWidth, imgRect.width - newLeft);
+        newHeight = Math.min(newHeight, imgRect.height - newTop);
+
+        cropArea.style.left = `${newLeft}px`;
+        cropArea.style.top = `${newTop}px`;
+        cropArea.style.width = `${newWidth}px`;
+        cropArea.style.height = `${newHeight}px`;
+      }
+      e.preventDefault();
+    }
+  });
+
+  const endInteraction = (e) => {
+    isDragging = false;
+    isResizing = false;
+    resizeHandle = null;
+    if (e && cropArea.releasePointerCapture) {
+      try {
+        cropArea.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn("[Crop] Could not release pointer capture:", err);
+      }
+    }
+  };
+  document.addEventListener("pointerup", endInteraction);
+  document.addEventListener("pointercancel", endInteraction);
+}
+
+/**
+ * Apply crop to the selected media item
+ */
+async function applyCrop(mediaId) {
+  const item = mediaItems.find((m) => m.id === mediaId);
+  if (!item || !item.imageElement) {
+    console.error("[Crop] Media item not found");
+    exitCropMode();
+    return;
+  }
+
+  const overlay = document.getElementById("crop-overlay");
+  const img = document.querySelector(".crop-image");
+  if (!overlay || !img) {
+    console.error("[Crop] Crop UI elements not found");
+    exitCropMode();
+    return;
+  }
+
+  const cropMode = overlay.dataset.cropMode;
+  const imgRect = img.getBoundingClientRect();
+
+  if (cropMode === "perspective") {
+    // Apply perspective correction
+    await applyPerspectiveCorrection(item, img, imgRect);
+  } else {
+    // Apply simple crop
+    await applySimpleCrop(item, img, imgRect);
+  }
+
+  // Exit crop mode
+  exitCropMode();
+
+  // Mark as edited and redraw
+  markNoteEdited();
+  redrawMedia();
+  scheduleSave();
+}
+
+/**
+ * Apply simple rectangular crop
+ * @param {Object} item - Media item to crop
+ * @param {HTMLImageElement} img - Display image element
+ * @param {DOMRect} imgRect - Image bounding rectangle
+ */
+async function applySimpleCrop(item, _img, imgRect) {
+  const cropArea = document.getElementById("crop-area");
+  if (!cropArea) {
+    console.error("[Crop] Crop area not found");
+    return;
+  }
+
+  const cropRect = cropArea.getBoundingClientRect();
+
+  // Calculate crop coordinates relative to the displayed image
+  const scaleX = item.imageElement.naturalWidth / imgRect.width;
+  const scaleY = item.imageElement.naturalHeight / imgRect.height;
+
+  const cropX = (cropRect.left - imgRect.left) * scaleX;
+  const cropY = (cropRect.top - imgRect.top) * scaleY;
+  const cropWidth = cropRect.width * scaleX;
+  const cropHeight = cropRect.height * scaleY;
+
+  // Create a canvas to crop the image
+  const canvas = document.createElement("canvas");
+  canvas.width = cropWidth;
+  canvas.height = cropHeight;
+  const ctx = canvas.getContext("2d");
+
+  // Draw the cropped portion
+  ctx.drawImage(
+    item.imageElement,
+    cropX,
+    cropY,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    cropWidth,
+    cropHeight,
+  );
+
+  // Convert to data URL
+  const croppedDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+  // Calculate new displayed size
+  const displayScaleX = cropRect.width / imgRect.width;
+  const displayScaleY = cropRect.height / imgRect.height;
+  const newDisplayWidth = item.width * displayScaleX;
+  const newDisplayHeight = item.height * displayScaleY;
+
+  // Update the media item
+  item.dataUrl = croppedDataUrl;
+  item.imageElement = null; // Force reload
+  item.width = newDisplayWidth;
+  item.height = newDisplayHeight;
+}
+
+/**
+ * Apply perspective correction to straighten document photos
+ * @param {Object} item - Media item to transform
+ * @param {HTMLImageElement} _img - Display image element
+ * @param {DOMRect} imgRect - Image bounding rectangle
+ */
+async function applyPerspectiveCorrection(item, _img, imgRect) {
+  try {
+    console.log("[Crop] Starting perspective correction...");
+
+    const perspectiveArea = document.getElementById("perspective-area");
+    if (!perspectiveArea) {
+      console.error("[Crop] Perspective area not found");
+      return;
+    }
+
+    // Get corner positions (relative to perspectiveArea)
+    const corners = {};
+    perspectiveArea.querySelectorAll(".perspective-corner").forEach((corner) => {
+      const name = corner.dataset.corner;
+      corners[name] = {
+        x: corner.offsetLeft,
+        y: corner.offsetTop,
+      };
+    });
+
+    // Calculate image offset within perspectiveArea container
+    const containerRect = perspectiveArea.getBoundingClientRect();
+    const imgOffsetX = imgRect.left - containerRect.left;
+    const imgOffsetY = imgRect.top - containerRect.top;
+
+    // Adjust corner positions to be relative to the image (not the container)
+    const imgRelativeCorners = {};
+    for (const [name, pos] of Object.entries(corners)) {
+      imgRelativeCorners[name] = {
+        x: pos.x - imgOffsetX,
+        y: pos.y - imgOffsetY,
+      };
+    }
+
+    // Validate corners form a quadrilateral (no crossing lines)
+    if (!isValidQuadrilateral(imgRelativeCorners)) {
+      alert("Invalid corner positions. Lines cannot cross each other.");
+      return;
+    }
+
+    // Calculate scale from displayed image to natural image size
+    const scaleX = item.imageElement.naturalWidth / imgRect.width;
+    const scaleY = item.imageElement.naturalHeight / imgRect.height;
+
+    // Convert corner positions to natural image coordinates
+    const srcCorners = [
+      imgRelativeCorners.tl.x * scaleX,
+      imgRelativeCorners.tl.y * scaleY, // top-left
+      imgRelativeCorners.tr.x * scaleX,
+      imgRelativeCorners.tr.y * scaleY, // top-right
+      imgRelativeCorners.br.x * scaleX,
+      imgRelativeCorners.br.y * scaleY, // bottom-right
+      imgRelativeCorners.bl.x * scaleX,
+      imgRelativeCorners.bl.y * scaleY, // bottom-left
+    ];
+
+    // Calculate output dimensions using natural image coordinates (after scaling)
+    // This ensures we use the actual pixel distances, not distorted display distances
+    const topWidth = Math.sqrt(
+      (srcCorners[2] - srcCorners[0]) ** 2 + (srcCorners[3] - srcCorners[1]) ** 2,
+    );
+    const bottomWidth = Math.sqrt(
+      (srcCorners[4] - srcCorners[6]) ** 2 + (srcCorners[5] - srcCorners[7]) ** 2,
+    );
+    const leftHeight = Math.sqrt(
+      (srcCorners[6] - srcCorners[0]) ** 2 + (srcCorners[7] - srcCorners[1]) ** 2,
+    );
+    const rightHeight = Math.sqrt(
+      (srcCorners[4] - srcCorners[2]) ** 2 + (srcCorners[5] - srcCorners[3]) ** 2,
+    );
+
+    // Calculate perspective distortion ratios
+    const widthRatio = Math.max(topWidth, bottomWidth) / Math.min(topWidth, bottomWidth);
+    const heightRatio = Math.max(leftHeight, rightHeight) / Math.min(leftHeight, rightHeight);
+
+    // For documents photographed at an angle, both edges are distorted
+    // Use the geometric mean (sqrt of product) to estimate the true dimension
+    // This balances between the longer and shorter edges
+    const outputWidth = Math.sqrt(topWidth * bottomWidth);
+    const outputHeight = Math.sqrt(leftHeight * rightHeight);
+
+    console.log("[Crop] Dimension calculation:", {
+      topWidth: topWidth.toFixed(1),
+      bottomWidth: bottomWidth.toFixed(1),
+      leftHeight: leftHeight.toFixed(1),
+      rightHeight: rightHeight.toFixed(1),
+      widthRatio: widthRatio.toFixed(2),
+      heightRatio: heightRatio.toFixed(2),
+      outputWidth: outputWidth.toFixed(1),
+      outputHeight: outputHeight.toFixed(1),
+    });
+
+    // Destination corners (perfect rectangle)
+    const dstCorners = [
+      0,
+      0, // top-left
+      outputWidth,
+      0, // top-right
+      outputWidth,
+      outputHeight, // bottom-right
+      0,
+      outputHeight, // bottom-left
+    ];
+
+    console.log("[Crop] Transform params:", {
+      outputWidth,
+      outputHeight,
+      scaleX,
+      scaleY,
+    });
+
+    // Validate output dimensions
+    if (
+      outputWidth <= 0 ||
+      outputHeight <= 0 ||
+      !Number.isFinite(outputWidth) ||
+      !Number.isFinite(outputHeight)
+    ) {
+      throw new Error(`Invalid output dimensions: ${outputWidth}x${outputHeight}`);
+    }
+
+    // Use the perspective transform library (loaded globally in index.html)
+    if (!window.PerspT) {
+      throw new Error("Perspective transform library not loaded. Please refresh the page.");
+    }
+
+    // Create transformation
+    const perspT = window.PerspT(srcCorners, dstCorners);
+
+    // Create output canvas
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(outputWidth);
+    canvas.height = Math.round(outputHeight);
+    const ctx = canvas.getContext("2d");
+
+    console.log("[Crop] Canvas size:", canvas.width, "x", canvas.height);
+
+    // Create temporary canvas for source image
+    const srcCanvas = document.createElement("canvas");
+    srcCanvas.width = item.imageElement.naturalWidth;
+    srcCanvas.height = item.imageElement.naturalHeight;
+    const srcCtx = srcCanvas.getContext("2d");
+    srcCtx.drawImage(item.imageElement, 0, 0);
+
+    const srcImageData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+    const srcData = srcImageData.data;
+
+    // Create output image data
+    const outputImageData = ctx.createImageData(canvas.width, canvas.height);
+    const outputData = outputImageData.data;
+
+    // Apply perspective transformation pixel by pixel
+    let pixelsTransformed = 0;
+    const totalPixels = canvas.width * canvas.height;
+
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        // Transform destination point to source point
+        const srcPoint = perspT.transformInverse(x, y);
+        const srcX = Math.round(srcPoint[0]);
+        const srcY = Math.round(srcPoint[1]);
+
+        // Check if source point is within bounds
+        if (srcX >= 0 && srcX < srcCanvas.width && srcY >= 0 && srcY < srcCanvas.height) {
+          const srcIndex = (srcY * srcCanvas.width + srcX) * 4;
+          const dstIndex = (y * canvas.width + x) * 4;
+
+          // Copy pixel
+          outputData[dstIndex] = srcData[srcIndex]; // R
+          outputData[dstIndex + 1] = srcData[srcIndex + 1]; // G
+          outputData[dstIndex + 2] = srcData[srcIndex + 2]; // B
+          outputData[dstIndex + 3] = 255; // A - force opaque
+          pixelsTransformed++;
+        }
+      }
+    }
+
+    console.log(
+      `[Crop] Transformed ${pixelsTransformed}/${totalPixels} pixels (${((pixelsTransformed / totalPixels) * 100).toFixed(1)}%)`,
+    );
+
+    // Put transformed image data on canvas
+    ctx.putImageData(outputImageData, 0, 0);
+
+    // Convert to data URL
+    const transformedDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+    // Update the media item
+    item.dataUrl = transformedDataUrl;
+    item.imageElement = null; // Force reload
+    item.width = outputWidth / scaleX; // Convert back to display coordinates
+    item.height = outputHeight / scaleY;
+
+    console.log("[Crop] Perspective correction completed successfully");
+  } catch (error) {
+    console.error("[Crop] Perspective correction failed:", error);
+    alert(`Failed to apply perspective correction: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Check if four corners form a valid quadrilateral (no crossing lines)
+ * @param {Object} corners - Corner positions {tl, tr, br, bl}
+ * @returns {boolean} True if valid
+ */
+function isValidQuadrilateral(corners) {
+  // Check if any lines cross each other
+  // We need to check if TL-TR crosses BL-BR, and if TL-BL crosses TR-BR
+
+  const linesCross = (p1, p2, p3, p4) => {
+    const ccw = (A, B, C) => (C.y - A.y) * (B.x - A.x) > (B.y - A.y) * (C.x - A.x);
+    return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
+  };
+
+  // Check if top-bottom lines cross
+  if (linesCross(corners.tl, corners.tr, corners.bl, corners.br)) return false;
+
+  // Check if left-right lines cross
+  if (linesCross(corners.tl, corners.bl, corners.tr, corners.br)) return false;
+
+  return true;
+}
+
+/**
  * Check if a stroke intersects with eraser circle
  * @param {Object} stroke - Stroke object with x, y arrays
  * @param {number} eraserX - Eraser center x
@@ -1567,18 +3736,18 @@ function eraseStrokesAtPoint(x, y) {
 }
 
 /**
- * Draw eraser cursor indicator on the top canvas
+ * Draw eraser cursor indicator on the overlay canvas
  * @param {number} x - X coordinate
  * @param {number} y - Y coordinate
  */
 function drawEraserCursor(x, y) {
-  if (!cursorCtx) return;
-  cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
-  cursorCtx.strokeStyle = "red";
-  cursorCtx.lineWidth = 1;
-  cursorCtx.beginPath();
-  cursorCtx.arc(x, y, eraserRadius, 0, 2 * Math.PI);
-  cursorCtx.stroke();
+  if (!overlayCtx) return;
+  clearCanvas(overlayCtx, overlayCanvas);
+  overlayCtx.strokeStyle = "red";
+  overlayCtx.lineWidth = 1;
+  overlayCtx.beginPath();
+  overlayCtx.arc(x, y, eraserRadius, 0, 2 * Math.PI);
+  overlayCtx.stroke();
 }
 
 /**
@@ -1586,12 +3755,29 @@ function drawEraserCursor(x, y) {
  */
 function switchToDrawMode() {
   isDrawMode = true;
+  isImageMode = false;
+
+  // Clear any active media transformation
+  mediaTransformState = null;
+
+  // Re-enable scrolling (in case it was disabled during media manipulation)
+  preventScrollDuringMediaManipulation(false);
+
+  // Clear media selection when switching to draw mode
+  if (selectedMediaId) {
+    selectMedia(null);
+  }
+
   if (dynamicCanvas) {
     dynamicCanvas.classList.add("active");
     dynamicCanvas.style.pointerEvents = "auto";
   }
   if (currentEditor) {
     currentEditor.style.pointerEvents = "none";
+  }
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (wrapper) {
+    wrapper.classList.remove("image-mode-active");
   }
 
   updateToolbarButtons();
@@ -1603,6 +3789,19 @@ function switchToDrawMode() {
  */
 function switchToTextMode() {
   isDrawMode = false;
+  isImageMode = false;
+
+  // Clear any active media transformation
+  mediaTransformState = null;
+
+  // Re-enable scrolling (in case it was disabled during media manipulation)
+  preventScrollDuringMediaManipulation(false);
+
+  // Deselect any selected media
+  if (selectedMediaId) {
+    selectMedia(null);
+  }
+
   if (dynamicCanvas) {
     dynamicCanvas.classList.remove("active");
     dynamicCanvas.style.pointerEvents = "none";
@@ -1611,8 +3810,8 @@ function switchToTextMode() {
   if (staticCanvas) {
     staticCanvas.style.pointerEvents = "none";
   }
-  if (cursorCanvas) {
-    cursorCanvas.style.pointerEvents = "none";
+  if (overlayCanvas) {
+    overlayCanvas.style.pointerEvents = "none";
   }
 
   // Hide pen settings dialog
@@ -1634,6 +3833,10 @@ function switchToTextMode() {
   if (currentEditor) {
     currentEditor.style.pointerEvents = "auto";
   }
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (wrapper) {
+    wrapper.classList.remove("image-mode-active");
+  }
 
   updateToolbarButtons();
   updateModeIndicator();
@@ -1647,7 +3850,9 @@ function updateModeIndicator() {
   if (!modeText) return;
 
   let mode = "Text";
-  if (isDrawMode) {
+  if (isImageMode) {
+    mode = "Image";
+  } else if (isDrawMode) {
     mode = isEraserMode ? "Erase" : "Draw";
   }
 
@@ -1661,6 +3866,12 @@ function updateModeIndicator() {
 function manualSwitchToTextMode() {
   autoSwitchedToDrawMode = false; // Clear auto-switch flag
   isEraserMode = false; // Exit eraser mode when switching to text
+
+  // Deselect media when leaving Image Mode
+  if (isImageMode && selectedMediaId) {
+    selectMedia(null);
+  }
+
   switchToTextMode();
   updateToolbarButtons();
 }
@@ -1688,6 +3899,69 @@ function manualSwitchToDrawMode() {
   isLassoMode = false;
   switchToDrawMode();
   updateToolbarButtons();
+}
+
+/**
+ * Switch to image mode
+ */
+function switchToImageMode() {
+  isImageMode = true;
+  isDrawMode = false;
+  isEraserMode = false;
+  isLassoMode = false;
+  autoSwitchedToDrawMode = false;
+
+  // Disable drawing canvases
+  if (dynamicCanvas) {
+    dynamicCanvas.classList.remove("active");
+    dynamicCanvas.style.pointerEvents = "none";
+  }
+  if (staticCanvas) {
+    staticCanvas.style.pointerEvents = "none";
+  }
+  if (overlayCanvas) {
+    overlayCanvas.style.pointerEvents = "none";
+  }
+
+  // Enable text editor for scrolling on background
+  if (currentEditor) {
+    currentEditor.style.pointerEvents = "auto";
+  }
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (wrapper) {
+    wrapper.classList.add("image-mode-active");
+  }
+  // Clear stroke selection
+  if (selectedStrokes.size > 0) {
+    selectedStrokes.clear();
+    selectionBounds = null;
+    const deleteBtn = document.getElementById("delete-selection-btn");
+    if (deleteBtn) deleteBtn.style.display = "none";
+    redrawCanvas();
+  }
+
+  updateToolbarButtons();
+  updateModeIndicator();
+}
+
+/**
+ * Exit image mode and return to text mode
+ */
+function _exitImageMode() {
+  isImageMode = false;
+  selectMedia(null); // Deselect any selected media
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (wrapper) {
+    wrapper.classList.remove("image-mode-active");
+  }
+  switchToTextMode();
+}
+
+/**
+ * Manually switch to image mode (user clicked button)
+ */
+function manualSwitchToImageMode() {
+  switchToImageMode();
 }
 
 /**
@@ -1756,17 +4030,22 @@ function toggleLassoMode() {
 function updateToolbarButtons() {
   const textBtn = document.getElementById("mode-text-btn");
   const drawBtn = document.getElementById("mode-draw-btn");
+  const imageBtn = document.getElementById("mode-image-btn");
   const penBtn = document.getElementById("pen-settings-btn");
   const eraseBtn = document.getElementById("mode-erase-btn");
   const lassoBtn = document.getElementById("mode-lasso-btn");
 
   if (textBtn) {
-    textBtn.classList.toggle("active", !isDrawMode);
-    textBtn.setAttribute("aria-selected", (!isDrawMode).toString());
+    textBtn.classList.toggle("active", !isDrawMode && !isImageMode);
+    textBtn.setAttribute("aria-selected", (!isDrawMode && !isImageMode).toString());
   }
   if (drawBtn) {
     drawBtn.classList.toggle("active", isDrawMode);
     drawBtn.setAttribute("aria-selected", isDrawMode.toString());
+  }
+  if (imageBtn) {
+    imageBtn.classList.toggle("active", isImageMode);
+    imageBtn.setAttribute("aria-selected", isImageMode.toString());
   }
   if (penBtn) {
     penBtn.classList.toggle("active", isDrawMode && !isEraserMode && !isLassoMode);
@@ -1780,14 +4059,24 @@ function updateToolbarButtons() {
 
   // Toggle Row 2 sections based on mode
   const textTools = document.getElementById("text-tools");
+  const imageTools = document.getElementById("image-tools");
   const penTools = document.getElementById("pen-tools");
 
-  if (textTools && penTools) {
+  if (textTools && imageTools && penTools) {
     if (isDrawMode) {
+      // Draw Mode: show pen tools only
       textTools.style.display = "none";
+      imageTools.style.display = "none";
       penTools.style.display = "flex";
+    } else if (isImageMode) {
+      // Image Mode: show image tools only
+      textTools.style.display = "none";
+      imageTools.style.display = "flex";
+      penTools.style.display = "none";
     } else {
+      // Text Mode: show text tools only
       textTools.style.display = "flex";
+      imageTools.style.display = "none";
       penTools.style.display = "none";
     }
   }
@@ -1957,6 +4246,7 @@ function attachToolbarListeners() {
   // Mode switching - use manual switch functions to clear auto-switch flag
   document.getElementById("mode-text-btn")?.addEventListener("click", manualSwitchToTextMode);
   document.getElementById("mode-draw-btn")?.addEventListener("click", manualSwitchToDrawMode);
+  document.getElementById("mode-image-btn")?.addEventListener("click", manualSwitchToImageMode);
   document.getElementById("mode-erase-btn")?.addEventListener("click", toggleEraserMode);
   document.getElementById("mode-lasso-btn")?.addEventListener("click", toggleLassoMode);
   document.getElementById("pen-settings-btn")?.addEventListener("click", () => {
@@ -2003,10 +4293,24 @@ function attachToolbarListeners() {
     ?.addEventListener("click", () => formatText("heading"));
   document.getElementById("format-list-btn")?.addEventListener("click", () => formatText("list"));
 
-  // Zoom controls
-  document.getElementById("zoom-in-btn")?.addEventListener("click", () => adjustZoom(zoomStep));
-  document.getElementById("zoom-out-btn")?.addEventListener("click", () => adjustZoom(-zoomStep));
-  document.getElementById("zoom-reset-btn")?.addEventListener("click", () => setZoom(1.0));
+  // Image import and manipulation
+  document.getElementById("insert-image-btn")?.addEventListener("click", handleInsertImage);
+  document.getElementById("insert-camera-btn")?.addEventListener("click", handleInsertCamera);
+  document.getElementById("crop-media-btn")?.addEventListener("click", enterCropMode);
+  document.getElementById("delete-media-btn")?.addEventListener("click", deleteSelectedMedia);
+  document.getElementById("move-forward-btn")?.addEventListener("click", moveMediaForward);
+  document.getElementById("move-backward-btn")?.addEventListener("click", moveMediaBackward);
+
+  // Zoom controls (use immediate rendering for button clicks)
+  document
+    .getElementById("zoom-in-btn")
+    ?.addEventListener("click", () => adjustZoom(zoomStep, { immediate: true }));
+  document
+    .getElementById("zoom-out-btn")
+    ?.addEventListener("click", () => adjustZoom(-zoomStep, { immediate: true }));
+  document
+    .getElementById("zoom-reset-btn")
+    ?.addEventListener("click", () => setZoom(1.0, { immediate: true, preserveViewport: true }));
 
   // Delete note
   document.getElementById("delete-note-btn")?.addEventListener("click", deleteCurrentNote);
@@ -2138,6 +4442,196 @@ function formatText(format) {
 }
 
 /**
+ * Calculate initial position and size for a new image
+ * Centers the image in the visible viewport and scales it to fit if needed
+ * @param {number} imageWidth - Original image width
+ * @param {number} imageHeight - Original image height
+ * @returns {Object} {x, y, width, height} - Calculated position and size
+ */
+function calculateInitialImagePlacement(imageWidth, imageHeight) {
+  const wrapper = document.querySelector(".editor-content-wrapper");
+  if (!wrapper) {
+    // Fallback if wrapper not found
+    return {
+      x: 100,
+      y: 100,
+      width: imageWidth,
+      height: imageHeight,
+    };
+  }
+
+  // Get viewport dimensions
+  const viewportWidth = wrapper.clientWidth;
+  const viewportHeight = wrapper.clientHeight;
+  const scrollLeft = wrapper.scrollLeft;
+  const scrollTop = wrapper.scrollTop;
+
+  // Calculate maximum size (leave 20% margin on each side)
+  const maxWidth = viewportWidth * 0.6;
+  const maxHeight = viewportHeight * 0.6;
+
+  // Scale image to fit within max dimensions while maintaining aspect ratio
+  let finalWidth = imageWidth;
+  let finalHeight = imageHeight;
+
+  if (finalWidth > maxWidth || finalHeight > maxHeight) {
+    const widthRatio = maxWidth / finalWidth;
+    const heightRatio = maxHeight / finalHeight;
+    const scale = Math.min(widthRatio, heightRatio);
+
+    finalWidth = finalWidth * scale;
+    finalHeight = finalHeight * scale;
+  }
+
+  // Center in viewport
+  const centerX = scrollLeft + (viewportWidth - finalWidth) / 2;
+  const centerY = scrollTop + (viewportHeight - finalHeight) / 2;
+
+  return {
+    x: Math.max(0, centerX),
+    y: Math.max(0, centerY),
+    width: finalWidth,
+    height: finalHeight,
+  };
+}
+
+/**
+ * Handle image import from file system
+ */
+async function handleInsertImage() {
+  try {
+    const files = await pickImages(true);
+    if (files.length === 0) return;
+
+    // Process images (get original data URLs without downsampling)
+    const results = await Promise.all(
+      files.map(async (file) => {
+        try {
+          const dataUrl = await fileToDataUrl(file);
+
+          // Load image to get original dimensions
+          const img = await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("Failed to load image"));
+            image.src = dataUrl;
+          });
+
+          return {
+            success: true,
+            dataUrl: dataUrl,
+            width: img.width,
+            height: img.height,
+            fileName: file.name,
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: error.message,
+            fileName: file.name,
+          };
+        }
+      }),
+    );
+
+    // Filter successful results
+    const successful = results.filter((r) => r.success);
+
+    if (successful.length > 0) {
+      // Add images to note
+      successful.forEach((result, index) => {
+        // Calculate initial placement (centered in viewport, scaled to fit)
+        const placement = calculateInitialImagePlacement(result.width, result.height);
+
+        // Offset multiple images slightly so they don't stack exactly on top of each other
+        const offset = index * 30;
+
+        // Create media item with original full-resolution image
+        const mediaItem = {
+          id: generateId(),
+          dataUrl: result.dataUrl, // Original full-resolution image
+          originalWidth: result.width, // Store original dimensions
+          originalHeight: result.height,
+          width: placement.width, // Display dimensions
+          height: placement.height,
+          x: placement.x + offset,
+          y: placement.y + offset,
+          rotation: 0,
+          createdAt: Date.now(),
+        };
+
+        mediaItems.push(mediaItem);
+      });
+
+      // Mark note as edited and save
+      markNoteEdited();
+
+      // Redraw media canvas
+      redrawMedia();
+    }
+
+    // Report failures
+    const failed = results.filter((r) => !r.success);
+    if (failed.length > 0) {
+      console.error(`[Image Import] Failed to process ${failed.length} image(s)`);
+      failed.forEach((result) => {
+        console.error(`[Image Import] ${result.fileName}: ${result.error}`);
+      });
+    }
+  } catch (error) {
+    console.error("[Image Import] Error:", error);
+  }
+}
+
+/**
+ * Handle image capture from camera
+ */
+async function handleInsertCamera() {
+  try {
+    const file = await captureFromCamera("environment");
+    if (!file) return;
+
+    // Get original image data without downsampling
+    const dataUrl = await fileToDataUrl(file);
+
+    // Load image to get original dimensions
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to load image"));
+      image.src = dataUrl;
+    });
+
+    // Calculate initial placement (centered in viewport, scaled to fit)
+    const placement = calculateInitialImagePlacement(img.width, img.height);
+
+    // Create media item with original full-resolution image
+    const mediaItem = {
+      id: generateId(),
+      dataUrl: dataUrl, // Original full-resolution image
+      originalWidth: img.width, // Store original dimensions
+      originalHeight: img.height,
+      width: placement.width, // Display dimensions
+      height: placement.height,
+      x: placement.x,
+      y: placement.y,
+      rotation: 0,
+      createdAt: Date.now(),
+    };
+
+    mediaItems.push(mediaItem);
+
+    // Mark note as edited and save
+    markNoteEdited();
+
+    // Redraw media canvas
+    redrawMedia();
+  } catch (error) {
+    console.error("[Camera] Error:", error);
+  }
+}
+
+/**
  * Delete current note
  */
 async function deleteCurrentNote() {
@@ -2162,53 +4656,283 @@ async function deleteCurrentNote() {
 /**
  * Set zoom level
  * @param {number} newZoom - New zoom scale (e.g., 1.0 = 100%, 1.5 = 150%)
+ * @param {Object} options - Options for zoom behavior
+ * @param {boolean} options.immediate - If true, skip debounced re-render and render immediately (default: false)
+ * @param {Object} options.fixedPoint - Point to keep fixed during zoom (in viewport coordinates)
+ * @param {number} options.fixedPoint.clientX - X coordinate in viewport
+ * @param {number} options.fixedPoint.clientY - Y coordinate in viewport
+ * @param {boolean} options.preserveViewport - If true, scale scroll to keep same content visible (for reset zoom)
  */
-function setZoom(newZoom) {
+function setZoom(newZoom, options = {}) {
+  const { immediate = false, fixedPoint = null, preserveViewport = false } = options;
+
+  // Store old zoom for calculating scroll adjustment
+  const oldZoom = zoomScale;
+
   // Clamp zoom to valid range
   zoomScale = Math.max(minZoom, Math.min(maxZoom, newZoom));
 
-  // Apply zoom to text editor using CSS transform
+  // Skip if zoom hasn't changed
+  if (zoomScale === oldZoom && !immediate) {
+    return;
+  }
+
+  // Get wrapper for scroll calculations
+  const wrapper = document.querySelector(".editor-content-wrapper");
+
+  // Calculate scroll adjustment
+  let newScrollLeft = wrapper ? wrapper.scrollLeft : 0;
+  let newScrollTop = wrapper ? wrapper.scrollTop : 0;
+
+  if (preserveViewport && wrapper && oldZoom !== 0) {
+    // Scale scroll position proportionally to keep the same content visible at top-left
+    // Content at scroll position S at zoom Z is at base coordinate S/Z
+    // To show the same base content at new zoom, scroll to S * (newZoom/oldZoom)
+    const zoomRatio = zoomScale / oldZoom;
+    newScrollLeft = wrapper.scrollLeft * zoomRatio;
+    newScrollTop = wrapper.scrollTop * zoomRatio;
+  } else if (fixedPoint && wrapper) {
+    // Get the fixed point's position relative to the wrapper viewport
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const viewportX = fixedPoint.clientX - wrapperRect.left;
+    const viewportY = fixedPoint.clientY - wrapperRect.top;
+
+    // Calculate the point in content space (base coordinates, unzoomed)
+    // Content position = (scroll + viewport offset) / zoom
+    const contentX = (wrapper.scrollLeft + viewportX) / oldZoom;
+    const contentY = (wrapper.scrollTop + viewportY) / oldZoom;
+
+    // Calculate new scroll position to keep the content point at the same viewport position
+    // New scroll = content position * new zoom - viewport offset
+    newScrollLeft = contentX * zoomScale - viewportX;
+    newScrollTop = contentY * zoomScale - viewportY;
+  }
+
+  // Update zoom indicator
+  updateZoomIndicator();
+
+  // Handle canvas re-rendering
+  if (immediate || !isZoomingGesture) {
+    // Immediate re-render: properly sets bitmap, CSS size, and CSS transform
+    rerenderCanvasAtNativeZoom();
+
+    // Apply scroll after re-render (dimensions have changed)
+    if (wrapper) {
+      wrapper.scrollLeft = newScrollLeft;
+      wrapper.scrollTop = newScrollTop;
+    }
+  } else {
+    // Preview zoom during gesture: use CSS transform on existing bitmap
+    // This is smooth but may be blurry; proper re-render happens after gesture ends
+    //
+    // The canvas bitmap is currently at: baseSize * currentResolutionScale
+    // To achieve visual zoom of zoomScale, we need CSS transform of: zoomScale / currentResolutionScale
+    const previewTransformScale = zoomScale / currentResolutionScale;
+
+    // Full-resolution canvases use preview transform based on their current resolution
+    const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+    fullResCanvases.forEach((cvs) => {
+      if (cvs) {
+        cvs.style.transformOrigin = "top left";
+        cvs.style.transform = `scale(${previewTransformScale})`;
+      }
+    });
+
+    // Overlay canvas is always at base resolution, so it scales by zoomScale directly
+    if (overlayCanvas) {
+      overlayCanvas.style.transformOrigin = "top left";
+      overlayCanvas.style.transform = `scale(${zoomScale})`;
+    }
+
+    // Apply zoom to text editor using CSS transform (text editor is always at base size)
+    if (currentEditor) {
+      currentEditor.style.transformOrigin = "top left";
+      currentEditor.style.transform = `scale(${zoomScale})`;
+    }
+
+    // Apply scroll position adjustment
+    if (wrapper) {
+      wrapper.scrollLeft = newScrollLeft;
+      wrapper.scrollTop = newScrollTop;
+    }
+
+    // Schedule proper re-render after gesture ends
+    scheduleZoomRerender();
+  }
+}
+
+/**
+ * Schedule a debounced canvas re-render at native zoom resolution
+ * Called during zoom gestures to avoid re-rendering on every frame
+ */
+function scheduleZoomRerender() {
+  // Clear any existing timer
+  if (zoomRerenderTimer) {
+    clearTimeout(zoomRerenderTimer);
+  }
+
+  // Schedule re-render after debounce period
+  zoomRerenderTimer = setTimeout(() => {
+    rerenderCanvasAtNativeZoom();
+    zoomRerenderTimer = null;
+  }, ZOOM_RERENDER_DEBOUNCE);
+}
+
+/**
+ * Re-render canvas at native zoom resolution
+ * This is called after zoom changes to ensure crisp rendering
+ *
+ * Strategy:
+ * 1. During preview zoom: CSS transform handles scaling visually (smooth but blurry)
+ * 2. After gesture: Re-render canvas at higher bitmap resolution, then REMOVE CSS transform
+ *
+ * The key insight is that preview zoom uses CSS transform, but final rendering
+ * uses bitmap resolution scaling. We must remove the CSS transform after re-rendering
+ * to avoid double-scaling.
+ *
+ * CSS size of canvas = baseCanvasWidth * zoomScale (to match the zoomed view)
+ * Bitmap resolution = baseCanvasWidth * resolutionScale (for crisp rendering)
+ * Context transform = resolutionScale (to draw at higher resolution)
+ * CSS transform = none (removed after re-render, handled by CSS size)
+ */
+function rerenderCanvasAtNativeZoom() {
+  if (!dynamicCanvas || !staticCtx || baseCanvasWidth === 0 || baseCanvasHeight === 0) {
+    console.warn("[Zoom] Cannot re-render: base canvas dimensions not initialized");
+    return;
+  }
+
+  console.log("[Zoom] Re-rendering canvas at native resolution for zoom:", zoomScale);
+
+  // Optimized for vertical scrolling: narrow width, tall height
+  const maxCanvasWidth = 2000;
+  const maxCanvasHeight = 25000;
+
+  // Calculate the maximum resolution scale we can use without exceeding canvas limits
+  const maxResolutionScaleW = maxCanvasWidth / baseCanvasWidth;
+  const maxResolutionScaleH = maxCanvasHeight / baseCanvasHeight;
+  const maxResolutionScale = Math.min(maxResolutionScaleW, maxResolutionScaleH);
+
+  // For zoom > 1.0: increase bitmap resolution for crisp rendering (up to max)
+  // For zoom <= 1.0: use base resolution (bitmap stays at base size)
+  // In both cases, CSS transform handles the final visual scaling
+  const desiredResolutionScale = Math.max(1.0, zoomScale);
+  const actualResolutionScale = Math.min(desiredResolutionScale, maxResolutionScale);
+
+  // Store the resolution scale for preview zoom calculations
+  currentResolutionScale = actualResolutionScale;
+
+  // Calculate bitmap dimensions (always >= base size)
+  const bitmapWidth = Math.round(baseCanvasWidth * actualResolutionScale);
+  const bitmapHeight = Math.round(baseCanvasHeight * actualResolutionScale);
+
+  // CSS transform handles the visual zoom:
+  // - For zoom > 1 and within bitmap capacity: cssTransformScale ≈ 1 (bitmap handles it)
+  // - For zoom > 1 beyond bitmap capacity: cssTransformScale > 1 (CSS scales up)
+  // - For zoom < 1: cssTransformScale < 1 (CSS scales down)
+  const cssTransformScale = zoomScale / actualResolutionScale;
+
+  // CSS size = bitmap size (no stretching between bitmap and CSS)
+  const cssWidth = bitmapWidth;
+  const cssHeight = bitmapHeight;
+
+  // Apply CSS transform if scale is not 1.0 (either scaling up or down)
+  const needsCssTransform = Math.abs(cssTransformScale - 1.0) > 0.001;
+
+  console.log("[Zoom] Base canvas dimensions:", baseCanvasWidth, "x", baseCanvasHeight);
+  console.log("[Zoom] Zoom scale:", zoomScale, "Resolution scale:", actualResolutionScale);
+  console.log(
+    "[Zoom] Bitmap:",
+    bitmapWidth,
+    "x",
+    bitmapHeight,
+    "CSS transform:",
+    cssTransformScale,
+  );
+
+  // Update full-resolution canvas dimensions
+  const fullResCanvases = [dynamicCanvas, staticCanvas, mediaCanvas];
+
+  fullResCanvases.forEach((cvs) => {
+    if (cvs) {
+      // Update bitmap resolution
+      cvs.width = bitmapWidth;
+      cvs.height = bitmapHeight;
+
+      // Set CSS size to match bitmap (1:1, no stretching)
+      cvs.style.width = `${cssWidth}px`;
+      cvs.style.height = `${cssHeight}px`;
+
+      // Apply CSS transform for visual zoom (both scaling up and down)
+      cvs.style.transformOrigin = "top left";
+      if (needsCssTransform) {
+        cvs.style.transform = `scale(${cssTransformScale})`;
+      } else {
+        cvs.style.transform = "none";
+      }
+    }
+  });
+
+  // Overlay canvas stays at base resolution (no zoom scaling on bitmap)
+  if (overlayCanvas) {
+    overlayCanvas.width = baseCanvasWidth;
+    overlayCanvas.height = baseCanvasHeight;
+    overlayCanvas.style.width = `${baseCanvasWidth}px`;
+    overlayCanvas.style.height = `${baseCanvasHeight}px`;
+    // Overlay uses CSS transform to match visual size
+    overlayCanvas.style.transformOrigin = "top left";
+    overlayCanvas.style.transform = `scale(${zoomScale})`;
+  }
+
+  // Text editor still uses CSS transform for scaling (it doesn't have bitmap resolution)
   if (currentEditor) {
     currentEditor.style.transformOrigin = "top left";
     currentEditor.style.transform = `scale(${zoomScale})`;
   }
 
-  // Apply same CSS transform to all canvases to keep them aligned
-  const canvases = [dynamicCanvas, staticCanvas, backgroundCanvas, cursorCanvas, highlightCanvas];
-  canvases.forEach((cvs) => {
-    if (cvs) {
-      cvs.style.transformOrigin = "top left";
-      cvs.style.transform = `scale(${zoomScale})`;
+  // Context transform scales drawing from base coordinates to bitmap coordinates
+  const contextScale = actualResolutionScale;
+
+  [staticCtx, dynamicCtx, mediaCtx].forEach((ctx) => {
+    if (ctx) {
+      ctx.setTransform(contextScale, 0, 0, contextScale, 0, 0);
     }
   });
 
-  // Resize and redraw canvas with new zoom scale
-  if (dynamicCanvas && staticCtx) {
-    // Store current scroll position
-    const wrapper = document.querySelector(".editor-content-wrapper");
-    const scrollLeft = wrapper ? wrapper.scrollLeft : 0;
-    const scrollTop = wrapper ? wrapper.scrollTop : 0;
-
-    // Resize canvas to account for new zoom scale, then redraw
-    resizeCanvas();
-
-    // Restore scroll position
-    if (wrapper) {
-      wrapper.scrollLeft = scrollLeft;
-      wrapper.scrollTop = scrollTop;
-    }
+  // Overlay context uses identity transform (always at base resolution)
+  if (overlayCtx) {
+    overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  // Update zoom indicator
-  updateZoomIndicator();
+  // Redraw all canvas content at the new resolution
+  redrawBackground();
+  redrawCanvas();
+  redrawMedia();
+
+  // Re-apply stroke highlighting if active
+  if (activeSearchQuery) {
+    console.log("[NotebookEditor] Re-applying highlights after zoom re-render");
+    highlightStrokes(activeSearchQuery);
+  }
+
+  console.log(
+    "[Zoom] Canvas re-rendered - bitmap:",
+    bitmapWidth,
+    "x",
+    bitmapHeight,
+    "CSS:",
+    cssWidth,
+    "x",
+    cssHeight,
+  );
 }
 
 /**
  * Adjust zoom by a delta amount
  * @param {number} delta - Amount to change zoom (e.g., 0.1 for +10%, -0.1 for -10%)
+ * @param {Object} options - Options passed to setZoom
  */
-function adjustZoom(delta) {
-  setZoom(zoomScale + delta);
+function adjustZoom(delta, options = {}) {
+  setZoom(zoomScale + delta, options);
 }
 
 /**
@@ -2228,8 +4952,9 @@ function updateContentBounds() {
   if (!dynamicCanvas || !currentEditor) return;
 
   // Calculate minimum canvas dimensions needed to show all content
-  let maxX = dynamicCanvas.width;
-  let maxY = dynamicCanvas.height;
+  // Start from 0 and find the actual content bounds
+  let maxX = 0;
+  let maxY = 0;
 
   // Check all strokes to find the extent
   for (const stroke of strokes) {
@@ -2241,7 +4966,15 @@ function updateContentBounds() {
     }
   }
 
-  // Update minimum dimensions
+  // Check all media items to find the extent
+  for (const media of mediaItems) {
+    if (media.position && media.size) {
+      maxX = Math.max(maxX, media.position.x + media.size.width + 50);
+      maxY = Math.max(maxY, media.position.y + media.size.height + 50);
+    }
+  }
+
+  // Update minimum dimensions (the actual content bounds)
   minCanvasWidth = maxX;
   minCanvasHeight = maxY;
 
@@ -2250,13 +4983,10 @@ function updateContentBounds() {
     const wrapper = dynamicCanvas.parentElement;
     const rect = wrapper.getBoundingClientRect();
 
-    dynamicCanvas.width =
-      staticCanvas.width =
-      backgroundCanvas.width =
-      cursorCanvas.width =
-      highlightCanvas.width =
-        Math.max(minCanvasWidth, rect.width);
+    const newWidth = Math.max(minCanvasWidth, rect.width);
+    dynamicCanvas.width = staticCanvas.width = mediaCanvas.width = newWidth;
 
+    redrawBackground(); // Redraw background after canvas resize clears it
     redrawCanvas();
   }
 }
@@ -2268,7 +4998,29 @@ function initZoomListeners() {
   const wrapper = document.querySelector(".editor-content-wrapper");
   if (!wrapper) return;
 
+  // Debounced scroll handler for lazy loading media
+  let scrollTimeout = null;
+  let cleanupTimeout = null;
+  wrapper.addEventListener("scroll", () => {
+    if (scrollTimeout) {
+      clearTimeout(scrollTimeout);
+    }
+    scrollTimeout = setTimeout(() => {
+      // Trigger lazy loading check on scroll
+      redrawMedia();
+    }, 100); // 100ms debounce
+
+    // Cleanup memory less frequently (every 2 seconds of idle)
+    if (cleanupTimeout) {
+      clearTimeout(cleanupTimeout);
+    }
+    cleanupTimeout = setTimeout(() => {
+      cleanupMediaMemory();
+    }, 2000); // 2 second debounce for cleanup
+  });
+
   // CTRL + Mouse wheel zoom (Windows/Desktop)
+  let wheelZoomEndTimer = null;
   wrapper.addEventListener(
     "wheel",
     (e) => {
@@ -2276,9 +5028,31 @@ function initZoomListeners() {
       if (e.ctrlKey) {
         e.preventDefault();
 
+        // Mark as zooming gesture for debounced re-render
+        isZoomingGesture = true;
+
         // wheelDelta is positive for zoom in, negative for zoom out
         const delta = e.deltaY < 0 ? zoomStep : -zoomStep;
-        adjustZoom(delta);
+        const newZoom = zoomScale + delta;
+
+        // Zoom around mouse cursor position
+        setZoom(newZoom, {
+          fixedPoint: {
+            clientX: e.clientX,
+            clientY: e.clientY,
+          },
+        });
+
+        // Clear existing end timer and set new one
+        if (wheelZoomEndTimer) {
+          clearTimeout(wheelZoomEndTimer);
+        }
+        wheelZoomEndTimer = setTimeout(() => {
+          isZoomingGesture = false;
+          // Trigger lazy loading check after zoom
+          redrawMedia();
+          wheelZoomEndTimer = null;
+        }, ZOOM_RERENDER_DEBOUNCE + 50);
       }
     },
     { passive: false },
@@ -2292,6 +5066,9 @@ function initZoomListeners() {
       if (e.touches.length === 2) {
         e.preventDefault();
 
+        // Mark as zooming gesture for debounced re-render
+        isZoomingGesture = true;
+
         // Calculate initial distance between fingers
         const touch1 = e.touches[0];
         const touch2 = e.touches[1];
@@ -2300,7 +5077,13 @@ function initZoomListeners() {
         lastTouchDistance = Math.sqrt(dx * dx + dy * dy);
         initialPinchZoom = zoomScale;
 
-        console.log("Pinch zoom started:", { lastTouchDistance, initialPinchZoom });
+        // Store the center point between fingers
+        pinchCenter = {
+          clientX: (touch1.clientX + touch2.clientX) / 2,
+          clientY: (touch1.clientY + touch2.clientY) / 2,
+        };
+
+        console.log("Pinch zoom started:", { lastTouchDistance, initialPinchZoom, pinchCenter });
       }
     },
     { passive: false },
@@ -2324,7 +5107,10 @@ function initZoomListeners() {
         const pinchScale = currentDistance / lastTouchDistance;
         const newZoom = initialPinchZoom * pinchScale;
 
-        setZoom(newZoom);
+        // Zoom around the center point between fingers
+        setZoom(newZoom, {
+          fixedPoint: pinchCenter,
+        });
       }
       // Single finger scroll - allow default behavior (scrolling)
       // This is handled by the browser automatically
@@ -2335,8 +5121,19 @@ function initZoomListeners() {
   wrapper.addEventListener("touchend", (e) => {
     // Reset pinch tracking when fingers are lifted
     if (e.touches.length < 2) {
+      if (lastTouchDistance !== null) {
+        // Mark gesture as ended
+        isZoomingGesture = false;
+
+        // Trigger final re-render at native resolution
+        rerenderCanvasAtNativeZoom();
+
+        // Trigger lazy loading check after zoom ends
+        redrawMedia();
+      }
       lastTouchDistance = null;
       initialPinchZoom = null;
+      pinchCenter = null;
     }
   });
 
@@ -2344,6 +5141,8 @@ function initZoomListeners() {
     // Reset pinch tracking on cancel
     lastTouchDistance = null;
     initialPinchZoom = null;
+    pinchCenter = null;
+    isZoomingGesture = false;
   });
 }
 
@@ -2403,17 +5202,34 @@ async function saveNoteContent(noteIdOverride = null) {
     const htmlContent = currentEditor.innerHTML;
     const markdownContent = htmlToMarkdown(htmlContent);
 
-    // Update note with content, strokes, deleted stroke IDs, and background setting
+    // Prepare media items for storage (strip transient properties)
+    const mediaForStorage = mediaItems.map((item) => ({
+      id: item.id,
+      dataUrl: item.dataUrl,
+      width: item.width,
+      height: item.height,
+      x: item.x,
+      y: item.y,
+      rotation: item.rotation,
+      createdAt: item.createdAt,
+    }));
+
+    // Update note with content, strokes, deleted stroke IDs, media, and background setting
     await updateNote(noteId, {
       content: markdownContent,
       strokes: strokes,
       deletedStrokes: deletedStrokes,
+      media: mediaForStorage,
+      deletedMedia: deletedMedia,
       background: currentNoteData?.background || "none",
       modified: Date.now(),
     });
 
-    // Reset inactivity timer after save
-    resetInactivityTimer(noteId);
+    // Check note size and warn if too large
+    checkNoteSizeAndWarn(markdownContent, strokes, mediaForStorage);
+
+    // Note: We no longer trigger sync while note is open
+    // Sync will happen when the note is closed via cleanupNotebookEditor()
 
     console.log("Note saved");
   } catch (error) {
@@ -2428,6 +5244,54 @@ async function saveNoteContent(noteIdOverride = null) {
 }
 
 // Markdown conversion functions are now imported from ../utils/markdown.js
+
+/**
+ * Check note size and warn user if it's too large
+ * @param {string} content - Markdown content
+ * @param {Array} strokes - Drawing strokes
+ * @param {Array} media - Media items
+ */
+function checkNoteSizeAndWarn(content, strokes, media) {
+  // Calculate approximate size in bytes
+  const contentSize = new Blob([content]).size;
+  const strokesSize = new Blob([JSON.stringify(strokes)]).size;
+  const mediaSize = new Blob([JSON.stringify(media)]).size;
+  const totalSize = contentSize + strokesSize + mediaSize;
+
+  // Convert to MB
+  const totalSizeMB = totalSize / (1024 * 1024);
+
+  // Warn if note exceeds 50MB
+  const WARNING_SIZE_MB = 50;
+  const CRITICAL_SIZE_MB = 100;
+
+  if (totalSizeMB > CRITICAL_SIZE_MB) {
+    console.warn(
+      `[Media] ⚠️ CRITICAL: Note size is ${totalSizeMB.toFixed(1)}MB. This may cause sync issues and slow performance. Consider splitting into multiple notes.`,
+    );
+    // Show browser alert for critical size (only once per session per note)
+    if (!window._shownCriticalSizeWarning) {
+      window._shownCriticalSizeWarning = true;
+      setTimeout(() => {
+        alert(
+          `⚠️ Warning: This note is very large (${totalSizeMB.toFixed(1)}MB).\n\nLarge notes may:\n• Sync slowly\n• Cause performance issues\n• Exceed storage limits\n\nConsider splitting it into multiple notes.`,
+        );
+      }, 100);
+    }
+  } else if (totalSizeMB > WARNING_SIZE_MB) {
+    console.warn(
+      `[Media] ⚠️ Note size is ${totalSizeMB.toFixed(1)}MB (warning threshold). Consider optimizing images or splitting content.`,
+    );
+  }
+
+  // Log media breakdown if there are images
+  if (media.length > 0) {
+    const mediaSizeMB = mediaSize / (1024 * 1024);
+    console.log(
+      `[Media] Note contains ${media.length} image(s), total media size: ${mediaSizeMB.toFixed(1)}MB`,
+    );
+  }
+}
 
 /**
  * Removes highlight spans from the text editor, preserving the text.
@@ -2569,6 +5433,36 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   }
 
   // SEQUENCE ON CLOSE:
+  // 0. Optimize media images to 2x display size to reduce storage
+  if (noteId && mediaItems.length > 0) {
+    try {
+      console.log(
+        `[NotebookEditor] Step 0: Optimizing ${mediaItems.length} media items for storage...`,
+      );
+      let optimizedCount = 0;
+
+      for (const item of mediaItems) {
+        // Optimize to 2x display size
+        const optimized = await optimizeImageForDisplay(item.dataUrl, item.width, item.height);
+
+        // Only update if optimization actually changed the image
+        if (optimized.dataUrl !== item.dataUrl) {
+          item.dataUrl = optimized.dataUrl;
+          item.originalWidth = optimized.width;
+          item.originalHeight = optimized.height;
+          optimizedCount++;
+        }
+      }
+
+      if (optimizedCount > 0) {
+        console.log(`[NotebookEditor] Optimized ${optimizedCount} images for storage`);
+        markNoteEdited(); // Ensure optimized images get saved
+      }
+    } catch (error) {
+      console.error("Failed to optimize media during cleanup:", error);
+    }
+  }
+
   // 1. Persist strokes to storage (await to ensure completion)
   if (noteId && currentEditor && noteEditedSinceOpen) {
     try {
@@ -2615,6 +5509,9 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   // Remove global listener
   document.removeEventListener("pointerdown", handleOutsideClick);
 
+  // Re-enable scrolling in case it was disabled
+  preventScrollDuringMediaManipulation(false);
+
   currentEditor = null;
   currentNoteData = null;
 
@@ -2622,16 +5519,18 @@ export async function cleanupNotebookEditor(noteIdOverride = null) {
   dynamicCtx = null;
   staticCanvas = null;
   staticCtx = null;
-  backgroundCanvas = null;
-  backgroundCtx = null;
-  cursorCanvas = null;
-  cursorCtx = null;
-  highlightCanvas = null;
-  highlightCtx = null;
+  mediaCanvas = null;
+  mediaCtx = null;
+  overlayCanvas = null;
+  overlayCtx = null;
   canvasRect = null;
 
   strokes = [];
   deletedStrokes = [];
+  mediaItems = [];
+  deletedMedia = [];
+  selectedMediaId = null;
+  mediaTransformState = null;
   currentStroke = [];
   isDrawing = false;
   isDrawMode = false;
@@ -2712,14 +5611,14 @@ function highlightText(query) {
 }
 
 /**
- * Highlight search terms in strokes (canvas)
+ * Highlight search terms in strokes (on overlay canvas)
  * @param {string} query - Search query
  */
 function highlightStrokes(query) {
-  if (!query || !currentNoteData?.recognition?.words || !highlightCtx) {
+  if (!query || !currentNoteData?.recognition?.words || !overlayCtx) {
     // Clear previous highlights if query is cleared
-    if (highlightCtx) {
-      highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+    if (overlayCtx) {
+      clearCanvas(overlayCtx, overlayCanvas);
     }
     return;
   }
@@ -2735,14 +5634,14 @@ function highlightStrokes(query) {
   const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
   const regex = new RegExp(pattern, "gi");
 
-  // Clear previous highlights
-  highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+  // Clear previous highlights (overlay canvas is shared with cursor)
+  clearCanvas(overlayCtx, overlayCanvas);
 
   let matchCount = 0;
-  highlightCtx.save();
-  highlightCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
-  highlightCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
-  highlightCtx.lineWidth = 2;
+  overlayCtx.save();
+  overlayCtx.fillStyle = "rgba(255, 255, 0, 0.3)";
+  overlayCtx.strokeStyle = "rgba(255, 200, 0, 0.8)";
+  overlayCtx.lineWidth = 2;
 
   currentNoteData.recognition.words.forEach((word) => {
     regex.lastIndex = 0; // Ensure regex is reset before test
@@ -2767,8 +5666,8 @@ function highlightStrokes(query) {
 
       if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
         console.log("[NotebookEditor] Highlighting match:", word.text, { x, y, w, h });
-        highlightCtx.fillRect(x, y, w, h);
-        highlightCtx.strokeRect(x, y, w, h);
+        overlayCtx.fillRect(x, y, w, h);
+        overlayCtx.strokeRect(x, y, w, h);
       } else {
         console.warn(
           "[NotebookEditor] Could not determine bounding box dimensions for word:",
@@ -2779,6 +5678,6 @@ function highlightStrokes(query) {
       }
     }
   });
-  highlightCtx.restore();
+  overlayCtx.restore();
   console.log(`[NotebookEditor] Finished highlighting. Matches found: ${matchCount}`);
 }

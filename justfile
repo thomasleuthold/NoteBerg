@@ -38,7 +38,7 @@ format-check:
 
 # Run Biome check (format + lint with auto-fix)
 check:
-    npm run check --fix
+    npm run check --write --unsafe
 
 # Utilities
 clean:
