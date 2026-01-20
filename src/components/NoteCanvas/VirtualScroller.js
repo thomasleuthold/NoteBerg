@@ -168,10 +168,30 @@ export class VirtualScroller {
   /**
    * Set the zoom scale (affects phantom size)
    * @param {number} scale - Zoom scale (1.0 = 100%)
+   * @param {Object} [fixedPoint] - Point to keep fixed {x, y} in viewport coordinates
    */
-  setZoom(scale) {
+  setZoom(scale, fixedPoint = null) {
+    const oldScale = this.zoomScale;
     this.zoomScale = scale;
     this._updatePhantomSize();
+
+    if (fixedPoint) {
+      const { x, y } = fixedPoint;
+
+      // Calculate content coordinates of the fixed point using old scale
+      const contentX = (this.scrollLeft + x) / oldScale;
+      const contentY = (this.scrollTop + y) / oldScale;
+
+      // Calculate new scroll position
+      const newScrollLeft = contentX * scale - x;
+      const newScrollTop = contentY * scale - y;
+
+      // Apply new scroll position and update state immediately
+      this.container.scrollLeft = newScrollLeft;
+      this.container.scrollTop = newScrollTop;
+      this.scrollLeft = this.container.scrollLeft;
+      this.scrollTop = this.container.scrollTop;
+    }
   }
 
   /**

@@ -185,12 +185,19 @@ export class NoteCanvas {
 
     e.preventDefault();
 
+    // Calculate fixed point relative to viewport
+    const rect = this.scroller.getViewportElement().getBoundingClientRect();
+    const fixedPoint = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+
     // Calculate new zoom
     const delta = e.deltaY > 0 ? -this.zoomStep : this.zoomStep;
     const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoomScale + delta));
 
     if (newZoom !== this.zoomScale) {
-      this.setZoom(newZoom);
+      this.setZoom(newZoom, { fixedPoint });
     }
   }
 
@@ -214,12 +221,21 @@ export class NoteCanvas {
     if (e.touches.length === 2 && this.lastTouchDistance !== null) {
       e.preventDefault();
 
+      const rect = this.scroller.getViewportElement().getBoundingClientRect();
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+
+      const fixedPoint = {
+        x: (touch1.clientX + touch2.clientX) / 2 - rect.left,
+        y: (touch1.clientY + touch2.clientY) / 2 - rect.top,
+      };
+
       const currentDistance = this._getTouchDistance(e.touches);
       const scale = currentDistance / this.lastTouchDistance;
       const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.initialPinchZoom * scale));
 
       if (newZoom !== this.zoomScale) {
-        this.setZoom(newZoom, { immediate: false });
+        this.setZoom(newZoom, { immediate: false, fixedPoint });
       }
     }
   }
@@ -260,7 +276,7 @@ export class NoteCanvas {
     this.zoomScale = scale;
 
     if (this.scroller) {
-      this.scroller.setZoom(scale);
+      this.scroller.setZoom(scale, options.fixedPoint);
     }
 
     if (this.renderer) {
