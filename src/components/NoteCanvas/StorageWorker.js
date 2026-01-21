@@ -2,51 +2,62 @@
  * StorageWorker - Handles IndexedDB operations off the main thread
  */
 
-const DB_NAME = "onejournal_db"; // Matches the app's DB name
+import { openDB } from "idb";
+import { encryptObject } from "../../modules/encryption.js";
+
+const DB_NAME = "oneJournal"; // Matches the app's DB name
 const DB_VERSION = 1; // Assuming version 1, or whatever the app uses
 
-let db = null;
+let dbPromise = null;
 
-async function getDB() {
-  if (db) return db;
-
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      db = request.result;
-      resolve(db);
-    };
-  });
+function getDB() {
+  if (!dbPromise) {
+    dbPromise = openDB(DB_NAME, DB_VERSION);
+  }
+  return dbPromise;
 }
 
 self.onmessage = async (e) => {
-  const { type, noteId, strokes } = e.data;
+  const { type, noteId, strokes, key } = e.data;
 
   if (type === "SAVE_STROKES") {
     try {
-      const database = await getDB();
+      const db = await getDB();
 
-      // 1. Get the current note
-      const tx = database.transaction(["notes"], "readwrite");
+      // Use a transaction to ensure atomicity
+      const tx = db.transaction("notes", "readwrite");
       const store = tx.objectStore("notes");
 
-      const getRequest = store.get(noteId);
+      const note = await store.get(noteId);
 
-      getRequest.onsuccess = () => {
-        const note = getRequest.result;
-        if (note) {
-          // 2. Update strokes and modified time
+      if (note) {
+        // 2. Update strokes (encrypt if needed)
+        if (note.encrypted) {
+          if (key) {
+            note.strokes = await encryptObject(strokes, key);
+          } else {
+            console.error("[StorageWorker] Cannot save encrypted note: Key missing");
+            return;
+          }
+        } else {
           note.strokes = strokes;
-          note.modified = Date.now();
-
-          // 3. Save back
-          store.put(note);
         }
-      };
+
+        // 3. Update metadata to match storage.js logic
+        note.modified = Date.now();
+        note.version = (note.version || 0) + 1;
+        note.synced = false;
+
+        await store.put(note);
+      }
+
+      await tx.done;
     } catch (err) {
       console.error("[StorageWorker] Save failed:", err);
     }
+  }
+
+  if (type === "CLOSE") {
+    self.close();
   }
 };

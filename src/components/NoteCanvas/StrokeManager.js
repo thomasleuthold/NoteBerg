@@ -7,6 +7,7 @@
  * - Asynchronous saving (debounced)
  */
 
+import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
 import { generateId } from "../../modules/storage.js";
 
 export class StrokeManager {
@@ -61,17 +62,34 @@ export class StrokeManager {
   }
 
   _save() {
+    let key = null;
+    if (isAppUnlocked()) {
+      try {
+        key = getEncryptionKey();
+      } catch (e) {
+        console.warn("[StrokeManager] Could not get encryption key:", e);
+      }
+    }
+
     // Offload to worker
     this.worker.postMessage({
       type: "SAVE_STROKES",
       noteId: this.noteId,
       strokes: this.strokes,
+      key: key,
     });
+  }
+
+  forceSave() {
+    this._save();
   }
 
   destroy() {
     if (this.worker) {
-      this.worker.terminate();
+      // Don't terminate immediately, as it might kill pending saves.
+      // Send a close message so the worker shuts down after processing the queue.
+      this.worker.postMessage({ type: "CLOSE" });
+      this.worker = null;
     }
   }
 }

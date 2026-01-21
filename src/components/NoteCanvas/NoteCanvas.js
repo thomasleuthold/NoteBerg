@@ -535,6 +535,7 @@ export class NoteCanvas {
     }
 
     if (this.strokeManager) {
+      this.strokeManager.forceSave();
       this.strokeManager.destroy();
     }
 
