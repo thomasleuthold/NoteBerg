@@ -83,6 +83,7 @@ export class VirtualScroller {
       overflow: hidden;
       display: flex;
       align-items: flex-start;
+      touch-action: none;
     `;
 
     // Assemble
@@ -252,6 +253,15 @@ export class VirtualScroller {
       top: scaledY,
       behavior: smooth ? "smooth" : "instant",
     });
+  }
+
+  /**
+   * Scroll by a delta in screen pixels
+   * @param {number} dx - Delta X in screen pixels
+   * @param {number} dy - Delta Y in screen pixels
+   */
+  scrollBy(dx, dy) {
+    this.container.scrollBy(dx, dy);
   }
 
   /**

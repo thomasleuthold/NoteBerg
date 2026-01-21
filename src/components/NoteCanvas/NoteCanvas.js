@@ -43,9 +43,12 @@ export class NoteCanvas {
     this.zoomStep = 0.05;
 
     // Gesture tracking
+    this.activePointers = new Map();
     this.lastTouchDistance = null;
     this.initialPinchZoom = null;
     this._isZooming = false; // Flag to suppress scroll events during zoom
+    this.lastTouchX = null;
+    this.lastTouchY = null;
 
     // Drawing state
     this.isDrawMode = false; // false = Pan Mode, true = Draw Mode
@@ -57,9 +60,9 @@ export class NoteCanvas {
     this._onViewportResize = this._onViewportResize.bind(this);
     this._onThemeChange = this._onThemeChange.bind(this);
     this._onWheel = this._onWheel.bind(this);
-    this._onTouchStart = this._onTouchStart.bind(this);
-    this._onTouchMove = this._onTouchMove.bind(this);
-    this._onTouchEnd = this._onTouchEnd.bind(this);
+    this._onPointerDownNav = this._onPointerDownNav.bind(this);
+    this._onPointerMoveNav = this._onPointerMoveNav.bind(this);
+    this._onPointerUpNav = this._onPointerUpNav.bind(this);
     this._onStrokeStart = this._onStrokeStart.bind(this);
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
@@ -243,10 +246,12 @@ export class NoteCanvas {
     const viewport = this.scroller.getViewportElement();
     viewport.addEventListener("wheel", this._onWheel, { passive: false });
 
-    // Zoom via pinch gesture
-    viewport.addEventListener("touchstart", this._onTouchStart, { passive: false });
-    viewport.addEventListener("touchmove", this._onTouchMove, { passive: false });
-    viewport.addEventListener("touchend", this._onTouchEnd, { passive: true });
+    // Navigation (Pan/Zoom) via Pointer Events
+    viewport.addEventListener("pointerdown", this._onPointerDownNav);
+    viewport.addEventListener("pointermove", this._onPointerMoveNav);
+    viewport.addEventListener("pointerup", this._onPointerUpNav);
+    viewport.addEventListener("pointercancel", this._onPointerUpNav);
+    viewport.addEventListener("pointerleave", this._onPointerUpNav);
   }
 
   /**
@@ -383,69 +388,113 @@ export class NoteCanvas {
   }
 
   /**
-   * Handle touch start for pinch zoom
+   * Handle pointer down for navigation (Pan/Zoom)
    * @private
    */
-  _onTouchStart(e) {
-    if (e.touches.length === 2) {
+  _onPointerDownNav(e) {
+    // Ignore pen inputs for navigation (handled by InputHandler/StrokeManager)
+    if (e.pointerType === "pen") return;
+    // Only allow touch for panning/zooming (mouse uses wheel/scrollbars)
+    if (e.pointerType !== "touch") return;
+
+    this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (this.activePointers.size === 2) {
+      // Start Pinch
       this._isZooming = true;
-      e.preventDefault();
-      this.lastTouchDistance = this._getTouchDistance(e.touches);
+      this.lastTouchDistance = this._getPointersDistance();
       this.initialPinchZoom = this.zoomScale;
+    } else if (this.activePointers.size === 1) {
+      // Start Pan
+      this.lastTouchX = e.clientX;
+      this.lastTouchY = e.clientY;
     }
   }
 
   /**
-   * Handle touch move for pinch zoom
+   * Handle pointer move for navigation
    * @private
    */
-  _onTouchMove(e) {
-    if (e.touches.length === 2 && this.lastTouchDistance !== null) {
+  _onPointerMoveNav(e) {
+    if (!this.activePointers.has(e.pointerId)) return;
+
+    // Update pointer position
+    this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (this.activePointers.size === 2) {
+      // Pinch Zoom
       e.preventDefault();
 
+      const points = Array.from(this.activePointers.values());
       const rect = this.scroller.getViewportElement().getBoundingClientRect();
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
 
       const fixedPoint = {
-        x: (touch1.clientX + touch2.clientX) / 2 - rect.left,
-        y: (touch1.clientY + touch2.clientY) / 2 - rect.top,
+        x: (points[0].x + points[1].x) / 2 - rect.left,
+        y: (points[0].y + points[1].y) / 2 - rect.top,
       };
 
-      const currentDistance = this._getTouchDistance(e.touches);
+      const currentDistance = this._getPointersDistance();
       const scale = currentDistance / this.lastTouchDistance;
       const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.initialPinchZoom * scale));
 
       if (newZoom !== this.zoomScale) {
         this.setZoom(newZoom, { immediate: false, fixedPoint });
       }
+    } else if (this.activePointers.size === 1) {
+      // Pan
+      const x = e.clientX;
+      const y = e.clientY;
+      const dx = x - this.lastTouchX;
+      const dy = y - this.lastTouchY;
+
+      this.lastTouchX = x;
+      this.lastTouchY = y;
+
+      this.scroller.scrollBy(-dx, -dy);
     }
   }
 
   /**
-   * Handle touch end for pinch zoom
+   * Handle pointer up/cancel/leave for navigation
    * @private
    */
-  _onTouchEnd(e) {
-    if (e.touches.length < 2) {
-      this.lastTouchDistance = null;
-      this.initialPinchZoom = null;
+  _onPointerUpNav(e) {
+    if (this.activePointers.has(e.pointerId)) {
+      this.activePointers.delete(e.pointerId);
 
-      this._isZooming = false;
-      // Trigger final zoom render
-      if (this.renderer) {
-        this.setZoom(this.zoomScale, { immediate: true });
+      // Reset gesture states
+      if (this.activePointers.size < 2) {
+        if (this._isZooming) {
+          this._isZooming = false;
+          if (this.renderer) {
+            this.setZoom(this.zoomScale, { immediate: true });
+          }
+        }
+        this.lastTouchDistance = null;
+        this.initialPinchZoom = null;
+      }
+
+      if (this.activePointers.size === 0) {
+        this.lastTouchX = null;
+        this.lastTouchY = null;
+      } else if (this.activePointers.size === 1) {
+        // Switch back to pan mode with remaining finger
+        const point = this.activePointers.values().next().value;
+        this.lastTouchX = point.x;
+        this.lastTouchY = point.y;
       }
     }
   }
 
   /**
-   * Calculate distance between two touch points
+   * Calculate distance between first two active pointers
    * @private
    */
-  _getTouchDistance(touches) {
-    const dx = touches[0].clientX - touches[1].clientX;
-    const dy = touches[0].clientY - touches[1].clientY;
+  _getPointersDistance() {
+    const points = Array.from(this.activePointers.values());
+    if (points.length < 2) return 0;
+    const dx = points[0].x - points[1].x;
+    const dy = points[0].y - points[1].y;
     return Math.sqrt(dx * dx + dy * dy);
   }
 
