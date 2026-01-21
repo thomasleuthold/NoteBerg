@@ -9,7 +9,9 @@
 
 import { getNote } from "../../modules/storage.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
+import { InputHandler } from "./InputHandler.js";
 import { SpatialIndex } from "./SpatialIndex.js";
+import { StrokeManager } from "./StrokeManager.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
 export class NoteCanvas {
@@ -26,6 +28,8 @@ export class NoteCanvas {
     this.scroller = null;
     this.renderer = null;
     this.spatialIndex = null;
+    this.inputHandler = null;
+    this.strokeManager = null;
 
     // State
     this.noteId = null;
@@ -43,6 +47,11 @@ export class NoteCanvas {
     this.initialPinchZoom = null;
     this._isZooming = false; // Flag to suppress scroll events during zoom
 
+    // Drawing state
+    this.isDrawMode = false; // false = Pan Mode, true = Draw Mode
+    this.currentPenColorIndex = 0;
+    this.currentPenWidth = 2;
+
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
     this._onViewportResize = this._onViewportResize.bind(this);
@@ -51,6 +60,10 @@ export class NoteCanvas {
     this._onTouchStart = this._onTouchStart.bind(this);
     this._onTouchMove = this._onTouchMove.bind(this);
     this._onTouchEnd = this._onTouchEnd.bind(this);
+    this._onStrokeStart = this._onStrokeStart.bind(this);
+    this._onStrokeMove = this._onStrokeMove.bind(this);
+    this._onStrokeEnd = this._onStrokeEnd.bind(this);
+    this._toggleMode = this._toggleMode.bind(this);
   }
 
   /**
@@ -69,6 +82,11 @@ export class NoteCanvas {
 
     console.log(`[NoteCanvas] Loading note with ${this.noteData.strokes?.length || 0} strokes`);
 
+    // Ensure strokes array exists and is shared across modules
+    if (!this.noteData.strokes) {
+      this.noteData.strokes = [];
+    }
+
     // Initialize scroller
     this.scroller = new VirtualScroller(this.containerElement, {
       onScroll: this._onScroll,
@@ -81,7 +99,7 @@ export class NoteCanvas {
 
     // Build spatial index with bucket height = viewport height
     this.spatialIndex = new SpatialIndex(height || 800);
-    this.spatialIndex.build(this.noteData.strokes || []);
+    this.spatialIndex.build(this.noteData.strokes);
 
     // Calculate content dimensions
     const contentBounds = this.spatialIndex.getContentBounds();
@@ -94,10 +112,13 @@ export class NoteCanvas {
     this.renderer = new CanvasRenderer(this.scroller.getViewportElement(), {
       maxContentWidth: this.maxContentWidth,
     });
-    this.renderer.setData(this.noteData.strokes || [], this.noteData.background);
+    this.renderer.setData(this.noteData.strokes, this.noteData.background);
     this.renderer.setSpatialIndex(this.spatialIndex);
     this.renderer.setContentSize(contentWidth, contentHeight);
     this.renderer.resize(width, height);
+
+    // Initialize stroke manager
+    this.strokeManager = new StrokeManager(noteId, this.noteData.strokes);
 
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, contentHeight);
@@ -107,6 +128,37 @@ export class NoteCanvas {
 
     // Set up event listeners
     this._setupEventListeners();
+
+    // Initialize input handler
+    this.inputHandler = new InputHandler(
+      this.scroller.getViewportElement(),
+      {
+        getZoom: () => this.zoomScale,
+        getScroll: () => ({
+          left: this.scroller.getScrollLeft(),
+          top: this.scroller.getScrollTop(),
+        }),
+        getRect: () => this.scroller.getViewportElement().getBoundingClientRect(),
+        getOffset: () => {
+          const viewportWidth = this.scroller.getViewportSize().width;
+          const contentWidth = this.maxContentWidth;
+          const scaledContentWidth = contentWidth * this.zoomScale;
+
+          if (scaledContentWidth < viewportWidth) {
+            return { x: (viewportWidth - scaledContentWidth) / 2, y: 0 };
+          }
+          return { x: 0, y: 0 };
+        },
+      },
+      {
+        onStrokeStart: this._onStrokeStart,
+        onStrokeMove: this._onStrokeMove,
+        onStrokeEnd: this._onStrokeEnd,
+      },
+    );
+
+    // Create Toolbar
+    this._createToolbar();
 
     this.isInitialized = true;
 
@@ -119,6 +171,64 @@ export class NoteCanvas {
 
     // Expose for debugging
     window.__noteCanvas = this;
+  }
+
+  /**
+   * Create the floating toolbar for Pan/Draw modes
+   * @private
+   */
+  _createToolbar() {
+    const toolbar = document.createElement("div");
+    toolbar.className = "note-canvas-toolbar";
+    toolbar.style.cssText = `
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: var(--bg-primary, #ffffff);
+      border: 1px solid var(--border-primary, #e2e8f0);
+      border-radius: 24px;
+      padding: 4px;
+      display: flex;
+      gap: 4px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      z-index: 100;
+    `;
+
+    const createBtn = (id, icon, title, isActive) => {
+      const btn = document.createElement("button");
+      btn.id = `nc-tool-${id}`;
+      btn.title = title;
+      btn.innerHTML = icon;
+      btn.style.cssText = `
+        width: 40px;
+        height: 40px;
+        border-radius: 20px;
+        border: none;
+        background: ${isActive ? "var(--color-primary, #3b82f6)" : "transparent"};
+        color: ${isActive ? "#ffffff" : "var(--text-secondary, #64748b)"};
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+      `;
+      btn.onclick = () => this._toggleMode(id === "draw");
+      return btn;
+    };
+
+    // Hand/Pan Icon
+    const panIcon = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M6 11v3.6a6 6 0 0 0 6 6h2"/><path d="M18 11a4 4 0 0 1 4 4v3a4 4 0 0 1-4 4h-2"/></svg>`;
+
+    // Pen Icon
+    const penIcon = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>`;
+
+    this.panBtn = createBtn("pan", panIcon, "Pan Mode", !this.isDrawMode);
+    this.drawBtn = createBtn("draw", penIcon, "Draw Mode", this.isDrawMode);
+
+    toolbar.appendChild(this.panBtn);
+    toolbar.appendChild(this.drawBtn);
+    this.scroller.getViewportElement().appendChild(toolbar);
   }
 
   /**
@@ -146,7 +256,7 @@ export class NoteCanvas {
   _onScroll(scrollTop, scrollLeft, viewportHeight) {
     if (this._isZooming) return;
     if (!this.renderer) return;
-    this.renderer.render(scrollTop, viewportHeight, scrollLeft);
+    this.renderer.render(scrollTop, viewportHeight, scrollLeft, this.strokeManager?.currentStroke);
   }
 
   /**
@@ -165,7 +275,7 @@ export class NoteCanvas {
     // Re-render
     const scrollTop = this.scroller.getScrollTop();
     const scrollLeft = this.scroller.getScrollLeft();
-    this.renderer.render(scrollTop, height, scrollLeft);
+    this.renderer.render(scrollTop, height, scrollLeft, this.strokeManager?.currentStroke);
   }
 
   /**
@@ -175,6 +285,75 @@ export class NoteCanvas {
   _onThemeChange() {
     if (!this.renderer) return;
     this.renderer.forceRedraw();
+  }
+
+  /**
+   * Toggle between Pan and Draw modes
+   * @param {boolean} enableDraw - True for Draw mode, False for Pan mode
+   */
+  _toggleMode(enableDraw) {
+    this.isDrawMode = enableDraw;
+
+    // Update UI
+    const activeBg = "var(--color-primary, #3b82f6)";
+    const activeColor = "#ffffff";
+    const inactiveBg = "transparent";
+    const inactiveColor = "var(--text-secondary, #64748b)";
+
+    this.drawBtn.style.background = this.isDrawMode ? activeBg : inactiveBg;
+    this.drawBtn.style.color = this.isDrawMode ? activeColor : inactiveColor;
+
+    this.panBtn.style.background = !this.isDrawMode ? activeBg : inactiveBg;
+    this.panBtn.style.color = !this.isDrawMode ? activeColor : inactiveColor;
+  }
+
+  /**
+   * Handle stroke start
+   * @private
+   */
+  _onStrokeStart(props) {
+    // Auto-switch to draw mode if pen detected
+    if (props.pointerType === "pen" && !this.isDrawMode) {
+      this._toggleMode(true);
+    }
+
+    // In Draw Mode: Pen draws, Touch scrolls (unless we add a "Finger Draw" toggle later)
+    // In Pan Mode: Everything scrolls
+    if (!this.isDrawMode) return false;
+    if (props.pointerType === "touch") return false;
+
+    const stroke = this.strokeManager.startStroke({
+      ...props,
+      colorIndex: this.currentPenColorIndex,
+      width: this.currentPenWidth,
+    });
+
+    this.renderer.drawDirectStroke(stroke);
+    return true;
+  }
+
+  /**
+   * Handle stroke move
+   * @private
+   */
+  _onStrokeMove(points) {
+    const stroke = this.strokeManager.addPoints(points);
+    if (stroke) {
+      this.renderer.drawDirectStroke(stroke);
+    }
+  }
+
+  /**
+   * Handle stroke end
+   * @private
+   */
+  _onStrokeEnd() {
+    const stroke = this.strokeManager.endStroke();
+    if (stroke) {
+      // Update spatial index so the stroke is included in future buffer redraws (scroll/zoom)
+      const newIndex = this.noteData.strokes.length - 1;
+      this.spatialIndex.insert(stroke, newIndex);
+    }
   }
 
   /**
@@ -348,6 +527,15 @@ export class NoteCanvas {
     if (this.spatialIndex) {
       this.spatialIndex.clear();
       this.spatialIndex = null;
+    }
+
+    if (this.inputHandler) {
+      this.inputHandler.destroy();
+      this.inputHandler = null;
+    }
+
+    if (this.strokeManager) {
+      this.strokeManager.destroy();
     }
 
     // Clear state

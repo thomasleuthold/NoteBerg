@@ -71,22 +71,30 @@ We will create a new directory `src/components/NoteCanvas/` to house the new eng
     -   Apply `getCoalescedEvents()` for higher precision curves.
     -   Map screen coordinates -> Document coordinates (accounting for scroll & zoom).
 
-### 2.2 The Dynamic Layer
--   **Task**: Render the stroke currently being drawn.
+### 2.2 Direct Rendering
+-   **Task**: Render the stroke currently being drawn directly to the buffer.
 -   **Logic**:
-    -   Use a separate `dynamicCanvas` (transparent, matches viewport size).
-    -   Clear and redraw only the new segment (or the whole active stroke) every frame.
-    -   **Optimization**: Do not touch the heavy `staticCanvas` while drawing.
+    -   Draw directly onto the `staticCanvas` (the sliding buffer) during `pointermove`.
+    -   This avoids the complexity of managing a second canvas and syncing/clearing it.
+    -   Since the `staticCanvas` is already transformed for scrolling/zooming, drawing coordinates need to be mapped correctly.
 
-### 2.3 Asynchronous "Baking" & Persistence
--   **Problem**: Merging the dynamic stroke into the static canvas and saving to IndexedDB can cause a frame drop, interrupting the *next* stroke if the user draws fast.
+### 2.3 Web Worker Persistence
+-   **Problem**: Serializing large stroke arrays and writing to IndexedDB on the main thread causes frame drops.
 -   **Solution**:
-    1.  **Stroke Queue**: When `pointerup` occurs, push the stroke to a "Pending Queue".
-    2.  **Visual Commit**: Draw the stroke onto the `staticCanvas` immediately (fast operation).
-    3.  **Lazy Save**:
-        -   Offload `JSON.stringify` and IndexedDB writes to a **Web Worker**.
-        -   Or, debounce the save heavily (e.g., 5 seconds) and only save when the user is idle.
-    4.  **Safety**: If the user starts drawing again while "Baking", defer the bake.
+    1.  **Web Worker**: Create a dedicated Web Worker for storage operations.
+    2.  **Message Passing**: On `pointerup`, send the completed stroke data to the worker.
+    3.  **Off-Main-Thread Saving**: The worker handles `JSON.stringify` and IndexedDB transactions asynchronously.
+    4.  **Synchronization**: The worker maintains the "source of truth" for the file on disk, while the main thread maintains the visual state.
+
+### 2.4 Autodetect active stylus
+-   **Task**: Improve drawing experience for stylus users.
+-   **Logic**:
+    -   Listen for `pointerType` on pointer events.
+    -   If a stylus is detected, switch to a "auto-draw" mode
+    -   When in auto-draw mode, activate scrolling/panning on first finger touch.
+    -   Create a toolbar with 2 buttons (aligned center, toolbar is above notes canvas) -> pan mode (to zoom/scroll with finger/mouse -> mode "pan"), pen mode (to draw with stylus/mouse -> mode "draw"). 
+
+
 
 ---
 

@@ -46,6 +46,7 @@ export class CanvasRenderer {
     this.background = "none";
     this.spatialIndex = null;
     this.palette = null;
+    this.activeStroke = null; // Stroke currently being drawn
 
     // Content bounds
     this.contentWidth = 0;
@@ -187,8 +188,9 @@ export class CanvasRenderer {
    * @param {number} scrollTop - Current scroll position (in screen pixels)
    * @param {number} viewportHeight - Current viewport height
    * @param {number} scrollLeft - Current scroll left position (in screen pixels)
+   * @param {Object} [activeStroke] - The stroke currently being drawn (optional)
    */
-  render(scrollTop, viewportHeight, scrollLeft = 0) {
+  render(scrollTop, viewportHeight, scrollLeft = 0, activeStroke = null) {
     // Convert to content coordinates (account for zoom)
     const contentScrollTop = scrollTop / this.zoomScale;
     const contentViewportHeight = viewportHeight / this.zoomScale;
@@ -200,12 +202,35 @@ export class CanvasRenderer {
       resized = true;
     }
 
+    // Update active stroke reference for redraws
+    this.activeStroke = activeStroke;
+
     // Check if we need to leapfrog (reposition buffer)
     if (resized || this._shouldLeapfrog(contentScrollTop)) {
       this._repositionBuffer(contentScrollTop);
     }
     // Always slide the canvas to match scroll position
     this._slideCanvas(contentScrollTop, scrollLeft);
+  }
+
+  /**
+   * Draw a stroke directly to the canvas (for low latency)
+   * @param {Object} stroke - Stroke data
+   */
+  drawDirectStroke(stroke) {
+    if (!this.ctx || !stroke) return;
+
+    this.ctx.save();
+
+    // Apply buffer translation (resolution scale is already in transform)
+    // The context transform is: scale(resolution, resolution)
+    // We need to translate by -bufferTop in content coordinates
+    this.ctx.translate(0, -this.bufferTop);
+
+    // Draw the stroke
+    sharedDrawStroke(this.ctx, stroke, this.palette, false);
+
+    this.ctx.restore();
   }
 
   /**
@@ -304,6 +329,11 @@ export class CanvasRenderer {
       if (stroke) {
         sharedDrawStroke(this.ctx, stroke, this.palette, false);
       }
+    }
+
+    // Draw active stroke on top if it exists
+    if (this.activeStroke) {
+      sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false);
     }
 
     this.ctx.restore();

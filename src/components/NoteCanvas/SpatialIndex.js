@@ -48,6 +48,29 @@ export class SpatialIndex {
   }
 
   /**
+   * Insert a single stroke into the index
+   * @param {Object} stroke - Stroke object
+   * @param {number} index - Index of the stroke in the strokes array
+   */
+  insert(stroke, index) {
+    const bounds = this._getStrokeBounds(stroke);
+    if (!bounds) return;
+
+    this.strokeBounds.set(index, bounds);
+    this.totalStrokes = Math.max(this.totalStrokes, index + 1);
+
+    const startBucket = Math.floor(bounds.minY / this.bucketHeight);
+    const endBucket = Math.floor(bounds.maxY / this.bucketHeight);
+
+    for (let bucket = startBucket; bucket <= endBucket; bucket++) {
+      if (!this.buckets.has(bucket)) {
+        this.buckets.set(bucket, new Set());
+      }
+      this.buckets.get(bucket).add(index);
+    }
+  }
+
+  /**
    * Query for stroke indices that may be visible in the given Y range
    * @param {number} viewportTop - Top Y coordinate of viewport
    * @param {number} viewportBottom - Bottom Y coordinate of viewport
