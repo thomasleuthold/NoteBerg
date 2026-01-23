@@ -142,11 +142,11 @@
 }
 
 .note-canvas-toolbar__button--active {
-  background-color: var(--color-primary, #3b82f6);
-  color: #ffffff;
+  background-color: var(--bg-tertiary, #d3ddee);
+  color: var(--text-primary, #1e293b);
   border-color: var(--color-primary, #3b82f6);
   transform: scale(1.1);
-  box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 5px 7px -3px rgba(59, 130, 246, 0.4);
 }
 
 .note-canvas-toolbar__button--active:hover {
@@ -301,4 +301,111 @@
     0 0 0 2px var(--bg-primary, #ffffff),
     0 0 0 4px var(--color-primary, #3b82f6);
   transform: scale(1.1);
+}
+
+/* ==========================================================================
+   Options Dialog
+   ========================================================================== */
+
+.note-canvas-toolbar__options-dialog {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  padding: 12px;
+  width: 220px;
+  z-index: 100;
+}
+
+.note-canvas-toolbar__options-dialog--open {
+  display: block;
+}
+
+.note-canvas-toolbar__options-notch {
+  position: absolute;
+  top: -6px;
+  right: 16px;
+  width: 12px;
+  height: 12px;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-primary);
+  border-top: 1px solid var(--border-primary);
+  transform: rotate(45deg);
+}
+
+.note-canvas-toolbar__options-content {
+  position: relative;
+  z-index: 1;
+}
+
+.note-canvas-toolbar__options-section {
+  margin-bottom: 0;
+}
+
+.note-canvas-toolbar__options-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.note-canvas-toolbar__background-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-canvas-toolbar__option-btn {
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-family: inherit;
+  transition: background-color 0.2s;
+}
+
+.note-canvas-toolbar__option-btn:hover {
+  background-color: var(--bg-secondary);
+}
+
+.note-canvas-toolbar__option-btn--active {
+  background-color: var(--bg-hover);
+}
+
+.note-canvas-toolbar__separator {
+  height: 1px;
+  background: var(--border-primary);
+  margin: 12px 0;
+}
+
+.note-canvas-toolbar__delete-btn {
+  width: 100%;
+  padding: 8px;
+  background: var(--color-danger);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+}
+
+.note-canvas-toolbar__delete-btn:hover {
+  background-color: #dc2626;
 }

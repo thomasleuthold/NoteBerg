@@ -20,22 +20,40 @@ function getPenIconWithColor(tipColor, size = 24) {
   </svg>`;
 }
 
+/**
+ * Generate more options icon SVG
+ * @param {number} size - Icon size
+ * @returns {string} SVG markup
+ */
+function getMoreIcon(size = 24) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="1"/>
+    <circle cx="12" cy="5" r="1"/>
+    <circle cx="12" cy="19" r="1"/>
+  </svg>`;
+}
+
 export class NoteToolbar {
   /**
    * @param {HTMLElement} container - Container to append toolbar to
    * @param {Function} onModeChange - Callback (mode) => void. mode: 'pan' | 'draw' | 'eraser'
    * @param {Object} options - Optional configuration
    * @param {Function} options.onPenSettingsChange - Callback ({ width, colorIndex }) => void
+   * @param {Function} options.onOptionsChange - Callback ({ type, value }) => void
    */
   constructor(container, onModeChange, options = {}) {
     this.container = container;
     this.onModeChange = onModeChange;
     this.onPenSettingsChange = options.onPenSettingsChange || (() => {});
+    this.onOptionsChange = options.onOptionsChange || (() => {});
     this.element = null;
     this.panBtn = null;
     this.drawBtn = null;
     this.eraserBtn = null;
     this.penSettingsDialog = null;
+    this.optionsBtn = null;
+    this.optionsDialog = null;
+    this.optionsBtnContainer = null;
     this.currentMode = "pan";
 
     // Pen settings state
@@ -43,7 +61,7 @@ export class NoteToolbar {
     this.penColorIndex = 0;
 
     // Bind methods
-    this._handleDocumentClick = this._handleDocumentClick.bind(this);
+    this._handleDocumentPointerDown = this._handleDocumentPointerDown.bind(this);
 
     this._createDOM();
   }
@@ -88,9 +106,21 @@ export class NoteToolbar {
     this.eraserBtn = createBtn("eraser", eraserIcon, "Eraser Mode");
     this.eraserBtn.onclick = () => this.onModeChange("eraser");
 
+    // Options button container (aligned right)
+    this.optionsBtnContainer = document.createElement("div");
+    this.optionsBtnContainer.className = "note-canvas-toolbar__button-container";
+    this.optionsBtnContainer.style.marginLeft = "auto";
+
+    this.optionsBtn = createBtn("options", getMoreIcon(24), "Note Options");
+    this.optionsBtn.onclick = (e) => this._handleOptionsClick(e);
+    this.optionsBtnContainer.appendChild(this.optionsBtn);
+
+    this._createOptionsDialog();
+
     this.element.appendChild(this.panBtn);
     this.element.appendChild(this.drawBtnContainer);
     this.element.appendChild(this.eraserBtn);
+    this.element.appendChild(this.optionsBtnContainer);
     this.container.appendChild(this.element);
   }
 
@@ -153,6 +183,55 @@ export class NoteToolbar {
   }
 
   /**
+   * Create the options dialog element
+   * @private
+   */
+  _createOptionsDialog() {
+    this.optionsDialog = document.createElement("div");
+    this.optionsDialog.className = "note-canvas-toolbar__options-dialog";
+
+    // Add notch
+    const notch = document.createElement("div");
+    notch.className = "note-canvas-toolbar__options-notch";
+    this.optionsDialog.appendChild(notch);
+
+    const content = document.createElement("div");
+    content.className = "note-canvas-toolbar__options-content";
+    content.innerHTML = this._getOptionsDialogHTML();
+    this.optionsDialog.appendChild(content);
+
+    this.optionsBtnContainer.appendChild(this.optionsDialog);
+    this._setupOptionsDialogListeners();
+  }
+
+  /**
+   * Generate HTML for options dialog
+   * @private
+   */
+  _getOptionsDialogHTML() {
+    return `
+      <div class="note-canvas-toolbar__options-section">
+        <label class="note-canvas-toolbar__options-label">Background</label>
+        <div class="note-canvas-toolbar__background-list">
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="none">None</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-narrow">Ruled - Narrow</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-medium">Ruled - Medium</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-wide">Ruled - Wide</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-small">Grid - Small</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-medium">Grid - Medium</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-large">Grid - Large</button>
+        </div>
+      </div>
+      <div class="note-canvas-toolbar__separator"></div>
+      <div class="note-canvas-toolbar__options-section">
+        <button id="nc-delete-note-btn" class="note-canvas-toolbar__delete-btn">
+            ${getIcon("trash", 16)} Delete Note
+        </button>
+      </div>
+    `;
+  }
+
+  /**
    * Set up event listeners for pen dialog controls
    * @private
    */
@@ -185,6 +264,35 @@ export class NoteToolbar {
     this.penSettingsDialog.addEventListener("click", (e) => {
       e.stopPropagation();
     });
+  }
+
+  /**
+   * Set up event listeners for options dialog controls
+   * @private
+   */
+  _setupOptionsDialogListeners() {
+    const bgOptions = this.optionsDialog.querySelectorAll(".background-option");
+    bgOptions.forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const value = e.target.dataset.value;
+        this.onOptionsChange({ type: "background", value });
+        // Update visual state
+        bgOptions.forEach((b) => {
+          b.classList.remove("note-canvas-toolbar__option-btn--active");
+        });
+        e.target.classList.add("note-canvas-toolbar__option-btn--active");
+      });
+    });
+
+    const deleteBtn = this.optionsDialog.querySelector("#nc-delete-note-btn");
+    if (deleteBtn) {
+      deleteBtn.addEventListener("click", () => {
+        this.onOptionsChange({ type: "delete" });
+        this._closeOptionsDialog();
+      });
+    }
+
+    this.optionsDialog.addEventListener("click", (e) => e.stopPropagation());
   }
 
   /**
@@ -248,6 +356,19 @@ export class NoteToolbar {
   }
 
   /**
+   * Handle options button click
+   * @private
+   */
+  _handleOptionsClick(e) {
+    e.stopPropagation();
+    if (this.optionsDialog.classList.contains("note-canvas-toolbar__options-dialog--open")) {
+      this._closeOptionsDialog();
+    } else {
+      this._openOptionsDialog();
+    }
+  }
+
+  /**
    * Toggle pen settings dialog visibility
    * @private
    */
@@ -272,7 +393,7 @@ export class NoteToolbar {
     this._refreshColorSwatches();
 
     this.penSettingsDialog.classList.add("note-canvas-toolbar__pen-dialog--open");
-    document.addEventListener("click", this._handleDocumentClick);
+    document.addEventListener("pointerdown", this._handleDocumentPointerDown);
   }
 
   /**
@@ -281,17 +402,47 @@ export class NoteToolbar {
    */
   _closePenDialog() {
     this.penSettingsDialog.classList.remove("note-canvas-toolbar__pen-dialog--open");
-    document.removeEventListener("click", this._handleDocumentClick);
+    document.removeEventListener("pointerdown", this._handleDocumentPointerDown);
   }
 
   /**
-   * Handle document click to close dialog
+   * Open options dialog
    * @private
    */
-  _handleDocumentClick(e) {
+  _openOptionsDialog() {
+    this.optionsDialog.classList.add("note-canvas-toolbar__options-dialog--open");
+    document.addEventListener("pointerdown", this._handleDocumentPointerDown);
+  }
+
+  /**
+   * Close options dialog
+   * @private
+   */
+  _closeOptionsDialog() {
+    this.optionsDialog.classList.remove("note-canvas-toolbar__options-dialog--open");
+    document.removeEventListener("pointerdown", this._handleDocumentPointerDown);
+  }
+
+  /**
+   * Handle document pointer down to close dialog
+   * @private
+   */
+  _handleDocumentPointerDown(e) {
     // Check if click is outside dialog and draw button
-    if (!this.penSettingsDialog.contains(e.target) && !this.drawBtn.contains(e.target)) {
+    if (
+      this.penSettingsDialog.classList.contains("note-canvas-toolbar__pen-dialog--open") &&
+      !this.penSettingsDialog.contains(e.target) &&
+      !this.drawBtn.contains(e.target)
+    ) {
       this._closePenDialog();
+    }
+    // Check if click is outside options dialog and options button
+    if (
+      this.optionsDialog.classList.contains("note-canvas-toolbar__options-dialog--open") &&
+      !this.optionsDialog.contains(e.target) &&
+      !this.optionsBtn.contains(e.target)
+    ) {
+      this._closeOptionsDialog();
     }
   }
 
@@ -353,7 +504,7 @@ export class NoteToolbar {
   }
 
   destroy() {
-    document.removeEventListener("click", this._handleDocumentClick);
+    document.removeEventListener("pointerdown", this._handleDocumentPointerDown);
 
     if (this.element?.parentNode) {
       this.element.parentNode.removeChild(this.element);
@@ -364,5 +515,8 @@ export class NoteToolbar {
     this.drawBtnContainer = null;
     this.eraserBtn = null;
     this.penSettingsDialog = null;
+    this.optionsBtn = null;
+    this.optionsBtnContainer = null;
+    this.optionsDialog = null;
   }
 }

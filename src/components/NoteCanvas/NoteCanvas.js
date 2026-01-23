@@ -6,7 +6,9 @@
  * Supports both viewing and drawing with stylus/pen input.
  */
 
-import { getNote } from "../../modules/storage.js";
+import { navigateTo } from "../../modules/router.js";
+import { deleteNote, getNote, updateNote } from "../../modules/storage.js";
+import { showConfirmDialog } from "../modals.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { InputHandler } from "./InputHandler.js";
 import "./NoteCanvas.css";
@@ -223,6 +225,25 @@ export class NoteCanvas {
         onPenSettingsChange: ({ width, colorIndex }) => {
           this.currentPenWidth = width;
           this.currentPenColorIndex = colorIndex;
+        },
+        onOptionsChange: async (action) => {
+          if (action.type === "background") {
+            this.noteData.background = action.value;
+            this.renderer.background = action.value;
+            this.renderer.forceRedraw();
+            await updateNote(this.noteId, { background: action.value, modified: Date.now() });
+          } else if (action.type === "delete") {
+            const confirmed = await showConfirmDialog(
+              "Delete Note",
+              "Are you sure you want to delete this note?",
+              "Delete",
+              "btn-danger",
+            );
+            if (confirmed) {
+              await deleteNote(this.noteId);
+              navigateTo("overview");
+            }
+          }
         },
       },
     );
