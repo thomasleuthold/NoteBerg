@@ -72,7 +72,6 @@ let deletedMedia = []; // Track IDs of deleted media for sync
 let selectedMediaId = null; // Currently selected media item ID
 let mediaTransformState = null; // { mode: 'move'|'resize'|'rotate', handle: 'nw'|'ne'|'sw'|'se'|'rotate', startX, startY, initialX, initialY, initialWidth, initialHeight }
 const mediaHandleSize = 20; // Size of media resize handles (increased from 12 for easier clicking)
-let _mediaHoverState = null; // { mediaId, handle: null|'nw'|'ne'|'sw'|'se' }
 let isImageMode = false; // Track if in image manipulation mode
 let mediaPanState = null;
 let dynamicStrokeDrawScheduled = false;
@@ -151,7 +150,9 @@ function clearCanvas(ctx, canvas) {
 export function initNotebookEditorComponent() {
   // Listen for render notebook event from router
   window.addEventListener("rendernotebook", async (e) => {
-    let { noteId, searchQuery } = e.detail || {};
+    const detail = e.detail || {};
+    const { noteId } = detail;
+    let { searchQuery } = detail;
 
     // Fallback: check session storage for search query if not in event detail
     if (!searchQuery) {
@@ -2722,7 +2723,6 @@ function updateMediaCursor(x, y) {
   // Only change cursor in Image Mode
   if (!isImageMode) {
     textEditorEl.style.cursor = "";
-    _mediaHoverState = null;
     return;
   }
 
@@ -2740,7 +2740,6 @@ function updateMediaCursor(x, y) {
         rotate: "grab", // Rotation cursor
       };
       textEditorEl.style.cursor = cursors[handle] || "move";
-      _mediaHoverState = { mediaId: selected.id, handle };
       return;
     }
   }
@@ -2749,13 +2748,11 @@ function updateMediaCursor(x, y) {
   const media = getMediaAtPoint(x, y);
   if (media) {
     textEditorEl.style.cursor = "move";
-    _mediaHoverState = { mediaId: media.id, handle: null };
     return;
   }
 
   // No media hover - reset cursor to default
   textEditorEl.style.cursor = "";
-  _mediaHoverState = null;
 }
 
 /**
@@ -3948,19 +3945,6 @@ function switchToImageMode() {
 
   updateToolbarButtons();
   updateModeIndicator();
-}
-
-/**
- * Exit image mode and return to text mode
- */
-function _exitImageMode() {
-  isImageMode = false;
-  selectMedia(null); // Deselect any selected media
-  const wrapper = document.querySelector(".editor-content-wrapper");
-  if (wrapper) {
-    wrapper.classList.remove("image-mode-active");
-  }
-  switchToTextMode();
 }
 
 /**

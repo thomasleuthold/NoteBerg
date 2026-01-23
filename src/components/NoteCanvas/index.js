@@ -50,9 +50,9 @@ export function initNoteCanvasComponent() {
 
       // Show error message in container
       container.innerHTML = `
-        <div style="padding: 20px; text-align: center; color: var(--text-secondary);">
-          <p>Failed to load note</p>
-          <p style="font-size: 12px; margin-top: 8px;">${error.message}</p>
+        <div class="note-canvas__error">
+          <p class="note-canvas__error-title">Failed to load note</p>
+          <p class="note-canvas__error-message">${error.message}</p>
         </div>
       `;
     }

@@ -78,14 +78,7 @@ export class CanvasRenderer {
 
     // Create overlay canvas for UI (cursor, selection)
     this.overlayCanvas = document.createElement("canvas");
-    this.overlayCanvas.className = "overlay-canvas";
-    this.overlayCanvas.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-      z-index: 10;
-    `;
+    this.overlayCanvas.className = "note-canvas__overlay";
     this.overlayCtx = this.overlayCanvas.getContext("2d");
     this.viewportElement.appendChild(this.overlayCanvas);
   }
@@ -439,25 +432,6 @@ export class CanvasRenderer {
   forceRedraw() {
     this.palette = sharedGetThemePalette();
     this._drawBuffer();
-  }
-
-  /**
-   * Get render statistics
-   * @returns {Object}
-   */
-  getStats() {
-    return {
-      bufferTop: this.bufferTop,
-      bufferHeight: this.bufferHeight,
-      viewportWidth: this.viewportWidth,
-      viewportHeight: this.viewportHeight,
-      contentWidth: this.contentWidth,
-      contentHeight: this.contentHeight,
-      zoomScale: this.zoomScale,
-      resolutionScale: this.resolutionScale,
-      lastRenderTime: this.lastRenderTime,
-      canvasSize: `${this.canvas.width}x${this.canvas.height}`,
-    };
   }
 
   /**

@@ -7,22 +7,72 @@
 import { getTheme } from "../modules/theme.js";
 
 /**
- * Get color palette for current theme
+ * Get color palette for current theme (15 colors)
  * @returns {string[]} Array of color hex values
  */
 export function getThemePalette() {
   const theme = getTheme();
 
   if (theme === "dark") {
-    return ["#ffffff", "#f87171", "#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#9ca3af", "#fde047"];
+    // Dark theme: white first, then colors visible on dark backgrounds
+    return [
+      "#ffffff", // White (primary)
+      "#f87171", // Red
+      "#60a5fa", // Blue
+      "#34d399", // Green
+      "#fbbf24", // Yellow
+      "#a78bfa", // Purple
+      "#fb923c", // Orange
+      "#f472b6", // Pink
+      "#2dd4bf", // Teal
+      "#a3e635", // Lime
+      "#e879f9", // Fuchsia
+      "#38bdf8", // Sky
+      "#facc15", // Amber
+      "#9ca3af", // Gray
+      "#fde047", // Bright Yellow
+    ];
   }
 
   if (theme === "epaper") {
-    return ["#000000", "#800000", "#000080", "#006400", "#a52a2a", "#4b0082", "#2f4f4f", "#5d4037"];
+    // E-paper theme: black first, then muted colors for e-ink displays
+    return [
+      "#000000", // Black (primary)
+      "#800000", // Maroon
+      "#000080", // Navy
+      "#006400", // Dark Green
+      "#a52a2a", // Brown
+      "#4b0082", // Indigo
+      "#8b4513", // Saddle Brown
+      "#2f4f4f", // Dark Slate
+      "#556b2f", // Dark Olive
+      "#483d8b", // Dark Slate Blue
+      "#8b0000", // Dark Red
+      "#191970", // Midnight Blue
+      "#b8860b", // Dark Goldenrod
+      "#696969", // Dim Gray
+      "#5d4037", // Brown
+    ];
   }
 
-  // Light theme (default)
-  return ["#000000", "#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#6b7280", "#78350f"];
+  // Light theme (default): black first, then colors visible on light backgrounds
+  return [
+    "#000000", // Black (primary)
+    "#ef4444", // Red
+    "#3b82f6", // Blue
+    "#10b981", // Green
+    "#f59e0b", // Amber
+    "#8b5cf6", // Purple
+    "#f97316", // Orange
+    "#ec4899", // Pink
+    "#14b8a6", // Teal
+    "#84cc16", // Lime
+    "#d946ef", // Fuchsia
+    "#0ea5e9", // Sky
+    "#eab308", // Yellow
+    "#6b7280", // Gray
+    "#78350f", // Brown
+  ];
 }
 
 /**
@@ -36,48 +86,115 @@ export function drawStroke(ctx, stroke, palette = null, isSelected = false) {
   if (!ctx || !stroke.x || stroke.x.length < 2) return;
 
   const colors = palette || getThemePalette();
-  const pointCount = stroke.x.length;
+  const baseWidth = stroke.width || 2;
+  const color =
+    stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
 
   if (isSelected) {
+    ctx.save();
     ctx.strokeStyle = "rgba(0, 100, 255, 0.7)"; // Highlight color
-    ctx.lineWidth = (stroke.width || 2) + 4; // Make it thicker
-  } else {
-    ctx.strokeStyle =
-      stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
-    ctx.lineWidth = stroke.width || 2;
+    ctx.lineWidth = baseWidth + 4; // Make it thicker
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    drawSimplePath(ctx, stroke);
+    ctx.stroke();
+    ctx.restore();
   }
 
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.beginPath();
+  ctx.strokeStyle = color;
+
+  // Check for pressure data
+  const usePressure = stroke.pressure && stroke.pressure.length === stroke.x.length;
+
+  if (usePressure) {
+    drawPressurePath(ctx, stroke, baseWidth);
+  } else {
+    ctx.lineWidth = baseWidth;
+    ctx.beginPath();
+    drawSimplePath(ctx, stroke);
+    ctx.stroke();
+  }
+}
+
+function drawSimplePath(ctx, stroke) {
+  const pointCount = stroke.x.length;
   ctx.moveTo(stroke.x[0], stroke.y[0]);
 
   if (pointCount === 2) {
     ctx.lineTo(stroke.x[1], stroke.y[1]);
-  } else {
-    for (let i = 1; i < pointCount - 1; i++) {
-      const xc = (stroke.x[i] + stroke.x[i + 1]) / 2;
-      const yc = (stroke.y[i] + stroke.y[i + 1]) / 2;
-      ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], xc, yc);
-    }
-    const lastIdx = pointCount - 1;
-    const secondLastIdx = pointCount - 2;
-    ctx.quadraticCurveTo(
-      stroke.x[secondLastIdx],
-      stroke.y[secondLastIdx],
-      stroke.x[lastIdx],
-      stroke.y[lastIdx],
-    );
+    return;
   }
-  ctx.stroke();
 
-  // If selected, draw the actual stroke on top of the highlight
-  if (isSelected) {
-    ctx.strokeStyle =
-      stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
-    ctx.lineWidth = stroke.width || 2;
+  for (let i = 1; i < pointCount - 1; i++) {
+    const xc = (stroke.x[i] + stroke.x[i + 1]) / 2;
+    const yc = (stroke.y[i] + stroke.y[i + 1]) / 2;
+    ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], xc, yc);
+  }
+
+  const lastIdx = pointCount - 1;
+  const secondLastIdx = pointCount - 2;
+  ctx.quadraticCurveTo(
+    stroke.x[secondLastIdx],
+    stroke.y[secondLastIdx],
+    stroke.x[lastIdx],
+    stroke.y[lastIdx],
+  );
+}
+
+function drawPressurePath(ctx, stroke, baseWidth) {
+  const x = stroke.x;
+  const y = stroke.y;
+  const p = stroke.pressure;
+  const pointCount = x.length;
+
+  // Map pressure (0.0-1.0) to width multiplier (0.5-1.5)
+  const getWidth = (pressure) => Math.max(0.5, baseWidth * (0.5 + pressure));
+
+  if (pointCount === 2) {
+    ctx.beginPath();
+    ctx.lineWidth = getWidth((p[0] + p[1]) / 2);
+    ctx.moveTo(x[0], y[0]);
+    ctx.lineTo(x[1], y[1]);
+    ctx.stroke();
+    return;
+  }
+
+  // Draw segments with varying width
+  for (let i = 1; i < pointCount - 1; i++) {
+    ctx.beginPath();
+    ctx.lineWidth = getWidth(p[i]);
+
+    // Start point
+    if (i === 1) {
+      ctx.moveTo(x[0], y[0]);
+    } else {
+      const prevXc = (x[i - 1] + x[i]) / 2;
+      const prevYc = (y[i - 1] + y[i]) / 2;
+      ctx.moveTo(prevXc, prevYc);
+    }
+
+    // End point (midpoint of current and next)
+    const xc = (x[i] + x[i + 1]) / 2;
+    const yc = (y[i] + y[i + 1]) / 2;
+
+    ctx.quadraticCurveTo(x[i], y[i], xc, yc);
     ctx.stroke();
   }
+
+  // Last segment
+  const last = pointCount - 1;
+  const secondLast = pointCount - 2;
+
+  ctx.beginPath();
+  ctx.lineWidth = getWidth(p[last]);
+  const prevXc = (x[secondLast] + x[last]) / 2;
+  const prevYc = (y[secondLast] + y[last]) / 2;
+  ctx.moveTo(prevXc, prevYc);
+  ctx.quadraticCurveTo(x[secondLast], y[secondLast], x[last], y[last]);
+  ctx.stroke();
 }
 
 /**

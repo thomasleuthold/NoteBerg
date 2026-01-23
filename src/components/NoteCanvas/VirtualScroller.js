@@ -243,18 +243,7 @@ export class VirtualScroller {
   }
 
   /**
-   * Get current scroll position
-   * @returns {{ top: number, left: number }}
-   */
-  getScrollPosition() {
-    return {
-      top: this.scrollTop,
-      left: this.scrollLeft,
-    };
-  }
-
-  /**
-   * Get current scroll top (convenience method)
+   * Get current scroll top
    * @returns {number}
    */
   getScrollTop() {

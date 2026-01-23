@@ -30,6 +30,21 @@
   min-height: 0; /* Crucial for nested flex scrolling */
 }
 
+.note-canvas__error {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.note-canvas__error-title {
+  margin: 0;
+}
+
+.note-canvas__error-message {
+  font-size: 12px;
+  margin-top: 8px;
+}
+
 /* ==========================================================================
    VirtualScroller
    ========================================================================== */
@@ -76,6 +91,14 @@
   position: relative;
   left: auto;
   transform-origin: top center;
+}
+
+.note-canvas__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10;
 }
 
 /* ==========================================================================
@@ -129,4 +152,153 @@
 .note-canvas-toolbar__button--active:hover {
   transform: scale(1.1);
   box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.4);
+}
+
+/* Button container for positioning dialog */
+.note-canvas-toolbar__button-container {
+  position: relative;
+}
+
+/* ==========================================================================
+   Pen Settings Dialog
+   ========================================================================== */
+
+.note-canvas-toolbar__pen-dialog {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  padding: 16px;
+  min-width: 220px;
+  background-color: var(--bg-primary, #ffffff);
+  border: 1px solid var(--border-primary, #e2e8f0);
+  border-radius: 12px;
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.15),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.2s ease,
+    visibility 0.2s ease,
+    transform 0.2s ease;
+  transform: translateY(-4px);
+}
+
+.note-canvas-toolbar__pen-dialog--open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* Dialog arrow - positioned off-center to align with button */
+.note-canvas-toolbar__pen-dialog::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 24px;
+  transform: rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background-color: var(--bg-primary, #ffffff);
+  border-left: 1px solid var(--border-primary, #e2e8f0);
+  border-top: 1px solid var(--border-primary, #e2e8f0);
+}
+
+.note-canvas-toolbar__pen-dialog-section {
+  margin-bottom: 16px;
+}
+
+.note-canvas-toolbar__pen-dialog-section:last-child {
+  margin-bottom: 0;
+}
+
+.note-canvas-toolbar__pen-dialog-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #1e293b);
+  margin-bottom: 8px;
+}
+
+.note-canvas-toolbar__width-value {
+  font-weight: 600;
+  color: var(--color-primary, #3b82f6);
+}
+
+/* Width Slider */
+.note-canvas-toolbar__width-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-tertiary, #e2e8f0);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.note-canvas-toolbar__width-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-primary, #3b82f6);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease;
+}
+
+.note-canvas-toolbar__width-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+.note-canvas-toolbar__width-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-primary, #3b82f6);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Color Grid */
+.note-canvas-toolbar__color-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.note-canvas-toolbar__color-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  padding: 0;
+  outline: none;
+}
+
+.note-canvas-toolbar__color-swatch:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.note-canvas-toolbar__color-swatch--active {
+  border-color: var(--color-primary, #3b82f6);
+  box-shadow:
+    0 0 0 2px var(--bg-primary, #ffffff),
+    0 0 0 4px var(--color-primary, #3b82f6);
+  transform: scale(1.1);
 }

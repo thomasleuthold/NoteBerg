@@ -60,8 +60,7 @@ export class NoteCanvas {
     this.momentumReqId = null;
 
     // Drawing state
-    this.isDrawMode = false; // false = Pan Mode, true = Draw Mode
-    this.isEraserMode = false;
+    this.mode = "pan"; // 'pan' | 'draw' | 'eraser'
     this.currentPenColorIndex = 0;
     this.currentPenWidth = 2;
     this.autoSwitchedToDrawMode = false;
@@ -77,7 +76,6 @@ export class NoteCanvas {
     this._onStrokeStart = this._onStrokeStart.bind(this);
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
-    this._toggleMode = this._toggleMode.bind(this);
   }
 
   /**
@@ -216,10 +214,23 @@ export class NoteCanvas {
     );
 
     // Create Toolbar
-    this.toolbar = new NoteToolbar(toolbarContainer, (mode) => {
-      this._setMode(mode);
+    this.toolbar = new NoteToolbar(
+      toolbarContainer,
+      (mode) => {
+        this._setMode(mode);
+      },
+      {
+        onPenSettingsChange: ({ width, colorIndex }) => {
+          this.currentPenWidth = width;
+          this.currentPenColorIndex = colorIndex;
+        },
+      },
+    );
+    this.toolbar.updateMode(this.mode);
+    this.toolbar.setPenSettings({
+      width: this.currentPenWidth,
+      colorIndex: this.currentPenColorIndex,
     });
-    this.toolbar.updateMode(this.isDrawMode);
 
     this.isInitialized = true;
 
@@ -316,24 +327,14 @@ export class NoteCanvas {
 
   /**
    * Set the current tool mode
-   * @param {string} mode - 'pan' | 'draw' | 'eraser'
+   * @param {string} newMode - 'pan' | 'draw' | 'eraser'
    */
-  _setMode(mode) {
-    this.isDrawMode = mode === "draw" || mode === "eraser";
-    this.isEraserMode = mode === "eraser";
+  _setMode(newMode) {
+    this.mode = newMode;
     this.autoSwitchedToDrawMode = false;
 
     if (this.toolbar) {
-      this.toolbar.updateMode(mode);
-    }
-  }
-
-  // Legacy toggle for internal calls
-  _toggleMode(enableDraw) {
-    if (enableDraw) {
-      this._setMode("draw");
-    } else {
-      this._setMode("pan");
+      this.toolbar.updateMode(newMode);
     }
   }
 
@@ -342,19 +343,19 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeStart(props) {
-    // Auto-switch to draw mode if pen detected
-    if (props.pointerType === "pen" && !this.isDrawMode) {
-      this._toggleMode(true);
+    // Auto-switch to draw mode if pen detected and currently in pan mode
+    if (props.pointerType === "pen" && this.mode === "pan") {
+      this._setMode("draw");
       this.autoSwitchedToDrawMode = true;
     }
 
-    // In Draw Mode: Pen draws, Touch scrolls (unless we add a "Finger Draw" toggle later)
+    // In Draw/Eraser Mode: Pen draws/erases, Touch scrolls (unless we add a "Finger Draw" toggle later)
     // In Pan Mode: Everything scrolls
-    if (!this.isDrawMode) return false;
+    if (this.mode === "pan") return false;
     // If auto-switched to draw mode (by pen), touch should still scroll (palm rejection behavior)
     if (this.autoSwitchedToDrawMode && props.pointerType === "touch") return false;
 
-    if (this.isEraserMode) {
+    if (this.mode === "eraser") {
       this._handleEraser(props.x, props.y, props.clientX, props.clientY);
       return true;
     }
@@ -374,7 +375,7 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeMove(points) {
-    if (this.isEraserMode) {
+    if (this.mode === "eraser") {
       const lastPoint = points[points.length - 1];
       // Use the last point for cursor update and erasing
       this._handleEraser(lastPoint.x, lastPoint.y, lastPoint.clientX, lastPoint.clientY);
@@ -392,7 +393,7 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeEnd() {
-    if (this.isEraserMode) {
+    if (this.mode === "eraser") {
       this.renderer.clearOverlay();
       return;
     }
@@ -491,8 +492,8 @@ export class NoteCanvas {
   _onPointerDownNav(e) {
     // Ignore pen inputs for navigation (handled by InputHandler/StrokeManager)
     if (e.pointerType === "pen") return;
-    // Allow mouse only if NOT in draw mode (Pan mode)
-    if (e.pointerType === "mouse" && this.isDrawMode) return;
+    // Allow mouse only if in Pan mode (not draw/eraser mode)
+    if (e.pointerType === "mouse" && this.mode !== "pan") return;
 
     // Stop any active momentum scrolling
     if (this.momentumReqId) {
@@ -504,7 +505,9 @@ export class NoteCanvas {
     // Capture pointer to track dragging outside viewport
     try {
       e.target.setPointerCapture(e.pointerId);
-    } catch (_err) {}
+    } catch (_err) {
+      // Ignore capture errors
+    }
 
     if (this.activePointers.size === 2) {
       // Start Pinch
@@ -552,10 +555,10 @@ export class NoteCanvas {
       }
     } else if (this.activePointers.size === 1) {
       // Pan
-      // If in manual draw mode, single touch should draw, not pan
-      if (this.isDrawMode && !this.autoSwitchedToDrawMode) return;
-      // Mouse in draw mode is handled by InputHandler or ignored
-      if (this.isDrawMode && e.pointerType === "mouse") return;
+      // If in manual draw/eraser mode, single touch should draw/erase, not pan
+      if (this.mode !== "pan" && !this.autoSwitchedToDrawMode) return;
+      // Mouse in draw/eraser mode is handled by InputHandler or ignored
+      if (this.mode !== "pan" && e.pointerType === "mouse") return;
 
       const x = e.clientX;
       const y = e.clientY;
@@ -590,7 +593,9 @@ export class NoteCanvas {
       this.activePointers.delete(e.pointerId);
       try {
         e.target.releasePointerCapture(e.pointerId);
-      } catch (_err) {}
+      } catch (_err) {
+        // Ignore capture errors
+      }
 
       // Reset gesture states
       if (this.activePointers.size < 2) {
@@ -707,20 +712,9 @@ export class NoteCanvas {
   }
 
   /**
-   * Unload the current note (called before loading another)
-   */
-  unload() {
-    // Nothing to save in Phase 1 (read-only)
-    console.log("[NoteCanvas] Unloading note:", this.noteId);
-  }
-
-  /**
    * Clean up all resources
    */
   destroy() {
-    // Unload first
-    this.unload();
-
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);
 
