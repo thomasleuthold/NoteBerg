@@ -53,6 +53,12 @@ export class NoteCanvas {
     this.lastTouchX = null;
     this.lastTouchY = null;
 
+    // Momentum scrolling
+    this.velocityX = 0;
+    this.velocityY = 0;
+    this.lastMoveTime = 0;
+    this.momentumReqId = null;
+
     // Drawing state
     this.isDrawMode = false; // false = Pan Mode, true = Draw Mode
     this.isEraserMode = false;
@@ -485,10 +491,20 @@ export class NoteCanvas {
   _onPointerDownNav(e) {
     // Ignore pen inputs for navigation (handled by InputHandler/StrokeManager)
     if (e.pointerType === "pen") return;
-    // Only allow touch for panning/zooming (mouse uses wheel/scrollbars)
-    if (e.pointerType !== "touch") return;
+    // Allow mouse only if NOT in draw mode (Pan mode)
+    if (e.pointerType === "mouse" && this.isDrawMode) return;
+
+    // Stop any active momentum scrolling
+    if (this.momentumReqId) {
+      cancelAnimationFrame(this.momentumReqId);
+      this.momentumReqId = null;
+    }
 
     this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // Capture pointer to track dragging outside viewport
+    try {
+      e.target.setPointerCapture(e.pointerId);
+    } catch (_err) {}
 
     if (this.activePointers.size === 2) {
       // Start Pinch
@@ -499,6 +515,9 @@ export class NoteCanvas {
       // Start Pan
       this.lastTouchX = e.clientX;
       this.lastTouchY = e.clientY;
+      this.lastMoveTime = Date.now();
+      this.velocityX = 0;
+      this.velocityY = 0;
     }
   }
 
@@ -535,14 +554,28 @@ export class NoteCanvas {
       // Pan
       // If in manual draw mode, single touch should draw, not pan
       if (this.isDrawMode && !this.autoSwitchedToDrawMode) return;
+      // Mouse in draw mode is handled by InputHandler or ignored
+      if (this.isDrawMode && e.pointerType === "mouse") return;
 
       const x = e.clientX;
       const y = e.clientY;
+      const now = Date.now();
+      const dt = now - this.lastMoveTime;
+
       const dx = x - this.lastTouchX;
       const dy = y - this.lastTouchY;
 
+      // Calculate velocity (pixels per ms) with low-pass filter
+      if (dt > 0) {
+        const vx = dx / dt;
+        const vy = dy / dt;
+        this.velocityX = this.velocityX * 0.2 + vx * 0.8;
+        this.velocityY = this.velocityY * 0.2 + vy * 0.8;
+      }
+
       this.lastTouchX = x;
       this.lastTouchY = y;
+      this.lastMoveTime = now;
 
       this.scroller.scrollBy(-dx, -dy);
     }
@@ -555,6 +588,9 @@ export class NoteCanvas {
   _onPointerUpNav(e) {
     if (this.activePointers.has(e.pointerId)) {
       this.activePointers.delete(e.pointerId);
+      try {
+        e.target.releasePointerCapture(e.pointerId);
+      } catch (_err) {}
 
       // Reset gesture states
       if (this.activePointers.size < 2) {
@@ -569,6 +605,12 @@ export class NoteCanvas {
       }
 
       if (this.activePointers.size === 0) {
+        // Check for momentum if release was recent
+        const now = Date.now();
+        if (now - this.lastMoveTime < 100) {
+          this._startMomentumScroll();
+        }
+
         this.lastTouchX = null;
         this.lastTouchY = null;
       } else if (this.activePointers.size === 1) {
@@ -576,8 +618,44 @@ export class NoteCanvas {
         const point = this.activePointers.values().next().value;
         this.lastTouchX = point.x;
         this.lastTouchY = point.y;
+        this.lastMoveTime = Date.now();
+        this.velocityX = 0;
+        this.velocityY = 0;
       }
     }
+  }
+
+  /**
+   * Start momentum scrolling animation
+   * @private
+   */
+  _startMomentumScroll() {
+    const friction = 0.75;
+    const stopThreshold = 0.05;
+    let lastTime = performance.now();
+
+    const animate = (time) => {
+      const dt = time - lastTime;
+      lastTime = time;
+
+      if (dt > 0) {
+        const dx = this.velocityX * dt;
+        const dy = this.velocityY * dt;
+
+        this.scroller.scrollBy(-dx, -dy);
+
+        this.velocityX *= friction;
+        this.velocityY *= friction;
+      }
+
+      if (Math.abs(this.velocityX) > stopThreshold || Math.abs(this.velocityY) > stopThreshold) {
+        this.momentumReqId = requestAnimationFrame(animate);
+      } else {
+        this.momentumReqId = null;
+      }
+    };
+
+    this.momentumReqId = requestAnimationFrame(animate);
   }
 
   /**

@@ -14,7 +14,7 @@
     "lint": "biome lint ./src",
     "format": "biome format --write ./src",
     "format-check": "biome format ./src",
-    "check": "biome check --write ./src",
+    "check": "biome check --write --unsafe ./src",
     "sync-version": "node scripts/sync-version.js",
     "version": "npm run sync-version && git add src-tauri/tauri.conf.json"
   },
