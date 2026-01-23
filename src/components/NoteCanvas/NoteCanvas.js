@@ -10,6 +10,7 @@
 import { getNote } from "../../modules/storage.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { InputHandler } from "./InputHandler.js";
+import { NoteToolbar } from "./NoteToolbar.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
 import { VirtualScroller } from "./VirtualScroller.js";
@@ -30,6 +31,8 @@ export class NoteCanvas {
     this.spatialIndex = null;
     this.inputHandler = null;
     this.strokeManager = null;
+    this.toolbar = null;
+    this.contentHeight = 0;
 
     // State
     this.noteId = null;
@@ -90,8 +93,29 @@ export class NoteCanvas {
       this.noteData.strokes = [];
     }
 
+    // Clear container and setup layout
+    this.containerElement.innerHTML = "";
+    this.containerElement.style.display = "flex";
+    this.containerElement.style.flexDirection = "column";
+    this.containerElement.style.height = "100%";
+    this.containerElement.style.overflow = "hidden";
+
+    // 1. Toolbar Container (Fixed height at top)
+    const toolbarContainer = document.createElement("div");
+    toolbarContainer.style.flex = "0 0 auto";
+    toolbarContainer.style.zIndex = "10";
+    this.containerElement.appendChild(toolbarContainer);
+
+    // 2. Scroller Container (Canvas Area - fills remaining space)
+    const scrollerContainer = document.createElement("div");
+    scrollerContainer.style.flex = "1 1 auto";
+    scrollerContainer.style.position = "relative";
+    scrollerContainer.style.overflow = "hidden";
+    scrollerContainer.style.minHeight = "0"; // Crucial for nested flex scrolling
+    this.containerElement.appendChild(scrollerContainer);
+
     // Initialize scroller
-    this.scroller = new VirtualScroller(this.containerElement, {
+    this.scroller = new VirtualScroller(scrollerContainer, {
       onScroll: this._onScroll,
       onViewportResize: this._onViewportResize,
       maxContentWidth: this.maxContentWidth,
@@ -106,8 +130,8 @@ export class NoteCanvas {
 
     // Calculate content dimensions
     const contentBounds = this.spatialIndex.getContentBounds();
-    const contentHeight = contentBounds
-      ? Math.max(contentBounds.maxY + 100, height) // Add padding below content
+    this.contentHeight = contentBounds
+      ? Math.max(contentBounds.maxY + 500, height) // Add padding below content
       : height;
     const contentWidth = this.maxContentWidth;
 
@@ -117,14 +141,14 @@ export class NoteCanvas {
     });
     this.renderer.setData(this.noteData.strokes, this.noteData.background);
     this.renderer.setSpatialIndex(this.spatialIndex);
-    this.renderer.setContentSize(contentWidth, contentHeight);
+    this.renderer.setContentSize(contentWidth, this.contentHeight);
     this.renderer.resize(width, height);
 
     // Initialize stroke manager
     this.strokeManager = new StrokeManager(noteId, this.noteData.strokes);
 
     // Set content size in scroller
-    this.scroller.setContentSize(contentWidth, contentHeight);
+    this.scroller.setContentSize(contentWidth, this.contentHeight);
 
     // Initial render
     this.renderer.render(0, height);
@@ -161,77 +185,22 @@ export class NoteCanvas {
     );
 
     // Create Toolbar
-    this._createToolbar();
+    this.toolbar = new NoteToolbar(toolbarContainer, (isDrawMode) => {
+      this._toggleMode(isDrawMode);
+    });
+    this.toolbar.updateMode(this.isDrawMode);
 
     this.isInitialized = true;
 
     // Log stats for debugging
     console.log("[NoteCanvas] Initialized:", {
       strokes: this.noteData.strokes?.length || 0,
-      contentHeight,
+      contentHeight: this.contentHeight,
       indexStats: this.spatialIndex.getStats(),
     });
 
     // Expose for debugging
     window.__noteCanvas = this;
-  }
-
-  /**
-   * Create the floating toolbar for Pan/Draw modes
-   * @private
-   */
-  _createToolbar() {
-    const toolbar = document.createElement("div");
-    toolbar.className = "note-canvas-toolbar";
-    toolbar.style.cssText = `
-      position: absolute;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      background-color: var(--bg-primary, #ffffff);
-      border: 1px solid var(--border-primary, #e2e8f0);
-      border-radius: 24px;
-      padding: 4px;
-      display: flex;
-      gap: 4px;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-      z-index: 100;
-    `;
-
-    const createBtn = (id, icon, title, isActive) => {
-      const btn = document.createElement("button");
-      btn.id = `nc-tool-${id}`;
-      btn.title = title;
-      btn.innerHTML = icon;
-      btn.style.cssText = `
-        width: 40px;
-        height: 40px;
-        border-radius: 20px;
-        border: none;
-        background: ${isActive ? "var(--color-primary, #3b82f6)" : "transparent"};
-        color: ${isActive ? "#ffffff" : "var(--text-secondary, #64748b)"};
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: all 0.2s;
-      `;
-      btn.onclick = () => this._toggleMode(id === "draw");
-      return btn;
-    };
-
-    // Hand/Pan Icon
-    const panIcon = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M6 11v3.6a6 6 0 0 0 6 6h2"/><path d="M18 11a4 4 0 0 1 4 4v3a4 4 0 0 1-4 4h-2"/></svg>`;
-
-    // Pen Icon
-    const penIcon = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>`;
-
-    this.panBtn = createBtn("pan", panIcon, "Pan Mode", !this.isDrawMode);
-    this.drawBtn = createBtn("draw", penIcon, "Draw Mode", this.isDrawMode);
-
-    toolbar.appendChild(this.panBtn);
-    toolbar.appendChild(this.drawBtn);
-    this.scroller.getViewportElement().appendChild(toolbar);
   }
 
   /**
@@ -260,6 +229,18 @@ export class NoteCanvas {
    */
   _onScroll(scrollTop, scrollLeft, viewportHeight) {
     if (this._isZooming) return;
+
+    // Infinite scroll expansion
+    const contentScrollTop = scrollTop / this.zoomScale;
+    const contentViewportHeight = viewportHeight / this.zoomScale;
+
+    if (this.contentHeight > 0) {
+      const distanceToBottom = this.contentHeight - (contentScrollTop + contentViewportHeight);
+      if (distanceToBottom < 500) {
+        this._expandCanvas(1000);
+      }
+    }
+
     if (!this.renderer) return;
     this.renderer.render(scrollTop, viewportHeight, scrollLeft, this.strokeManager?.currentStroke);
   }
@@ -293,23 +274,25 @@ export class NoteCanvas {
   }
 
   /**
+   * Expand canvas height for infinite scrolling
+   * @private
+   */
+  _expandCanvas(amount) {
+    this.contentHeight += amount;
+    this.scroller.setContentSize(this.maxContentWidth, this.contentHeight);
+    this.renderer.setContentSize(this.maxContentWidth, this.contentHeight);
+  }
+
+  /**
    * Toggle between Pan and Draw modes
    * @param {boolean} enableDraw - True for Draw mode, False for Pan mode
    */
   _toggleMode(enableDraw) {
     this.isDrawMode = enableDraw;
 
-    // Update UI
-    const activeBg = "var(--color-primary, #3b82f6)";
-    const activeColor = "#ffffff";
-    const inactiveBg = "transparent";
-    const inactiveColor = "var(--text-secondary, #64748b)";
-
-    this.drawBtn.style.background = this.isDrawMode ? activeBg : inactiveBg;
-    this.drawBtn.style.color = this.isDrawMode ? activeColor : inactiveColor;
-
-    this.panBtn.style.background = !this.isDrawMode ? activeBg : inactiveBg;
-    this.panBtn.style.color = !this.isDrawMode ? activeColor : inactiveColor;
+    if (this.toolbar) {
+      this.toolbar.updateMode(this.isDrawMode);
+    }
   }
 
   /**
@@ -586,6 +569,11 @@ export class NoteCanvas {
     if (this.strokeManager) {
       this.strokeManager.forceSave();
       this.strokeManager.destroy();
+    }
+
+    if (this.toolbar) {
+      this.toolbar.destroy();
+      this.toolbar = null;
     }
 
     // Clear state
