@@ -55,36 +55,14 @@ export class VirtualScroller {
     // Main scrollable container
     this.container = document.createElement("div");
     this.container.className = "virtual-scroll-container";
-    this.container.style.cssText = `
-      position: relative;
-      overflow: auto;
-      height: 100%;
-      width: 100%;
-    `;
 
     // Phantom div that establishes scroll dimensions
     this.phantomDiv = document.createElement("div");
-    this.phantomDiv.className = "phantom-size";
-    this.phantomDiv.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-      visibility: hidden;
-    `;
+    this.phantomDiv.className = "virtual-scroll-container__phantom";
 
     // Viewport that stays fixed in view (sticky positioning)
     this.viewport = document.createElement("div");
-    this.viewport.className = "canvas-viewport";
-    this.viewport.style.cssText = `
-      position: sticky;
-      top: 0;
-      left: 0;
-      overflow: hidden;
-      display: flex;
-      align-items: flex-start;
-      touch-action: none;
-    `;
+    this.viewport.className = "virtual-scroll-container__viewport";
 
     // Assemble
     this.container.appendChild(this.phantomDiv);
@@ -156,14 +134,6 @@ export class VirtualScroller {
     this.contentWidth = width;
     this.contentHeight = height;
     this._updatePhantomSize();
-  }
-
-  /**
-   * Set the total content height (convenience method)
-   * @param {number} height - Content height in pixels (before zoom)
-   */
-  setContentHeight(height) {
-    this.setContentSize(this.contentWidth || this.maxContentWidth, height);
   }
 
   /**

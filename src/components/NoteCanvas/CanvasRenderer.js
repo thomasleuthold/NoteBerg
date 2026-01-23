@@ -70,14 +70,6 @@ export class CanvasRenderer {
   _createCanvas() {
     this.canvas = document.createElement("canvas");
     this.canvas.className = "sliding-buffer-canvas";
-    this.canvas.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      transform-origin: top left;
-      will-change: transform;
-      background-color: var(--bg-primary);
-    `;
 
     this.ctx = this.canvas.getContext("2d");
     this.viewportElement.appendChild(this.canvas);
@@ -113,14 +105,6 @@ export class CanvasRenderer {
   }
 
   /**
-   * Set the total content height (convenience method)
-   * @param {number} height
-   */
-  setContentHeight(height) {
-    this.contentHeight = height;
-  }
-
-  /**
    * Resize the canvas for the given viewport dimensions
    * @param {number} width - Viewport width (screen pixels)
    * @param {number} height - Viewport height (screen pixels)
@@ -145,15 +129,10 @@ export class CanvasRenderer {
 
     if (scaledContentWidth < this.screenViewportWidth) {
       // Canvas is smaller than viewport - center it
-      // Use relative positioning within flexbox parent
-      this.canvas.style.position = "relative";
-      this.canvas.style.left = "auto";
-      this.canvas.style.transformOrigin = "top center";
+      this.canvas.classList.add("sliding-buffer-canvas--centered");
     } else {
       // Canvas fills or exceeds viewport - position absolutely
-      this.canvas.style.position = "absolute";
-      this.canvas.style.left = "0";
-      this.canvas.style.transformOrigin = "top left";
+      this.canvas.classList.remove("sliding-buffer-canvas--centered");
     }
   }
 

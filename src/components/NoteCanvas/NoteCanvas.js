@@ -3,13 +3,13 @@
  *
  * Coordinates the VirtualScroller, CanvasRenderer, and SpatialIndex
  * to provide smooth 60fps scrolling and instant zoom for large notes.
- *
- * Phase 1: Read-only rendering only.
+ * Supports both viewing and drawing with stylus/pen input.
  */
 
 import { getNote } from "../../modules/storage.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { InputHandler } from "./InputHandler.js";
+import "./NoteCanvas.css";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
@@ -95,23 +95,16 @@ export class NoteCanvas {
 
     // Clear container and setup layout
     this.containerElement.innerHTML = "";
-    this.containerElement.style.display = "flex";
-    this.containerElement.style.flexDirection = "column";
-    this.containerElement.style.height = "100%";
-    this.containerElement.style.overflow = "hidden";
+    this.containerElement.className = "note-canvas";
 
     // 1. Toolbar Container (Fixed height at top)
     const toolbarContainer = document.createElement("div");
-    toolbarContainer.style.flex = "0 0 auto";
-    toolbarContainer.style.zIndex = "10";
+    toolbarContainer.className = "note-canvas__toolbar-container";
     this.containerElement.appendChild(toolbarContainer);
 
     // 2. Scroller Container (Canvas Area - fills remaining space)
     const scrollerContainer = document.createElement("div");
-    scrollerContainer.style.flex = "1 1 auto";
-    scrollerContainer.style.position = "relative";
-    scrollerContainer.style.overflow = "hidden";
-    scrollerContainer.style.minHeight = "0"; // Crucial for nested flex scrolling
+    scrollerContainer.className = "note-canvas__scroller-container";
     this.containerElement.appendChild(scrollerContainer);
 
     // Initialize scroller
@@ -539,9 +532,11 @@ export class NoteCanvas {
       const viewport = this.scroller.getViewportElement();
       if (viewport) {
         viewport.removeEventListener("wheel", this._onWheel);
-        viewport.removeEventListener("touchstart", this._onTouchStart);
-        viewport.removeEventListener("touchmove", this._onTouchMove);
-        viewport.removeEventListener("touchend", this._onTouchEnd);
+        viewport.removeEventListener("pointerdown", this._onPointerDownNav);
+        viewport.removeEventListener("pointermove", this._onPointerMoveNav);
+        viewport.removeEventListener("pointerup", this._onPointerUpNav);
+        viewport.removeEventListener("pointercancel", this._onPointerUpNav);
+        viewport.removeEventListener("pointerleave", this._onPointerUpNav);
       }
     }
 

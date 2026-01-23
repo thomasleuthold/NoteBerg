@@ -21,56 +21,13 @@ export class NoteToolbar {
   _createDOM() {
     this.element = document.createElement("div");
     this.element.className = "note-canvas-toolbar";
-    // Container is invisible but holds layout
-    this.element.style.cssText = `
-      display: flex;
-      gap: 16px;
-      padding: 10px 20px;
-      width: 100%;
-      background-color: var(--bg-primary);
-      border-bottom: 1px solid var(--border-primary);
-      align-items: center;
-    `;
 
     const createBtn = (id, icon, title) => {
       const btn = document.createElement("button");
       btn.id = `nc-tool-${id}`;
+      btn.className = "note-canvas-toolbar__button";
       btn.title = title;
       btn.innerHTML = icon;
-      btn.style.cssText = `
-        width: 48px;
-        height: 48px;
-        border-radius: 50%;
-        border: 1px solid var(--border-primary, #e2e8f0);
-        background-color: var(--bg-primary, #ffffff);
-        color: var(--text-secondary, #64748b);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-        pointer-events: auto;
-        outline: none;
-      `;
-
-      // Add hover effects via JS since we're using inline styles for encapsulation
-      btn.addEventListener("mouseenter", () => {
-        if (!btn.dataset.active) {
-          btn.style.transform = "translateY(-2px)";
-          btn.style.boxShadow =
-            "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)";
-        }
-      });
-
-      btn.addEventListener("mouseleave", () => {
-        if (!btn.dataset.active) {
-          btn.style.transform = "none";
-          btn.style.boxShadow =
-            "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)";
-        }
-      });
-
       return btn;
     };
 
@@ -92,20 +49,9 @@ export class NoteToolbar {
   updateMode(isDrawMode) {
     const setActive = (btn, active) => {
       if (active) {
-        btn.dataset.active = "true";
-        btn.style.backgroundColor = "var(--color-primary, #3b82f6)";
-        btn.style.color = "#ffffff";
-        btn.style.borderColor = "var(--color-primary, #3b82f6)";
-        btn.style.transform = "scale(1.1)";
-        btn.style.boxShadow = "0 10px 15px -3px rgba(59, 130, 246, 0.4)";
+        btn.classList.add("note-canvas-toolbar__button--active");
       } else {
-        delete btn.dataset.active;
-        btn.style.backgroundColor = "var(--bg-primary, #ffffff)";
-        btn.style.color = "var(--text-secondary, #64748b)";
-        btn.style.borderColor = "var(--border-primary, #e2e8f0)";
-        btn.style.transform = "none";
-        btn.style.boxShadow =
-          "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)";
+        btn.classList.remove("note-canvas-toolbar__button--active");
       }
     };
 

@@ -2,7 +2,7 @@
  * NoteCanvas Module - Entry point and component initialization
  *
  * This module provides the virtualized canvas rendering system for notes.
- * Phase 1: Read-only rendering with smooth scrolling and zoom.
+ * Supports smooth scrolling, zoom, and stylus/pen drawing.
  */
 
 import { NoteCanvas } from "./NoteCanvas.js";
