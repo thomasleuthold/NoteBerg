@@ -58,6 +58,7 @@ export class NoteCanvas {
     this.isEraserMode = false;
     this.currentPenColorIndex = 0;
     this.currentPenWidth = 2;
+    this.autoSwitchedToDrawMode = false;
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -291,6 +292,7 @@ export class NoteCanvas {
   _setMode(mode) {
     this.isDrawMode = mode === "draw" || mode === "eraser";
     this.isEraserMode = mode === "eraser";
+    this.autoSwitchedToDrawMode = false;
 
     if (this.toolbar) {
       this.toolbar.updateMode(mode);
@@ -314,12 +316,14 @@ export class NoteCanvas {
     // Auto-switch to draw mode if pen detected
     if (props.pointerType === "pen" && !this.isDrawMode) {
       this._toggleMode(true);
+      this.autoSwitchedToDrawMode = true;
     }
 
     // In Draw Mode: Pen draws, Touch scrolls (unless we add a "Finger Draw" toggle later)
     // In Pan Mode: Everything scrolls
     if (!this.isDrawMode) return false;
-    if (props.pointerType === "touch") return false;
+    // If auto-switched to draw mode (by pen), touch should still scroll (palm rejection behavior)
+    if (this.autoSwitchedToDrawMode && props.pointerType === "touch") return false;
 
     if (this.isEraserMode) {
       this._handleEraser(props.x, props.y, props.clientX, props.clientY);
@@ -506,6 +510,9 @@ export class NoteCanvas {
       }
     } else if (this.activePointers.size === 1) {
       // Pan
+      // If in manual draw mode, single touch should draw, not pan
+      if (this.isDrawMode && !this.autoSwitchedToDrawMode) return;
+
       const x = e.clientX;
       const y = e.clientY;
       const dx = x - this.lastTouchX;
