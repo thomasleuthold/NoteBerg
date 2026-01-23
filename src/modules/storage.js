@@ -5,8 +5,8 @@
 
 import { openDB } from "idb";
 
-const DB_NAME = "oneJournal";
-const DB_VERSION = 1;
+export const DB_NAME = "oneJournal";
+export const DB_VERSION = 1;
 
 let db = null;
 

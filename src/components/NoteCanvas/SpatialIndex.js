@@ -148,28 +148,36 @@ export class SpatialIndex {
   }
 
   /**
-   * Calculate the Y-axis bounding box for a stroke
+   * Calculate the bounding box for a stroke
    * @private
-   * @param {Object} stroke - Stroke object with y[] and width properties
-   * @returns {{ minY: number, maxY: number } | null}
+   * @param {Object} stroke - Stroke object with x[], y[] and width properties
+   * @returns {{ minX: number, maxX: number, minY: number, maxY: number } | null}
    */
   _getStrokeBounds(stroke) {
-    if (!stroke.y || stroke.y.length === 0) return null;
+    if (!stroke.x || !stroke.y || stroke.y.length === 0) return null;
 
+    let minX = Infinity;
+    let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
 
-    for (const y of stroke.y) {
+    for (let i = 0; i < stroke.y.length; i++) {
+      const x = stroke.x[i];
+      const y = stroke.y[i];
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
       minY = Math.min(minY, y);
       maxY = Math.max(maxY, y);
     }
 
     // Add padding for stroke width
     const padding = (stroke.width || 2) / 2;
+    minX -= padding;
+    maxX += padding;
     minY -= padding;
     maxY += padding;
 
-    return { minY, maxY };
+    return { minX, maxX, minY, maxY };
   }
 
   /**

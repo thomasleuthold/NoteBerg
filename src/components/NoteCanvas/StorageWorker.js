@@ -4,9 +4,7 @@
 
 import { openDB } from "idb";
 import { encryptObject } from "../../modules/encryption.js";
-
-const DB_NAME = "oneJournal"; // Matches the app's DB name
-const DB_VERSION = 1; // Assuming version 1, or whatever the app uses
+import { DB_NAME, DB_VERSION } from "../../modules/storage.js";
 
 let dbPromise = null;
 
