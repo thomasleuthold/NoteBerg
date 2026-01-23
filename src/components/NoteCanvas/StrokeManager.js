@@ -11,9 +11,10 @@ import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js
 import { generateId } from "../../modules/storage.js";
 
 export class StrokeManager {
-  constructor(noteId, initialStrokes = []) {
+  constructor(noteId, initialStrokes = [], initialDeletedStrokes = []) {
     this.noteId = noteId;
     this.strokes = initialStrokes;
+    this.deletedStrokes = initialDeletedStrokes;
     this.currentStroke = null;
 
     // Initialize Web Worker
@@ -71,11 +72,15 @@ export class StrokeManager {
       }
     }
 
+    // Filter out deleted strokes for storage (they are kept in memory for SpatialIndex validity)
+    const activeStrokes = this.strokes.filter((s) => !s._deleted);
+
     // Offload to worker
     this.worker.postMessage({
       type: "SAVE_STROKES",
       noteId: this.noteId,
-      strokes: this.strokes,
+      strokes: activeStrokes,
+      deletedStrokes: this.deletedStrokes,
       key: key,
     });
   }

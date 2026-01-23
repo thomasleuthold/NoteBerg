@@ -76,6 +76,8 @@ export class InputHandler {
       pressure,
       pointerType: e.pointerType,
       pointerId: e.pointerId,
+      clientX: e.clientX,
+      clientY: e.clientY,
     });
 
     if (shouldDraw) {
@@ -105,6 +107,8 @@ export class InputHandler {
         y,
         pressure: event.pressure !== undefined ? event.pressure : 0.5,
         time: event.timeStamp || Date.now(),
+        clientX: event.clientX,
+        clientY: event.clientY,
       });
     }
 

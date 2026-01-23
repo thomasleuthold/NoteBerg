@@ -55,6 +55,7 @@ export class NoteCanvas {
 
     // Drawing state
     this.isDrawMode = false; // false = Pan Mode, true = Draw Mode
+    this.isEraserMode = false;
     this.currentPenColorIndex = 0;
     this.currentPenWidth = 2;
 
@@ -91,6 +92,9 @@ export class NoteCanvas {
     // Ensure strokes array exists and is shared across modules
     if (!this.noteData.strokes) {
       this.noteData.strokes = [];
+    }
+    if (!this.noteData.deletedStrokes) {
+      this.noteData.deletedStrokes = [];
     }
 
     // Clear container and setup layout
@@ -138,7 +142,11 @@ export class NoteCanvas {
     this.renderer.resize(width, height);
 
     // Initialize stroke manager
-    this.strokeManager = new StrokeManager(noteId, this.noteData.strokes);
+    this.strokeManager = new StrokeManager(
+      noteId,
+      this.noteData.strokes,
+      this.noteData.deletedStrokes,
+    );
 
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, this.contentHeight);
@@ -178,8 +186,8 @@ export class NoteCanvas {
     );
 
     // Create Toolbar
-    this.toolbar = new NoteToolbar(toolbarContainer, (isDrawMode) => {
-      this._toggleMode(isDrawMode);
+    this.toolbar = new NoteToolbar(toolbarContainer, (mode) => {
+      this._setMode(mode);
     });
     this.toolbar.updateMode(this.isDrawMode);
 
@@ -277,14 +285,24 @@ export class NoteCanvas {
   }
 
   /**
-   * Toggle between Pan and Draw modes
-   * @param {boolean} enableDraw - True for Draw mode, False for Pan mode
+   * Set the current tool mode
+   * @param {string} mode - 'pan' | 'draw' | 'eraser'
    */
-  _toggleMode(enableDraw) {
-    this.isDrawMode = enableDraw;
+  _setMode(mode) {
+    this.isDrawMode = mode === "draw" || mode === "eraser";
+    this.isEraserMode = mode === "eraser";
 
     if (this.toolbar) {
-      this.toolbar.updateMode(this.isDrawMode);
+      this.toolbar.updateMode(mode);
+    }
+  }
+
+  // Legacy toggle for internal calls
+  _toggleMode(enableDraw) {
+    if (enableDraw) {
+      this._setMode("draw");
+    } else {
+      this._setMode("pan");
     }
   }
 
@@ -303,6 +321,11 @@ export class NoteCanvas {
     if (!this.isDrawMode) return false;
     if (props.pointerType === "touch") return false;
 
+    if (this.isEraserMode) {
+      this._handleEraser(props.x, props.y, props.clientX, props.clientY);
+      return true;
+    }
+
     const stroke = this.strokeManager.startStroke({
       ...props,
       colorIndex: this.currentPenColorIndex,
@@ -318,6 +341,13 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeMove(points) {
+    if (this.isEraserMode) {
+      const lastPoint = points[points.length - 1];
+      // Use the last point for cursor update and erasing
+      this._handleEraser(lastPoint.x, lastPoint.y, lastPoint.clientX, lastPoint.clientY);
+      return;
+    }
+
     const stroke = this.strokeManager.addPoints(points);
     if (stroke) {
       this.renderer.drawDirectStroke(stroke);
@@ -329,12 +359,70 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeEnd() {
+    if (this.isEraserMode) {
+      this.renderer.clearOverlay();
+      return;
+    }
+
     const stroke = this.strokeManager.endStroke();
     if (stroke) {
       // Update spatial index so the stroke is included in future buffer redraws (scroll/zoom)
       const newIndex = this.noteData.strokes.length - 1;
       this.spatialIndex.insert(stroke, newIndex);
     }
+  }
+
+  /**
+   * Handle eraser logic
+   * @private
+   */
+  _handleEraser(contentX, contentY, clientX, clientY) {
+    // 1. Draw cursor
+    const rect = this.scroller.getViewportElement().getBoundingClientRect();
+    const screenX = clientX - rect.left;
+    const screenY = clientY - rect.top;
+    const eraserRadius = 10; // Screen pixels
+    this.renderer.drawEraserCursor(screenX, screenY, eraserRadius);
+
+    // 2. Erase strokes
+    // Convert screen radius to content radius for hit testing
+    const contentRadius = eraserRadius / this.zoomScale;
+    const queryPadding = contentRadius;
+
+    // Query potential hits
+    const candidates = this.spatialIndex.query(contentY - queryPadding, contentY + queryPadding);
+    let didErase = false;
+
+    for (const index of candidates) {
+      const stroke = this.noteData.strokes[index];
+      if (stroke._deleted) continue;
+
+      if (this._strokeIntersectsCircle(stroke, contentX, contentY, contentRadius)) {
+        stroke._deleted = true;
+        didErase = true;
+        if (stroke.id) {
+          this.noteData.deletedStrokes.push(stroke.id);
+        }
+      }
+    }
+
+    if (didErase) {
+      this.renderer.forceRedraw();
+      this.strokeManager.forceSave(); // Save changes
+    }
+  }
+
+  _strokeIntersectsCircle(stroke, cx, cy, r) {
+    // Simple bounding box check first
+    // (Optimization: SpatialIndex query already did a rough Y check, but X check is needed)
+    // For now, just checking points. A proper segment-circle intersection is better but more expensive.
+    // Checking if any point is within radius is a fast approximation for high-sample-rate strokes.
+    const rSq = r * r;
+    return stroke.x.some((x, i) => {
+      const dx = x - cx;
+      const dy = stroke.y[i] - cy;
+      return dx * dx + dy * dy <= rSq;
+    });
   }
 
   /**

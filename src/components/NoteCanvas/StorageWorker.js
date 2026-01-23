@@ -16,7 +16,7 @@ function getDB() {
 }
 
 self.onmessage = async (e) => {
-  const { type, noteId, strokes, key } = e.data;
+  const { type, noteId, strokes, deletedStrokes, key } = e.data;
 
   if (type === "SAVE_STROKES") {
     try {
@@ -29,6 +29,11 @@ self.onmessage = async (e) => {
       const note = await store.get(noteId);
 
       if (note) {
+        // 1. Update deleted strokes
+        if (deletedStrokes) {
+          note.deletedStrokes = deletedStrokes;
+        }
+
         // 2. Update strokes (encrypt if needed)
         if (note.encrypted) {
           if (key) {

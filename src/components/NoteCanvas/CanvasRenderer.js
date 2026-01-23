@@ -25,6 +25,8 @@ export class CanvasRenderer {
     // Canvas elements
     this.canvas = null;
     this.ctx = null;
+    this.overlayCanvas = null;
+    this.overlayCtx = null;
 
     // Buffer state
     this.bufferTop = 0; // Current buffer Y position in content space
@@ -73,6 +75,19 @@ export class CanvasRenderer {
 
     this.ctx = this.canvas.getContext("2d");
     this.viewportElement.appendChild(this.canvas);
+
+    // Create overlay canvas for UI (cursor, selection)
+    this.overlayCanvas = document.createElement("canvas");
+    this.overlayCanvas.className = "overlay-canvas";
+    this.overlayCanvas.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 10;
+    `;
+    this.overlayCtx = this.overlayCanvas.getContext("2d");
+    this.viewportElement.appendChild(this.overlayCanvas);
   }
 
   /**
@@ -115,6 +130,10 @@ export class CanvasRenderer {
     this.viewportWidth = this.maxContentWidth;
     this.viewportHeight = height;
     this.bufferHeight = height * this.bufferMultiplier;
+
+    // Resize overlay to match viewport exactly
+    this.overlayCanvas.width = width;
+    this.overlayCanvas.height = height;
 
     this._resizeCanvasBitmap();
     this._updateCanvasPosition();
@@ -213,6 +232,25 @@ export class CanvasRenderer {
   }
 
   /**
+   * Draw the eraser cursor on the overlay canvas
+   * @param {number} x - Screen X coordinate
+   * @param {number} y - Screen Y coordinate
+   * @param {number} radius - Radius in screen pixels
+   */
+  drawEraserCursor(x, y, radius = 10) {
+    this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+    this.overlayCtx.beginPath();
+    this.overlayCtx.arc(x, y, radius, 0, Math.PI * 2);
+    this.overlayCtx.strokeStyle = "rgba(255, 0, 0, 0.5)";
+    this.overlayCtx.lineWidth = 2;
+    this.overlayCtx.stroke();
+  }
+
+  clearOverlay() {
+    this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+  }
+
+  /**
    * Check if scroll position requires a leapfrog (buffer reposition)
    * @private
    * @param {number} scrollTop - Scroll position in content coordinates
@@ -305,7 +343,7 @@ export class CanvasRenderer {
 
     for (const index of strokeIndices) {
       const stroke = this.strokes[index];
-      if (stroke) {
+      if (stroke && !stroke._deleted) {
         sharedDrawStroke(this.ctx, stroke, this.palette, false);
       }
     }
@@ -432,6 +470,10 @@ export class CanvasRenderer {
 
     if (this.canvas?.parentElement) {
       this.canvas.parentElement.removeChild(this.canvas);
+    }
+
+    if (this.overlayCanvas?.parentElement) {
+      this.overlayCanvas.parentElement.removeChild(this.overlayCanvas);
     }
 
     this.canvas = null;
