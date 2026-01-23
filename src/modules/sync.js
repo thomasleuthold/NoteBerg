@@ -10,6 +10,8 @@ import {
   deleteNotebook,
   getAllNotebooksForSync,
   getAllNotesForSync,
+  getNote,
+  getNotebook,
   saveNote,
   saveNotebook,
 } from "./storage.js";
@@ -159,7 +161,8 @@ export async function performSync({
 
     // Mark uploaded items as synced
     for (const id of result.uploaded.notebooks.uploadedIds || []) {
-      const notebook = notebooks.find((n) => n.id === id);
+      // Fetch fresh notebook to avoid overwriting concurrent changes
+      const notebook = await getNotebook(id);
       if (notebook) {
         const etag = result.uploaded.notebooks.metadata?.[id]?.etag;
         if (!silent) {
@@ -174,13 +177,16 @@ export async function performSync({
     }
 
     for (const id of result.uploaded.notes.uploadedIds || []) {
-      const note = notes.find((n) => n.id === id);
+      // Fetch fresh note to avoid overwriting concurrent changes (e.g. new strokes)
+      // getNote returns decrypted note, which is what we want for modification
+      const note = await getNote(id);
       if (note) {
         const etag = result.uploaded.notes.metadata?.[id]?.etag;
         if (!silent) {
           console.log(`Marking note ${id} as synced (was: ${note.synced})`);
         }
         // Use skipEncryption because note is already in correct encrypted format
+        // Wait, getNote returns decrypted. saveNote handles encryption.
         await saveNote({
           ...note,
           synced: true,

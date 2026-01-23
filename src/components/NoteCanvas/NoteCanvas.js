@@ -75,6 +75,29 @@ export class NoteCanvas {
   }
 
   /**
+   * Check if the note content has changed in storage compared to loaded data
+   * Used to determine if a reload is necessary
+   * @param {string} noteId
+   * @returns {Promise<boolean>}
+   */
+  async hasContentChanged(noteId) {
+    if (noteId !== this.noteId) return true;
+
+    const freshData = await getNote(noteId);
+    if (!freshData) return true; // Note deleted?
+
+    // Check strokes count
+    const currentStrokesCount = this.noteData.strokes?.length || 0;
+    const freshStrokesCount = freshData.strokes?.length || 0;
+
+    // Simple check: if stroke count or background changed, we need reload
+    // We ignore metadata changes like 'synced' or 'lastSyncedEtag'
+    return (
+      currentStrokesCount !== freshStrokesCount || this.noteData.background !== freshData.background
+    );
+  }
+
+  /**
    * Load and render a note
    * @param {string} noteId - ID of the note to load
    */

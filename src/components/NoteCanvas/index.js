@@ -71,10 +71,16 @@ export function initNoteCanvasComponent() {
   window.addEventListener("datachange", async () => {
     if (!noteCanvasInstance || !noteCanvasInstance.noteId) return;
 
-    // In Phase 1, we just reload the note on external changes
-    // Future phases will implement smarter merging
     const noteId = noteCanvasInstance.noteId;
     const container = noteCanvasInstance.containerElement;
+
+    // Check if content actually changed to avoid unnecessary reloads (e.g. on sync metadata update)
+    // This prevents "vanishing strokes" when auto-sync updates the note status while drawing
+    const changed = await noteCanvasInstance.hasContentChanged(noteId);
+    if (!changed) {
+      console.log("[NoteCanvas] Ignoring datachange (content unchanged)");
+      return;
+    }
 
     if (container) {
       noteCanvasInstance.destroy();
