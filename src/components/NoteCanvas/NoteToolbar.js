@@ -179,14 +179,18 @@ export class NoteToolbar {
         <label class="note-canvas-toolbar__pen-dialog-label">
           Line Width: <span class="note-canvas-toolbar__width-value">${this.penWidth}</span>
         </label>
-        <input
-          type="range"
-          class="note-canvas-toolbar__width-slider"
-          min="0.25"
-          max="15"
-          step="0.25"
-          value="${this.penWidth}"
-        />
+        <div class="note-canvas-toolbar__width-control">
+          <button class="note-canvas-toolbar__width-btn" data-action="decrease">-</button>
+          <input
+            type="range"
+            class="note-canvas-toolbar__width-slider"
+            min="0.2"
+            max="15"
+            step="0.1"
+            value="${this.penWidth}"
+          />
+          <button class="note-canvas-toolbar__width-btn" data-action="increase">+</button>
+        </div>
       </div>
       <div class="note-canvas-toolbar__pen-dialog-section">
         <label class="note-canvas-toolbar__pen-dialog-label">Color</label>
@@ -254,14 +258,59 @@ export class NoteToolbar {
     // Width slider
     const slider = this.penSettingsDialog.querySelector(".note-canvas-toolbar__width-slider");
     const widthValue = this.penSettingsDialog.querySelector(".note-canvas-toolbar__width-value");
+    const decreaseBtn = this.penSettingsDialog.querySelector('[data-action="decrease"]');
+    const increaseBtn = this.penSettingsDialog.querySelector('[data-action="increase"]');
+
+    const snapValue = (val) => {
+      if (val <= 2) {
+        // Snap to nearest 0.2
+        const snapped = Math.round(val * 5) / 5;
+        return Math.max(0.2, snapped);
+      }
+      // Snap to nearest 1
+      return Math.round(val);
+    };
+
+    const updateWidth = (val) => {
+      const newVal = snapValue(val);
+      this.penWidth = newVal;
+      if (slider) slider.value = newVal;
+      if (widthValue) widthValue.textContent = newVal % 1 === 0 ? newVal : newVal.toFixed(1);
+      this._notifyPenSettingsChange();
+    };
 
     if (slider) {
       slider.addEventListener("input", (e) => {
-        this.penWidth = parseFloat(e.target.value);
-        if (widthValue) {
-          widthValue.textContent = this.penWidth;
+        const val = parseFloat(e.target.value);
+        updateWidth(val);
+      });
+    }
+
+    if (decreaseBtn) {
+      decreaseBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        let current = this.penWidth;
+        // Handle floating point precision
+        current = Math.round(current * 10) / 10;
+
+        let next;
+        if (current <= 2.001) {
+          next = current - 0.2;
+        } else {
+          next = current - 1;
         }
-        this._notifyPenSettingsChange();
+        updateWidth(next);
+      });
+    }
+
+    if (increaseBtn) {
+      increaseBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        let current = this.penWidth;
+        current = Math.round(current * 10) / 10;
+
+        const next = current < 2 ? current + 0.2 : current + 1;
+        updateWidth(next);
       });
     }
 
