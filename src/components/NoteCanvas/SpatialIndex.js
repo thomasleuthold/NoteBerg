@@ -71,6 +71,25 @@ export class SpatialIndex {
   }
 
   /**
+   * Remove a single stroke from the index
+   * @param {number} index - Index of the stroke to remove
+   */
+  remove(index) {
+    const bounds = this.strokeBounds.get(index);
+    if (!bounds) return;
+
+    const startBucket = Math.floor(bounds.minY / this.bucketHeight);
+    const endBucket = Math.floor(bounds.maxY / this.bucketHeight);
+
+    for (let bucket = startBucket; bucket <= endBucket; bucket++) {
+      if (this.buckets.has(bucket)) {
+        this.buckets.get(bucket).delete(index);
+      }
+    }
+    this.strokeBounds.delete(index);
+  }
+
+  /**
    * Query for stroke indices that may be visible in the given Y range
    * Optimized to avoid Set allocation and O(n log n) sort on every call
    * @param {number} viewportTop - Top Y coordinate of viewport

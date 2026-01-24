@@ -452,6 +452,31 @@ export class CanvasRenderer {
       this.ctx.setLineDash([5, 5]);
       this.ctx.strokeRect(minX, minY, width, height);
       this.ctx.restore();
+
+      // Draw resize handles
+      const handleSize = 10 / this.zoomScale; // Constant screen size
+      const half = handleSize / 2;
+      this.ctx.save();
+      this.ctx.fillStyle = "#ffffff";
+      this.ctx.strokeStyle = "#3b82f6";
+      this.ctx.lineWidth = 1 / this.resolutionScale;
+
+      const handles = [
+        { x: minX, y: minY }, // nw
+        { x: minX + width / 2, y: minY }, // n
+        { x: maxX, y: minY }, // ne
+        { x: maxX, y: minY + height / 2 }, // e
+        { x: maxX, y: maxY }, // se
+        { x: minX + width / 2, y: maxY }, // s
+        { x: minX, y: maxY }, // sw
+        { x: minX, y: minY + height / 2 }, // w
+      ];
+
+      handles.forEach((h) => {
+        this.ctx.fillRect(h.x - half, h.y - half, handleSize, handleSize);
+        this.ctx.strokeRect(h.x - half, h.y - half, handleSize, handleSize);
+      });
+      this.ctx.restore();
     }
 
     this.ctx.restore();

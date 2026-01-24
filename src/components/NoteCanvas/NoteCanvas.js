@@ -71,6 +71,7 @@ export class NoteCanvas {
     this.currentPenWidth = 2;
     this.autoSwitchedToDrawMode = false;
     this.lassoPoints = []; // Points for lasso selection
+    this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -384,6 +385,7 @@ export class NoteCanvas {
     this.mode = newMode;
     this.autoSwitchedToDrawMode = false;
     this.lassoPoints = [];
+    this.transformState = null;
 
     if (this.toolbar) {
       this.toolbar.updateMode(newMode);
@@ -418,6 +420,22 @@ export class NoteCanvas {
     }
 
     if (this.mode === "lasso") {
+      // Check for interaction with existing selection
+      if (this.renderer?.selectionBounds) {
+        const { x, y } = props;
+        const handle = this._getHandleAtPoint(x, y);
+
+        if (handle) {
+          this._startTransform("resize", x, y, handle);
+          return true;
+        }
+
+        if (this._isPointInSelection(x, y)) {
+          this._startTransform("move", x, y);
+          return true;
+        }
+      }
+
       // If clicking outside selection, clear it
       if (this.renderer?.selectionBounds) {
         const { minX, minY, maxX, maxY } = this.renderer.selectionBounds;
@@ -448,6 +466,12 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeMove(points) {
+    if (this.transformState) {
+      const lastPoint = points[points.length - 1];
+      this._handleTransformMove(lastPoint.x, lastPoint.y);
+      return;
+    }
+
     if (this.mode === "eraser") {
       const lastPoint = points[points.length - 1];
       // Use the last point for cursor update and erasing
@@ -482,6 +506,11 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeEnd() {
+    if (this.transformState) {
+      this._endTransform();
+      return;
+    }
+
     if (this.mode === "eraser" || this.mode === "lasso") {
       if (this.mode === "lasso") {
         this._handleLassoEnd();
@@ -556,7 +585,10 @@ export class NoteCanvas {
       if (stroke._deleted || stroke.isDeleted) continue;
 
       // Calculate stroke bounds
-      let sMinX = Infinity, sMaxX = -Infinity, sMinY = Infinity, sMaxY = -Infinity;
+      let sMinX = Infinity,
+        sMaxX = -Infinity,
+        sMinY = Infinity,
+        sMaxY = -Infinity;
       for (let i = 0; i < stroke.x.length; i++) {
         const x = stroke.x[i];
         const y = stroke.y[i];
@@ -669,6 +701,175 @@ export class NoteCanvas {
       const dy = stroke.y[i] - cy;
       return dx * dx + dy * dy <= rSq;
     });
+  }
+
+  /**
+   * Check if point is on a resize handle
+   * @private
+   */
+  _getHandleAtPoint(x, y) {
+    const bounds = this.renderer.selectionBounds;
+    if (!bounds) return null;
+
+    const { minX, minY, maxX, maxY } = bounds;
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const handleSize = 20 / this.zoomScale; // Hit area slightly larger than visual
+    const half = handleSize / 2;
+
+    const handles = {
+      nw: { x: minX, y: minY },
+      n: { x: minX + width / 2, y: minY },
+      ne: { x: maxX, y: minY },
+      e: { x: maxX, y: minY + height / 2 },
+      se: { x: maxX, y: maxY },
+      s: { x: minX + width / 2, y: maxY },
+      sw: { x: minX, y: maxY },
+      w: { x: minX, y: minY + height / 2 },
+    };
+
+    for (const [key, pos] of Object.entries(handles)) {
+      if (Math.abs(x - pos.x) <= half && Math.abs(y - pos.y) <= half) {
+        return key;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Check if point is inside selection bounds
+   * @private
+   */
+  _isPointInSelection(x, y) {
+    const bounds = this.renderer.selectionBounds;
+    if (!bounds) return false;
+    return x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY;
+  }
+
+  /**
+   * Start a move or resize operation
+   * @private
+   */
+  _startTransform(mode, x, y, handle = null) {
+    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
+    const initialStrokes = selectedIndices.map((index) =>
+      JSON.parse(JSON.stringify(this.noteData.strokes[index])),
+    );
+
+    this.transformState = {
+      mode,
+      handle,
+      startX: x,
+      startY: y,
+      initialBounds: { ...this.renderer.selectionBounds },
+      initialStrokes,
+      selectedIndices,
+    };
+  }
+
+  /**
+   * Handle move during transform
+   * @private
+   */
+  _handleTransformMove(x, y) {
+    const { mode, handle, startX, startY, initialBounds, initialStrokes, selectedIndices } =
+      this.transformState;
+    const dx = x - startX;
+    const dy = y - startY;
+
+    const newBounds = { ...initialBounds };
+
+    if (mode === "move") {
+      newBounds.minX += dx;
+      newBounds.maxX += dx;
+      newBounds.minY += dy;
+      newBounds.maxY += dy;
+
+      // Update strokes
+      selectedIndices.forEach((index, i) => {
+        const stroke = this.noteData.strokes[index];
+        const initial = initialStrokes[i];
+        stroke.x = initial.x.map((val) => val + dx);
+        stroke.y = initial.y.map((val) => val + dy);
+      });
+    } else if (mode === "resize") {
+      // Calculate new bounds based on handle
+      if (handle.includes("e")) newBounds.maxX += dx;
+      if (handle.includes("w")) newBounds.minX += dx;
+      if (handle.includes("s")) newBounds.maxY += dy;
+      if (handle.includes("n")) newBounds.minY += dy;
+
+      // Enforce aspect ratio for corner handles
+      if (handle.length === 2) {
+        // Corner handle (nw, ne, sw, se)
+        const initialRatio =
+          (initialBounds.maxX - initialBounds.minX) / (initialBounds.maxY - initialBounds.minY);
+        const newWidth = newBounds.maxX - newBounds.minX;
+        const newHeight = newBounds.maxY - newBounds.minY;
+
+        // Simple aspect ratio lock: adjust the dimension that changed less to match
+        // Or strictly follow width change. Let's strictly follow width for simplicity.
+        // Better UX: Project point onto diagonal.
+        // Simplified approach:
+        const currentRatio = newWidth / newHeight;
+        if (currentRatio > initialRatio) {
+          // Too wide, adjust height
+          const targetHeight = newWidth / initialRatio;
+          if (handle.includes("n")) newBounds.minY = newBounds.maxY - targetHeight;
+          else newBounds.maxY = newBounds.minY + targetHeight;
+        } else {
+          // Too tall, adjust width
+          const targetWidth = newHeight * initialRatio;
+          if (handle.includes("w")) newBounds.minX = newBounds.maxX - targetWidth;
+          else newBounds.maxX = newBounds.minX + targetWidth;
+        }
+      }
+
+      // Update strokes by scaling
+      const scaleX = (newBounds.maxX - newBounds.minX) / (initialBounds.maxX - initialBounds.minX);
+      const scaleY = (newBounds.maxY - newBounds.minY) / (initialBounds.maxY - initialBounds.minY);
+
+      selectedIndices.forEach((index, i) => {
+        const stroke = this.noteData.strokes[index];
+        const initial = initialStrokes[i];
+
+        stroke.x = initial.x.map((val) => newBounds.minX + (val - initialBounds.minX) * scaleX);
+        stroke.y = initial.y.map((val) => newBounds.minY + (val - initialBounds.minY) * scaleY);
+        // Scale stroke width? Maybe later.
+      });
+    }
+
+    // Update renderer
+    this.renderer.setSelectedStrokes(this.renderer.selectedStrokeIndices, newBounds);
+  }
+
+  /**
+   * End transform operation
+   * @private
+   */
+  _endTransform() {
+    const { selectedIndices } = this.transformState;
+
+    // Update spatial index
+    selectedIndices.forEach((index) => {
+      this.spatialIndex.remove(index);
+      this.spatialIndex.insert(this.noteData.strokes[index], index);
+    });
+
+    // Recalculate content height if strokes moved down
+    const contentBounds = this.spatialIndex.getContentBounds();
+    if (contentBounds) {
+      const newHeight = Math.max(contentBounds.maxY + 500, this.scroller.getViewportSize().height);
+      if (newHeight > this.contentHeight) {
+        this._expandCanvas(newHeight - this.contentHeight);
+      }
+    }
+
+    this.strokeManager.forceSave();
+    this.transformState = null;
+
+    // Force full redraw to ensure high quality
+    this.renderer.forceRedraw();
   }
 
   /**
