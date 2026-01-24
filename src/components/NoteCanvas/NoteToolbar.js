@@ -33,6 +33,15 @@ function getMoreIcon(size = 24) {
   </svg>`;
 }
 
+/**
+ * Generate lasso icon SVG
+ * @param {number} size - Icon size
+ * @returns {string} SVG markup
+ */
+function getLassoIcon(size = 24) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22a5 5 0 0 1-2-4"/><path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1"/><path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
+}
+
 export class NoteToolbar {
   /**
    * @param {HTMLElement} container - Container to append toolbar to
@@ -50,6 +59,7 @@ export class NoteToolbar {
     this.panBtn = null;
     this.drawBtn = null;
     this.eraserBtn = null;
+    this.lassoBtn = null;
     this.penSettingsDialog = null;
     this.optionsBtn = null;
     this.optionsDialog = null;
@@ -82,6 +92,7 @@ export class NoteToolbar {
     // Use icons from icons.js
     const handIcon = getIcon("hand", 24);
     const eraserIcon = getIcon("eraser", 24);
+    const lassoIcon = getLassoIcon(24);
 
     this.panBtn = createBtn("pan", handIcon, "Pan Mode");
     this.panBtn.onclick = () => this.onModeChange("pan");
@@ -106,6 +117,9 @@ export class NoteToolbar {
     this.eraserBtn = createBtn("eraser", eraserIcon, "Eraser Mode");
     this.eraserBtn.onclick = () => this.onModeChange("eraser");
 
+    this.lassoBtn = createBtn("lasso", lassoIcon, "Lasso Select");
+    this.lassoBtn.onclick = () => this.onModeChange("lasso");
+
     // Options button container (aligned right)
     this.optionsBtnContainer = document.createElement("div");
     this.optionsBtnContainer.className = "note-canvas-toolbar__button-container";
@@ -120,6 +134,7 @@ export class NoteToolbar {
     this.element.appendChild(this.panBtn);
     this.element.appendChild(this.drawBtnContainer);
     this.element.appendChild(this.eraserBtn);
+    this.element.appendChild(this.lassoBtn);
     this.element.appendChild(this.optionsBtnContainer);
     this.container.appendChild(this.element);
   }
@@ -496,6 +511,7 @@ export class NoteToolbar {
     setActive(this.panBtn, mode === "pan");
     setActive(this.drawBtn, mode === "draw");
     setActive(this.eraserBtn, mode === "eraser");
+    setActive(this.lassoBtn, mode === "lasso");
 
     // Close pen dialog when switching away from draw mode
     if (mode !== "draw") {
@@ -514,6 +530,7 @@ export class NoteToolbar {
     this.drawBtn = null;
     this.drawBtnContainer = null;
     this.eraserBtn = null;
+    this.lassoBtn = null;
     this.penSettingsDialog = null;
     this.optionsBtn = null;
     this.optionsBtnContainer = null;

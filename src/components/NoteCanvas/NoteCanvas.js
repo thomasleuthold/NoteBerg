@@ -66,10 +66,11 @@ export class NoteCanvas {
     this._pendingScroll = null;
 
     // Drawing state
-    this.mode = "pan"; // 'pan' | 'draw' | 'eraser'
+    this.mode = "pan"; // 'pan' | 'draw' | 'eraser' | 'lasso'
     this.currentPenColorIndex = 0;
     this.currentPenWidth = 2;
     this.autoSwitchedToDrawMode = false;
+    this.lassoPoints = []; // Points for lasso selection
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -348,7 +349,7 @@ export class NoteCanvas {
     }
 
     // Resize renderer
-    this.renderer.resize(width, height);
+    this.renderer.resize(width, height / this.zoomScale);
 
     // Re-render
     const scrollTop = this.scroller.getScrollTop();
@@ -382,9 +383,15 @@ export class NoteCanvas {
   _setMode(newMode) {
     this.mode = newMode;
     this.autoSwitchedToDrawMode = false;
+    this.lassoPoints = [];
 
     if (this.toolbar) {
       this.toolbar.updateMode(newMode);
+    }
+
+    // Clear selection when switching modes (except to pan or lasso)
+    if (this.renderer && newMode !== "pan" && newMode !== "lasso") {
+      this.renderer.setSelectedStrokes(new Set(), null);
     }
   }
 
@@ -410,6 +417,22 @@ export class NoteCanvas {
       return true;
     }
 
+    if (this.mode === "lasso") {
+      // If clicking outside selection, clear it
+      if (this.renderer?.selectionBounds) {
+        const { minX, minY, maxX, maxY } = this.renderer.selectionBounds;
+        const { x, y } = props;
+        if (x < minX || x > maxX || y < minY || y > maxY) {
+          this.renderer.setSelectedStrokes(new Set(), null);
+        }
+      }
+
+      this.lassoPoints = [];
+      // Store screen coordinates for drawing trail
+      this.lassoPoints.push({ x: props.clientX, y: props.clientY });
+      return true;
+    }
+
     const stroke = this.strokeManager.startStroke({
       ...props,
       colorIndex: this.currentPenColorIndex,
@@ -432,6 +455,22 @@ export class NoteCanvas {
       return;
     }
 
+    if (this.mode === "lasso") {
+      // Add points for trail drawing (screen coords)
+      // We use the last point from the batch
+      const lastPoint = points[points.length - 1];
+      this.lassoPoints.push({ x: lastPoint.clientX, y: lastPoint.clientY });
+
+      // Draw trail on overlay (requires screen coordinates relative to viewport)
+      const rect = this.scroller.getViewportElement().getBoundingClientRect();
+      const relativePoints = this.lassoPoints.map((p) => ({
+        x: p.x - rect.left,
+        y: p.y - rect.top,
+      }));
+      this.renderer.drawLassoTrail(relativePoints);
+      return;
+    }
+
     const stroke = this.strokeManager.addPoints(points);
     if (stroke) {
       this.renderer.drawDirectStroke(stroke);
@@ -443,7 +482,12 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeEnd() {
-    if (this.mode === "eraser") {
+    if (this.mode === "eraser" || this.mode === "lasso") {
+      if (this.mode === "lasso") {
+        this._handleLassoEnd();
+      }
+
+      // Clear overlay (eraser cursor or lasso trail)
       this.renderer.clearOverlay();
       return;
     }
@@ -454,6 +498,124 @@ export class NoteCanvas {
       const newIndex = this.noteData.strokes.length - 1;
       this.spatialIndex.insert(stroke, newIndex);
     }
+  }
+
+  /**
+   * Handle end of lasso selection
+   * @private
+   */
+  _handleLassoEnd() {
+    if (this.lassoPoints.length < 3) return;
+
+    // Convert screen points to content coordinates for hit testing
+    const rect = this.scroller.getViewportElement().getBoundingClientRect();
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const zoom = this.zoomScale;
+
+    // Calculate offset (centering) to match InputHandler logic
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const contentWidth = this.maxContentWidth;
+    const scaledContentWidth = contentWidth * zoom;
+    let offsetX = 0;
+    if (scaledContentWidth < viewportWidth) {
+      offsetX = (viewportWidth - scaledContentWidth) / 2;
+    }
+
+    // Polygon in content coordinates
+    const polygon = this.lassoPoints.map((p) => ({
+      x: (p.x - rect.left - offsetX + scrollLeft) / zoom,
+      y: (p.y - rect.top + scrollTop) / zoom,
+    }));
+
+    // Calculate bounding box of lasso polygon
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity;
+    for (const p of polygon) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+
+    // Query spatial index for candidates
+    const candidates = this.spatialIndex.query(minY, maxY);
+    const selectedIndices = new Set();
+
+    // Selection bounds
+    let selMinX = Infinity,
+      selMaxX = -Infinity,
+      selMinY = Infinity,
+      selMaxY = -Infinity;
+    let hasSelection = false;
+
+    for (const index of candidates) {
+      const stroke = this.noteData.strokes[index];
+      if (stroke._deleted || stroke.isDeleted) continue;
+
+      // Calculate stroke bounds
+      let sMinX = Infinity, sMaxX = -Infinity, sMinY = Infinity, sMaxY = -Infinity;
+      for (let i = 0; i < stroke.x.length; i++) {
+        const x = stroke.x[i];
+        const y = stroke.y[i];
+        if (x < sMinX) sMinX = x;
+        if (x > sMaxX) sMaxX = x;
+        if (y < sMinY) sMinY = y;
+        if (y > sMaxY) sMaxY = y;
+      }
+
+      // Fast fail: if stroke bounds are outside lasso bounds, it cannot be fully inside
+      if (sMinX < minX || sMaxX > maxX || sMinY < minY || sMaxY > maxY) {
+        continue;
+      }
+
+      // Strict check: All points must be inside the polygon
+      let isSelected = true;
+      for (let i = 0; i < stroke.x.length; i++) {
+        if (!this._isPointInPolygon({ x: stroke.x[i], y: stroke.y[i] }, polygon)) {
+          isSelected = false;
+          break;
+        }
+      }
+
+      if (isSelected) {
+        selectedIndices.add(index);
+        // Update selection bounds
+        selMinX = Math.min(selMinX, sMinX);
+        selMaxX = Math.max(selMaxX, sMaxX);
+        selMinY = Math.min(selMinY, sMinY);
+        selMaxY = Math.max(selMaxY, sMaxY);
+        hasSelection = true;
+      }
+    }
+
+    const bounds = hasSelection
+      ? { minX: selMinX, minY: selMinY, maxX: selMaxX, maxY: selMaxY }
+      : null;
+    this.renderer.setSelectedStrokes(selectedIndices, bounds);
+    this.lassoPoints = [];
+  }
+
+  /**
+   * Ray-casting algorithm for point in polygon
+   * @private
+   */
+  _isPointInPolygon(point, vs) {
+    const x = point.x,
+      y = point.y;
+    let inside = false;
+    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+      const xi = vs[i].x,
+        yi = vs[i].y;
+      const xj = vs[j].x,
+        yj = vs[j].y;
+
+      const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+      if (intersect) inside = !inside;
+    }
+    return inside;
   }
 
   /**
@@ -543,7 +705,7 @@ export class NoteCanvas {
     // Ignore pen inputs for navigation (handled by InputHandler/StrokeManager)
     if (e.pointerType === "pen") return;
     // Allow mouse only if in Pan mode (not draw/eraser mode)
-    if (e.pointerType === "mouse" && this.mode !== "pan") return;
+    if (e.pointerType === "mouse" && this.mode !== "pan" && this.mode !== "lasso") return;
 
     // Stop any active momentum scrolling
     if (this.momentumReqId) {
@@ -610,7 +772,7 @@ export class NoteCanvas {
       // Pan
       // If in manual draw/eraser mode, single touch should draw/erase, not pan
       if (this.mode !== "pan" && !this.autoSwitchedToDrawMode) return;
-      // Mouse in draw/eraser mode is handled by InputHandler or ignored
+      // Mouse in draw/eraser/lasso mode is handled by InputHandler or ignored
       if (this.mode !== "pan" && e.pointerType === "mouse") return;
 
       const x = e.clientX;

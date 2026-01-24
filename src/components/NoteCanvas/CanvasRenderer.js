@@ -49,6 +49,8 @@ export class CanvasRenderer {
     this.spatialIndex = null;
     this.palette = null;
     this.activeStroke = null; // Stroke currently being drawn
+    this.selectedStrokeIndices = new Set();
+    this.selectionBounds = null;
 
     // Content bounds
     this.contentWidth = 0;
@@ -101,6 +103,17 @@ export class CanvasRenderer {
   }
 
   /**
+   * Set selected strokes and their bounding box
+   * @param {Set<number>} selectedIndices
+   * @param {Object|null} bounds - {minX, minY, maxX, maxY}
+   */
+  setSelectedStrokes(selectedIndices, bounds) {
+    this.selectedStrokeIndices = selectedIndices;
+    this.selectionBounds = bounds;
+    this.forceRedraw();
+  }
+
+  /**
    * Set the spatial index for efficient queries
    * @param {SpatialIndex} index
    */
@@ -132,7 +145,7 @@ export class CanvasRenderer {
 
     // Resize overlay to match viewport exactly
     this.overlayCanvas.width = width;
-    this.overlayCanvas.height = height;
+    this.overlayCanvas.height = height * this.zoomScale;
 
     this._resizeCanvasBitmap();
     this._updateCanvasPosition();
@@ -228,6 +241,58 @@ export class CanvasRenderer {
     sharedDrawStroke(this.ctx, stroke, this.palette, false);
 
     this.ctx.restore();
+  }
+
+  /**
+   * Draw the lasso trail on the overlay canvas
+   * @param {Array<{x: number, y: number}>} points - Array of points in content coordinates
+   */
+  drawLassoTrail(points) {
+    this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+    if (points.length < 2) return;
+
+    this.overlayCtx.beginPath();
+    this.overlayCtx.strokeStyle = "rgba(0, 100, 255, 0.8)";
+    this.overlayCtx.lineWidth = 2;
+    this.overlayCtx.setLineDash([5, 5]);
+
+    // Points are in content coordinates, need to transform to screen coordinates
+    // Screen = Content * Zoom - Scroll (handled by overlay CSS transform? No, overlay has CSS transform)
+    // Overlay canvas has CSS transform `scale(zoom)`.
+    // So we draw in BASE coordinates (content coordinates).
+    // But wait, overlay canvas size is set to viewport size in `resize`.
+    // In `resize`: overlayCanvas.width = baseCanvasWidth (which is viewportWidth / zoom? No.)
+    // Let's check `resize`:
+    // overlayCanvas.width = width (screen pixels).
+    // overlayCanvas.style.transform = `scale(${zoomScale})`? No, in `resize` it sets width/height to screen size.
+    // In `_updateCanvasPosition` or `setZoom`?
+    //
+    // Let's look at `resize` implementation in this file:
+    // this.overlayCanvas.width = width; (screen width)
+    // this.overlayCanvas.height = height; (screen height)
+    //
+    // So overlay is 1:1 with screen pixels.
+    // But `drawEraserCursor` receives screen coordinates.
+    //
+    // `points` passed here are likely content coordinates (from InputHandler).
+    // We need to convert content -> screen.
+    // ScreenX = ContentX * Zoom - ScrollLeft
+    // ScreenY = ContentY * Zoom - ScrollTop
+    //
+    // However, `CanvasRenderer` doesn't track scroll position perfectly in sync with `VirtualScroller` for overlay drawing unless we pass it.
+    // Actually, `drawEraserCursor` works because `NoteCanvas` passes `e.clientX`.
+    //
+    // For Lasso, `NoteCanvas` collects points.
+    // If we draw on overlay, we should probably use screen coordinates or transform context.
+    //
+    // Let's assume `points` are passed as Screen Coordinates for `drawLassoTrail` to match `drawEraserCursor`.
+
+    this.overlayCtx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      this.overlayCtx.lineTo(points[i].x, points[i].y);
+    }
+    this.overlayCtx.stroke();
+    this.overlayCtx.setLineDash([]);
   }
 
   /**
@@ -364,14 +429,29 @@ export class CanvasRenderer {
 
     for (const index of strokeIndices) {
       const stroke = this.strokes[index];
-      if (stroke && !stroke._deleted) {
-        sharedDrawStroke(this.ctx, stroke, this.palette, false, fastMode);
+      if (stroke && !stroke._deleted && !stroke.isDeleted) {
+        const isSelected = this.selectedStrokeIndices.has(index);
+        sharedDrawStroke(this.ctx, stroke, this.palette, isSelected, fastMode);
       }
     }
 
     // Draw active stroke on top if it exists (always full quality for responsiveness)
     if (this.activeStroke) {
       sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
+    }
+
+    // Draw selection bounding box
+    if (this.selectionBounds) {
+      const { minX, minY, maxX, maxY } = this.selectionBounds;
+      const width = maxX - minX;
+      const height = maxY - minY;
+
+      this.ctx.save();
+      this.ctx.strokeStyle = "rgba(0, 100, 255, 0.6)";
+      this.ctx.lineWidth = 1 / this.resolutionScale; // Keep line thin regardless of zoom
+      this.ctx.setLineDash([5, 5]);
+      this.ctx.strokeRect(minX, minY, width, height);
+      this.ctx.restore();
     }
 
     this.ctx.restore();
