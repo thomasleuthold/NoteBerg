@@ -71,6 +71,7 @@ export class NoteCanvas {
     this.currentPenWidth = 2;
     this.autoSwitchedToDrawMode = false;
     this.lassoPoints = []; // Points for lasso selection
+    this.stylusDetected = false; // Track if a stylus has been used in this session
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
 
     // Bind methods
@@ -402,17 +403,19 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeStart(props) {
-    // Auto-switch to draw mode if pen detected and currently in pan mode
-    if (props.pointerType === "pen" && this.mode === "pan") {
-      this._setMode("draw");
-      this.autoSwitchedToDrawMode = true;
+    // Detect stylus usage
+    if (props.pointerType === "pen") {
+      this.stylusDetected = true;
+      // Auto-switch to draw mode if currently in pan mode
+      if (this.mode === "pan") {
+        this._setMode("draw");
+        this.autoSwitchedToDrawMode = true;
+      }
     }
 
-    // In Draw/Eraser Mode: Pen draws/erases, Touch scrolls (unless we add a "Finger Draw" toggle later)
-    // In Pan Mode: Everything scrolls
     if (this.mode === "pan") return false;
-    // If auto-switched to draw mode (by pen), touch should still scroll (palm rejection behavior)
-    if (this.autoSwitchedToDrawMode && props.pointerType === "touch") return false;
+    // If stylus has been detected, touch inputs are strictly for navigation (pan/zoom)
+    if (this.stylusDetected && props.pointerType === "touch") return false;
 
     if (this.mode === "eraser") {
       this._handleEraser(props.x, props.y, props.clientX, props.clientY);
@@ -868,7 +871,10 @@ export class NoteCanvas {
       });
 
       // Recalculate bounds for the rotated selection
-      let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
+      let rMinX = Infinity,
+        rMaxX = -Infinity,
+        rMinY = Infinity,
+        rMaxY = -Infinity;
       selectedIndices.forEach((index) => {
         const s = this.noteData.strokes[index];
         for (let k = 0; k < s.x.length; k++) {
@@ -878,14 +884,14 @@ export class NoteCanvas {
           rMaxY = Math.max(rMaxY, s.y[k]);
         }
       });
-      
+
       // Add padding to match getStrokeBounds logic
-      const padding = 2; 
+      const padding = 2;
       newBounds = {
         minX: rMinX - padding,
         maxX: rMaxX + padding,
         minY: rMinY - padding,
-        maxY: rMaxY + padding
+        maxY: rMaxY + padding,
       };
     }
 
@@ -994,6 +1000,9 @@ export class NoteCanvas {
   _onPointerMoveNav(e) {
     if (!this.activePointers.has(e.pointerId)) return;
 
+    // Prevent panning if currently drawing (prevents palm movements from sliding canvas while writing)
+    if (this.inputHandler?.isDrawing) return;
+
     // Update pointer position
     this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -1021,8 +1030,9 @@ export class NoteCanvas {
       }
     } else if (this.activePointers.size === 1) {
       // Pan
-      // If in manual draw/eraser mode, single touch should draw/erase, not pan
-      if (this.mode !== "pan" && !this.autoSwitchedToDrawMode) return;
+      // If in manual draw/eraser mode, single touch should draw/erase, not pan.
+      // UNLESS stylus mode is active (stylusDetected), then touch always pans.
+      if (!this.stylusDetected && this.mode !== "pan" && !this.autoSwitchedToDrawMode) return;
       // Mouse in draw/eraser/lasso mode is handled by InputHandler or ignored
       if (this.mode !== "pan" && e.pointerType === "mouse") return;
 
