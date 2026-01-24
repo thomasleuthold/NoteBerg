@@ -461,6 +461,21 @@ export class CanvasRenderer {
       this.ctx.strokeStyle = "#3b82f6";
       this.ctx.lineWidth = 1 / this.resolutionScale;
 
+      // Draw rotation handle
+      const rotateOffset = 25 / this.zoomScale;
+      const topMidX = minX + width / 2;
+      const rotateY = minY - rotateOffset;
+
+      this.ctx.beginPath();
+      this.ctx.moveTo(topMidX, minY);
+      this.ctx.lineTo(topMidX, rotateY);
+      this.ctx.stroke();
+
+      this.ctx.beginPath();
+      this.ctx.arc(topMidX, rotateY, half, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.stroke();
+
       const handles = [
         { x: minX, y: minY }, // nw
         { x: minX + width / 2, y: minY }, // n

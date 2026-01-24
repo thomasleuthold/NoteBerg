@@ -426,7 +426,7 @@ export class NoteCanvas {
         const handle = this._getHandleAtPoint(x, y);
 
         if (handle) {
-          this._startTransform("resize", x, y, handle);
+          this._startTransform(handle === "rotate" ? "rotate" : "resize", x, y, handle);
           return true;
         }
 
@@ -716,8 +716,10 @@ export class NoteCanvas {
     const height = maxY - minY;
     const handleSize = 20 / this.zoomScale; // Hit area slightly larger than visual
     const half = handleSize / 2;
+    const rotateOffset = 25 / this.zoomScale;
 
     const handles = {
+      rotate: { x: minX + width / 2, y: minY - rotateOffset },
       nw: { x: minX, y: minY },
       n: { x: minX + width / 2, y: minY },
       ne: { x: maxX, y: minY },
@@ -777,7 +779,7 @@ export class NoteCanvas {
     const dx = x - startX;
     const dy = y - startY;
 
-    const newBounds = { ...initialBounds };
+    let newBounds = { ...initialBounds };
 
     if (mode === "move") {
       newBounds.minX += dx;
@@ -837,6 +839,54 @@ export class NoteCanvas {
         stroke.y = initial.y.map((val) => newBounds.minY + (val - initialBounds.minY) * scaleY);
         // Scale stroke width? Maybe later.
       });
+    } else if (mode === "rotate") {
+      const centerX = (initialBounds.minX + initialBounds.maxX) / 2;
+      const centerY = (initialBounds.minY + initialBounds.maxY) / 2;
+
+      const startAngle = Math.atan2(startY - centerY, startX - centerX);
+      const currentAngle = Math.atan2(y - centerY, x - centerX);
+      const angle = currentAngle - startAngle;
+
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+
+      // Rotate strokes
+      selectedIndices.forEach((index, i) => {
+        const stroke = this.noteData.strokes[index];
+        const initial = initialStrokes[i];
+
+        stroke.x = initial.x.map((val, j) => {
+          const px = val - centerX;
+          const py = initial.y[j] - centerY;
+          return centerX + px * cos - py * sin;
+        });
+        stroke.y = initial.y.map((val, j) => {
+          const px = initial.x[j] - centerX;
+          const py = val - centerY;
+          return centerY + px * sin + py * cos;
+        });
+      });
+
+      // Recalculate bounds for the rotated selection
+      let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
+      selectedIndices.forEach((index) => {
+        const s = this.noteData.strokes[index];
+        for (let k = 0; k < s.x.length; k++) {
+          rMinX = Math.min(rMinX, s.x[k]);
+          rMaxX = Math.max(rMaxX, s.x[k]);
+          rMinY = Math.min(rMinY, s.y[k]);
+          rMaxY = Math.max(rMaxY, s.y[k]);
+        }
+      });
+      
+      // Add padding to match getStrokeBounds logic
+      const padding = 2; 
+      newBounds = {
+        minX: rMinX - padding,
+        maxX: rMaxX + padding,
+        minY: rMinY - padding,
+        maxY: rMaxY + padding
+      };
     }
 
     // Update renderer
