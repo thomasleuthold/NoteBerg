@@ -61,6 +61,10 @@ export class NoteCanvas {
     this.lastMoveTime = 0;
     this.momentumReqId = null;
 
+    // Scroll throttling (requestAnimationFrame batching)
+    this._scrollRafId = null;
+    this._pendingScroll = null;
+
     // Drawing state
     this.mode = "pan"; // 'pan' | 'draw' | 'eraser'
     this.currentPenColorIndex = 0;
@@ -288,24 +292,44 @@ export class NoteCanvas {
 
   /**
    * Handle scroll events from VirtualScroller
+   * Uses requestAnimationFrame batching to coalesce multiple scroll events per frame
    * @private
    */
   _onScroll(scrollTop, scrollLeft, viewportHeight) {
     if (this._isZooming) return;
 
-    // Infinite scroll expansion
-    const contentScrollTop = scrollTop / this.zoomScale;
-    const contentViewportHeight = viewportHeight / this.zoomScale;
+    // Store pending scroll data (overwrites previous if not yet processed)
+    this._pendingScroll = { scrollTop, scrollLeft, viewportHeight };
 
-    if (this.contentHeight > 0) {
-      const distanceToBottom = this.contentHeight - (contentScrollTop + contentViewportHeight);
-      if (distanceToBottom < 500) {
-        this._expandCanvas(1000);
-      }
+    // Schedule render on next animation frame (coalesces multiple scroll events)
+    if (!this._scrollRafId) {
+      this._scrollRafId = requestAnimationFrame(() => {
+        this._scrollRafId = null;
+
+        if (!this._pendingScroll) return;
+        const { scrollTop, scrollLeft, viewportHeight } = this._pendingScroll;
+        this._pendingScroll = null;
+
+        // Infinite scroll expansion
+        const contentScrollTop = scrollTop / this.zoomScale;
+        const contentViewportHeight = viewportHeight / this.zoomScale;
+
+        if (this.contentHeight > 0) {
+          const distanceToBottom = this.contentHeight - (contentScrollTop + contentViewportHeight);
+          if (distanceToBottom < 500) {
+            this._expandCanvas(1000);
+          }
+        }
+
+        if (!this.renderer) return;
+        this.renderer.render(
+          scrollTop,
+          viewportHeight,
+          scrollLeft,
+          this.strokeManager?.currentStroke,
+        );
+      });
     }
-
-    if (!this.renderer) return;
-    this.renderer.render(scrollTop, viewportHeight, scrollLeft, this.strokeManager?.currentStroke);
   }
 
   /**
@@ -315,8 +339,13 @@ export class NoteCanvas {
   _onViewportResize(width, height) {
     if (!this.renderer || !this.spatialIndex) return;
 
-    // Update spatial index bucket size
-    this.spatialIndex.setBucketHeight(height, this.noteData?.strokes || []);
+    // Only rebuild spatial index if height change is very significant (>2x or <0.5x)
+    // This avoids expensive O(n) rebuilds on routine resize events
+    const currentBucketHeight = this.spatialIndex.bucketHeight;
+    const ratio = height / currentBucketHeight;
+    if (ratio < 0.5 || ratio > 2.0) {
+      this.spatialIndex.setBucketHeight(height, this.noteData?.strokes || []);
+    }
 
     // Resize renderer
     this.renderer.resize(width, height);
@@ -559,12 +588,15 @@ export class NoteCanvas {
       // Pinch Zoom
       e.preventDefault();
 
-      const points = Array.from(this.activePointers.values());
+      // Get two pointer positions without creating intermediate array (reduces GC pressure)
+      const iter = this.activePointers.values();
+      const p1 = iter.next().value;
+      const p2 = iter.next().value;
       const rect = this.scroller.getViewportElement().getBoundingClientRect();
 
       const fixedPoint = {
-        x: (points[0].x + points[1].x) / 2 - rect.left,
-        y: (points[0].y + points[1].y) / 2 - rect.top,
+        x: (p1.x + p2.x) / 2 - rect.left,
+        y: (p1.y + p2.y) / 2 - rect.top,
       };
 
       const currentDistance = this._getPointersDistance();
@@ -689,10 +721,13 @@ export class NoteCanvas {
    * @private
    */
   _getPointersDistance() {
-    const points = Array.from(this.activePointers.values());
-    if (points.length < 2) return 0;
-    const dx = points[0].x - points[1].x;
-    const dy = points[0].y - points[1].y;
+    if (this.activePointers.size < 2) return 0;
+    // Use iterator directly to avoid Array.from allocation
+    const iter = this.activePointers.values();
+    const p1 = iter.next().value;
+    const p2 = iter.next().value;
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
     return Math.sqrt(dx * dx + dy * dy);
   }
 
@@ -736,6 +771,13 @@ export class NoteCanvas {
    * Clean up all resources
    */
   destroy() {
+    // Cancel pending scroll RAF
+    if (this._scrollRafId) {
+      cancelAnimationFrame(this._scrollRafId);
+      this._scrollRafId = null;
+    }
+    this._pendingScroll = null;
+
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);
 

@@ -61,6 +61,12 @@ export class CanvasRenderer {
     this.zoomRenderTimeout = null;
     this.zoomRenderDebounce = 150; // ms
 
+    // Quality rendering debounce (for scroll performance)
+    // During scroll, render in fast mode (no pressure). After scroll stops, re-render with full quality.
+    this._qualityRenderTimeout = null;
+    this._qualityRenderDebounce = 150; // ms after scroll stops
+    this._lastRenderWasFastMode = false;
+
     // Initialize
     this._createCanvas();
   }
@@ -292,15 +298,37 @@ export class CanvasRenderer {
     const maxBufferTop = Math.max(0, this.contentHeight - this.bufferHeight);
     this.bufferTop = Math.min(newBufferTop, maxBufferTop);
 
-    // Redraw the buffer
-    this._drawBuffer();
+    // Redraw the buffer in fast mode (no pressure) for scroll performance
+    this._drawBuffer(true);
+
+    // Schedule high-quality re-render after scroll stops
+    this._scheduleQualityRender();
+  }
+
+  /**
+   * Schedule a high-quality re-render after scroll/interaction stops
+   * @private
+   */
+  _scheduleQualityRender() {
+    if (this._qualityRenderTimeout) {
+      clearTimeout(this._qualityRenderTimeout);
+    }
+
+    this._qualityRenderTimeout = setTimeout(() => {
+      this._qualityRenderTimeout = null;
+      // Only re-render if last render was in fast mode
+      if (this._lastRenderWasFastMode) {
+        this._drawBuffer(false);
+      }
+    }, this._qualityRenderDebounce);
   }
 
   /**
    * Draw the entire buffer content
    * @private
+   * @param {boolean} fastMode - Skip pressure rendering for scroll performance
    */
-  _drawBuffer() {
+  _drawBuffer(fastMode = false) {
     const startTime = performance.now();
 
     // Clear canvas
@@ -337,17 +365,18 @@ export class CanvasRenderer {
     for (const index of strokeIndices) {
       const stroke = this.strokes[index];
       if (stroke && !stroke._deleted) {
-        sharedDrawStroke(this.ctx, stroke, this.palette, false);
+        sharedDrawStroke(this.ctx, stroke, this.palette, false, fastMode);
       }
     }
 
-    // Draw active stroke on top if it exists
+    // Draw active stroke on top if it exists (always full quality for responsiveness)
     if (this.activeStroke) {
-      sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false);
+      sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
     }
 
     this.ctx.restore();
 
+    this._lastRenderWasFastMode = fastMode;
     this.lastRenderTime = performance.now() - startTime;
   }
 
@@ -427,11 +456,11 @@ export class CanvasRenderer {
   }
 
   /**
-   * Force a full redraw of the current buffer
+   * Force a full redraw of the current buffer (high quality)
    */
   forceRedraw() {
     this.palette = sharedGetThemePalette();
-    this._drawBuffer();
+    this._drawBuffer(false); // Always full quality on explicit redraw
   }
 
   /**
@@ -440,6 +469,10 @@ export class CanvasRenderer {
   destroy() {
     if (this.zoomRenderTimeout) {
       clearTimeout(this.zoomRenderTimeout);
+    }
+
+    if (this._qualityRenderTimeout) {
+      clearTimeout(this._qualityRenderTimeout);
     }
 
     if (this.canvas?.parentElement) {

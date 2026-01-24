@@ -81,8 +81,9 @@ export function getThemePalette() {
  * @param {Object} stroke - Stroke data with x, y, width, color/colorIndex
  * @param {string[]|null} palette - Optional color palette (will use theme palette if not provided)
  * @param {boolean} isSelected - Whether the stroke is selected (for highlighting)
+ * @param {boolean} fastMode - Skip pressure rendering for performance (use during scroll)
  */
-export function drawStroke(ctx, stroke, palette = null, isSelected = false) {
+export function drawStroke(ctx, stroke, palette = null, isSelected = false, fastMode = false) {
   if (!ctx || !stroke.x || stroke.x.length < 2) return;
 
   const colors = palette || getThemePalette();
@@ -106,8 +107,8 @@ export function drawStroke(ctx, stroke, palette = null, isSelected = false) {
   ctx.lineJoin = "round";
   ctx.strokeStyle = color;
 
-  // Check for pressure data
-  const usePressure = stroke.pressure && stroke.pressure.length === stroke.x.length;
+  // Check for pressure data (skip in fast mode for scroll performance)
+  const usePressure = !fastMode && stroke.pressure && stroke.pressure.length === stroke.x.length;
 
   if (usePressure) {
     drawPressurePath(ctx, stroke, baseWidth);
@@ -144,6 +145,11 @@ function drawSimplePath(ctx, stroke) {
   );
 }
 
+/**
+ * Draw a pressure-sensitive path with batched segments.
+ * Groups consecutive segments with similar pressure into single paths
+ * to reduce canvas API calls from O(N) to O(pressure_changes).
+ */
 function drawPressurePath(ctx, stroke, baseWidth) {
   const x = stroke.x;
   const y = stroke.y;
@@ -162,38 +168,51 @@ function drawPressurePath(ctx, stroke, baseWidth) {
     return;
   }
 
-  // Draw segments with varying width
-  for (let i = 1; i < pointCount - 1; i++) {
-    ctx.beginPath();
-    ctx.lineWidth = getWidth(p[i]);
+  // Threshold for "similar enough" pressure (relative to baseWidth)
+  // This batches segments together, reducing beginPath/stroke calls
+  const PRESSURE_THRESHOLD = 0.08;
 
-    // Start point
-    if (i === 1) {
-      ctx.moveTo(x[0], y[0]);
-    } else {
-      const prevXc = (x[i - 1] + x[i]) / 2;
-      const prevYc = (y[i - 1] + y[i]) / 2;
-      ctx.moveTo(prevXc, prevYc);
-    }
-
-    // End point (midpoint of current and next)
-    const xc = (x[i] + x[i + 1]) / 2;
-    const yc = (y[i] + y[i + 1]) / 2;
-
-    ctx.quadraticCurveTo(x[i], y[i], xc, yc);
-    ctx.stroke();
-  }
-
-  // Last segment
-  const last = pointCount - 1;
-  const secondLast = pointCount - 2;
+  let currentWidth = getWidth(p[0]);
 
   ctx.beginPath();
-  ctx.lineWidth = getWidth(p[last]);
-  const prevXc = (x[secondLast] + x[last]) / 2;
-  const prevYc = (y[secondLast] + y[last]) / 2;
-  ctx.moveTo(prevXc, prevYc);
-  ctx.quadraticCurveTo(x[secondLast], y[secondLast], x[last], y[last]);
+  ctx.lineWidth = currentWidth;
+  ctx.moveTo(x[0], y[0]);
+
+  for (let i = 1; i < pointCount; i++) {
+    const targetWidth = getWidth(p[i]);
+    const widthDiff = Math.abs(targetWidth - currentWidth) / baseWidth;
+
+    // Check if pressure changed significantly (start new batch)
+    const shouldStartNewBatch = widthDiff > PRESSURE_THRESHOLD && i < pointCount - 1;
+
+    if (shouldStartNewBatch) {
+      // Draw curve to midpoint before starting new batch
+      const xc = (x[i - 1] + x[i]) / 2;
+      const yc = (y[i - 1] + y[i]) / 2;
+      ctx.quadraticCurveTo(x[i - 1], y[i - 1], xc, yc);
+
+      // Finish current batch
+      ctx.stroke();
+
+      // Start new batch
+      ctx.beginPath();
+      ctx.lineWidth = targetWidth;
+      currentWidth = targetWidth;
+
+      // Continue from midpoint
+      ctx.moveTo(xc, yc);
+    } else if (i === pointCount - 1) {
+      // Last point - draw final segment
+      ctx.quadraticCurveTo(x[i - 1], y[i - 1], x[i], y[i]);
+    } else {
+      // Continue building path - draw curve to midpoint
+      const xc = (x[i] + x[i + 1]) / 2;
+      const yc = (y[i] + y[i + 1]) / 2;
+      ctx.quadraticCurveTo(x[i], y[i], xc, yc);
+    }
+  }
+
+  // Finish final batch
   ctx.stroke();
 }
 

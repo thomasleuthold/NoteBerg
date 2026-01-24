@@ -72,6 +72,7 @@ export class SpatialIndex {
 
   /**
    * Query for stroke indices that may be visible in the given Y range
+   * Optimized to avoid Set allocation and O(n log n) sort on every call
    * @param {number} viewportTop - Top Y coordinate of viewport
    * @param {number} viewportBottom - Bottom Y coordinate of viewport
    * @returns {number[]} Array of stroke indices that intersect the viewport
@@ -80,28 +81,60 @@ export class SpatialIndex {
     const startBucket = Math.floor(viewportTop / this.bucketHeight);
     const endBucket = Math.floor(viewportBottom / this.bucketHeight);
 
-    // Collect all candidate stroke indices from overlapping buckets
-    const candidates = new Set();
+    // Use a seen array to deduplicate (avoids Set allocation in hot path)
+    // Reuse the buffer if possible to reduce GC pressure
+    if (!this._seenBuffer || this._seenBuffer.length < this.totalStrokes) {
+      this._seenBuffer = new Uint8Array(Math.max(this.totalStrokes, 1000));
+    }
+    const seen = this._seenBuffer;
+
+    // Collect candidates from all overlapping buckets
+    const result = [];
     for (let bucket = startBucket; bucket <= endBucket; bucket++) {
       const bucketStrokes = this.buckets.get(bucket);
       if (bucketStrokes) {
         for (const strokeIndex of bucketStrokes) {
-          candidates.add(strokeIndex);
+          if (!seen[strokeIndex]) {
+            seen[strokeIndex] = 1;
+            const bounds = this.strokeBounds.get(strokeIndex);
+            if (bounds && bounds.maxY >= viewportTop && bounds.minY <= viewportBottom) {
+              result.push(strokeIndex);
+            }
+          }
         }
       }
     }
 
-    // Filter candidates to only those that actually intersect the viewport
-    const result = [];
-    for (const strokeIndex of candidates) {
-      const bounds = this.strokeBounds.get(strokeIndex);
-      if (bounds && bounds.maxY >= viewportTop && bounds.minY <= viewportBottom) {
-        result.push(strokeIndex);
+    // Clear seen flags for next query (only clear used indices)
+    for (const idx of result) {
+      seen[idx] = 0;
+    }
+    // Also clear any candidates that didn't pass bounds check
+    for (let bucket = startBucket; bucket <= endBucket; bucket++) {
+      const bucketStrokes = this.buckets.get(bucket);
+      if (bucketStrokes) {
+        for (const strokeIndex of bucketStrokes) {
+          seen[strokeIndex] = 0;
+        }
       }
     }
 
-    // Sort by index to maintain draw order
-    result.sort((a, b) => a - b);
+    // Strokes are already mostly in draw order since buckets store them by insertion.
+    // Only sort if we have strokes from multiple buckets that might be out of order.
+    // For most cases, insertion sort would be O(n) on nearly-sorted data,
+    // but we can skip entirely if single bucket or result is small.
+    if (result.length > 1 && endBucket > startBucket) {
+      // Use insertion sort - O(n) for nearly-sorted data (much faster than quicksort)
+      for (let i = 1; i < result.length; i++) {
+        const key = result[i];
+        let j = i - 1;
+        while (j >= 0 && result[j] > key) {
+          result[j + 1] = result[j];
+          j--;
+        }
+        result[j + 1] = key;
+      }
+    }
 
     return result;
   }

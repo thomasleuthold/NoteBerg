@@ -153,3 +153,6 @@ We will create a new directory `src/components/NoteCanvas/` to house the new eng
 -   **Logic**:
     -   Draw images onto the `staticCanvas` (layered below strokes) OR manage them as DOM elements floating over the canvas (better for accessibility and browser-native handling, but complex for Z-indexing with strokes).
     -   *Decision*: Drawing to canvas is usually more performant for zooming/panning in sync with strokes.
+
+---
+
