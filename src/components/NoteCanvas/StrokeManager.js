@@ -16,6 +16,7 @@ export class StrokeManager {
     this.strokes = initialStrokes;
     this.deletedStrokes = initialDeletedStrokes;
     this.currentStroke = null;
+    this.isDirty = false;
 
     // Initialize Web Worker
     this.worker = new Worker(new URL("./StorageWorker.js", import.meta.url), { type: "module" });
@@ -55,6 +56,7 @@ export class StrokeManager {
     // Only add if it has enough points
     if (stroke.x.length > 0) {
       this.strokes.push(stroke);
+      this.isDirty = true;
       this._save();
     }
 
@@ -62,7 +64,13 @@ export class StrokeManager {
     return stroke;
   }
 
+  markDirty() {
+    this.isDirty = true;
+  }
+
   _save() {
+    if (!this.isDirty) return;
+
     let key = null;
     if (isAppUnlocked()) {
       try {
@@ -83,6 +91,8 @@ export class StrokeManager {
       deletedStrokes: this.deletedStrokes,
       key: key,
     });
+
+    this.isDirty = false;
   }
 
   forceSave() {

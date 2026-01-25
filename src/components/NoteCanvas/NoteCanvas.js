@@ -6,6 +6,7 @@
  * Supports both viewing and drawing with stylus/pen input.
  */
 
+import { forceRecognition } from "../../modules/autoRecognition.js";
 import { navigateTo } from "../../modules/router.js";
 import { deleteNote, getNote, updateNote } from "../../modules/storage.js";
 import { showConfirmDialog } from "../modals.js";
@@ -105,6 +106,8 @@ export class NoteCanvas {
     this.lassoPoints = []; // Points for lasso selection
     this.stylusDetected = false; // Track if a stylus has been used in this session
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
+    this.strokesChanged = false; // Track if strokes have been modified
+    this.activeSearchQuery = null; // Track active search query for highlighting
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -145,9 +148,11 @@ export class NoteCanvas {
   /**
    * Load and render a note
    * @param {string} noteId - ID of the note to load
+   * @param {string|null} searchQuery - Optional search query to highlight
    */
-  async load(noteId) {
+  async load(noteId, searchQuery = null) {
     this.noteId = noteId;
+    this.activeSearchQuery = searchQuery;
 
     // Fetch note data
     this.noteData = await getNote(noteId);
@@ -292,6 +297,11 @@ export class NoteCanvas {
       colorIndex: this.currentPenColorIndex,
     });
 
+    // Highlight search terms if provided
+    if (this.activeSearchQuery) {
+      this._highlightSearchTerms(this.activeSearchQuery);
+    }
+
     this.isInitialized = true;
 
     // Log stats for debugging
@@ -303,6 +313,45 @@ export class NoteCanvas {
 
     // Expose for debugging
     window.__noteCanvas = this;
+  }
+
+  /**
+   * Highlight search terms in the note
+   * @private
+   * @param {string} query
+   */
+  _highlightSearchTerms(query) {
+    if (!this.noteData?.recognition?.words) return;
+
+    // Create regex pattern from query with wildcard support
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+    const regex = new RegExp(pattern, "gi");
+
+    const rects = [];
+
+    this.noteData.recognition.words.forEach((word) => {
+      regex.lastIndex = 0;
+      if (word.text && regex.test(word.text)) {
+        // Support multiple structures for bounding box
+        const box = word.boundingRect || word.boundingBox || word.rect || word;
+
+        if (box) {
+          const x = box.x !== undefined ? box.x : box.left;
+          const y = box.y !== undefined ? box.y : box.top;
+          const w = box.width !== undefined ? box.width : box.w;
+          const h = box.height !== undefined ? box.height : box.h;
+
+          if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
+            rects.push({ x, y, w, h });
+          }
+        }
+      }
+    });
+
+    if (this.renderer) {
+      this.renderer.setHighlights(rects);
+    }
   }
 
   /**
@@ -561,6 +610,7 @@ export class NoteCanvas {
       // Update spatial index so the stroke is included in future buffer redraws (scroll/zoom)
       const newIndex = this.noteData.strokes.length - 1;
       this.spatialIndex.insert(stroke, newIndex);
+      this.strokesChanged = true;
     }
   }
 
@@ -596,7 +646,8 @@ export class NoteCanvas {
     // Calculate offset (centering) to match InputHandler logic
     const viewportWidth = this.scroller.getViewportSize().width;
     const scaledContentWidth = this.maxContentWidth * zoom;
-    const offsetX = scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
     return this.lassoPoints.map((p) => ({
       x: (p.x - rect.left - offsetX + scrollLeft) / zoom,
@@ -754,7 +805,9 @@ export class NoteCanvas {
 
     if (didErase) {
       this.renderer.forceRedraw();
+      this.strokeManager.markDirty();
       this.strokeManager.forceSave(); // Save changes
+      this.strokesChanged = true;
     }
   }
 
@@ -1020,7 +1073,9 @@ export class NoteCanvas {
       }
     }
 
+    this.strokeManager.markDirty();
     this.strokeManager.forceSave();
+    this.strokesChanged = true;
     this.transformState = null;
 
     // Force full redraw to ensure high quality
@@ -1293,6 +1348,16 @@ export class NoteCanvas {
    * Clean up all resources
    */
   destroy() {
+    // Trigger handwriting recognition if strokes changed
+    if (this.strokesChanged && this.noteId && this.noteData?.strokes) {
+      const activeStrokes = this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted);
+      if (activeStrokes.length > 0) {
+        forceRecognition(this.noteId, activeStrokes).catch((e) =>
+          console.error("[NoteCanvas] Recognition failed:", e),
+        );
+      }
+    }
+
     // Cancel pending scroll RAF
     if (this._scrollRafId) {
       cancelAnimationFrame(this._scrollRafId);

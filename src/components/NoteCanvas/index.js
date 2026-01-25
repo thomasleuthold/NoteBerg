@@ -18,6 +18,7 @@ export function initNoteCanvasComponent() {
   // Listen for render notebook event from router
   window.addEventListener("rendernotebook", async (e) => {
     const { noteId } = e.detail || {};
+    let { searchQuery } = e.detail || {};
 
     if (!noteId) {
       console.warn("[NoteCanvas] No note ID provided");
@@ -37,13 +38,22 @@ export function initNoteCanvasComponent() {
       noteCanvasInstance = null;
     }
 
+    // Fallback: check session storage for search query if not in event detail
+    if (!searchQuery) {
+      const storedQuery = sessionStorage.getItem("onejournal_search_query");
+      if (storedQuery) {
+        searchQuery = storedQuery;
+        sessionStorage.removeItem("onejournal_search_query");
+      }
+    }
+
     // Clear container
     container.innerHTML = "";
 
     // Create and load new instance
     try {
       noteCanvasInstance = new NoteCanvas(container);
-      await noteCanvasInstance.load(noteId);
+      await noteCanvasInstance.load(noteId, searchQuery);
       console.log("[NoteCanvas] Component initialized for note:", noteId);
     } catch (error) {
       console.error("[NoteCanvas] Failed to initialize:", error);

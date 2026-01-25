@@ -13,6 +13,11 @@ import {
 } from "../../utils/noteRenderer.js";
 import { getSelectionHandles, SELECTION_HANDLE_SIZE } from "./NoteCanvas.js";
 
+// Highlight styles
+const HIGHLIGHT_FILL_STYLE = "rgba(255, 255, 0, 0.3)";
+const HIGHLIGHT_STROKE_STYLE = "rgba(255, 200, 0, 0.8)";
+const HIGHLIGHT_LINE_WIDTH = 2;
+
 export class CanvasRenderer {
   /**
    * @param {HTMLElement} viewportElement - Element to mount canvas into
@@ -52,6 +57,7 @@ export class CanvasRenderer {
     this.activeStroke = null; // Stroke currently being drawn
     this.selectedStrokeIndices = new Set();
     this.selectionBounds = null;
+    this.highlightRects = []; // Search term highlights
 
     // Content bounds
     this.contentWidth = 0;
@@ -111,6 +117,15 @@ export class CanvasRenderer {
   setSelectedStrokes(selectedIndices, bounds) {
     this.selectedStrokeIndices = selectedIndices;
     this.selectionBounds = bounds;
+    this.forceRedraw();
+  }
+
+  /**
+   * Set highlight rectangles
+   * @param {Array<{x, y, w, h}>} rects
+   */
+  setHighlights(rects) {
+    this.highlightRects = rects || [];
     this.forceRedraw();
   }
 
@@ -434,6 +449,20 @@ export class CanvasRenderer {
         const isSelected = this.selectedStrokeIndices.has(index);
         sharedDrawStroke(this.ctx, stroke, this.palette, isSelected, fastMode);
       }
+    }
+
+    // Draw highlights
+    if (this.highlightRects.length > 0) {
+      this.ctx.save();
+      this.ctx.fillStyle = HIGHLIGHT_FILL_STYLE;
+      this.ctx.strokeStyle = HIGHLIGHT_STROKE_STYLE;
+      this.ctx.lineWidth = HIGHLIGHT_LINE_WIDTH;
+
+      for (const rect of this.highlightRects) {
+        this.ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+        this.ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      }
+      this.ctx.restore();
     }
 
     // Draw active stroke on top if it exists (always full quality for responsiveness)

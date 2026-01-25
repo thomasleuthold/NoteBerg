@@ -458,6 +458,8 @@ async function uploadFile(path, content, mtime = null, etag = null) {
   const headers = {
     Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
     "Content-Type": "application/json",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
   };
 
   // Set modification time if provided (Nextcloud-specific header)
@@ -535,6 +537,8 @@ async function downloadFile(path) {
     method: "GET",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
     },
   });
 
@@ -565,6 +569,8 @@ export async function listFiles(path) {
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
       Depth: "1",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
     },
   });
 
@@ -594,6 +600,8 @@ export async function listFolders(path) {
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
       Depth: "1",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
     },
   });
 
@@ -949,21 +957,27 @@ export async function downloadAllData() {
 
 /**
  * Merge strokes while respecting deletions
- * @param {Array} localStrokes - Local strokes array
- * @param {Array} remoteStrokes - Remote strokes array
- * @param {Array} localDeleted - Local deleted stroke IDs
- * @param {Array} remoteDeleted - Remote deleted stroke IDs
+ * Prioritizes strokes from the first array (priorityStrokes) in case of conflict
+ * @param {Array} priorityStrokes - Strokes from the newer/priority version
+ * @param {Array} secondaryStrokes - Strokes from the older/secondary version
+ * @param {Array} priorityDeleted - Deleted stroke IDs from priority version
+ * @param {Array} secondaryDeleted - Deleted stroke IDs from secondary version
  * @returns {Object} Object with merged strokes and deletedStrokes arrays
  */
-function mergeStrokes(localStrokes, remoteStrokes, localDeleted = [], remoteDeleted = []) {
+function mergeStrokes(
+  priorityStrokes,
+  secondaryStrokes,
+  priorityDeleted = [],
+  secondaryDeleted = [],
+) {
   // Combine all deleted stroke IDs from both sides
-  const allDeletedIds = new Set([...localDeleted, ...remoteDeleted]);
+  const allDeletedIds = new Set([...priorityDeleted, ...secondaryDeleted]);
 
   // Create a map of stroke ID to stroke for deduplication
   const strokesById = new Map();
 
-  // Add remote strokes (but skip deleted ones)
-  for (const stroke of remoteStrokes) {
+  // Add priority strokes first (wins conflicts)
+  for (const stroke of priorityStrokes) {
     if (stroke.id && !allDeletedIds.has(stroke.id)) {
       strokesById.set(stroke.id, stroke);
     } else if (!stroke.id) {
@@ -972,8 +986,8 @@ function mergeStrokes(localStrokes, remoteStrokes, localDeleted = [], remoteDele
     }
   }
 
-  // Add local strokes (but skip deleted ones and duplicates)
-  for (const stroke of localStrokes) {
+  // Add secondary strokes (only if not already present)
+  for (const stroke of secondaryStrokes) {
     if (stroke.id) {
       if (!allDeletedIds.has(stroke.id) && !strokesById.has(stroke.id)) {
         strokesById.set(stroke.id, stroke);
@@ -997,16 +1011,17 @@ function mergeStrokes(localStrokes, remoteStrokes, localDeleted = [], remoteDele
  * Attempt to merge two versions of a note
  */
 function attemptMerge(local, remote) {
+  // Determine which note is newer based on modification time
+  const localIsNewer = local.modified >= remote.modified;
+  const newerNote = localIsNewer ? local : remote;
+
   // Merge strokes while respecting deletions from both sides
   const mergedStrokeData = mergeStrokes(
-    local.strokes || [],
-    remote.strokes || [],
-    local.deletedStrokes || [],
-    remote.deletedStrokes || [],
+    localIsNewer ? local.strokes || [] : remote.strokes || [],
+    localIsNewer ? remote.strokes || [] : local.strokes || [],
+    localIsNewer ? local.deletedStrokes || [] : remote.deletedStrokes || [],
+    localIsNewer ? remote.deletedStrokes || [] : local.deletedStrokes || [],
   );
-
-  // Determine which note is newer based on modification time.
-  const newerNote = remote.modified > local.modified ? remote : local;
 
   // Attempt to merge text content.
   let mergedContent;
