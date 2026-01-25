@@ -321,7 +321,19 @@ export class NoteCanvas {
    * @param {string} query
    */
   _highlightSearchTerms(query) {
-    if (!this.noteData?.recognition?.words) return;
+    let recognition = this.noteData?.recognition;
+
+    // Handle case where recognition might be a JSON string (legacy data artifact)
+    if (typeof recognition === "string") {
+      try {
+        recognition = JSON.parse(recognition);
+        this.noteData.recognition = recognition;
+      } catch (e) {
+        return;
+      }
+    }
+
+    if (!recognition?.words || !Array.isArray(recognition.words)) return;
 
     // Create regex pattern from query with wildcard support
     const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -330,7 +342,9 @@ export class NoteCanvas {
 
     const rects = [];
 
-    this.noteData.recognition.words.forEach((word) => {
+    recognition.words.forEach((word) => {
+      if (!word) return;
+
       regex.lastIndex = 0;
       if (word.text && regex.test(word.text)) {
         // Support multiple structures for bounding box
