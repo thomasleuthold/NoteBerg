@@ -17,6 +17,38 @@ import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
+// Selection handle constants (exported for use by CanvasRenderer)
+export const SELECTION_HANDLE_SIZE = 10; // Visual size in content pixels (scaled by zoom)
+export const SELECTION_HANDLE_HIT_AREA = 20; // Hit area for touch/click detection
+export const ROTATION_HANDLE_OFFSET = 25; // Distance of rotation handle from top edge
+export const SELECTION_BOUNDS_PADDING = 2; // Padding around selection bounds
+export const MIN_SELECTION_SIZE = 10; // Minimum width/height during resize
+
+/**
+ * Compute selection handle positions for a given bounds
+ * @param {Object} bounds - {minX, minY, maxX, maxY}
+ * @param {number} zoomScale - Current zoom level
+ * @returns {Array<{key: string, x: number, y: number}>} Array of handle positions
+ */
+export function getSelectionHandles(bounds, zoomScale) {
+  const { minX, minY, maxX, maxY } = bounds;
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const rotateOffset = ROTATION_HANDLE_OFFSET / zoomScale;
+
+  return [
+    { key: "rotate", x: minX + width / 2, y: minY - rotateOffset },
+    { key: "nw", x: minX, y: minY },
+    { key: "n", x: minX + width / 2, y: minY },
+    { key: "ne", x: maxX, y: minY },
+    { key: "e", x: maxX, y: minY + height / 2 },
+    { key: "se", x: maxX, y: maxY },
+    { key: "s", x: minX + width / 2, y: maxY },
+    { key: "sw", x: minX, y: maxY },
+    { key: "w", x: minX, y: minY + height / 2 },
+  ];
+}
+
 export class NoteCanvas {
   /**
    * @param {HTMLElement} containerElement - Container to mount into
@@ -539,7 +571,23 @@ export class NoteCanvas {
   _handleLassoEnd() {
     if (this.lassoPoints.length < 3) return;
 
-    // Convert screen points to content coordinates for hit testing
+    // Convert screen points to content coordinates
+    const polygon = this._convertLassoToContentCoords();
+    const lassoBounds = this._calculatePolygonBounds(polygon);
+
+    // Find strokes fully contained within the lasso polygon
+    const { selectedIndices, selectionBounds } = this._findStrokesInPolygon(polygon, lassoBounds);
+
+    this.renderer.setSelectedStrokes(selectedIndices, selectionBounds);
+    this.lassoPoints = [];
+  }
+
+  /**
+   * Convert lasso screen points to content coordinates
+   * @private
+   * @returns {Array<{x: number, y: number}>} Polygon in content coordinates
+   */
+  _convertLassoToContentCoords() {
     const rect = this.scroller.getViewportElement().getBoundingClientRect();
     const scrollLeft = this.scroller.getScrollLeft();
     const scrollTop = this.scroller.getScrollTop();
@@ -547,24 +595,27 @@ export class NoteCanvas {
 
     // Calculate offset (centering) to match InputHandler logic
     const viewportWidth = this.scroller.getViewportSize().width;
-    const contentWidth = this.maxContentWidth;
-    const scaledContentWidth = contentWidth * zoom;
-    let offsetX = 0;
-    if (scaledContentWidth < viewportWidth) {
-      offsetX = (viewportWidth - scaledContentWidth) / 2;
-    }
+    const scaledContentWidth = this.maxContentWidth * zoom;
+    const offsetX = scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
-    // Polygon in content coordinates
-    const polygon = this.lassoPoints.map((p) => ({
+    return this.lassoPoints.map((p) => ({
       x: (p.x - rect.left - offsetX + scrollLeft) / zoom,
       y: (p.y - rect.top + scrollTop) / zoom,
     }));
+  }
 
-    // Calculate bounding box of lasso polygon
+  /**
+   * Calculate bounding box of a polygon
+   * @private
+   * @param {Array<{x: number, y: number}>} polygon
+   * @returns {{minX: number, maxX: number, minY: number, maxY: number}}
+   */
+  _calculatePolygonBounds(polygon) {
     let minX = Infinity,
       maxX = -Infinity,
       minY = Infinity,
       maxY = -Infinity;
+
     for (const p of polygon) {
       minX = Math.min(minX, p.x);
       maxX = Math.max(maxX, p.x);
@@ -572,11 +623,21 @@ export class NoteCanvas {
       maxY = Math.max(maxY, p.y);
     }
 
-    // Query spatial index for candidates
+    return { minX, maxX, minY, maxY };
+  }
+
+  /**
+   * Find all strokes fully contained within a polygon
+   * @private
+   * @param {Array<{x: number, y: number}>} polygon - Lasso polygon in content coords
+   * @param {{minX: number, maxX: number, minY: number, maxY: number}} lassoBounds
+   * @returns {{selectedIndices: Set<number>, selectionBounds: Object|null}}
+   */
+  _findStrokesInPolygon(polygon, lassoBounds) {
+    const { minX, maxX, minY, maxY } = lassoBounds;
     const candidates = this.spatialIndex.query(minY, maxY);
     const selectedIndices = new Set();
 
-    // Selection bounds
     let selMinX = Infinity,
       selMaxX = -Infinity,
       selMinY = Infinity,
@@ -585,39 +646,22 @@ export class NoteCanvas {
 
     for (const index of candidates) {
       const stroke = this.noteData.strokes[index];
-      if (stroke._deleted || stroke.isDeleted) continue;
+      if (!stroke || stroke._deleted || stroke.isDeleted) continue;
 
-      // Calculate stroke bounds
-      let sMinX = Infinity,
-        sMaxX = -Infinity,
-        sMinY = Infinity,
-        sMaxY = -Infinity;
-      for (let i = 0; i < stroke.x.length; i++) {
-        const x = stroke.x[i];
-        const y = stroke.y[i];
-        if (x < sMinX) sMinX = x;
-        if (x > sMaxX) sMaxX = x;
-        if (y < sMinY) sMinY = y;
-        if (y > sMaxY) sMaxY = y;
-      }
+      // Use cached bounds from spatial index
+      const strokeBounds = this.spatialIndex.strokeBounds.get(index);
+      if (!strokeBounds) continue;
 
-      // Fast fail: if stroke bounds are outside lasso bounds, it cannot be fully inside
+      const { minX: sMinX, maxX: sMaxX, minY: sMinY, maxY: sMaxY } = strokeBounds;
+
+      // Fast fail: stroke bounds must be fully inside lasso bounds
       if (sMinX < minX || sMaxX > maxX || sMinY < minY || sMaxY > maxY) {
         continue;
       }
 
-      // Strict check: All points must be inside the polygon
-      let isSelected = true;
-      for (let i = 0; i < stroke.x.length; i++) {
-        if (!this._isPointInPolygon({ x: stroke.x[i], y: stroke.y[i] }, polygon)) {
-          isSelected = false;
-          break;
-        }
-      }
-
-      if (isSelected) {
+      // Check if all stroke points are inside the polygon
+      if (this._isStrokeFullyInPolygon(stroke, polygon)) {
         selectedIndices.add(index);
-        // Update selection bounds
         selMinX = Math.min(selMinX, sMinX);
         selMaxX = Math.max(selMaxX, sMaxX);
         selMinY = Math.min(selMinY, sMinY);
@@ -626,11 +670,32 @@ export class NoteCanvas {
       }
     }
 
-    const bounds = hasSelection
-      ? { minX: selMinX, minY: selMinY, maxX: selMaxX, maxY: selMaxY }
+    const selectionBounds = hasSelection
+      ? {
+          minX: selMinX - SELECTION_BOUNDS_PADDING,
+          minY: selMinY - SELECTION_BOUNDS_PADDING,
+          maxX: selMaxX + SELECTION_BOUNDS_PADDING,
+          maxY: selMaxY + SELECTION_BOUNDS_PADDING,
+        }
       : null;
-    this.renderer.setSelectedStrokes(selectedIndices, bounds);
-    this.lassoPoints = [];
+
+    return { selectedIndices, selectionBounds };
+  }
+
+  /**
+   * Check if all points of a stroke are inside a polygon
+   * @private
+   * @param {Object} stroke - Stroke with x[] and y[] arrays
+   * @param {Array<{x: number, y: number}>} polygon
+   * @returns {boolean}
+   */
+  _isStrokeFullyInPolygon(stroke, polygon) {
+    for (let i = 0; i < stroke.x.length; i++) {
+      if (!this._isPointInPolygon({ x: stroke.x[i], y: stroke.y[i] }, polygon)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -714,27 +779,11 @@ export class NoteCanvas {
     const bounds = this.renderer.selectionBounds;
     if (!bounds) return null;
 
-    const { minX, minY, maxX, maxY } = bounds;
-    const width = maxX - minX;
-    const height = maxY - minY;
-    const handleSize = 20 / this.zoomScale; // Hit area slightly larger than visual
-    const half = handleSize / 2;
-    const rotateOffset = 25 / this.zoomScale;
+    const half = SELECTION_HANDLE_HIT_AREA / this.zoomScale / 2;
+    const handles = getSelectionHandles(bounds, this.zoomScale);
 
-    const handles = {
-      rotate: { x: minX + width / 2, y: minY - rotateOffset },
-      nw: { x: minX, y: minY },
-      n: { x: minX + width / 2, y: minY },
-      ne: { x: maxX, y: minY },
-      e: { x: maxX, y: minY + height / 2 },
-      se: { x: maxX, y: maxY },
-      s: { x: minX + width / 2, y: maxY },
-      sw: { x: minX, y: maxY },
-      w: { x: minX, y: minY + height / 2 },
-    };
-
-    for (const [key, pos] of Object.entries(handles)) {
-      if (Math.abs(x - pos.x) <= half && Math.abs(y - pos.y) <= half) {
+    for (const { key, x: hx, y: hy } of handles) {
+      if (Math.abs(x - hx) <= half && Math.abs(y - hy) <= half) {
         return key;
       }
     }
@@ -757,9 +806,15 @@ export class NoteCanvas {
    */
   _startTransform(mode, x, y, handle = null) {
     const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
-    const initialStrokes = selectedIndices.map((index) =>
-      JSON.parse(JSON.stringify(this.noteData.strokes[index])),
-    );
+
+    // Clone only the coordinate arrays we need (much faster than JSON deep copy)
+    const initialStrokes = selectedIndices.map((index) => {
+      const stroke = this.noteData.strokes[index];
+      return {
+        x: stroke.x.slice(),
+        y: stroke.y.slice(),
+      };
+    });
 
     this.transformState = {
       mode,
@@ -785,118 +840,159 @@ export class NoteCanvas {
     let newBounds = { ...initialBounds };
 
     if (mode === "move") {
-      newBounds.minX += dx;
-      newBounds.maxX += dx;
-      newBounds.minY += dy;
-      newBounds.maxY += dy;
-
-      // Update strokes
-      selectedIndices.forEach((index, i) => {
-        const stroke = this.noteData.strokes[index];
-        const initial = initialStrokes[i];
-        stroke.x = initial.x.map((val) => val + dx);
-        stroke.y = initial.y.map((val) => val + dy);
-      });
+      this._handleMove(dx, dy, newBounds, initialStrokes, selectedIndices);
     } else if (mode === "resize") {
-      // Calculate new bounds based on handle
-      if (handle.includes("e")) newBounds.maxX += dx;
-      if (handle.includes("w")) newBounds.minX += dx;
-      if (handle.includes("s")) newBounds.maxY += dy;
-      if (handle.includes("n")) newBounds.minY += dy;
-
-      // Enforce aspect ratio for corner handles
-      if (handle.length === 2) {
-        // Corner handle (nw, ne, sw, se)
-        const initialRatio =
-          (initialBounds.maxX - initialBounds.minX) / (initialBounds.maxY - initialBounds.minY);
-        const newWidth = newBounds.maxX - newBounds.minX;
-        const newHeight = newBounds.maxY - newBounds.minY;
-
-        // Simple aspect ratio lock: adjust the dimension that changed less to match
-        // Or strictly follow width change. Let's strictly follow width for simplicity.
-        // Better UX: Project point onto diagonal.
-        // Simplified approach:
-        const currentRatio = newWidth / newHeight;
-        if (currentRatio > initialRatio) {
-          // Too wide, adjust height
-          const targetHeight = newWidth / initialRatio;
-          if (handle.includes("n")) newBounds.minY = newBounds.maxY - targetHeight;
-          else newBounds.maxY = newBounds.minY + targetHeight;
-        } else {
-          // Too tall, adjust width
-          const targetWidth = newHeight * initialRatio;
-          if (handle.includes("w")) newBounds.minX = newBounds.maxX - targetWidth;
-          else newBounds.maxX = newBounds.minX + targetWidth;
-        }
-      }
-
-      // Update strokes by scaling
-      const scaleX = (newBounds.maxX - newBounds.minX) / (initialBounds.maxX - initialBounds.minX);
-      const scaleY = (newBounds.maxY - newBounds.minY) / (initialBounds.maxY - initialBounds.minY);
-
-      selectedIndices.forEach((index, i) => {
-        const stroke = this.noteData.strokes[index];
-        const initial = initialStrokes[i];
-
-        stroke.x = initial.x.map((val) => newBounds.minX + (val - initialBounds.minX) * scaleX);
-        stroke.y = initial.y.map((val) => newBounds.minY + (val - initialBounds.minY) * scaleY);
-        // Scale stroke width? Maybe later.
-      });
+      this._handleResize(dx, dy, handle, newBounds, initialBounds, initialStrokes, selectedIndices);
     } else if (mode === "rotate") {
-      const centerX = (initialBounds.minX + initialBounds.maxX) / 2;
-      const centerY = (initialBounds.minY + initialBounds.maxY) / 2;
-
-      const startAngle = Math.atan2(startY - centerY, startX - centerX);
-      const currentAngle = Math.atan2(y - centerY, x - centerX);
-      const angle = currentAngle - startAngle;
-
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-
-      // Rotate strokes
-      selectedIndices.forEach((index, i) => {
-        const stroke = this.noteData.strokes[index];
-        const initial = initialStrokes[i];
-
-        stroke.x = initial.x.map((val, j) => {
-          const px = val - centerX;
-          const py = initial.y[j] - centerY;
-          return centerX + px * cos - py * sin;
-        });
-        stroke.y = initial.y.map((val, j) => {
-          const px = initial.x[j] - centerX;
-          const py = val - centerY;
-          return centerY + px * sin + py * cos;
-        });
-      });
-
-      // Recalculate bounds for the rotated selection
-      let rMinX = Infinity,
-        rMaxX = -Infinity,
-        rMinY = Infinity,
-        rMaxY = -Infinity;
-      selectedIndices.forEach((index) => {
-        const s = this.noteData.strokes[index];
-        for (let k = 0; k < s.x.length; k++) {
-          rMinX = Math.min(rMinX, s.x[k]);
-          rMaxX = Math.max(rMaxX, s.x[k]);
-          rMinY = Math.min(rMinY, s.y[k]);
-          rMaxY = Math.max(rMaxY, s.y[k]);
-        }
-      });
-
-      // Add padding to match getStrokeBounds logic
-      const padding = 2;
-      newBounds = {
-        minX: rMinX - padding,
-        maxX: rMaxX + padding,
-        minY: rMinY - padding,
-        maxY: rMaxY + padding,
-      };
+      newBounds = this._handleRotate(
+        x,
+        y,
+        startX,
+        startY,
+        initialBounds,
+        initialStrokes,
+        selectedIndices,
+      );
     }
 
     // Update renderer
     this.renderer.setSelectedStrokes(this.renderer.selectedStrokeIndices, newBounds);
+  }
+
+  /**
+   * Handle move transform - translate all selected strokes
+   * @private
+   */
+  _handleMove(dx, dy, newBounds, initialStrokes, selectedIndices) {
+    newBounds.minX += dx;
+    newBounds.maxX += dx;
+    newBounds.minY += dy;
+    newBounds.maxY += dy;
+
+    // Update strokes in-place for better performance
+    selectedIndices.forEach((index, i) => {
+      const stroke = this.noteData.strokes[index];
+      const initial = initialStrokes[i];
+      for (let j = 0; j < stroke.x.length; j++) {
+        stroke.x[j] = initial.x[j] + dx;
+        stroke.y[j] = initial.y[j] + dy;
+      }
+    });
+  }
+
+  /**
+   * Handle resize transform - scale all selected strokes
+   * @private
+   */
+  _handleResize(dx, dy, handle, newBounds, initialBounds, initialStrokes, selectedIndices) {
+    // Calculate new bounds based on handle
+    if (handle.includes("e")) newBounds.maxX += dx;
+    if (handle.includes("w")) newBounds.minX += dx;
+    if (handle.includes("s")) newBounds.maxY += dy;
+    if (handle.includes("n")) newBounds.minY += dy;
+
+    // Calculate initial dimensions with safety check for zero
+    const initialWidth = initialBounds.maxX - initialBounds.minX;
+    const initialHeight = initialBounds.maxY - initialBounds.minY;
+
+    // Enforce minimum size constraints
+    const minSize = MIN_SELECTION_SIZE / this.zoomScale;
+    let newWidth = newBounds.maxX - newBounds.minX;
+    let newHeight = newBounds.maxY - newBounds.minY;
+
+    if (newWidth < minSize) {
+      if (handle.includes("w")) newBounds.minX = newBounds.maxX - minSize;
+      else newBounds.maxX = newBounds.minX + minSize;
+      newWidth = minSize;
+    }
+    if (newHeight < minSize) {
+      if (handle.includes("n")) newBounds.minY = newBounds.maxY - minSize;
+      else newBounds.maxY = newBounds.minY + minSize;
+      newHeight = minSize;
+    }
+
+    // Enforce aspect ratio for corner handles
+    if (handle.length === 2 && initialHeight > 0) {
+      const initialRatio = initialWidth / initialHeight;
+      const currentRatio = newWidth / newHeight;
+
+      if (currentRatio > initialRatio) {
+        // Too wide, adjust height
+        const targetHeight = newWidth / initialRatio;
+        if (handle.includes("n")) newBounds.minY = newBounds.maxY - targetHeight;
+        else newBounds.maxY = newBounds.minY + targetHeight;
+      } else {
+        // Too tall, adjust width
+        const targetWidth = newHeight * initialRatio;
+        if (handle.includes("w")) newBounds.minX = newBounds.maxX - targetWidth;
+        else newBounds.maxX = newBounds.minX + targetWidth;
+      }
+    }
+
+    // Calculate scale factors with division-by-zero protection
+    const scaleX = initialWidth > 0 ? (newBounds.maxX - newBounds.minX) / initialWidth : 1;
+    const scaleY = initialHeight > 0 ? (newBounds.maxY - newBounds.minY) / initialHeight : 1;
+
+    // Update strokes by scaling
+    selectedIndices.forEach((index, i) => {
+      const stroke = this.noteData.strokes[index];
+      const initial = initialStrokes[i];
+
+      for (let j = 0; j < stroke.x.length; j++) {
+        stroke.x[j] = newBounds.minX + (initial.x[j] - initialBounds.minX) * scaleX;
+        stroke.y[j] = newBounds.minY + (initial.y[j] - initialBounds.minY) * scaleY;
+      }
+    });
+  }
+
+  /**
+   * Handle rotate transform - rotate all selected strokes around center
+   * @private
+   * @returns {Object} New bounds after rotation
+   */
+  _handleRotate(x, y, startX, startY, initialBounds, initialStrokes, selectedIndices) {
+    const centerX = (initialBounds.minX + initialBounds.maxX) / 2;
+    const centerY = (initialBounds.minY + initialBounds.maxY) / 2;
+
+    const startAngle = Math.atan2(startY - centerY, startX - centerX);
+    const currentAngle = Math.atan2(y - centerY, x - centerX);
+    const angle = currentAngle - startAngle;
+
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    // Rotate strokes and track new bounds
+    let rMinX = Infinity,
+      rMaxX = -Infinity,
+      rMinY = Infinity,
+      rMaxY = -Infinity;
+
+    selectedIndices.forEach((index, i) => {
+      const stroke = this.noteData.strokes[index];
+      const initial = initialStrokes[i];
+
+      for (let j = 0; j < stroke.x.length; j++) {
+        const px = initial.x[j] - centerX;
+        const py = initial.y[j] - centerY;
+        const newX = centerX + px * cos - py * sin;
+        const newY = centerY + px * sin + py * cos;
+        stroke.x[j] = newX;
+        stroke.y[j] = newY;
+
+        // Track bounds while we're iterating
+        rMinX = Math.min(rMinX, newX);
+        rMaxX = Math.max(rMaxX, newX);
+        rMinY = Math.min(rMinY, newY);
+        rMaxY = Math.max(rMaxY, newY);
+      }
+    });
+
+    return {
+      minX: rMinX - SELECTION_BOUNDS_PADDING,
+      maxX: rMaxX + SELECTION_BOUNDS_PADDING,
+      minY: rMinY - SELECTION_BOUNDS_PADDING,
+      maxY: rMaxY + SELECTION_BOUNDS_PADDING,
+    };
   }
 
   /**
@@ -906,10 +1002,13 @@ export class NoteCanvas {
   _endTransform() {
     const { selectedIndices } = this.transformState;
 
-    // Update spatial index
+    // Update spatial index (with validation to handle stale references)
     selectedIndices.forEach((index) => {
+      const stroke = this.noteData.strokes[index];
+      if (!stroke || stroke._deleted) return; // Skip invalid/deleted strokes
+
       this.spatialIndex.remove(index);
-      this.spatialIndex.insert(this.noteData.strokes[index], index);
+      this.spatialIndex.insert(stroke, index);
     });
 
     // Recalculate content height if strokes moved down

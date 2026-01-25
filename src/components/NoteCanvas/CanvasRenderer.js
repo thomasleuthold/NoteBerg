@@ -11,6 +11,7 @@ import {
   drawStroke as sharedDrawStroke,
   getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
+import { getSelectionHandles, SELECTION_HANDLE_SIZE } from "./NoteCanvas.js";
 
 export class CanvasRenderer {
   /**
@@ -453,44 +454,34 @@ export class CanvasRenderer {
       this.ctx.strokeRect(minX, minY, width, height);
       this.ctx.restore();
 
-      // Draw resize handles
-      const handleSize = 10 / this.zoomScale; // Constant screen size
+      // Draw resize handles using shared handle positions
+      const handleSize = SELECTION_HANDLE_SIZE / this.zoomScale; // Constant screen size
       const half = handleSize / 2;
       this.ctx.save();
       this.ctx.fillStyle = "#ffffff";
       this.ctx.strokeStyle = "#3b82f6";
       this.ctx.lineWidth = 1 / this.resolutionScale;
 
-      // Draw rotation handle
-      const rotateOffset = 25 / this.zoomScale;
-      const topMidX = minX + width / 2;
-      const rotateY = minY - rotateOffset;
+      const handles = getSelectionHandles(this.selectionBounds, this.zoomScale);
 
-      this.ctx.beginPath();
-      this.ctx.moveTo(topMidX, minY);
-      this.ctx.lineTo(topMidX, rotateY);
-      this.ctx.stroke();
+      for (const { key, x: hx, y: hy } of handles) {
+        if (key === "rotate") {
+          // Draw rotation handle with stem
+          this.ctx.beginPath();
+          this.ctx.moveTo(hx, minY);
+          this.ctx.lineTo(hx, hy);
+          this.ctx.stroke();
 
-      this.ctx.beginPath();
-      this.ctx.arc(topMidX, rotateY, half, 0, Math.PI * 2);
-      this.ctx.fill();
-      this.ctx.stroke();
-
-      const handles = [
-        { x: minX, y: minY }, // nw
-        { x: minX + width / 2, y: minY }, // n
-        { x: maxX, y: minY }, // ne
-        { x: maxX, y: minY + height / 2 }, // e
-        { x: maxX, y: maxY }, // se
-        { x: minX + width / 2, y: maxY }, // s
-        { x: minX, y: maxY }, // sw
-        { x: minX, y: minY + height / 2 }, // w
-      ];
-
-      handles.forEach((h) => {
-        this.ctx.fillRect(h.x - half, h.y - half, handleSize, handleSize);
-        this.ctx.strokeRect(h.x - half, h.y - half, handleSize, handleSize);
-      });
+          this.ctx.beginPath();
+          this.ctx.arc(hx, hy, half, 0, Math.PI * 2);
+          this.ctx.fill();
+          this.ctx.stroke();
+        } else {
+          // Draw square handle for resize
+          this.ctx.fillRect(hx - half, hy - half, handleSize, handleSize);
+          this.ctx.strokeRect(hx - half, hy - half, handleSize, handleSize);
+        }
+      }
       this.ctx.restore();
     }
 

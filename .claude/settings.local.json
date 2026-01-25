@@ -17,7 +17,8 @@
       "Bash(git log:*)",
       "Bash(npm run dev:*)",
       "Bash(npm install:*)",
-      "Bash(just check:*)"
+      "Bash(just check:*)",
+      "Bash(npx eslint:*)"
     ]
   }
 }
