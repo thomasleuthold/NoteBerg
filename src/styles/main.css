@@ -278,6 +278,10 @@ body {
   color: var(--text-tertiary);
 }
 
+.sync-status[data-status="error"] .sync-indicator {
+  color: var(--color-error);
+}
+
 /* Sidebar */
 .sidebar {
   width: var(--sidebar-width);

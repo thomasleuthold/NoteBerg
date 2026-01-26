@@ -25,6 +25,7 @@ import {
   getNotebookTombstonePath,
   getNotePath,
   getQuickNotesTombstonePath,
+  parsePath,
   ROOT_FOLDER,
   STORAGE_VERSION,
 } from "./storagePaths.js";
@@ -32,6 +33,17 @@ import { addNoteTombstone, cleanupOldTombstones, createEmptyTombstone } from "./
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
 const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
+
+// Helper for batching promises
+async function runInBatches(items, batchSize, fn) {
+  const results = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...batchResults);
+  }
+  return results;
+}
 
 /**
  * Encrypt note data for Nextcloud upload if encryption is enabled
@@ -556,6 +568,53 @@ async function downloadFile(path) {
 }
 
 /**
+ * Fetch the state of all files on the server (PROPFIND Depth: infinity)
+ * Returns a flat list of all files with their ETags and modification times
+ */
+async function fetchRemoteState() {
+  const creds = await getStoredCredentials();
+  if (!creds) throw new Error("Not authenticated");
+
+  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${ROOT_FOLDER}`;
+
+  const response = await fetch(webdavUrl, {
+    method: "PROPFIND",
+    headers: {
+      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Depth: "infinity", // Get everything recursively
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
+  });
+
+  if (response.status === 404) {
+    return []; // Root folder doesn't exist
+  }
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch remote state: ${response.status} ${response.statusText}`);
+  }
+
+  const text = await response.text();
+  const allItems = parseWebDAVResponse(text, false); // false = don't include collections (folders)
+
+  return allItems.map((item) => {
+    // Decode URL encoded path
+    let path = decodeURIComponent(item.href);
+    // Robustly strip base path by finding ROOT_FOLDER
+    // This handles variations in how Nextcloud returns the path (e.g. username casing)
+    const rootIndex = path.indexOf(ROOT_FOLDER);
+    if (rootIndex !== -1) {
+      path = path.substring(rootIndex);
+    }
+    return {
+      ...item,
+      path, // e.g. /oneJournal/notebooks/...
+    };
+  });
+}
+
+/**
  * List files in a folder using WebDAV PROPFIND
  */
 export async function listFiles(path) {
@@ -717,15 +776,9 @@ export async function syncNotebooks(notebooks) {
   // Ensure hierarchical folder structure exists
   await ensureHierarchicalStructure();
 
-  const results = {
-    uploaded: 0,
-    failed: 0,
-    errors: [],
-    uploadedIds: [],
-    metadata: {},
-  };
+  const CONCURRENCY = 5;
 
-  for (const notebook of notebooks) {
+  const batchResults = await runInBatches(notebooks, CONCURRENCY, async (notebook) => {
     try {
       // Create notebook folder
       const notebookFolder = getNotebookFolder(notebook.id);
@@ -750,13 +803,29 @@ export async function syncNotebooks(notebooks) {
         syncedNotebook.modified,
         notebook.lastSyncedEtag,
       );
-      results.uploaded++;
-      results.uploadedIds.push(notebook.id);
-      results.metadata[notebook.id] = { etag: typeof etag === "string" ? etag : null };
+      return { success: true, id: notebook.id, etag };
     } catch (error) {
-      results.failed++;
-      results.errors.push({ id: notebook.id, error: error.message });
       console.error(`Failed to sync notebook ${notebook.id}:`, error);
+      return { success: false, id: notebook.id, error: error.message };
+    }
+  });
+
+  const results = {
+    uploaded: 0,
+    failed: 0,
+    errors: [],
+    uploadedIds: [],
+    metadata: {},
+  };
+
+  for (const res of batchResults) {
+    if (res.success) {
+      results.uploaded++;
+      results.uploadedIds.push(res.id);
+      results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+    } else {
+      results.failed++;
+      results.errors.push({ id: res.id, error: res.error });
     }
   }
 
@@ -774,15 +843,9 @@ export async function syncNotes(notes) {
   // Ensure hierarchical folder structure exists
   await ensureHierarchicalStructure();
 
-  const results = {
-    uploaded: 0,
-    failed: 0,
-    errors: [],
-    uploadedIds: [],
-    metadata: {},
-  };
+  const CONCURRENCY = 5;
 
-  for (const note of notes) {
+  const batchResults = await runInBatches(notes, CONCURRENCY, async (note) => {
     try {
       // Get the correct path based on whether note is in a notebook or is a quick note
       const path = getNotePath(note.id, note.notebookId);
@@ -811,14 +874,30 @@ export async function syncNotes(notes) {
       const content = JSON.stringify(noteForUpload, null, 2);
 
       const etag = await uploadFile(path, content, syncedNote.modified, note.lastSyncedEtag);
-      results.uploaded++;
-      results.uploadedIds.push(note.id);
-      results.metadata[note.id] = { etag: typeof etag === "string" ? etag : null };
       console.log(`Successfully uploaded note ${note.id}`);
+      return { success: true, id: note.id, etag };
     } catch (error) {
-      results.failed++;
-      results.errors.push({ id: note.id, error: error.message });
       console.error(`Failed to sync note ${note.id}:`, error);
+      return { success: false, id: note.id, error: error.message };
+    }
+  });
+
+  const results = {
+    uploaded: 0,
+    failed: 0,
+    errors: [],
+    uploadedIds: [],
+    metadata: {},
+  };
+
+  for (const res of batchResults) {
+    if (res.success) {
+      results.uploaded++;
+      results.uploadedIds.push(res.id);
+      results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+    } else {
+      results.failed++;
+      results.errors.push({ id: res.id, error: res.error });
     }
   }
 
@@ -827,130 +906,131 @@ export async function syncNotes(notes) {
 
 /**
  * Download all data from Nextcloud (hierarchical structure)
+ * Optimized to only download changed files based on ETags
  */
-export async function downloadAllData() {
+export async function downloadAllData(localNotebooks = [], localNotes = []) {
   if (!isAuthenticated()) {
     throw new Error("Not authenticated with Nextcloud");
   }
+
+  console.log("[Sync] Fetching remote state...");
+
+  // Create maps for fast lookup of local state
+  const localNotebooksMap = new Map(localNotebooks.map((n) => [n.id, n]));
+  const localNotesMap = new Map(localNotes.map((n) => [n.id, n]));
 
   const notebooks = [];
   const notes = [];
   const tombstones = new Map(); // Map of notebookId -> tombstone data
 
-  // Step 1: List all notebook folders (need to include collections/folders)
-  const notebookFolders = await listFolders(`${ROOT_FOLDER}/notebooks`);
+  // Step 1: Fetch all remote files in one request
+  const remoteFiles = await fetchRemoteState();
 
-  // Step 2: Download each notebook and its notes
-  for (const folder of notebookFolders) {
+  // Lists of items to download
+  const notebooksToDownload = [];
+  const notesToDownload = [];
+  const tombstonesToDownload = [];
+
+  // Step 2: Identify what needs downloading
+  for (const file of remoteFiles) {
+    const parsed = parsePath(file.path);
+
+    if (parsed.type === "notebook") {
+      const local = localNotebooksMap.get(parsed.notebookId);
+      // Download if we don't have it or ETag changed
+      if (!local || local.lastSyncedEtag !== file.etag) {
+        notebooksToDownload.push({ ...parsed, path: file.path, etag: file.etag });
+      } else {
+        // Unchanged: Add stub to result so fullSync knows it exists
+        notebooks.push({
+          ...local,
+          lastSyncedEtag: file.etag, // Ensure it matches remote
+        });
+      }
+    } else if (parsed.type === "note") {
+      const local = localNotesMap.get(parsed.noteId);
+      // Download if we don't have it or ETag changed
+      // Note: For notes, we compare against _currentFileEtag if available, or lastSyncedEtag
+      // But local notes store the *remote* etag in lastSyncedEtag.
+      if (!local || local.lastSyncedEtag !== file.etag) {
+        notesToDownload.push({ ...parsed, path: file.path, etag: file.etag });
+      } else {
+        // Unchanged: Add stub to result
+        notes.push({
+          id: local.id,
+          notebookId: local.notebookId,
+          modified: file.lastModified, // Use remote timestamp for conflict check
+          _currentFileEtag: file.etag,
+          // We don't need content for unchanged notes unless there's a local conflict,
+          // in which case fullSync logic handles it (local modified + remote unchanged = upload local).
+        });
+      }
+    } else if (parsed.type === "tombstone") {
+      // Always download tombstones for now (they are small and critical)
+      tombstonesToDownload.push({ ...parsed, path: file.path });
+    }
+  }
+
+  console.log(
+    `[Sync] Incremental check: ${notebooksToDownload.length} notebooks, ${notesToDownload.length} notes to download.`,
+  );
+
+  // Step 3: Download changed items in parallel batches
+  const CONCURRENCY = 5;
+
+  // Download Notebooks
+  const downloadedNotebooks = await runInBatches(notebooksToDownload, CONCURRENCY, async (item) => {
     try {
-      // Skip if not a folder (we only expect folders here, but WebDAV might include files)
-      if (!folder.name || folder.name.includes(".")) {
-        continue;
+      const { content } = await downloadFile(item.path);
+      if (content) {
+        const notebook = JSON.parse(content);
+        notebook.lastSyncedEtag = item.etag;
+        return notebook;
       }
-
-      const notebookId = folder.name;
-
-      // Download notebook metadata
-      const notebookPath = getNotebookPath(notebookId);
-      const { content: notebookContent, etag: notebookEtag } = await downloadFile(notebookPath);
-
-      if (notebookContent) {
-        const notebook = JSON.parse(notebookContent);
-        notebook.lastSyncedEtag = notebookEtag;
-        notebooks.push(notebook);
-      }
-
-      // Download tombstones for this notebook
-      const tombstonePath = getNotebookTombstonePath(notebookId);
-      const { content: tombstoneContent } = await downloadFile(tombstonePath);
-
-      if (tombstoneContent) {
-        tombstones.set(notebookId, JSON.parse(tombstoneContent));
-      }
-
-      // Download notes in this notebook
-      const noteFiles = await listFiles(getNotebookNotesFolder(notebookId));
-
-      for (const noteFile of noteFiles) {
-        try {
-          // Skip media folders and tombstone files
-          if (
-            noteFile.name.includes("_media") ||
-            noteFile.name === "_tombstones.json" ||
-            !noteFile.name.endsWith(".json")
-          ) {
-            continue;
-          }
-
-          const noteId = noteFile.name.replace(".json", "");
-          const notePath = getNotePath(noteId, notebookId);
-          const { content: noteContent, etag: noteEtag } = await downloadFile(notePath);
-
-          if (noteContent) {
-            const note = JSON.parse(noteContent);
-            // Store both the etag from the note's JSON content (for conflict detection)
-            // and the current file etag (for upload conditional requests)
-            note._currentFileEtag = noteEtag || noteFile.etag;
-            // Keep the lastSyncedEtag from the note's JSON content (don't overwrite it)
-
-            // Decrypt note if it's encrypted for Nextcloud
-            const decryptedNote = await decryptNoteFromNextcloud(note);
-            notes.push(decryptedNote);
-          }
-        } catch (error) {
-          console.error(`Failed to download note ${noteFile.name}:`, error);
-        }
-      }
-    } catch (error) {
-      console.error(`Failed to process notebook ${folder.name}:`, error);
+    } catch (e) {
+      console.error(`Failed to download notebook ${item.notebookId}:`, e);
     }
-  }
+    return null;
+  });
+  notebooks.push(...downloadedNotebooks.filter((n) => n));
 
-  // Step 3: Download quick notes
-  try {
-    const quickNoteFiles = await listFiles(`${ROOT_FOLDER}/quickNotes`);
+  // Download Notes
+  const downloadedNotes = await runInBatches(notesToDownload, CONCURRENCY, async (item) => {
+    try {
+      const { content } = await downloadFile(item.path);
+      if (content) {
+        const note = JSON.parse(content);
+        note._currentFileEtag = item.etag;
+        return await decryptNoteFromNextcloud(note);
+      }
+    } catch (e) {
+      console.error(`Failed to download note ${item.noteId}:`, e);
+    }
+    return null;
+  });
+  notes.push(...downloadedNotes.filter((n) => n));
 
-    for (const noteFile of quickNoteFiles) {
+  // Download Tombstones
+  const downloadedTombstones = await runInBatches(
+    tombstonesToDownload,
+    CONCURRENCY,
+    async (item) => {
       try {
-        // Skip media folders and tombstone files
-        if (
-          noteFile.name.includes("_media") ||
-          noteFile.name === "_tombstones.json" ||
-          !noteFile.name.endsWith(".json")
-        ) {
-          continue;
+        const { content } = await downloadFile(item.path);
+        if (content) {
+          const key = item.notebookId || "quickNotes";
+          return { key, data: JSON.parse(content) };
         }
-
-        const noteId = noteFile.name.replace(".json", "");
-        const notePath = getNotePath(noteId, null);
-        const { content: noteContent, etag: noteEtag } = await downloadFile(notePath);
-
-        if (noteContent) {
-          const note = JSON.parse(noteContent);
-          // Store both the etag from the note's JSON content (for conflict detection)
-          // and the current file etag (for upload conditional requests)
-          note._currentFileEtag = noteEtag || noteFile.etag;
-          // Keep the lastSyncedEtag from the note's JSON content (don't overwrite it)
-
-          // Decrypt note if it's encrypted for Nextcloud
-          const decryptedNote = await decryptNoteFromNextcloud(note);
-          notes.push(decryptedNote);
-        }
-      } catch (error) {
-        console.error(`Failed to download quick note ${noteFile.name}:`, error);
+      } catch (e) {
+        console.error(`Failed to download tombstone ${item.path}:`, e);
       }
-    }
+      return null;
+    },
+  );
 
-    // Download quick notes tombstones
-    const quickTombstonePath = getQuickNotesTombstonePath();
-    const { content: quickTombstoneContent } = await downloadFile(quickTombstonePath);
-
-    if (quickTombstoneContent) {
-      tombstones.set("quickNotes", JSON.parse(quickTombstoneContent));
-    }
-  } catch (error) {
-    console.error("Failed to process quick notes:", error);
-  }
+  downloadedTombstones.forEach((t) => {
+    if (t) tombstones.set(t.key, t.data);
+  });
 
   return { notebooks, notes, tombstones };
 }
@@ -1010,7 +1090,7 @@ function mergeStrokes(
 /**
  * Attempt to merge two versions of a note
  */
-function attemptMerge(local, remote) {
+export function attemptMerge(local, remote) {
   // Determine which note is newer based on modification time
   const localIsNewer = local.modified >= remote.modified;
   const newerNote = localIsNewer ? local : remote;
@@ -1083,7 +1163,7 @@ export async function fullSync(localNotebooks, localNotes) {
   console.log(`Unsynced notes: ${localNotes.filter((n) => n.synced === false).length}`);
 
   // Step 1: Download remote data first
-  const remoteData = await downloadAllData();
+  const remoteData = await downloadAllData(localNotebooks, localNotes);
 
   // Step 2: Merge notebooks (newer wins)
   const notebooksToUpload = [];

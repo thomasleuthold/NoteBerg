@@ -4,7 +4,7 @@
  */
 
 import { showConflictResolutionDialog } from "../components/modals.js";
-import { fullSync, isAuthenticated } from "./nextcloudSync.js";
+import { attemptMerge, fullSync, isAuthenticated } from "./nextcloudSync.js";
 import {
   deleteNote,
   deleteNotebook,
@@ -18,6 +18,7 @@ import {
 
 // Sync state
 let isSyncing = false;
+let lastSyncResult = null;
 const syncStatusCallbacks = [];
 
 /**
@@ -43,6 +44,14 @@ function notifySyncStatusChange() {
  */
 export function getIsSyncing() {
   return isSyncing;
+}
+
+/**
+ * Get the result of the last sync operation
+ * @returns {Object|null} Last sync result or null if no sync has occurred
+ */
+export function getLastSyncResult() {
+  return lastSyncResult;
 }
 
 /**
@@ -80,6 +89,10 @@ export async function performSync({
         `Before sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`,
       );
     }
+
+    // Create maps of original local state for race condition detection
+    const localNotebooksMap = new Map(notebooks.map((n) => [n.id, n]));
+    const localNotesMap = new Map(notes.map((n) => [n.id, n]));
 
     // Pass copies of notes to fullSync to prevent any potential mutation of our local references
     // which we need for updating status later.
@@ -159,6 +172,20 @@ export async function performSync({
       return await performSync({ silent, skipConflictResolution });
     }
 
+    // Update last sync result on success
+    lastSyncResult = {
+      success: true,
+      timestamp: Date.now(),
+      uploaded: {
+        notes: result.uploaded.notes.uploaded,
+        notebooks: result.uploaded.notebooks.uploaded,
+      },
+      downloaded: {
+        notes: result.downloaded.notes.length,
+        notebooks: result.downloaded.notebooks.length,
+      },
+    };
+
     // Mark uploaded items as synced
     for (const id of result.uploaded.notebooks.uploadedIds || []) {
       // Fetch fresh notebook to avoid overwriting concurrent changes
@@ -197,15 +224,48 @@ export async function performSync({
 
     // Save downloaded items
     for (const notebook of result.downloaded.notebooks) {
-      await saveNotebook(notebook);
+      // Check for race condition: has local notebook changed since sync started?
+      const currentLocalNotebook = await getNotebook(notebook.id);
+      const originalLocalNotebook = localNotebooksMap.get(notebook.id);
+
+      if (
+        currentLocalNotebook &&
+        (!originalLocalNotebook || currentLocalNotebook.modified !== originalLocalNotebook.modified)
+      ) {
+        console.warn(
+          `[Sync] Race condition detected for notebook ${notebook.id}. Keeping local changes.`,
+        );
+        // Keep local version but update base ETag so next sync uploads it cleanly
+        await saveNotebook({
+          ...currentLocalNotebook,
+          synced: false,
+          lastSyncedEtag: notebook.lastSyncedEtag,
+        });
+      } else {
+        await saveNotebook(notebook);
+      }
     }
 
     for (const note of result.downloaded.notes) {
-      // Note is decrypted (plain text) from Nextcloud, so saveNote will handle local encryption
+      // Note is decrypted (plain text) from Nextcloud
       // Remove internal _currentFileEtag and update lastSyncedEtag for tracking
       const { _currentFileEtag, ...noteToSave } = note;
       noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
-      await saveNote(noteToSave);
+
+      // Check for race condition: has local note changed since sync started?
+      const currentLocalNote = await getNote(note.id);
+      const originalLocalNote = localNotesMap.get(note.id);
+
+      if (
+        currentLocalNote &&
+        (!originalLocalNote || currentLocalNote.modified !== originalLocalNote.modified)
+      ) {
+        console.warn(`[Sync] Race condition detected for note ${note.id}. Merging changes.`);
+        const merged = attemptMerge(currentLocalNote, noteToSave);
+        await saveNote(merged);
+      } else {
+        await saveNote(noteToSave);
+      }
     }
 
     // Process deletions (Remote deleted -> Local delete)
@@ -246,6 +306,11 @@ export async function performSync({
     return result;
   } catch (error) {
     console.error("Sync: Failed", error);
+    lastSyncResult = {
+      success: false,
+      timestamp: Date.now(),
+      error: error.message,
+    };
     throw error;
   } finally {
     isSyncing = false;
