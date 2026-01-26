@@ -50,7 +50,6 @@ async function renderRootOverview(container) {
   // Fetch data
   const notebooks = await getAllNotebooks();
   const quickNotes = await getQuickNotes();
-  updateBreadcrumb(); // Reset breadcrumb
 
   // Get note counts for each notebook
   const notebookCounts = await Promise.all(
@@ -133,7 +132,6 @@ async function renderNotebookContents(container, notebookId) {
   if (!notebook) throw new Error("Notebook not found");
 
   const notes = await getNotesByNotebook(notebookId);
-  updateBreadcrumb(notebook.title);
 
   const notesHtml =
     notes.length > 0
@@ -482,38 +480,6 @@ function renderPreviewNoteCard(note) {
       </div>
     </div>
   `;
-}
-
-function updateBreadcrumb(notebookTitle = null) {
-  const breadcrumb = document.getElementById("breadcrumb");
-  if (!breadcrumb) return;
-
-  const homeIcon = getIcon("home", 24);
-
-  // Reset to just Home
-  breadcrumb.innerHTML = `
-    <button id="nav-overview" class="breadcrumb-item" aria-label="Home" title="Home">
-      ${homeIcon}
-    </button>
-  `;
-
-  // Re-attach home listener
-  breadcrumb.querySelector("#nav-overview").addEventListener("click", () => navigateTo("overview"));
-
-  if (notebookTitle) {
-    const separator = document.createElement("span");
-    separator.className = "breadcrumb-separator";
-    separator.textContent = "/";
-    separator.style.margin = "0 8px";
-    separator.style.color = "var(--text-secondary)";
-    breadcrumb.appendChild(separator);
-
-    const item = document.createElement("span");
-    item.className = "breadcrumb-item";
-    item.textContent = notebookTitle;
-    item.style.fontWeight = "600";
-    breadcrumb.appendChild(item);
-  }
 }
 
 function formatDate(timestamp) {
