@@ -328,7 +328,7 @@ export class NoteCanvas {
       try {
         recognition = JSON.parse(recognition);
         this.noteData.recognition = recognition;
-      } catch (e) {
+      } catch (_e) {
         return;
       }
     }
@@ -619,12 +619,148 @@ export class NoteCanvas {
       return;
     }
 
+    // Check for scratch-out gesture (only in draw mode)
+    if (this.mode === "draw" && this.strokeManager.currentStroke) {
+      const stroke = this.strokeManager.currentStroke;
+      if (this._isScratchGesture(stroke)) {
+        this._handleScratchErase(stroke);
+        this.strokeManager.cancelCurrentStroke();
+        this.renderer.forceRedraw(); // Clear the gesture stroke from screen
+        return;
+      }
+    }
+
     const stroke = this.strokeManager.endStroke();
     if (stroke) {
+      // Draw the final segment (tail) of the stroke
+      this.renderer.drawDirectStroke(stroke, true);
+
       // Update spatial index so the stroke is included in future buffer redraws (scroll/zoom)
       const newIndex = this.noteData.strokes.length - 1;
       this.spatialIndex.insert(stroke, newIndex);
       this.strokesChanged = true;
+    }
+  }
+
+  /**
+   * Detect if a stroke is a scratch-out gesture
+   * Definition: At least 3 horizontal segments (Back-Forth-Back)
+   * @private
+   */
+  _isScratchGesture(stroke) {
+    if (!stroke || stroke.x.length < 30) return false;
+
+    // 1. Calculate bounds and total path length
+    let minX = stroke.x[0],
+      maxX = stroke.x[0],
+      minY = stroke.y[0],
+      maxY = stroke.y[0];
+    let totalLength = 0;
+
+    for (let i = 1; i < stroke.x.length; i++) {
+      minX = Math.min(minX, stroke.x[i]);
+      maxX = Math.max(maxX, stroke.x[i]);
+      minY = Math.min(minY, stroke.y[i]);
+      maxY = Math.max(maxY, stroke.y[i]);
+
+      const dx = stroke.x[i] - stroke.x[i - 1];
+      const dy = stroke.y[i] - stroke.y[i - 1];
+      totalLength += Math.sqrt(dx * dx + dy * dy);
+    }
+
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const diag = Math.sqrt(width * width + height * height);
+
+    // Minimum size threshold to avoid accidental triggers on small letters
+    if (width < 30 && height < 30) return false;
+
+    // Density check: Scratch-out has high ink-to-area ratio (vs straight line or simple curve)
+    // Letters like 'Z' or 'M' usually have ratio < 2.5. Scratches usually > 3.
+    if (diag === 0 || totalLength / diag < 2.5) return false;
+
+    // 2. Analyze direction changes in primary axis (Horizontal or Vertical)
+    const isHorizontal = width > height;
+    const primaryValues = isHorizontal ? stroke.x : stroke.y;
+
+    let changes = 0;
+    let currentDir = 0;
+    let lastVal = primaryValues[0];
+    const threshold = 8; // Increased threshold to reduce noise sensitivity
+
+    for (let i = 1; i < primaryValues.length; i++) {
+      const d = primaryValues[i] - lastVal;
+      if (Math.abs(d) > threshold) {
+        const dir = Math.sign(d);
+        if (currentDir !== 0 && dir !== currentDir) {
+          changes++;
+        }
+        currentDir = dir;
+        lastVal = primaryValues[i];
+      }
+    }
+
+    // Require at least 4 turns (5 segments) to avoid false positives like 'M', 'W', 'Z'
+    return changes >= 4;
+  }
+
+  /**
+   * Erase strokes covered by the scratch gesture
+   * @private
+   */
+  _handleScratchErase(gestureStroke) {
+    // Calculate bounds of the gesture
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity;
+
+    for (let i = 0; i < gestureStroke.x.length; i++) {
+      minX = Math.min(minX, gestureStroke.x[i]);
+      maxX = Math.max(maxX, gestureStroke.x[i]);
+      minY = Math.min(minY, gestureStroke.y[i]);
+      maxY = Math.max(maxY, gestureStroke.y[i]);
+    }
+
+    // Add padding to catch small nearby strokes (like 'i' dots)
+    const padding = 15;
+    const eraseRect = {
+      minX: minX - padding,
+      maxX: maxX + padding,
+      minY: minY - padding,
+      maxY: maxY + padding,
+    };
+
+    // Use lasso logic to find strokes fully contained in the (rectangular) erase area
+    // We create a polygon from the rect to reuse _findStrokesInPolygon logic
+    const polygon = [
+      { x: eraseRect.minX, y: eraseRect.minY },
+      { x: eraseRect.maxX, y: eraseRect.minY },
+      { x: eraseRect.maxX, y: eraseRect.maxY },
+      { x: eraseRect.minX, y: eraseRect.maxY },
+    ];
+
+    // Find strokes. Note: _findStrokesInPolygon checks if stroke is FULLY inside.
+    // For a scratch-out, usually we want to delete anything we scribbled over.
+    // However, checking intersection is expensive. Checking "fully inside bounding box of scratch"
+    // is a safe and performant approximation if the user scribbles widely enough.
+    // If we want "intersects", we'd need a different query.
+    // Let's stick to "fully inside the expanded bounding box" for safety and performance.
+    const { selectedIndices } = this._findStrokesInPolygon(polygon, eraseRect);
+
+    if (selectedIndices.size > 0) {
+      selectedIndices.forEach((index) => {
+        const s = this.noteData.strokes[index];
+        if (s) {
+          s._deleted = true;
+          if (s.id) this.noteData.deletedStrokes.push(s.id);
+        }
+      });
+
+      this.strokesChanged = true;
+      this.strokeManager.markDirty();
+      this.strokeManager.forceSave();
+      this.renderer.forceRedraw();
     }
   }
 

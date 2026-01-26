@@ -56,6 +56,8 @@ export class CanvasRenderer {
     this.palette = null;
     this.activeStroke = null; // Stroke currently being drawn
     this.selectedStrokeIndices = new Set();
+    this.activeStrokeId = null; // ID of the stroke currently being drawn incrementally
+    this.lastDrawnPointIndex = 0; // Index of the last point processed in the active stroke
     this.selectionBounds = null;
     this.highlightRects = []; // Search term highlights
 
@@ -188,8 +190,13 @@ export class CanvasRenderer {
    * @private
    */
   _resizeCanvasBitmap() {
+    const dpr = window.devicePixelRatio || 1;
+
     // Calculate resolution scale (for crisp rendering when zoomed in)
-    this.resolutionScale = Math.min(Math.max(1.0, this.zoomScale), this.maxResolutionScale);
+    this.resolutionScale = Math.min(
+      Math.max(1.0, this.zoomScale * dpr),
+      this.maxResolutionScale * dpr,
+    );
 
     // Canvas bitmap size
     const bitmapWidth = Math.round(this.viewportWidth * this.resolutionScale);
@@ -241,20 +248,84 @@ export class CanvasRenderer {
 
   /**
    * Draw a stroke directly to the canvas (for low latency)
+   * Uses incremental drawing to avoid overdraw artifacts on the main canvas
    * @param {Object} stroke - Stroke data
+   * @param {boolean} isFinished - Whether this is the final draw call for the stroke
    */
-  drawDirectStroke(stroke) {
+  drawDirectStroke(stroke, isFinished = false) {
     if (!this.ctx || !stroke) return;
 
-    this.ctx.save();
+    // Reset state if this is a new stroke
+    if (this.activeStrokeId !== stroke.id) {
+      this.activeStrokeId = stroke.id;
+      this.lastDrawnPointIndex = 0;
+    }
 
-    // Apply buffer translation (resolution scale is already in transform)
-    // The context transform is: scale(resolution, resolution)
-    // We need to translate by -bufferTop in content coordinates
+    const pointCount = stroke.x.length;
+    if (pointCount < 2) return;
+
+    this.ctx.save();
     this.ctx.translate(0, -this.bufferTop);
 
-    // Draw the stroke
-    sharedDrawStroke(this.ctx, stroke, this.palette, false);
+    // Setup styles manually since we are drawing incrementally
+    const colors = this.palette || sharedGetThemePalette();
+    const color =
+      stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
+    this.ctx.strokeStyle = color;
+    this.ctx.lineCap = "round";
+    this.ctx.lineJoin = "round";
+
+    const baseWidth = stroke.width || 2;
+    const getWidth = (p) => Math.max(0.5, baseWidth * (0.5 + p));
+
+    // Start from where we left off
+    let i = this.lastDrawnPointIndex;
+
+    // Handle the very first segment (P0 -> Mid(P0, P1))
+    if (i === 0) {
+      const midX = (stroke.x[0] + stroke.x[1]) / 2;
+      const midY = (stroke.y[0] + stroke.y[1]) / 2;
+      this.ctx.beginPath();
+      this.ctx.lineWidth = getWidth(stroke.pressure[0]);
+      this.ctx.moveTo(stroke.x[0], stroke.y[0]);
+      this.ctx.lineTo(midX, midY);
+      this.ctx.stroke();
+      i = 1;
+    }
+
+    // Draw curves for new points: Mid(i-1, i) -> P(i) -> Mid(i, i+1)
+    for (; i < pointCount - 1; i++) {
+      const midPrevX = (stroke.x[i - 1] + stroke.x[i]) / 2;
+      const midPrevY = (stroke.y[i - 1] + stroke.y[i]) / 2;
+      const midNextX = (stroke.x[i] + stroke.x[i + 1]) / 2;
+      const midNextY = (stroke.y[i] + stroke.y[i + 1]) / 2;
+
+      this.ctx.beginPath();
+      this.ctx.lineWidth = getWidth(stroke.pressure[i]);
+      this.ctx.moveTo(midPrevX, midPrevY);
+      this.ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], midNextX, midNextY);
+      this.ctx.stroke();
+    }
+
+    this.lastDrawnPointIndex = i;
+
+    // Draw tail segment if finished: Mid(last-1, last) -> P(last)
+    if (isFinished) {
+      const last = pointCount - 1;
+      const prev = last - 1;
+      const midX = (stroke.x[prev] + stroke.x[last]) / 2;
+      const midY = (stroke.y[prev] + stroke.y[last]) / 2;
+
+      this.ctx.beginPath();
+      this.ctx.lineWidth = getWidth(stroke.pressure[last]);
+      this.ctx.moveTo(midX, midY);
+      this.ctx.lineTo(stroke.x[last], stroke.y[last]);
+      this.ctx.stroke();
+
+      // Reset for next stroke
+      this.activeStrokeId = null;
+      this.lastDrawnPointIndex = 0;
+    }
 
     this.ctx.restore();
   }

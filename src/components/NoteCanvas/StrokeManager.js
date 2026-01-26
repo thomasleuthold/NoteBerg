@@ -64,6 +64,10 @@ export class StrokeManager {
     return stroke;
   }
 
+  cancelCurrentStroke() {
+    this.currentStroke = null;
+  }
+
   markDirty() {
     this.isDirty = true;
   }
