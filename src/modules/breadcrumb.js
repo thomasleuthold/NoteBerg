@@ -13,7 +13,7 @@ import { getNote, getNotebook, updateNote, updateNotebook } from "./storage.js";
  * @param {string|null} notebookId - Current notebook ID
  * @param {string|null} noteId - Current note ID
  */
-export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
+export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) {
   const breadcrumb = document.getElementById("breadcrumb");
   if (!breadcrumb) return;
 
@@ -70,20 +70,14 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
           notebookItem.onclick = () => navigateTo("overview", { notebookId: actualNotebookId });
         } else {
           // It's the current view (Notebook Overview) - Allow rename
-          setupEditableItem(
-            notebookItem,
-            notebook.title,
-            editIcon,
-            checkIcon,
-            async (newName) => {
-              if (newName && newName !== notebook.title) {
-                await updateNotebook(notebook.id, { title: newName });
-                window.dispatchEvent(new CustomEvent("datachange"));
-                return true;
-              }
-              return false;
-            },
-          );
+          setupEditableItem(notebookItem, notebook.title, editIcon, checkIcon, async (newName) => {
+            if (newName && newName !== notebook.title) {
+              await updateNotebook(notebook.id, { title: newName });
+              window.dispatchEvent(new CustomEvent("datachange"));
+              return true;
+            }
+            return false;
+          });
         }
 
         breadcrumb.appendChild(notebookItem);
@@ -100,20 +94,14 @@ export async function updateBreadcrumb(mode, notebookId = null, noteId = null) {
     const noteItem = document.createElement("div");
     noteItem.className = "breadcrumb-item breadcrumb-current";
 
-    setupEditableItem(
-      noteItem,
-      note.title || "Untitled",
-      editIcon,
-      checkIcon,
-      async (newName) => {
-        if (newName && newName !== note.title) {
-          await updateNote(note.id, { title: newName });
-          window.dispatchEvent(new CustomEvent("datachange"));
-          return true;
-        }
-        return false;
-      },
-    );
+    setupEditableItem(noteItem, note.title || "Untitled", editIcon, checkIcon, async (newName) => {
+      if (newName && newName !== note.title) {
+        await updateNote(note.id, { title: newName });
+        window.dispatchEvent(new CustomEvent("datachange"));
+        return true;
+      }
+      return false;
+    });
 
     breadcrumb.appendChild(noteItem);
   }
@@ -155,7 +143,7 @@ function setupEditableItem(container, text, editIcon, checkIcon, onSave) {
     input.className = "breadcrumb-edit-input";
     input.style.font = "inherit";
     input.style.minWidth = "100px";
-    input.style.width = Math.max(100, input.value.length * 10) + "px";
+    input.style.width = `${Math.max(100, input.value.length * 10)}px`;
 
     const save = async () => {
       const newName = input.value.trim();

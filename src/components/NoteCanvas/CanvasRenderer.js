@@ -53,10 +53,12 @@ export class CanvasRenderer {
     this.strokes = [];
     this.background = "none";
     this.spatialIndex = null;
+    this.mediaManager = null; // Reference to MediaManager
     this.palette = null;
     this.activeStroke = null; // Stroke currently being drawn
     this.selectedStrokeIndices = new Set();
     this.activeStrokeId = null; // ID of the stroke currently being drawn incrementally
+    this.selectedMediaId = null; // ID of selected media item
     this.lastDrawnPointIndex = 0; // Index of the last point processed in the active stroke
     this.selectionBounds = null;
     this.highlightRects = []; // Search term highlights
@@ -112,6 +114,15 @@ export class CanvasRenderer {
   }
 
   /**
+   * Set selected media item
+   * @param {string|null} id
+   */
+  setSelectedMedia(id) {
+    this.selectedMediaId = id;
+    this.forceRedraw();
+  }
+
+  /**
    * Set selected strokes and their bounding box
    * @param {Set<number>} selectedIndices
    * @param {Object|null} bounds - {minX, minY, maxX, maxY}
@@ -137,6 +148,14 @@ export class CanvasRenderer {
    */
   setSpatialIndex(index) {
     this.spatialIndex = index;
+  }
+
+  /**
+   * Set the media manager
+   * @param {MediaManager} manager
+   */
+  setMediaManager(manager) {
+    this.mediaManager = manager;
   }
 
   /**
@@ -499,6 +518,11 @@ export class CanvasRenderer {
       this._drawBackground();
     }
 
+    // Draw media items (images, PDF pages)
+    if (this.mediaManager) {
+      this._drawMedia(fastMode);
+    }
+
     // Query spatial index for visible strokes
     const bufferBottom = this.bufferTop + this.bufferHeight;
     let strokeIndices;
@@ -589,6 +613,56 @@ export class CanvasRenderer {
 
     this._lastRenderWasFastMode = fastMode;
     this.lastRenderTime = performance.now() - startTime;
+  }
+
+  /**
+   * Draw media items onto the buffer
+   * @private
+   * @param {boolean} fastMode - Use faster rendering (lower quality)
+   */
+  _drawMedia(fastMode = false) {
+    const items = this.mediaManager.getItems();
+    if (!items || items.length === 0) return;
+
+    this.ctx.save();
+    this.ctx.translate(0, -this.bufferTop);
+
+    if (fastMode) {
+      this.ctx.imageSmoothingEnabled = false;
+    }
+
+    const bufferBottom = this.bufferTop + this.bufferHeight;
+
+    // Sort by z-index if available, otherwise draw in order
+    // TODO: Add z-index support to data model
+
+    for (const item of items) {
+      // Culling: Skip items not visible in the current buffer
+      if (item.y + item.height < this.bufferTop || item.y > bufferBottom) {
+        continue;
+      }
+
+      if (item.type === "image" && item.fileId) {
+        const img = this.mediaManager.getImage(item.fileId);
+        if (img) {
+          // TODO: Handle rotation if present in item
+          this.ctx.drawImage(img, item.x, item.y, item.width, item.height);
+        } else {
+          // Draw placeholder while loading
+          this.ctx.fillStyle = "rgba(200, 200, 200, 0.2)";
+          this.ctx.fillRect(item.x, item.y, item.width, item.height);
+        }
+
+        // Draw selection border
+        if (item.id === this.selectedMediaId) {
+          this.ctx.strokeStyle = "#3b82f6";
+          this.ctx.lineWidth = 2;
+          this.ctx.strokeRect(item.x, item.y, item.width, item.height);
+        }
+      }
+    }
+
+    this.ctx.restore();
   }
 
   /**

@@ -44,7 +44,7 @@ export class InputHandler {
     this.element.removeEventListener("pointercancel", this._onPointerUp);
   }
 
-  _getContentCoordinates(clientX, clientY) {
+  getContentCoordinates(clientX, clientY) {
     const { getZoom, getScroll, getRect, getOffset } = this.contextProvider;
     const zoom = getZoom();
     const { left: scrollLeft, top: scrollTop } = getScroll();
@@ -67,7 +67,7 @@ export class InputHandler {
     // Ignore if already drawing
     if (this.isDrawing) return;
 
-    const { x, y } = this._getContentCoordinates(e.clientX, e.clientY);
+    const { x, y } = this.getContentCoordinates(e.clientX, e.clientY);
     const pressure = e.pressure !== undefined ? e.pressure : 0.5;
 
     const shouldDraw = this.callbacks.onStrokeStart({
@@ -101,7 +101,7 @@ export class InputHandler {
     const points = [];
 
     for (const event of events) {
-      const { x, y } = this._getContentCoordinates(event.clientX, event.clientY);
+      const { x, y } = this.getContentCoordinates(event.clientX, event.clientY);
       points.push({
         x,
         y,

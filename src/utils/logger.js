@@ -175,12 +175,20 @@ export async function initLogger(initialLevel = "warning") {
   // Intercepting every console call causes severe performance degradation
   if (isAndroid()) {
     originalConsole.log(
-      "[Logger] Android detected - console interception DISABLED for performance",
+      "[Logger] Android detected - console interception optimized for performance",
     );
-    originalConsole.log("[Logger] Only direct logger.error/warning calls will be captured");
 
-    // Set log level but don't intercept console
-    setLogLevel("error"); // Only capture critical errors on Android
+    // On Android, we ONLY intercept warnings and errors to avoid performance hits from verbose logs
+    // console.log remains native (fastest)
+    console.warn = (...args) => {
+      originalConsole.warn(...args);
+      captureConsoleMessage("warning", args);
+    };
+
+    console.error = (...args) => {
+      originalConsole.error(...args);
+      captureConsoleMessage("error", args);
+    };
 
     // DO NOT attach Rust logging to webview - causes severe performance issues
     // Rust logs will only go to stdout/terminal

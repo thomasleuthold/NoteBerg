@@ -99,6 +99,28 @@ export class StrokeManager {
     this.isDirty = false;
   }
 
+  /**
+   * Save media changes via the worker to ensure sequential writes
+   */
+  saveMedia({ media, deletedMedia }) {
+    let key = null;
+    if (isAppUnlocked()) {
+      try {
+        key = getEncryptionKey();
+      } catch (e) {
+        console.warn("[StrokeManager] Could not get encryption key:", e);
+      }
+    }
+
+    this.worker.postMessage({
+      type: "SAVE_MEDIA",
+      noteId: this.noteId,
+      media,
+      deletedMedia,
+      key,
+    });
+  }
+
   forceSave() {
     this._save();
   }

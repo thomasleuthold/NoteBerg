@@ -60,80 +60,19 @@ export function pickImages(multiple = true) {
 }
 
 /**
- * Detect if running on mobile/Android device
- */
-function isMobileDevice() {
-  const ua = navigator.userAgent.toLowerCase();
-  return /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
-}
-
-/**
  * Capture image from camera using HTML5 file input with capture attribute
  * Falls back to getUserMedia if cancelled
  * @param {string} facing - Camera facing mode: 'user' (front) or 'environment' (back)
  * @returns {Promise<File|null>} - Captured image file or null if cancelled
  */
 export async function captureFromCamera(facing = "environment") {
-  // On mobile devices, try Method 1 first (native camera)
-  // On desktop, skip directly to Method 2 (getUserMedia) to avoid file picker
-  if (isMobileDevice()) {
-    const file = await captureWithFileInput(facing);
-    if (file) return file; // User captured photo successfully
-    // User cancelled, fall through to Method 2
-  }
-
-  // Method 2: getUserMedia with camera preview (works everywhere)
+  // Use getUserMedia with camera preview (works everywhere)
   try {
     return await captureWithGetUserMedia(facing);
   } catch (error) {
     console.error("getUserMedia failed:", error);
     return null; // Failed
   }
-}
-
-/**
- * Method 1: Capture using file input with capture attribute (camera only, no file picker)
- */
-function captureWithFileInput(facing = "environment") {
-  return new Promise((resolve, _reject) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.capture = facing; // Camera only
-    input.style.display = "none";
-
-    let resolved = false;
-
-    const cleanup = () => {
-      try {
-        if (input.parentNode) {
-          document.body.removeChild(input);
-        }
-      } catch (_e) {
-        // Already removed
-      }
-    };
-
-    // Handle file selection
-    input.addEventListener("change", (e) => {
-      if (resolved) return;
-      resolved = true;
-      cleanup();
-      const file = e.target.files?.[0] || null;
-      resolve(file); // Return the file or null
-    });
-
-    // Handle cancellation
-    input.addEventListener("cancel", () => {
-      if (resolved) return;
-      resolved = true;
-      cleanup();
-      resolve(null); // User cancelled
-    });
-
-    document.body.appendChild(input);
-    input.click();
-  });
 }
 
 /**

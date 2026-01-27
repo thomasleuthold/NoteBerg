@@ -14,7 +14,7 @@ import {
   getSecureCredential,
   saveSecureCredential,
 } from "./secureStorage.js";
-import { isNextcloudEncryptionEnabled } from "./storage.js";
+import { checkFileExists, getFile, isNextcloudEncryptionEnabled, saveFile } from "./storage.js";
 import {
   getAllRequiredFolders,
   getLegacyNotebookPath,
@@ -23,6 +23,7 @@ import {
   getNotebookNotesFolder,
   getNotebookPath,
   getNotebookTombstonePath,
+  getNoteMediaFolder,
   getNotePath,
   getQuickNotesTombstonePath,
   parsePath,
@@ -33,6 +34,20 @@ import { addNoteTombstone, cleanupOldTombstones, createEmptyTombstone } from "./
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
 const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
+
+// Mime type mapping for file extensions
+const MIME_TYPES = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "image/svg+xml": ".svg",
+  "application/pdf": ".pdf",
+};
+
+function getExtensionFromMime(mimeType) {
+  return MIME_TYPES[mimeType] || ".bin";
+}
 
 // Helper for batching promises
 async function runInBatches(items, batchSize, fn) {
@@ -539,7 +554,7 @@ async function uploadFile(path, content, mtime = null, etag = null) {
 /**
  * Download a file from Nextcloud using WebDAV
  */
-async function downloadFile(path) {
+async function downloadFile(path, asBinary = false) {
   const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
@@ -562,9 +577,179 @@ async function downloadFile(path) {
     throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
   }
 
+  if (asBinary) {
+    const content = await response.arrayBuffer();
+    const etag = response.headers.get("etag")?.replace(/"/g, "");
+    return { content, etag };
+  }
+
   const content = await response.text();
   const etag = response.headers.get("etag")?.replace(/"/g, "");
   return { content, etag };
+}
+
+/**
+ * Sync media files for a note (Upload)
+ * Ensures all binary files referenced in the note are uploaded to Nextcloud
+ * Uses parallel uploads for efficiency
+ */
+async function syncNoteMedia(note) {
+  if (!note.media || note.media.length === 0) return;
+
+  const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
+
+  // Ensure media folder exists
+  await createFolder(mediaFolder);
+
+  // Get list of existing files on server to avoid unnecessary uploads
+  let remoteFiles = [];
+  try {
+    remoteFiles = await listFiles(mediaFolder);
+  } catch (_e) {
+    // Ignore error if folder is empty/new
+  }
+  const remoteNames = new Set(remoteFiles.map((f) => f.name));
+
+  // Prepare upload tasks for items that need uploading
+  const uploadTasks = [];
+
+  for (const item of note.media) {
+    if (!item.fileId) continue;
+
+    // Get file from local storage
+    const blob = await getFile(item.fileId);
+    if (!blob) {
+      console.warn(
+        `[Sync] Local file not found for media item ${item.id} (fileId: ${item.fileId})`,
+      );
+      continue;
+    }
+
+    // Determine filename
+    const ext = getExtensionFromMime(blob.type);
+    const filename = `${item.fileId}${ext}`;
+
+    // Queue upload if not exists on server
+    if (!remoteNames.has(filename)) {
+      uploadTasks.push({ filename, blob, path: `${mediaFolder}/${filename}` });
+    }
+  }
+
+  // Upload in parallel batches
+  if (uploadTasks.length > 0) {
+    const MEDIA_UPLOAD_CONCURRENCY = 3;
+    await runInBatches(uploadTasks, MEDIA_UPLOAD_CONCURRENCY, async (task) => {
+      try {
+        console.log(`[Sync] Uploading media file: ${task.filename}`);
+        await uploadFile(task.path, task.blob);
+        return { success: true, filename: task.filename };
+      } catch (error) {
+        console.error(`[Sync] Failed to upload media file ${task.filename}:`, error);
+        return { success: false, filename: task.filename, error };
+      }
+    });
+  }
+}
+
+/**
+ * Clean up orphaned media files from Nextcloud
+ * Deletes files in the media folder that are no longer referenced by the note
+ * @param {Object} note - Note with media array and deletedMedia array
+ */
+async function cleanupOrphanedMedia(note) {
+  const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
+
+  // Get list of files currently on server
+  let remoteFiles = [];
+  try {
+    remoteFiles = await listFiles(mediaFolder);
+  } catch (_e) {
+    // Folder doesn't exist, nothing to clean up
+    return;
+  }
+
+  if (remoteFiles.length === 0) return;
+
+  // Build set of valid fileIds that should exist
+  const validFileIds = new Set();
+  if (note.media) {
+    for (const item of note.media) {
+      if (item.fileId) {
+        validFileIds.add(item.fileId);
+      }
+    }
+  }
+
+  // Find orphaned files (files on server not referenced in note.media)
+  const orphanedFiles = remoteFiles.filter((file) => {
+    // Extract fileId from filename (filename format: {fileId}.{ext})
+    const dotIndex = file.name.lastIndexOf(".");
+    const fileId = dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
+    return !validFileIds.has(fileId);
+  });
+
+  // Delete orphaned files
+  if (orphanedFiles.length > 0) {
+    console.log(
+      `[Sync] Cleaning up ${orphanedFiles.length} orphaned media files for note ${note.id}`,
+    );
+    for (const file of orphanedFiles) {
+      try {
+        await deleteFile(`${mediaFolder}/${file.name}`);
+        console.log(`[Sync] Deleted orphaned media file: ${file.name}`);
+      } catch (error) {
+        console.warn(`[Sync] Failed to delete orphaned media file ${file.name}:`, error);
+      }
+    }
+  }
+}
+
+/**
+ * Download media files for a note
+ * Ensures all binary files referenced in the note are downloaded to local storage
+ */
+async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
+  if (!note.media || note.media.length === 0) return;
+
+  const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
+  let remoteFiles = preloadedRemoteFiles;
+
+  for (const item of note.media) {
+    if (!item.fileId) continue;
+
+    // Check if file exists locally
+    const existing = await checkFileExists(item.fileId);
+    if (existing) continue;
+
+    // Need to find the remote filename. It should be fileId + extension.
+    // Since we don't store the extension in the note JSON explicitly in all versions,
+    // we list the folder once to find the matching file.
+    if (!remoteFiles) {
+      try {
+        remoteFiles = await listFiles(mediaFolder);
+      } catch (e) {
+        console.warn(`[Sync] Failed to list media folder ${mediaFolder}:`, e);
+        return; // Stop if folder doesn't exist
+      }
+    }
+
+    const remoteFile = remoteFiles.find((f) => f.name.startsWith(item.fileId));
+    if (remoteFile) {
+      console.log(`[Sync] Downloading media file: ${remoteFile.name}`);
+      const { content } = await downloadFile(`${mediaFolder}/${remoteFile.name}`, true); // Download as binary
+
+      if (content) {
+        // Infer mime type from extension
+        const ext = remoteFile.name.substring(remoteFile.name.lastIndexOf("."));
+        const mimeType =
+          Object.keys(MIME_TYPES).find((key) => MIME_TYPES[key] === ext) ||
+          "application/octet-stream";
+
+        const blob = new Blob([content], { type: mimeType });
+        await saveFile(blob, item.fileId);
+      }
+    }
+  }
 }
 
 /**
@@ -858,17 +1043,21 @@ export async function syncNotes(notes) {
         // Keep original modified timestamp to preserve history
       };
 
+      // Sync media files (upload binaries)
+      await syncNoteMedia(syncedNote);
+
+      // Clean up orphaned media files (deleted from note but still on server)
+      await cleanupOrphanedMedia(syncedNote);
+
       // Encrypt note for Nextcloud if encryption is enabled
       const encryptedNote = await encryptNoteForNextcloud(syncedNote);
 
       // Strip internal sync tracking fields before uploading
-      const {
-        lastSyncedEtag: _,
-        synced: __,
-        encrypted: ___,
-        _currentFileEtag: ____,
-        ...noteForUpload
-      } = encryptedNote;
+      const noteForUpload = { ...encryptedNote };
+      delete noteForUpload.lastSyncedEtag;
+      delete noteForUpload.synced;
+      delete noteForUpload.encrypted;
+      delete noteForUpload._currentFileEtag;
 
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
@@ -930,6 +1119,7 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
   const notebooksToDownload = [];
   const notesToDownload = [];
   const tombstonesToDownload = [];
+  const mediaCheckQueue = []; // Notes that are unchanged but might need media checks
 
   // Step 2: Identify what needs downloading
   for (const file of remoteFiles) {
@@ -964,10 +1154,30 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
           // We don't need content for unchanged notes unless there's a local conflict,
           // in which case fullSync logic handles it (local modified + remote unchanged = upload local).
         });
+
+        if (local.media && local.media.length > 0) {
+          mediaCheckQueue.push(local);
+        }
       }
     } else if (parsed.type === "tombstone") {
       // Always download tombstones for now (they are small and critical)
       tombstonesToDownload.push({ ...parsed, path: file.path });
+    }
+  }
+
+  // Index remote media files for efficient lookup
+  // Map: noteId -> Array of { name, path }
+  const remoteMediaMap = new Map();
+  for (const file of remoteFiles) {
+    const parsed = parsePath(file.path);
+    if (parsed.type === "media" && parsed.noteId) {
+      if (!remoteMediaMap.has(parsed.noteId)) {
+        remoteMediaMap.set(parsed.noteId, []);
+      }
+      remoteMediaMap.get(parsed.noteId).push({
+        name: parsed.filename,
+        path: file.path,
+      });
     }
   }
 
@@ -1001,7 +1211,12 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
       if (content) {
         const note = JSON.parse(content);
         note._currentFileEtag = item.etag;
-        return await decryptNoteFromNextcloud(note);
+        const decrypted = await decryptNoteFromNextcloud(note);
+
+        // Download media files for this note
+        await downloadNoteMedia(decrypted, remoteMediaMap.get(decrypted.id));
+
+        return decrypted;
       }
     } catch (e) {
       console.error(`Failed to download note ${item.noteId}:`, e);
@@ -1009,6 +1224,15 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
     return null;
   });
   notes.push(...downloadedNotes.filter((n) => n));
+
+  // Check media for unchanged notes (fix for missing images)
+  if (mediaCheckQueue.length > 0) {
+    console.log(`[Sync] Checking media for ${mediaCheckQueue.length} unchanged notes...`);
+    await runInBatches(mediaCheckQueue, CONCURRENCY, async (note) => {
+      const remoteMedia = remoteMediaMap.get(note.id);
+      await downloadNoteMedia(note, remoteMedia);
+    });
+  }
 
   // Download Tombstones
   const downloadedTombstones = await runInBatches(

@@ -5,6 +5,7 @@
  * Supports smooth scrolling, zoom, and stylus/pen drawing.
  */
 
+import { syncOnNoteClose } from "../../modules/autoSync.js";
 import { NoteCanvas } from "./NoteCanvas.js";
 
 // Module-level instance
@@ -72,8 +73,13 @@ export function initNoteCanvasComponent() {
   window.addEventListener("navigate", (e) => {
     if (e.detail?.previousMode === "notebook" && noteCanvasInstance) {
       console.log("[NoteCanvas] Cleaning up on navigation away");
+      const noteId = noteCanvasInstance.noteId;
       noteCanvasInstance.destroy();
       noteCanvasInstance = null;
+
+      if (noteId) {
+        syncOnNoteClose(noteId);
+      }
     }
   });
 

@@ -8,10 +8,12 @@
 
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { navigateTo } from "../../modules/router.js";
-import { deleteNote, getNote, updateNote } from "../../modules/storage.js";
+import { deleteNote, generateId, getNote, saveFile, updateNote } from "../../modules/storage.js";
+import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import { showConfirmDialog } from "../modals.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { InputHandler } from "./InputHandler.js";
+import { MediaManager } from "./MediaManager.js";
 import "./NoteCanvas.css";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { SpatialIndex } from "./SpatialIndex.js";
@@ -24,6 +26,14 @@ export const SELECTION_HANDLE_HIT_AREA = 20; // Hit area for touch/click detecti
 export const ROTATION_HANDLE_OFFSET = 25; // Distance of rotation handle from top edge
 export const SELECTION_BOUNDS_PADDING = 2; // Padding around selection bounds
 export const MIN_SELECTION_SIZE = 10; // Minimum width/height during resize
+
+// Scratch-out gesture detection constants
+const SCRATCH_MIN_POINTS = 30; // Minimum points in stroke to consider as scratch
+const SCRATCH_MIN_SIZE = 30; // Minimum width/height to avoid accidental triggers
+const SCRATCH_DENSITY_THRESHOLD = 2.5; // Ink-to-diagonal ratio (scratches > 2.5, letters < 2.5)
+const SCRATCH_DIRECTION_THRESHOLD = 8; // Minimum movement to register direction change
+const SCRATCH_MIN_DIRECTION_CHANGES = 4; // Minimum back-and-forth changes (4 turns = 5 segments)
+const SCRATCH_ERASE_PADDING = 15; // Padding around gesture bounds for erasing
 
 /**
  * Compute selection handle positions for a given bounds
@@ -65,6 +75,7 @@ export class NoteCanvas {
     this.renderer = null;
     this.spatialIndex = null;
     this.inputHandler = null;
+    this.mediaManager = null;
     this.strokeManager = null;
     this.toolbar = null;
     this.contentHeight = 0;
@@ -108,6 +119,12 @@ export class NoteCanvas {
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
     this.strokesChanged = false; // Track if strokes have been modified
     this.activeSearchQuery = null; // Track active search query for highlighting
+    this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
+    this.selectedMediaId = null; // Track selected media item
+
+    // Long press state
+    this.longPressTimer = null;
+    this.longPressStart = null;
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -120,6 +137,7 @@ export class NoteCanvas {
     this._onStrokeStart = this._onStrokeStart.bind(this);
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
+    this._onKeyDown = this._onKeyDown.bind(this);
   }
 
   /**
@@ -170,6 +188,12 @@ export class NoteCanvas {
     if (!this.noteData.deletedStrokes) {
       this.noteData.deletedStrokes = [];
     }
+    if (!this.noteData.media) {
+      this.noteData.media = [];
+    }
+    if (!this.noteData.deletedMedia) {
+      this.noteData.deletedMedia = [];
+    }
 
     // Clear container and setup layout
     this.containerElement.innerHTML = "";
@@ -206,12 +230,17 @@ export class NoteCanvas {
       : height;
     const contentWidth = this.maxContentWidth;
 
+    // Initialize MediaManager
+    this.mediaManager = new MediaManager(noteId, this.noteData.media);
+    this.mediaManager.setOnImageLoaded(() => this.renderer.forceRedraw());
+
     // Initialize renderer
     this.renderer = new CanvasRenderer(this.scroller.getViewportElement(), {
       maxContentWidth: this.maxContentWidth,
     });
     this.renderer.setData(this.noteData.strokes, this.noteData.background);
     this.renderer.setSpatialIndex(this.spatialIndex);
+    this.renderer.setMediaManager(this.mediaManager);
     this.renderer.setContentSize(contentWidth, this.contentHeight);
     this.renderer.resize(width, height);
 
@@ -289,6 +318,10 @@ export class NoteCanvas {
             }
           }
         },
+        onAction: (action) => {
+          if (action === "insert-image") this.insertImage("picker");
+          if (action === "insert-camera") this.insertImage("camera");
+        },
       },
     );
     this.toolbar.updateMode(this.mode);
@@ -313,6 +346,78 @@ export class NoteCanvas {
 
     // Expose for debugging
     window.__noteCanvas = this;
+  }
+
+  /**
+   * Insert an image into the note
+   * @param {string} source - 'picker' or 'camera'
+   */
+  async insertImage(source = "picker") {
+    try {
+      let files = [];
+      if (source === "camera") {
+        const file = await captureFromCamera();
+        if (file) files = [file];
+      } else {
+        files = await pickImages(true);
+      }
+
+      if (files.length === 0) {
+        return;
+      }
+
+      // Calculate center of viewport for insertion
+      const viewport = this.scroller.getViewportBounds();
+      const centerX = viewport.left + viewport.width / 2;
+      const centerY = viewport.top + viewport.height / 2;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        try {
+          const processed = await processImageFile(file);
+
+          // Convert DataURL to Blob for storage
+          let blob;
+          try {
+            const res = await fetch(processed.dataUrl);
+            blob = await res.blob();
+          } catch (fetchErr) {
+            console.warn("[NoteCanvas] fetch(dataUrl) failed, using fallback conversion", fetchErr);
+            const arr = processed.dataUrl.split(",");
+            const mime = arr[0].match(/:(.*?);/)[1];
+            const bstr = atob(arr[1]);
+            let n = bstr.length;
+            const u8arr = new Uint8Array(n);
+            while (n--) u8arr[n] = bstr.charCodeAt(n);
+            blob = new Blob([u8arr], { type: mime });
+          }
+
+          const fileId = await saveFile(blob);
+
+          const item = {
+            id: generateId(),
+            type: "image",
+            fileId: fileId,
+            x: centerX - processed.width / 4 + i * 20, // Offset slightly
+            y: centerY - processed.height / 4 + i * 20,
+            width: processed.width / 2, // Insert at 50% scale initially
+            height: processed.height / 2,
+            rotation: 0,
+          };
+
+          this.mediaManager.addItem(item);
+        } catch (err) {
+          console.error(`[NoteCanvas] Error processing file ${file.name}:`, err);
+        }
+      }
+
+      // Save changes
+      await this._saveMediaChanges();
+      this.renderer.forceRedraw();
+    } catch (error) {
+      console.error("[NoteCanvas] Failed to insert image:", error);
+    }
   }
 
   /**
@@ -386,6 +491,7 @@ export class NoteCanvas {
     viewport.addEventListener("pointerup", this._onPointerUpNav);
     viewport.addEventListener("pointercancel", this._onPointerUpNav);
     viewport.addEventListener("pointerleave", this._onPointerUpNav);
+    window.addEventListener("keydown", this._onKeyDown);
   }
 
   /**
@@ -482,6 +588,8 @@ export class NoteCanvas {
     this.autoSwitchedToDrawMode = false;
     this.lassoPoints = [];
     this.transformState = null;
+    this.mediaDragState = null;
+    this._clearLongPress();
 
     if (this.toolbar) {
       this.toolbar.updateMode(newMode);
@@ -506,6 +614,17 @@ export class NoteCanvas {
         this._setMode("draw");
         this.autoSwitchedToDrawMode = true;
       }
+    }
+
+    // Handle Media Interactions (Selection & Manipulation)
+    const mediaResult = this._handleMediaInteraction(
+      props.x,
+      props.y,
+      props.clientX,
+      props.clientY,
+    );
+    if (mediaResult.consumed) {
+      return true; // Started dragging selected media
     }
 
     if (this.mode === "pan") return false;
@@ -564,6 +683,22 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeMove(points) {
+    // Check long press movement threshold
+    if (this.longPressTimer) {
+      const lastPoint = points[points.length - 1];
+      this._checkLongPressMove(lastPoint.clientX, lastPoint.clientY);
+    }
+
+    if (this.mediaDragState) {
+      const lastPoint = points[points.length - 1];
+      const dx = lastPoint.x - this.mediaDragState.startX;
+      const dy = lastPoint.y - this.mediaDragState.startY;
+      this.mediaDragState.item.x = this.mediaDragState.initialX + dx;
+      this.mediaDragState.item.y = this.mediaDragState.initialY + dy;
+      this.renderer.forceRedraw();
+      return;
+    }
+
     if (this.transformState) {
       const lastPoint = points[points.length - 1];
       this._handleTransformMove(lastPoint.x, lastPoint.y);
@@ -604,6 +739,14 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeEnd() {
+    this._clearLongPress();
+
+    if (this.mediaDragState) {
+      this.mediaDragState = null;
+      this._saveMediaChanges();
+      return;
+    }
+
     if (this.transformState) {
       this._endTransform();
       return;
@@ -643,12 +786,156 @@ export class NoteCanvas {
   }
 
   /**
+   * Handle keyboard events
+   * @private
+   */
+  _onKeyDown(e) {
+    if (e.key === "Delete" || e.key === "Backspace") {
+      if (this.selectedMediaId) {
+        this.deleteSelectedMedia();
+      }
+    }
+  }
+
+  /**
+   * Start long press detection
+   * @private
+   */
+  _startLongPress(item, clientX, clientY) {
+    this._clearLongPress();
+    this.longPressStart = { x: clientX, y: clientY };
+    this.longPressTimer = setTimeout(() => {
+      this._triggerLongPress(item);
+    }, 500); // 500ms for long press
+  }
+
+  /**
+   * Clear long press state
+   * @private
+   */
+  _clearLongPress() {
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
+    this.longPressStart = null;
+  }
+
+  /**
+   * Check if movement exceeds threshold for long press
+   * @private
+   */
+  _checkLongPressMove(clientX, clientY) {
+    if (!this.longPressStart) return;
+    const dist = Math.sqrt(
+      (clientX - this.longPressStart.x) ** 2 + (clientY - this.longPressStart.y) ** 2,
+    );
+    if (dist > 10) {
+      // 10px threshold
+      this._clearLongPress();
+    }
+  }
+
+  /**
+   * Trigger long press action (select item)
+   * @private
+   */
+  _triggerLongPress(item) {
+    this.longPressTimer = null;
+
+    // Select the item
+    this.selectedMediaId = item.id;
+    this.renderer.setSelectedMedia(item.id);
+
+    // Cancel current stroke if drawing
+    if (this.strokeManager.currentStroke) {
+      this.strokeManager.cancelCurrentStroke();
+      this.renderer.forceRedraw(); // Clear the partial stroke
+    }
+
+    // Note: We don't automatically start dragging here to avoid jumps.
+    // The user sees the selection border and can then drag.
+  }
+
+  /**
+   * Handle media interaction at a point (shared logic for stroke and nav handlers)
+   * @private
+   * @param {number} x - Content X coordinate
+   * @param {number} y - Content Y coordinate
+   * @param {number} clientX - Screen X coordinate (for long press)
+   * @param {number} clientY - Screen Y coordinate (for long press)
+   * @returns {{ consumed: boolean, startedDrag: boolean }} Result of interaction check
+   */
+  _handleMediaInteraction(x, y, clientX, clientY) {
+    const hitItem = this.mediaManager.hitTest(x, y);
+
+    // Case 1: Interacting with an already selected item -> Start drag
+    if (hitItem && hitItem.id === this.selectedMediaId) {
+      this.mediaDragState = {
+        item: hitItem,
+        startX: x,
+        startY: y,
+        initialX: hitItem.x,
+        initialY: hitItem.y,
+      };
+      return { consumed: true, startedDrag: true };
+    }
+
+    // Case 2: Clicking outside selected item -> Deselect
+    if (this.selectedMediaId && (!hitItem || hitItem.id !== this.selectedMediaId)) {
+      this.selectedMediaId = null;
+      this.renderer.setSelectedMedia(null);
+    }
+
+    // Case 3: Long press detection on unselected item
+    if (hitItem && !this.selectedMediaId) {
+      this._startLongPress(hitItem, clientX, clientY);
+    }
+
+    return { consumed: false, startedDrag: false };
+  }
+
+  /**
+   * Delete the currently selected media item
+   */
+  deleteSelectedMedia() {
+    if (!this.selectedMediaId) return;
+
+    // Track deleted media ID
+    this.noteData.deletedMedia.push(this.selectedMediaId);
+
+    // Remove from manager
+    this.mediaManager.removeItem(this.selectedMediaId);
+    this.selectedMediaId = null;
+    this.renderer.setSelectedMedia(null);
+
+    this._saveMediaChanges();
+    this.renderer.forceRedraw();
+  }
+
+  /**
+   * Save media changes to storage
+   * @private
+   */
+  async _saveMediaChanges() {
+    if (this.noteId && this.mediaManager) {
+      this.noteData.media = this.mediaManager.getItems();
+      // Use StrokeManager (which uses StorageWorker) to save media updates
+      // This prevents race conditions between stroke saving and media saving
+      this.strokeManager.saveMedia({
+        media: this.noteData.media,
+        deletedMedia: this.noteData.deletedMedia,
+      });
+    }
+  }
+
+  /**
    * Detect if a stroke is a scratch-out gesture
    * Definition: At least 3 horizontal segments (Back-Forth-Back)
    * @private
    */
   _isScratchGesture(stroke) {
-    if (!stroke || stroke.x.length < 30) return false;
+    if (!stroke || stroke.x.length < SCRATCH_MIN_POINTS) return false;
 
     // 1. Calculate bounds and total path length
     let minX = stroke.x[0],
@@ -673,11 +960,11 @@ export class NoteCanvas {
     const diag = Math.sqrt(width * width + height * height);
 
     // Minimum size threshold to avoid accidental triggers on small letters
-    if (width < 30 && height < 30) return false;
+    if (width < SCRATCH_MIN_SIZE && height < SCRATCH_MIN_SIZE) return false;
 
     // Density check: Scratch-out has high ink-to-area ratio (vs straight line or simple curve)
-    // Letters like 'Z' or 'M' usually have ratio < 2.5. Scratches usually > 3.
-    if (diag === 0 || totalLength / diag < 2.5) return false;
+    // Letters like 'Z' or 'M' usually have ratio < threshold. Scratches usually > threshold.
+    if (diag === 0 || totalLength / diag < SCRATCH_DENSITY_THRESHOLD) return false;
 
     // 2. Analyze direction changes in primary axis (Horizontal or Vertical)
     const isHorizontal = width > height;
@@ -686,11 +973,10 @@ export class NoteCanvas {
     let changes = 0;
     let currentDir = 0;
     let lastVal = primaryValues[0];
-    const threshold = 8; // Increased threshold to reduce noise sensitivity
 
     for (let i = 1; i < primaryValues.length; i++) {
       const d = primaryValues[i] - lastVal;
-      if (Math.abs(d) > threshold) {
+      if (Math.abs(d) > SCRATCH_DIRECTION_THRESHOLD) {
         const dir = Math.sign(d);
         if (currentDir !== 0 && dir !== currentDir) {
           changes++;
@@ -700,8 +986,8 @@ export class NoteCanvas {
       }
     }
 
-    // Require at least 4 turns (5 segments) to avoid false positives like 'M', 'W', 'Z'
-    return changes >= 4;
+    // Require minimum direction changes to avoid false positives like 'M', 'W', 'Z'
+    return changes >= SCRATCH_MIN_DIRECTION_CHANGES;
   }
 
   /**
@@ -723,12 +1009,11 @@ export class NoteCanvas {
     }
 
     // Add padding to catch small nearby strokes (like 'i' dots)
-    const padding = 15;
     const eraseRect = {
-      minX: minX - padding,
-      maxX: maxX + padding,
-      minY: minY - padding,
-      maxY: maxY + padding,
+      minX: minX - SCRATCH_ERASE_PADDING,
+      maxX: maxX + SCRATCH_ERASE_PADDING,
+      minY: minY - SCRATCH_ERASE_PADDING,
+      maxY: maxY + SCRATCH_ERASE_PADDING,
     };
 
     // Use lasso logic to find strokes fully contained in the (rectangular) erase area
@@ -1263,6 +1548,17 @@ export class NoteCanvas {
    * @private
    */
   _onPointerDownNav(e) {
+    // Handle media hit testing for Pan mode
+    const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
+    const mediaResult = this._handleMediaInteraction(x, y, e.clientX, e.clientY);
+
+    if (mediaResult.consumed) {
+      // Started dragging selected media - consume event to prevent pan
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     // Ignore pen inputs for navigation (handled by InputHandler/StrokeManager)
     if (e.pointerType === "pen") return;
     // Allow mouse only if in Pan mode (not draw/eraser mode)
@@ -1302,6 +1598,22 @@ export class NoteCanvas {
    * @private
    */
   _onPointerMoveNav(e) {
+    // Check long press movement
+    if (this.longPressTimer) {
+      this._checkLongPressMove(e.clientX, e.clientY);
+    }
+
+    // Handle media dragging in Pan mode
+    if (this.mediaDragState) {
+      const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
+      const dx = x - this.mediaDragState.startX;
+      const dy = y - this.mediaDragState.startY;
+      this.mediaDragState.item.x = this.mediaDragState.initialX + dx;
+      this.mediaDragState.item.y = this.mediaDragState.initialY + dy;
+      this.renderer.forceRedraw();
+      return;
+    }
+
     if (!this.activePointers.has(e.pointerId)) return;
 
     // Prevent panning if currently drawing (prevents palm movements from sliding canvas while writing)
@@ -1369,6 +1681,13 @@ export class NoteCanvas {
    * @private
    */
   _onPointerUpNav(e) {
+    this._clearLongPress();
+
+    if (this.mediaDragState) {
+      this.mediaDragState = null;
+      this._saveMediaChanges();
+    }
+
     if (this.activePointers.has(e.pointerId)) {
       this.activePointers.delete(e.pointerId);
       try {
@@ -1517,6 +1836,7 @@ export class NoteCanvas {
 
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);
+    window.removeEventListener("keydown", this._onKeyDown);
 
     if (this.scroller) {
       const viewport = this.scroller.getViewportElement();
@@ -1544,6 +1864,11 @@ export class NoteCanvas {
     if (this.spatialIndex) {
       this.spatialIndex.clear();
       this.spatialIndex = null;
+    }
+
+    if (this.mediaManager) {
+      this.mediaManager.destroy();
+      this.mediaManager = null;
     }
 
     if (this.inputHandler) {

@@ -157,6 +157,9 @@
 /* Button container for positioning dialog */
 .note-canvas-toolbar__button-container {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ==========================================================================

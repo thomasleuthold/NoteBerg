@@ -6,7 +6,7 @@
 import { openDB } from "idb";
 
 export const DB_NAME = "oneJournal";
-export const DB_VERSION = 1;
+export const DB_VERSION = 3;
 
 let db = null;
 
@@ -44,6 +44,11 @@ export async function initStorage() {
         });
         syncStore.createIndex("timestamp", "timestamp");
       }
+
+      // Create files store for binary data (blobs)
+      if (!database.objectStoreNames.contains("files")) {
+        database.createObjectStore("files", { keyPath: "id" });
+      }
     },
   });
 
@@ -51,7 +56,6 @@ export async function initStorage() {
 
   // Run migrations
   await migrateStrokeIds();
-  await migrateMediaFields();
 
   return db;
 }
@@ -101,52 +105,6 @@ async function migrateStrokeIds() {
 }
 
 /**
- * Migrate existing notes to add media fields
- * This ensures all notes have media, deletedMedia, and mediaVersion fields
- */
-async function migrateMediaFields() {
-  if (!db) return;
-
-  try {
-    const notes = await db.getAll("notes");
-    let migratedCount = 0;
-
-    for (const note of notes) {
-      let needsUpdate = false;
-
-      // Initialize media array if it doesn't exist
-      if (!note.media) {
-        note.media = [];
-        needsUpdate = true;
-      }
-
-      // Initialize deletedMedia array if it doesn't exist
-      if (!note.deletedMedia) {
-        note.deletedMedia = [];
-        needsUpdate = true;
-      }
-
-      // Initialize mediaVersion if it doesn't exist
-      if (!note.mediaVersion) {
-        note.mediaVersion = 1;
-        needsUpdate = true;
-      }
-
-      if (needsUpdate) {
-        await db.put("notes", note);
-        migratedCount++;
-      }
-    }
-
-    if (migratedCount > 0) {
-      console.log(`Migrated media fields for ${migratedCount} notes`);
-    }
-  } catch (error) {
-    console.error("Failed to migrate media fields:", error);
-  }
-}
-
-/**
  * Helper to generate ID (used during migration before generateId is defined)
  */
 function generateIdHelper() {
@@ -167,7 +125,11 @@ function generateIdHelper() {
 export function generateId() {
   // Try native crypto.randomUUID() first (works in secure contexts and Tauri)
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
+    try {
+      return crypto.randomUUID();
+    } catch (e) {
+      console.warn("crypto.randomUUID() failed, falling back to polyfill", e);
+    }
   }
 
   // Fallback for non-secure contexts (HTTP dev server on mobile)
@@ -305,6 +267,8 @@ export async function createNote({ title, notebookId = null }) {
     title,
     content: "", // Markdown content
     strokes: [], // Array of drawing strokes
+    media: [], // Array of media items (images, pdf pages)
+    deletedMedia: [], // Array of deleted media IDs
     formatVersion: 1, // Stroke format version
     background: "none", // Background pattern: none, ruled-narrow, ruled-medium, ruled-wide, grid-small, grid-medium, grid-large
     created: Date.now(),
@@ -478,6 +442,76 @@ export async function restoreNote(id) {
   await db.put("notes", note);
   console.log("Note restored:", id);
   return note;
+}
+
+// ========== File/Blob Operations ==========
+
+/**
+ * Save a binary file (blob)
+ * @param {Blob} blob - The file data
+ * @param {string} [id] - Optional ID (if syncing from server)
+ * @returns {Promise<string>} - The file ID
+ */
+export async function saveFile(blob, id = null) {
+  const fileId = id || generateId();
+
+  // Convert Blob to ArrayBuffer for maximum compatibility
+  // Some mobile WebViews have issues storing Blobs directly in IndexedDB
+  let dataToStore = blob;
+  const mimeType = blob.type;
+
+  if (blob instanceof Blob) {
+    try {
+      dataToStore = await blob.arrayBuffer();
+    } catch (e) {
+      console.warn(
+        "[Storage] Failed to convert Blob to ArrayBuffer, trying FileReader fallback",
+        e,
+      );
+      dataToStore = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+      });
+    }
+  }
+
+  await db.put("files", { id: fileId, data: dataToStore, type: mimeType, created: Date.now() });
+  return fileId;
+}
+
+/**
+ * Get a binary file (blob) by ID
+ */
+export async function getFile(id) {
+  const record = await db.get("files", id);
+  if (!record) return null;
+
+  // If stored as ArrayBuffer (new format), convert back to Blob
+  if (record.data instanceof ArrayBuffer) {
+    return new Blob([record.data], { type: record.type || "application/octet-stream" });
+  }
+
+  // If stored as Blob (legacy/direct support), return as is
+  return record.data;
+}
+
+/**
+ * Check if a file exists in storage without loading it
+ * @param {string} id - File ID
+ * @returns {Promise<boolean>}
+ */
+export async function checkFileExists(id) {
+  const count = await db.count("files", id);
+  return count > 0;
+}
+
+/**
+ * Delete a binary file
+ */
+export async function deleteFile(id) {
+  await db.delete("files", id);
 }
 
 // ========== Settings Operations ==========

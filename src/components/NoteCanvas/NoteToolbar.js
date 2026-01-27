@@ -49,17 +49,21 @@ export class NoteToolbar {
    * @param {Object} options - Optional configuration
    * @param {Function} options.onPenSettingsChange - Callback ({ width, colorIndex }) => void
    * @param {Function} options.onOptionsChange - Callback ({ type, value }) => void
+   * @param {Function} options.onAction - Callback (action) => void
    */
   constructor(container, onModeChange, options = {}) {
     this.container = container;
     this.onModeChange = onModeChange;
     this.onPenSettingsChange = options.onPenSettingsChange || (() => {});
     this.onOptionsChange = options.onOptionsChange || (() => {});
+    this.onAction = options.onAction || (() => {});
     this.element = null;
     this.panBtn = null;
     this.drawBtn = null;
     this.eraserBtn = null;
     this.lassoBtn = null;
+    this.insertBtn = null;
+    this.insertDialog = null;
     this.penSettingsDialog = null;
     this.optionsBtn = null;
     this.optionsDialog = null;
@@ -124,6 +128,17 @@ export class NoteToolbar {
     this.optionsBtnContainer = document.createElement("div");
     this.optionsBtnContainer.className = "note-canvas-toolbar__button-container";
     this.optionsBtnContainer.style.marginLeft = "auto";
+    this.optionsBtnContainer.style.display = "flex";
+    this.optionsBtnContainer.style.gap = "16px";
+
+    this.insertBtn = createBtn(
+      "insert",
+      `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
+      "Insert",
+    );
+    this.insertBtn.onclick = (e) => this._handleInsertClick(e);
+    this.optionsBtnContainer.appendChild(this.insertBtn);
+    this._createInsertDialog();
 
     this.optionsBtn = createBtn("options", getMoreIcon(24), "Note Options");
     this.optionsBtn.onclick = (e) => this._handleOptionsClick(e);
@@ -199,6 +214,33 @@ export class NoteToolbar {
         </div>
       </div>
     `;
+  }
+
+  /**
+   * Create the insert dialog element
+   * @private
+   */
+  _createInsertDialog() {
+    this.insertDialog = document.createElement("div");
+    this.insertDialog.className = "note-canvas-toolbar__options-dialog"; // Reuse options dialog style
+    this.insertDialog.style.right = "50px"; // Offset to align with insert button
+
+    const content = document.createElement("div");
+    content.className = "note-canvas-toolbar__options-content";
+    content.innerHTML = `
+      <div class="note-canvas-toolbar__options-section">
+        <button class="note-canvas-toolbar__option-btn" data-action="insert-image">
+          ${getIcon("image", 16)} Insert Image
+        </button>
+        <button class="note-canvas-toolbar__option-btn" data-action="insert-camera">
+          ${getIcon("camera", 16)} Take Photo
+        </button>
+      </div>
+    `;
+    this.insertDialog.appendChild(content);
+
+    this.optionsBtnContainer.appendChild(this.insertDialog);
+    this._setupInsertDialogListeners();
   }
 
   /**
@@ -360,6 +402,20 @@ export class NoteToolbar {
   }
 
   /**
+   * Set up event listeners for insert dialog controls
+   * @private
+   */
+  _setupInsertDialogListeners() {
+    const btns = this.insertDialog.querySelectorAll(".note-canvas-toolbar__option-btn");
+    btns.forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        this.onAction(e.target.dataset.action);
+        this._closeInsertDialog();
+      });
+    });
+  }
+
+  /**
    * Select a color by index
    * @private
    */
@@ -420,6 +476,17 @@ export class NoteToolbar {
   }
 
   /**
+   * Handle insert button click
+   * @private
+   */
+  _handleInsertClick(e) {
+    e.stopPropagation();
+    this._closeOptionsDialog(); // Close other dialogs
+    this._closePenDialog();
+    this._toggleInsertDialog();
+  }
+
+  /**
    * Handle options button click
    * @private
    */
@@ -428,6 +495,7 @@ export class NoteToolbar {
     if (this.optionsDialog.classList.contains("note-canvas-toolbar__options-dialog--open")) {
       this._closeOptionsDialog();
     } else {
+      this._closeInsertDialog(); // Close other dialogs
       this._openOptionsDialog();
     }
   }
@@ -470,6 +538,25 @@ export class NoteToolbar {
   }
 
   /**
+   * Toggle insert dialog visibility
+   * @private
+   */
+  _toggleInsertDialog() {
+    this.insertDialog.classList.toggle("note-canvas-toolbar__options-dialog--open");
+    if (this.insertDialog.classList.contains("note-canvas-toolbar__options-dialog--open")) {
+      document.addEventListener("pointerdown", this._handleDocumentPointerDown);
+    }
+  }
+
+  /**
+   * Close insert dialog
+   * @private
+   */
+  _closeInsertDialog() {
+    this.insertDialog.classList.remove("note-canvas-toolbar__options-dialog--open");
+  }
+
+  /**
    * Open options dialog
    * @private
    */
@@ -507,6 +594,14 @@ export class NoteToolbar {
       !this.optionsBtn.contains(e.target)
     ) {
       this._closeOptionsDialog();
+    }
+    // Check if click is outside insert dialog and insert button
+    if (
+      this.insertDialog.classList.contains("note-canvas-toolbar__options-dialog--open") &&
+      !this.insertDialog.contains(e.target) &&
+      !this.insertBtn.contains(e.target)
+    ) {
+      this._closeInsertDialog();
     }
   }
 
@@ -580,6 +675,8 @@ export class NoteToolbar {
     this.drawBtnContainer = null;
     this.eraserBtn = null;
     this.lassoBtn = null;
+    this.insertBtn = null;
+    this.insertDialog = null;
     this.penSettingsDialog = null;
     this.optionsBtn = null;
     this.optionsBtnContainer = null;
