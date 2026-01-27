@@ -1,0 +1,110 @@
+/**
+ * NoteCanvas Module - Entry point and component initialization
+ *
+ * This module provides the virtualized canvas rendering system for notes.
+ * Supports smooth scrolling, zoom, and stylus/pen drawing.
+ */
+
+import { NoteCanvas } from "./NoteCanvas.js";
+
+// Module-level instance
+let noteCanvasInstance = null;
+
+/**
+ * Initialize the NoteCanvas component
+ * Sets up event listeners for router integration
+ */
+export function initNoteCanvasComponent() {
+  // Listen for render notebook event from router
+  window.addEventListener("rendernotebook", async (e) => {
+    const { noteId } = e.detail || {};
+    let { searchQuery } = e.detail || {};
+
+    if (!noteId) {
+      console.warn("[NoteCanvas] No note ID provided");
+      return;
+    }
+
+    // Get the container
+    const container = document.getElementById("notebook-editor-container");
+    if (!container) {
+      console.error("[NoteCanvas] Container not found");
+      return;
+    }
+
+    // Clean up previous instance if exists
+    if (noteCanvasInstance) {
+      noteCanvasInstance.destroy();
+      noteCanvasInstance = null;
+    }
+
+    // Fallback: check session storage for search query if not in event detail
+    if (!searchQuery) {
+      const storedQuery = sessionStorage.getItem("onejournal_search_query");
+      if (storedQuery) {
+        searchQuery = storedQuery;
+        sessionStorage.removeItem("onejournal_search_query");
+      }
+    }
+
+    // Clear container
+    container.innerHTML = "";
+
+    // Create and load new instance
+    try {
+      noteCanvasInstance = new NoteCanvas(container);
+      await noteCanvasInstance.load(noteId, searchQuery);
+      console.log("[NoteCanvas] Component initialized for note:", noteId);
+    } catch (error) {
+      console.error("[NoteCanvas] Failed to initialize:", error);
+
+      // Show error message in container
+      container.innerHTML = `
+        <div class="note-canvas__error">
+          <p class="note-canvas__error-title">Failed to load note</p>
+          <p class="note-canvas__error-message">${error.message}</p>
+        </div>
+      `;
+    }
+  });
+
+  // Listen for navigation to clean up when leaving notebook mode
+  window.addEventListener("navigate", (e) => {
+    if (e.detail?.previousMode === "notebook" && noteCanvasInstance) {
+      console.log("[NoteCanvas] Cleaning up on navigation away");
+      noteCanvasInstance.destroy();
+      noteCanvasInstance = null;
+    }
+  });
+
+  // Listen for data changes to refresh if current note was updated externally
+  window.addEventListener("datachange", async () => {
+    if (!noteCanvasInstance || !noteCanvasInstance.noteId) return;
+
+    const noteId = noteCanvasInstance.noteId;
+    const container = noteCanvasInstance.containerElement;
+
+    // Check if content actually changed to avoid unnecessary reloads (e.g. on sync metadata update)
+    // This prevents "vanishing strokes" when auto-sync updates the note status while drawing
+    const changed = await noteCanvasInstance.hasContentChanged(noteId);
+    if (!changed) {
+      console.log("[NoteCanvas] Ignoring datachange (content unchanged)");
+      return;
+    }
+
+    if (container) {
+      noteCanvasInstance.destroy();
+      noteCanvasInstance = new NoteCanvas(container);
+      await noteCanvasInstance.load(noteId);
+      console.log("[NoteCanvas] Reloaded after external data change");
+    }
+  });
+
+  console.log("[NoteCanvas] Component registered");
+}
+
+export { CanvasRenderer } from "./CanvasRenderer.js";
+// Re-export classes for direct usage if needed
+export { NoteCanvas } from "./NoteCanvas.js";
+export { SpatialIndex } from "./SpatialIndex.js";
+export { VirtualScroller } from "./VirtualScroller.js";

@@ -1,0 +1,440 @@
+/**
+ * NoteCanvas Component Styles
+ *
+ * Organized using BEM naming convention:
+ * - Block: .note-canvas
+ * - Elements: .note-canvas__element
+ * - Modifiers: .note-canvas--modifier
+ */
+
+/* ==========================================================================
+   NoteCanvas Container
+   ========================================================================== */
+
+.note-canvas {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.note-canvas__toolbar-container {
+  flex: 0 0 auto;
+  z-index: 10;
+}
+
+.note-canvas__scroller-container {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: hidden;
+  min-height: 0; /* Crucial for nested flex scrolling */
+}
+
+.note-canvas__error {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.note-canvas__error-title {
+  margin: 0;
+}
+
+.note-canvas__error-message {
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+/* ==========================================================================
+   VirtualScroller
+   ========================================================================== */
+
+.virtual-scroll-container {
+  position: relative;
+  overflow: auto;
+  height: 100%;
+  width: 100%;
+}
+
+.virtual-scroll-container__phantom {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.virtual-scroll-container__viewport {
+  position: sticky;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-start;
+  touch-action: none;
+}
+
+/* ==========================================================================
+   CanvasRenderer
+   ========================================================================== */
+
+.sliding-buffer-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  will-change: transform;
+  background-color: var(--bg-primary);
+}
+
+.sliding-buffer-canvas--centered {
+  position: relative;
+  left: auto;
+  transform-origin: top center;
+}
+
+.note-canvas__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ==========================================================================
+   NoteToolbar
+   ========================================================================== */
+
+.note-canvas-toolbar {
+  display: flex;
+  gap: 16px;
+  padding: 10px 20px;
+  width: 100%;
+  background-color: var(--bg-primary);
+  border-bottom: 1px solid var(--border-primary);
+  align-items: center;
+}
+
+.note-canvas-toolbar__button {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--border-primary, #e2e8f0);
+  background-color: var(--bg-primary, #ffffff);
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: auto;
+  outline: none;
+}
+
+.note-canvas-toolbar__button:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.note-canvas-toolbar__button--active {
+  background-color: var(--bg-tertiary, #d3ddee);
+  color: var(--text-primary, #1e293b);
+  border-color: var(--color-primary, #3b82f6);
+  transform: scale(1.1);
+  box-shadow: 0 5px 7px -3px rgba(59, 130, 246, 0.4);
+}
+
+.note-canvas-toolbar__button--active:hover {
+  transform: scale(1.1);
+  box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.4);
+}
+
+/* Button container for positioning dialog */
+.note-canvas-toolbar__button-container {
+  position: relative;
+}
+
+/* ==========================================================================
+   Pen Settings Dialog
+   ========================================================================== */
+
+.note-canvas-toolbar__pen-dialog {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  padding: 16px;
+  min-width: 220px;
+  background-color: var(--bg-primary, #ffffff);
+  border: 1px solid var(--border-primary, #e2e8f0);
+  border-radius: 12px;
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.15),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.2s ease,
+    visibility 0.2s ease,
+    transform 0.2s ease;
+  transform: translateY(-4px);
+}
+
+.note-canvas-toolbar__pen-dialog--open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* Dialog arrow - positioned off-center to align with button */
+.note-canvas-toolbar__pen-dialog::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 24px;
+  transform: rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background-color: var(--bg-primary, #ffffff);
+  border-left: 1px solid var(--border-primary, #e2e8f0);
+  border-top: 1px solid var(--border-primary, #e2e8f0);
+}
+
+.note-canvas-toolbar__pen-dialog-section {
+  margin-bottom: 16px;
+}
+
+.note-canvas-toolbar__pen-dialog-section:last-child {
+  margin-bottom: 0;
+}
+
+.note-canvas-toolbar__pen-dialog-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #1e293b);
+  margin-bottom: 8px;
+}
+
+.note-canvas-toolbar__width-value {
+  font-weight: 600;
+  color: var(--color-primary, #3b82f6);
+}
+
+/* Width Control Container */
+.note-canvas-toolbar__width-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-canvas-toolbar__width-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background-color 0.2s;
+}
+
+.note-canvas-toolbar__width-btn:hover {
+  background: var(--bg-hover);
+}
+
+/* Width Slider */
+.note-canvas-toolbar__width-slider {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-tertiary, #e2e8f0);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.note-canvas-toolbar__width-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-primary, #3b82f6);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease;
+}
+
+.note-canvas-toolbar__width-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+.note-canvas-toolbar__width-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-primary, #3b82f6);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Color Grid */
+.note-canvas-toolbar__color-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.note-canvas-toolbar__color-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  padding: 0;
+  outline: none;
+}
+
+.note-canvas-toolbar__color-swatch:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.note-canvas-toolbar__color-swatch--active {
+  border-color: var(--color-primary, #3b82f6);
+  box-shadow:
+    0 0 0 2px var(--bg-primary, #ffffff),
+    0 0 0 4px var(--color-primary, #3b82f6);
+  transform: scale(1.1);
+}
+
+/* ==========================================================================
+   Options Dialog
+   ========================================================================== */
+
+.note-canvas-toolbar__options-dialog {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  padding: 12px;
+  width: 220px;
+  z-index: 100;
+}
+
+.note-canvas-toolbar__options-dialog--open {
+  display: block;
+}
+
+.note-canvas-toolbar__options-notch {
+  position: absolute;
+  top: -6px;
+  right: 16px;
+  width: 12px;
+  height: 12px;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-primary);
+  border-top: 1px solid var(--border-primary);
+  transform: rotate(45deg);
+}
+
+.note-canvas-toolbar__options-content {
+  position: relative;
+  z-index: 1;
+}
+
+.note-canvas-toolbar__options-section {
+  margin-bottom: 0;
+}
+
+.note-canvas-toolbar__options-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.note-canvas-toolbar__background-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-canvas-toolbar__option-btn {
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-family: inherit;
+  transition: background-color 0.2s;
+}
+
+.note-canvas-toolbar__option-btn:hover {
+  background-color: var(--bg-secondary);
+}
+
+.note-canvas-toolbar__option-btn--active {
+  background-color: var(--bg-hover);
+}
+
+.note-canvas-toolbar__separator {
+  height: 1px;
+  background: var(--border-primary);
+  margin: 12px 0;
+}
+
+.note-canvas-toolbar__delete-btn {
+  width: 100%;
+  padding: 8px;
+  background: var(--color-danger);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+}
+
+.note-canvas-toolbar__delete-btn:hover {
+  background-color: #dc2626;
+}

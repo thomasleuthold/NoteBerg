@@ -7,22 +7,72 @@
 import { getTheme } from "../modules/theme.js";
 
 /**
- * Get color palette for current theme
+ * Get color palette for current theme (15 colors)
  * @returns {string[]} Array of color hex values
  */
 export function getThemePalette() {
   const theme = getTheme();
 
   if (theme === "dark") {
-    return ["#ffffff", "#f87171", "#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#9ca3af", "#fde047"];
+    // Dark theme: white first, then colors visible on dark backgrounds
+    return [
+      "#ffffff", // White (primary)
+      "#f87171", // Red
+      "#60a5fa", // Blue
+      "#34d399", // Green
+      "#fbbf24", // Yellow
+      "#a78bfa", // Purple
+      "#fb923c", // Orange
+      "#f472b6", // Pink
+      "#2dd4bf", // Teal
+      "#a3e635", // Lime
+      "#e879f9", // Fuchsia
+      "#38bdf8", // Sky
+      "#facc15", // Amber
+      "#9ca3af", // Gray
+      "#fde047", // Bright Yellow
+    ];
   }
 
   if (theme === "epaper") {
-    return ["#000000", "#800000", "#000080", "#006400", "#a52a2a", "#4b0082", "#2f4f4f", "#5d4037"];
+    // E-paper theme: black first, then muted colors for e-ink displays
+    return [
+      "#000000", // Black (primary)
+      "#800000", // Maroon
+      "#000080", // Navy
+      "#006400", // Dark Green
+      "#a52a2a", // Brown
+      "#4b0082", // Indigo
+      "#8b4513", // Saddle Brown
+      "#2f4f4f", // Dark Slate
+      "#556b2f", // Dark Olive
+      "#483d8b", // Dark Slate Blue
+      "#8b0000", // Dark Red
+      "#191970", // Midnight Blue
+      "#b8860b", // Dark Goldenrod
+      "#696969", // Dim Gray
+      "#5d4037", // Brown
+    ];
   }
 
-  // Light theme (default)
-  return ["#000000", "#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#6b7280", "#78350f"];
+  // Light theme (default): black first, then colors visible on light backgrounds
+  return [
+    "#000000", // Black (primary)
+    "#ef4444", // Red
+    "#3b82f6", // Blue
+    "#10b981", // Green
+    "#f59e0b", // Amber
+    "#8b5cf6", // Purple
+    "#f97316", // Orange
+    "#ec4899", // Pink
+    "#14b8a6", // Teal
+    "#84cc16", // Lime
+    "#d946ef", // Fuchsia
+    "#0ea5e9", // Sky
+    "#eab308", // Yellow
+    "#6b7280", // Gray
+    "#78350f", // Brown
+  ];
 }
 
 /**
@@ -31,53 +81,139 @@ export function getThemePalette() {
  * @param {Object} stroke - Stroke data with x, y, width, color/colorIndex
  * @param {string[]|null} palette - Optional color palette (will use theme palette if not provided)
  * @param {boolean} isSelected - Whether the stroke is selected (for highlighting)
+ * @param {boolean} fastMode - Skip pressure rendering for performance (use during scroll)
  */
-export function drawStroke(ctx, stroke, palette = null, isSelected = false) {
+export function drawStroke(ctx, stroke, palette = null, isSelected = false, fastMode = false) {
   if (!ctx || !stroke.x || stroke.x.length < 2) return;
 
   const colors = palette || getThemePalette();
-  const pointCount = stroke.x.length;
+  const baseWidth = stroke.width || 2;
+  const color =
+    stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
 
   if (isSelected) {
+    ctx.save();
     ctx.strokeStyle = "rgba(0, 100, 255, 0.7)"; // Highlight color
-    ctx.lineWidth = (stroke.width || 2) + 4; // Make it thicker
-  } else {
-    ctx.strokeStyle =
-      stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
-    ctx.lineWidth = stroke.width || 2;
+    ctx.lineWidth = baseWidth + 4; // Make it thicker
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    drawSimplePath(ctx, stroke);
+    ctx.stroke();
+    ctx.restore();
   }
 
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.beginPath();
+  ctx.strokeStyle = color;
+
+  // Check for pressure data (skip in fast mode for scroll performance)
+  const usePressure = !fastMode && stroke.pressure && stroke.pressure.length === stroke.x.length;
+
+  if (usePressure) {
+    drawPressurePath(ctx, stroke, baseWidth);
+  } else {
+    ctx.lineWidth = baseWidth;
+    ctx.beginPath();
+    drawSimplePath(ctx, stroke);
+    ctx.stroke();
+  }
+}
+
+function drawSimplePath(ctx, stroke) {
+  const pointCount = stroke.x.length;
   ctx.moveTo(stroke.x[0], stroke.y[0]);
 
   if (pointCount === 2) {
     ctx.lineTo(stroke.x[1], stroke.y[1]);
-  } else {
-    for (let i = 1; i < pointCount - 1; i++) {
-      const xc = (stroke.x[i] + stroke.x[i + 1]) / 2;
-      const yc = (stroke.y[i] + stroke.y[i + 1]) / 2;
-      ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], xc, yc);
-    }
-    const lastIdx = pointCount - 1;
-    const secondLastIdx = pointCount - 2;
-    ctx.quadraticCurveTo(
-      stroke.x[secondLastIdx],
-      stroke.y[secondLastIdx],
-      stroke.x[lastIdx],
-      stroke.y[lastIdx],
-    );
+    return;
   }
-  ctx.stroke();
 
-  // If selected, draw the actual stroke on top of the highlight
-  if (isSelected) {
-    ctx.strokeStyle =
-      stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
-    ctx.lineWidth = stroke.width || 2;
-    ctx.stroke();
+  for (let i = 1; i < pointCount - 1; i++) {
+    const xc = (stroke.x[i] + stroke.x[i + 1]) / 2;
+    const yc = (stroke.y[i] + stroke.y[i + 1]) / 2;
+    ctx.quadraticCurveTo(stroke.x[i], stroke.y[i], xc, yc);
   }
+
+  const lastIdx = pointCount - 1;
+  const secondLastIdx = pointCount - 2;
+  ctx.quadraticCurveTo(
+    stroke.x[secondLastIdx],
+    stroke.y[secondLastIdx],
+    stroke.x[lastIdx],
+    stroke.y[lastIdx],
+  );
+}
+
+/**
+ * Draw a pressure-sensitive path with batched segments.
+ * Groups consecutive segments with similar pressure into single paths
+ * to reduce canvas API calls from O(N) to O(pressure_changes).
+ */
+function drawPressurePath(ctx, stroke, baseWidth) {
+  const x = stroke.x;
+  const y = stroke.y;
+  const p = stroke.pressure;
+  const pointCount = x.length;
+
+  // Map pressure (0.0-1.0) to width multiplier (0.5-1.5)
+  const getWidth = (pressure) => Math.max(0.5, baseWidth * (0.5 + pressure));
+
+  if (pointCount === 2) {
+    ctx.beginPath();
+    ctx.lineWidth = getWidth((p[0] + p[1]) / 2);
+    ctx.moveTo(x[0], y[0]);
+    ctx.lineTo(x[1], y[1]);
+    ctx.stroke();
+    return;
+  }
+
+  // Threshold for "similar enough" pressure (relative to baseWidth)
+  // This batches segments together, reducing beginPath/stroke calls
+  const PRESSURE_THRESHOLD = 0.08;
+
+  let currentWidth = getWidth(p[0]);
+
+  ctx.beginPath();
+  ctx.lineWidth = currentWidth;
+  ctx.moveTo(x[0], y[0]);
+
+  for (let i = 1; i < pointCount; i++) {
+    const targetWidth = getWidth(p[i]);
+    const widthDiff = Math.abs(targetWidth - currentWidth) / baseWidth;
+
+    // Check if pressure changed significantly (start new batch)
+    const shouldStartNewBatch = widthDiff > PRESSURE_THRESHOLD && i < pointCount - 1;
+
+    if (shouldStartNewBatch) {
+      // Draw curve to midpoint before starting new batch
+      const xc = (x[i - 1] + x[i]) / 2;
+      const yc = (y[i - 1] + y[i]) / 2;
+      ctx.quadraticCurveTo(x[i - 1], y[i - 1], xc, yc);
+
+      // Finish current batch
+      ctx.stroke();
+
+      // Start new batch
+      ctx.beginPath();
+      ctx.lineWidth = targetWidth;
+      currentWidth = targetWidth;
+
+      // Continue from midpoint
+      ctx.moveTo(xc, yc);
+    } else if (i === pointCount - 1) {
+      // Last point - draw final segment
+      ctx.quadraticCurveTo(x[i - 1], y[i - 1], x[i], y[i]);
+    } else {
+      // Continue building path - draw curve to midpoint
+      const xc = (x[i] + x[i + 1]) / 2;
+      const yc = (y[i] + y[i + 1]) / 2;
+      ctx.quadraticCurveTo(x[i], y[i], xc, yc);
+    }
+  }
+
+  // Finish final batch
+  ctx.stroke();
 }
 
 /**
@@ -110,7 +246,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
   switch (backgroundType) {
     case "ruled-narrow":
       // Draw horizontal lines every 20px
-      for (let y = Math.max(20, startY); y < height; y += 20) {
+      for (let y = Math.max(20, Math.ceil(startY / 20) * 20); y < height; y += 20) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -118,7 +254,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "ruled-medium":
       // Draw horizontal lines every 30px
-      for (let y = Math.max(30, startY); y < height; y += 30) {
+      for (let y = Math.max(30, Math.ceil(startY / 30) * 30); y < height; y += 30) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -126,7 +262,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "ruled-wide":
       // Draw horizontal lines every 40px
-      for (let y = Math.max(40, startY); y < height; y += 40) {
+      for (let y = Math.max(40, Math.ceil(startY / 40) * 40); y < height; y += 40) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -134,7 +270,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "grid-small":
       // Draw grid with 20px squares
-      for (let y = Math.max(20, startY); y < height; y += 20) {
+      for (let y = Math.max(20, Math.ceil(startY / 20) * 20); y < height; y += 20) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -146,7 +282,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "grid-medium":
       // Draw grid with 30px squares
-      for (let y = Math.max(30, startY); y < height; y += 30) {
+      for (let y = Math.max(30, Math.ceil(startY / 30) * 30); y < height; y += 30) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }
@@ -158,7 +294,7 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
 
     case "grid-large":
       // Draw grid with 40px squares
-      for (let y = Math.max(40, startY); y < height; y += 40) {
+      for (let y = Math.max(40, Math.ceil(startY / 40) * 40); y < height; y += 40) {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
       }

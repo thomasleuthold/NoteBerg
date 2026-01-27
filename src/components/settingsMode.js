@@ -6,24 +6,16 @@
 import { APP_FULL_VERSION, APP_NAME } from "../config.js";
 import {
   clearCredentials,
-  fullSync,
   getStoredCredentials,
   isAuthenticated,
   startLoginFlow,
   testConnection,
 } from "../modules/nextcloudSync.js";
-import {
-  getAllNotebooksForSync,
-  getAllNotesForSync,
-  getSetting,
-  purgeLocalData,
-  saveNote,
-  saveNotebook,
-  setSetting,
-} from "../modules/storage.js";
+import { getSetting, purgeLocalData, setSetting } from "../modules/storage.js";
+import { performSync } from "../modules/sync.js";
 import { getTheme, setTheme } from "../modules/theme.js";
 import { showLicensesDialog } from "./licensesDialog.js";
-import { showAlertDialog, showConfirmDialog, showConflictResolutionDialog } from "./modals.js";
+import { showAlertDialog, showConfirmDialog } from "./modals.js";
 
 /**
  * Render settings UI
@@ -739,83 +731,26 @@ export async function renderSettings(container) {
     const syncStatus = container.querySelector("#sync-status");
 
     syncBtn?.addEventListener("click", async () => {
-      const runSync = async () => {
-        syncBtn.disabled = true;
-        syncBtn.textContent = "Syncing...";
-        syncStatus.textContent = "Syncing with Nextcloud...";
-        syncStatus.style.color = "var(--color-text)";
+      syncBtn.disabled = true;
+      syncBtn.textContent = "Syncing...";
+      syncStatus.textContent = "Syncing with Nextcloud...";
+      syncStatus.style.color = "var(--color-text)";
 
-        const notebooks = await getAllNotebooksForSync();
-        const notes = await getAllNotesForSync();
+      try {
+        // Use centralized sync logic
+        const result = await performSync({ silent: false });
 
-        const result = await fullSync(notebooks, notes);
-
-        // Handle manual conflict resolution for notes
-        if (result.conflicts?.notes?.length > 0) {
-          for (const conflict of result.conflicts.notes) {
-            const choice = await showConflictResolutionDialog(conflict.local, conflict.remote);
-            if (choice === "local") {
-              // Keep local: Accept remote ETag as base, but increment version and mark unsynced
-              await saveNote({
-                ...conflict.local,
-                lastSyncedEtag: conflict.remote.lastSyncedEtag,
-                synced: false,
-                version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
-                modified: Date.now(),
-              });
-            } else {
-              // Keep remote: Overwrite local with remote data
-              await saveNote({ ...conflict.remote, synced: true });
-            }
-          }
-          // Re-run sync logic to process the resolutions
-          return await runSync();
+        if (!result) {
+          syncStatus.textContent = "Sync skipped (already in progress)";
+          syncStatus.style.color = "var(--color-warning)";
+          return;
         }
 
-        // Mark uploaded items as synced in local storage
-        for (const id of result.uploaded.notebooks.uploadedIds || []) {
-          const uploadedNotebook = result.notebooksToUpload.find((n) => n.id === id);
-          const notebook = uploadedNotebook || notebooks.find((n) => n.id === id);
-          if (notebook) {
-            const etag = result.uploaded.notebooks.metadata?.[id]?.etag;
-            await saveNotebook({
-              ...notebook,
-              synced: true,
-              lastSyncedEtag: etag || notebook.lastSyncedEtag,
-            });
-          }
-        }
-
-        for (const id of result.uploaded.notes.uploadedIds || []) {
-          const uploadedNote = result.notesToUpload.find((n) => n.id === id);
-          const note = uploadedNote || notes.find((n) => n.id === id);
-          if (note) {
-            const etag = result.uploaded.notes.metadata?.[id]?.etag;
-            await saveNote({ ...note, synced: true, lastSyncedEtag: etag || note.lastSyncedEtag });
-          }
-        }
-
-        // Save downloaded notebooks to local storage
-        let downloadedNotebooks = 0;
-        let downloadedNotes = 0;
-
-        for (const notebook of result.downloaded.notebooks) {
-          await saveNotebook(notebook);
-          downloadedNotebooks++;
-        }
-
-        // Save downloaded notes to local storage
-        // Use skipEncryption because decryptNoteFromNextcloud already handled encryption format conversion
-        for (const note of result.downloaded.notes) {
-          // Remove internal _currentFileEtag and update lastSyncedEtag for tracking
-          const { _currentFileEtag, ...noteToSave } = note;
-          noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
-          await saveNote(noteToSave, { skipEncryption: true });
-          downloadedNotes++;
-        }
-
+        const downloadedNotebooks = result.downloaded.notebooks.length;
+        const downloadedNotes = result.downloaded.notes.length;
         const conflictCount =
           (result.conflicts?.notebooks?.length || 0) + (result.conflicts?.notes?.length || 0);
+
         let statusMsg = `✓ Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`;
 
         if (conflictCount > 0) {
@@ -826,14 +761,6 @@ export async function renderSettings(container) {
         }
 
         syncStatus.textContent = statusMsg;
-
-        // Dispatch a global event to notify all components that data has changed.
-        // This is safer than conditional dispatching, as sync can have many side effects.
-        window.dispatchEvent(new CustomEvent("datachange"));
-      };
-
-      try {
-        await runSync();
       } catch (error) {
         syncStatus.textContent = `✗ Sync failed: ${error.message}`;
         syncStatus.style.color = "var(--color-error)";
