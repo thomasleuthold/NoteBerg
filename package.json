@@ -1,6 +1,6 @@
 {
   "name": "onejournal",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
   "scripts": {
@@ -15,7 +15,7 @@
     "format": "biome format --write ./src",
     "format-check": "biome format ./src",
     "check": "biome check --write --unsafe ./src",
-    "sync-version": "node scripts/sync-version.js",
+    "sync-version": "node sync-version.js",
     "version": "npm run sync-version && git add src-tauri/tauri.conf.json"
   },
   "keywords": [
