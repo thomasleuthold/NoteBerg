@@ -8,12 +8,20 @@
 
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { navigateTo } from "../../modules/router.js";
-import { deleteNote, generateId, getNote, saveFile, updateNote } from "../../modules/storage.js";
+import {
+  deleteFile,
+  deleteNote,
+  generateId,
+  getNote,
+  saveFile,
+  updateNote,
+} from "../../modules/storage.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import { showConfirmDialog } from "../modals.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { InputHandler } from "./InputHandler.js";
 import { MediaManager } from "./MediaManager.js";
+import { MediaOverlay } from "./MediaOverlay.js";
 import "./NoteCanvas.css";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { SpatialIndex } from "./SpatialIndex.js";
@@ -24,6 +32,7 @@ import { VirtualScroller } from "./VirtualScroller.js";
 export const SELECTION_HANDLE_SIZE = 10; // Visual size in content pixels (scaled by zoom)
 export const SELECTION_HANDLE_HIT_AREA = 20; // Hit area for touch/click detection
 export const ROTATION_HANDLE_OFFSET = 25; // Distance of rotation handle from top edge
+export const MEDIA_HANDLE_SIZE = 12; // Larger handles for media
 export const SELECTION_BOUNDS_PADDING = 2; // Padding around selection bounds
 export const MIN_SELECTION_SIZE = 10; // Minimum width/height during resize
 
@@ -60,6 +69,50 @@ export function getSelectionHandles(bounds, zoomScale) {
   ];
 }
 
+/**
+ * Compute media handle positions (rotated)
+ * @param {Object} item - Media item {x, y, width, height, rotation}
+ * @param {number} zoomScale - Current zoom level
+ * @returns {Array<{key: string, x: number, y: number}>}
+ */
+export function getMediaHandles(item, zoomScale) {
+  const { x, y, width, height, rotation = 0 } = item;
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  const rotateOffset = (ROTATION_HANDLE_OFFSET + 10) / zoomScale; // Slightly further out
+
+  // Helper to rotate a point around center
+  const rotatePoint = (px, py) => {
+    if (rotation === 0) return { x: px, y: py };
+    const rad = (rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    return {
+      x: cx + (px - cx) * cos - (py - cy) * sin,
+      y: cy + (px - cx) * sin + (py - cy) * cos,
+    };
+  };
+
+  // Define unrotated handle positions
+  const handles = [
+    { key: "rotate", x: cx, y: y - rotateOffset },
+    { key: "nw", x: x, y: y },
+    { key: "n", x: cx, y: y },
+    { key: "ne", x: x + width, y: y },
+    { key: "e", x: x + width, y: cy },
+    { key: "se", x: x + width, y: y + height },
+    { key: "s", x: cx, y: y + height },
+    { key: "sw", x: x, y: y + height },
+    { key: "w", x: x, y: cy },
+  ];
+
+  // Apply rotation
+  return handles.map((h) => {
+    const p = rotatePoint(h.x, h.y);
+    return { key: h.key, x: p.x, y: p.y };
+  });
+}
+
 export class NoteCanvas {
   /**
    * @param {HTMLElement} containerElement - Container to mount into
@@ -77,6 +130,7 @@ export class NoteCanvas {
     this.inputHandler = null;
     this.mediaManager = null;
     this.strokeManager = null;
+    this.mediaOverlay = null;
     this.toolbar = null;
     this.contentHeight = 0;
 
@@ -233,6 +287,11 @@ export class NoteCanvas {
     // Initialize MediaManager
     this.mediaManager = new MediaManager(noteId, this.noteData.media);
     this.mediaManager.setOnImageLoaded(() => this.renderer.forceRedraw());
+
+    // Initialize MediaOverlay
+    this.mediaOverlay = new MediaOverlay(this.scroller.getViewportElement(), {
+      onDelete: (id) => this.deleteSelectedMedia(id),
+    });
 
     // Initialize renderer
     this.renderer = new CanvasRenderer(this.scroller.getViewportElement(), {
@@ -532,6 +591,7 @@ export class NoteCanvas {
           scrollLeft,
           this.strokeManager?.currentStroke,
         );
+        this._updateMediaOverlay();
       });
     }
   }
@@ -558,6 +618,7 @@ export class NoteCanvas {
     const scrollTop = this.scroller.getScrollTop();
     const scrollLeft = this.scroller.getScrollLeft();
     this.renderer.render(scrollTop, height, scrollLeft, this.strokeManager?.currentStroke);
+    this._updateMediaOverlay();
   }
 
   /**
@@ -691,11 +752,9 @@ export class NoteCanvas {
 
     if (this.mediaDragState) {
       const lastPoint = points[points.length - 1];
-      const dx = lastPoint.x - this.mediaDragState.startX;
-      const dy = lastPoint.y - this.mediaDragState.startY;
-      this.mediaDragState.item.x = this.mediaDragState.initialX + dx;
-      this.mediaDragState.item.y = this.mediaDragState.initialY + dy;
+      this._handleMediaTransformMove(lastPoint.x, lastPoint.y);
       this.renderer.forceRedraw();
+      this._updateMediaOverlay();
       return;
     }
 
@@ -846,6 +905,7 @@ export class NoteCanvas {
     // Select the item
     this.selectedMediaId = item.id;
     this.renderer.setSelectedMedia(item.id);
+    this._updateMediaOverlay();
 
     // Cancel current stroke if drawing
     if (this.strokeManager.currentStroke) {
@@ -869,14 +929,33 @@ export class NoteCanvas {
   _handleMediaInteraction(x, y, clientX, clientY) {
     const hitItem = this.mediaManager.hitTest(x, y);
 
+    // Check handles first
+    let hitHandle = null;
+    if (this.selectedMediaId) {
+      const selectedItem = this.mediaManager.getItems().find((i) => i.id === this.selectedMediaId);
+      if (selectedItem) {
+        hitHandle = this._getMediaHandleAtPoint(x, y, selectedItem);
+      }
+    }
+
     // Case 1: Interacting with an already selected item -> Start drag
-    if (hitItem && hitItem.id === this.selectedMediaId) {
+    if (hitHandle || (hitItem && hitItem.id === this.selectedMediaId)) {
+      const item = hitHandle
+        ? this.mediaManager.getItems().find((i) => i.id === this.selectedMediaId)
+        : hitItem;
       this.mediaDragState = {
-        item: hitItem,
+        item: item,
+        mode: hitHandle ? (hitHandle === "rotate" ? "rotate" : "resize") : "move",
+        handle: hitHandle,
         startX: x,
         startY: y,
-        initialX: hitItem.x,
-        initialY: hitItem.y,
+        initialX: item.x,
+        initialY: item.y,
+        initialWidth: item.width,
+        initialHeight: item.height,
+        initialRotation: item.rotation || 0,
+        centerX: item.x + item.width / 2,
+        centerY: item.y + item.height / 2,
       };
       return { consumed: true, startedDrag: true };
     }
@@ -885,6 +964,7 @@ export class NoteCanvas {
     if (this.selectedMediaId && (!hitItem || hitItem.id !== this.selectedMediaId)) {
       this.selectedMediaId = null;
       this.renderer.setSelectedMedia(null);
+      this.mediaOverlay.hide();
     }
 
     // Case 3: Long press detection on unselected item
@@ -896,20 +976,179 @@ export class NoteCanvas {
   }
 
   /**
+   * Check if point hits a media handle
+   * @private
+   */
+  _getMediaHandleAtPoint(x, y, item) {
+    const handles = getMediaHandles(item, this.zoomScale);
+    // Use larger hit area for touch
+    const hitRadius = SELECTION_HANDLE_HIT_AREA / this.zoomScale / 2;
+
+    for (const h of handles) {
+      if (Math.abs(x - h.x) <= hitRadius && Math.abs(y - h.y) <= hitRadius) {
+        return h.key;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Handle media transform (move/resize/rotate)
+   * @private
+   */
+  _handleMediaTransformMove(x, y) {
+    const state = this.mediaDragState;
+    const item = state.item;
+
+    if (state.mode === "move") {
+      const dx = x - state.startX;
+      const dy = y - state.startY;
+      item.x = state.initialX + dx;
+      item.y = state.initialY + dy;
+    } else if (state.mode === "rotate") {
+      // Calculate angle from center
+      const startAngle = Math.atan2(state.startY - state.centerY, state.startX - state.centerX);
+      const currentAngle = Math.atan2(y - state.centerY, x - state.centerX);
+      const deltaAngle = (currentAngle - startAngle) * (180 / Math.PI);
+      item.rotation = (state.initialRotation + deltaAngle) % 360;
+    } else if (state.mode === "resize") {
+      // Rotate point back to unrotated coordinate space for simpler resizing logic
+      // This is an approximation; full rotated resizing is complex.
+      // For simplicity, we calculate distance from center or opposite corner.
+
+      // Simple approach: Calculate distance change from center
+      // This works well for corner resizing while maintaining aspect ratio
+      const dx = x - state.startX;
+      const dy = y - state.startY;
+
+      // Determine resize direction based on handle
+      const isLeft = state.handle.includes("w");
+      const isTop = state.handle.includes("n");
+
+      // Rotate the delta vector by -rotation to align with item axes
+      const rad = (-(item.rotation || 0) * Math.PI) / 180;
+      const rdx = dx * Math.cos(rad) - dy * Math.sin(rad);
+      const rdy = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+      let newWidth = state.initialWidth;
+      let newHeight = state.initialHeight;
+      let newX = state.initialX;
+      let newY = state.initialY;
+
+      // Apply resize logic
+      if (state.handle.length === 2) {
+        // Corner (aspect ratio locked)
+        // Use the larger delta to drive the scale
+        const ratio = state.initialWidth / state.initialHeight;
+        let change = 0;
+
+        if (state.handle === "se") change = Math.max(rdx, rdy);
+        else if (state.handle === "nw") change = Math.max(-rdx, -rdy);
+        else if (state.handle === "ne") change = Math.max(rdx, -rdy);
+        else if (state.handle === "sw") change = Math.max(-rdx, rdy);
+
+        newWidth = Math.max(50, state.initialWidth + change);
+        newHeight = newWidth / ratio;
+
+        // Adjust position to keep opposite corner fixed (roughly)
+        // For perfect rotated resizing, we'd need to rotate the pivot point.
+        // Simplified: Center-based scaling if we don't want to do full matrix math here
+        // Let's do center-based scaling for now as it's robust for rotated items
+        const widthDiff = newWidth - state.initialWidth;
+        const heightDiff = newHeight - state.initialHeight;
+
+        // Adjust center based on handle
+        // This is a simplification. For full corner pinning, we need more math.
+        // But center-expansion is often acceptable for rotated items.
+        // Let's try to pin the center for now to avoid jumping.
+        newX = state.initialX - widthDiff / 2;
+        newY = state.initialY - heightDiff / 2;
+      } else {
+        // Side (one dimension)
+        if (state.handle === "e") newWidth += rdx;
+        else if (state.handle === "w") {
+          newWidth -= rdx;
+          newX -= rdx;
+        } // This X adjustment is only valid if rotation is 0
+        else if (state.handle === "s") newHeight += rdy;
+        else if (state.handle === "n") {
+          newHeight -= rdy;
+          newY -= rdy;
+        }
+
+        // For rotated side resizing, center-based is safer without full matrix logic
+        if (item.rotation) {
+          newX = state.initialX - (newWidth - state.initialWidth) / 2;
+          newY = state.initialY - (newHeight - state.initialHeight) / 2;
+        }
+      }
+
+      item.width = Math.max(50, newWidth);
+      item.height = Math.max(50, newHeight);
+      if (item.rotation) {
+        item.x = newX;
+        item.y = newY;
+      } else {
+        // Non-rotated logic (standard)
+        if (isLeft) item.x = state.initialX + (state.initialWidth - item.width);
+        if (isTop) item.y = state.initialY + (state.initialHeight - item.height);
+      }
+    }
+  }
+
+  /**
+   * Update media overlay position
+   * @private
+   */
+  _updateMediaOverlay() {
+    if (this.selectedMediaId && this.mediaOverlay) {
+      const item = this.mediaManager.getItems().find((i) => i.id === this.selectedMediaId);
+      if (item) {
+        const scrollLeft = this.scroller.getScrollLeft();
+        const scrollTop = this.scroller.getScrollTop();
+        const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+        this.mediaOverlay.show(item, this.zoomScale, scrollLeft, scrollTop, viewport);
+      }
+    }
+  }
+
+  /**
    * Delete the currently selected media item
    */
-  deleteSelectedMedia() {
-    if (!this.selectedMediaId) return;
+  async deleteSelectedMedia(id = null) {
+    const targetId = id || this.selectedMediaId;
+    console.log("[NoteCanvas] deleteSelectedMedia called for:", targetId);
+    if (!targetId) return;
+
+    // Find item to get fileId before removing
+    const item = this.mediaManager.getItems().find((i) => i.id === targetId);
+
+    if (!item) {
+      console.warn("[NoteCanvas] Media item not found for deletion:", targetId);
+      return;
+    }
 
     // Track deleted media ID
-    this.noteData.deletedMedia.push(this.selectedMediaId);
+    this.noteData.deletedMedia.push(targetId);
 
     // Remove from manager
-    this.mediaManager.removeItem(this.selectedMediaId);
+    this.mediaManager.removeItem(targetId);
     this.selectedMediaId = null;
     this.renderer.setSelectedMedia(null);
+    this.mediaOverlay.hide();
 
-    this._saveMediaChanges();
+    // Save changes to note structure
+    await this._saveMediaChanges();
+    console.log("[NoteCanvas] _saveMediaChanges completed");
+
+    // Delete binary file from storage if it exists
+    if (item?.fileId) {
+      await deleteFile(item.fileId).catch((e) =>
+        console.warn("[NoteCanvas] Failed to delete media file:", e),
+      );
+    }
+
+    console.log("[NoteCanvas] Media deleted, redrawing...");
     this.renderer.forceRedraw();
   }
 
@@ -1606,11 +1845,9 @@ export class NoteCanvas {
     // Handle media dragging in Pan mode
     if (this.mediaDragState) {
       const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
-      const dx = x - this.mediaDragState.startX;
-      const dy = y - this.mediaDragState.startY;
-      this.mediaDragState.item.x = this.mediaDragState.initialX + dx;
-      this.mediaDragState.item.y = this.mediaDragState.initialY + dy;
+      this._handleMediaTransformMove(x, y);
       this.renderer.forceRedraw();
+      this._updateMediaOverlay();
       return;
     }
 
@@ -1869,6 +2106,11 @@ export class NoteCanvas {
     if (this.mediaManager) {
       this.mediaManager.destroy();
       this.mediaManager = null;
+    }
+
+    if (this.mediaOverlay) {
+      this.mediaOverlay.destroy();
+      this.mediaOverlay = null;
     }
 
     if (this.inputHandler) {

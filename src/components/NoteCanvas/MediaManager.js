@@ -54,7 +54,11 @@ export class MediaManager {
    * @param {string} id - The ID of the item to remove
    */
   removeItem(id) {
+    const initialCount = this.mediaItems.length;
     this.mediaItems = this.mediaItems.filter((item) => item.id !== id);
+    console.log(
+      `[MediaManager] Removed item ${id}. Count: ${initialCount} -> ${this.mediaItems.length}`,
+    );
   }
 
   /**

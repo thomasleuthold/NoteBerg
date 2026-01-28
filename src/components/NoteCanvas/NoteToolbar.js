@@ -225,6 +225,12 @@ export class NoteToolbar {
     this.insertDialog.className = "note-canvas-toolbar__options-dialog"; // Reuse options dialog style
     this.insertDialog.style.right = "50px"; // Offset to align with insert button
 
+    // Add notch
+    const notch = document.createElement("div");
+    notch.className = "note-canvas-toolbar__options-notch";
+    notch.style.right = "38px"; // Align with insert button
+    this.insertDialog.appendChild(notch);
+
     const content = document.createElement("div");
     content.className = "note-canvas-toolbar__options-content";
     content.innerHTML = `

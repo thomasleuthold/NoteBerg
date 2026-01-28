@@ -11,7 +11,12 @@ import {
   drawStroke as sharedDrawStroke,
   getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
-import { getSelectionHandles, SELECTION_HANDLE_SIZE } from "./NoteCanvas.js";
+import {
+  getMediaHandles,
+  getSelectionHandles,
+  MEDIA_HANDLE_SIZE,
+  SELECTION_HANDLE_SIZE,
+} from "./NoteCanvas.js";
 
 // Highlight styles
 const HIGHLIGHT_FILL_STYLE = "rgba(255, 255, 0, 0.3)";
@@ -644,8 +649,18 @@ export class CanvasRenderer {
 
       if (item.type === "image" && item.fileId) {
         const img = this.mediaManager.getImage(item.fileId);
+        this.ctx.save();
+
+        // Apply rotation for both image and border
+        if (item.rotation) {
+          const cx = item.x + item.width / 2;
+          const cy = item.y + item.height / 2;
+          this.ctx.translate(cx, cy);
+          this.ctx.rotate((item.rotation * Math.PI) / 180);
+          this.ctx.translate(-cx, -cy);
+        }
+
         if (img) {
-          // TODO: Handle rotation if present in item
           this.ctx.drawImage(img, item.x, item.y, item.width, item.height);
         } else {
           // Draw placeholder while loading
@@ -653,11 +668,35 @@ export class CanvasRenderer {
           this.ctx.fillRect(item.x, item.y, item.width, item.height);
         }
 
-        // Draw selection border
+        // Draw selection border (within the same rotated context)
         if (item.id === this.selectedMediaId) {
           this.ctx.strokeStyle = "#3b82f6";
           this.ctx.lineWidth = 2;
           this.ctx.strokeRect(item.x, item.y, item.width, item.height);
+        }
+        this.ctx.restore(); // Restore from rotation transform
+
+        // Draw handles (which are pre-rotated) if selected
+        if (item.id === this.selectedMediaId) {
+          // Draw handles
+          const handles = getMediaHandles(item, this.zoomScale);
+          const handleSize = MEDIA_HANDLE_SIZE / this.zoomScale;
+          const half = handleSize / 2;
+
+          this.ctx.fillStyle = "#ffffff";
+          this.ctx.strokeStyle = "#3b82f6";
+          this.ctx.lineWidth = 1 / this.resolutionScale;
+
+          for (const h of handles) {
+            this.ctx.beginPath();
+            if (h.key === "rotate") {
+              this.ctx.arc(h.x, h.y, half, 0, Math.PI * 2);
+            } else {
+              this.ctx.rect(h.x - half, h.y - half, handleSize, handleSize);
+            }
+            this.ctx.fill();
+            this.ctx.stroke();
+          }
         }
       }
     }

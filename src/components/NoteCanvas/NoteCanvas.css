@@ -163,6 +163,47 @@
 }
 
 /* ==========================================================================
+   Media Overlay (Options Menu)
+   ========================================================================== */
+
+.note-canvas__media-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 20;
+  display: none; /* Hidden by default */
+}
+
+.note-canvas__media-overlay--visible {
+  display: block;
+}
+
+.note-canvas__media-btn {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  background: white;
+  border: 1px solid var(--border-primary);
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  color: var(--text-secondary);
+  transition: transform 0.1s;
+}
+
+.note-canvas__media-btn:hover {
+  transform: scale(1.1);
+  color: var(--color-primary);
+}
+
+/* Reuse .note-canvas-toolbar__options-dialog styles for the menu */
+
+/* ==========================================================================
    Pen Settings Dialog
    ========================================================================== */
 

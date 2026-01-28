@@ -61,6 +61,12 @@ self.onmessage = async (e) => {
   }
 
   if (type === "SAVE_MEDIA") {
+    console.log(
+      "[StorageWorker] Received SAVE_MEDIA. NoteId:",
+      noteId,
+      "Media count:",
+      media?.length,
+    );
     try {
       const db = await getDB();
       const tx = db.transaction("notes", "readwrite");
@@ -69,8 +75,8 @@ self.onmessage = async (e) => {
 
       if (note) {
         // Update media fields
-        if (media) note.media = media;
-        if (deletedMedia) note.deletedMedia = deletedMedia;
+        if (media !== undefined) note.media = media;
+        if (deletedMedia !== undefined) note.deletedMedia = deletedMedia;
 
         // Encrypt media if needed
         if (note.encrypted && media) {
@@ -87,6 +93,7 @@ self.onmessage = async (e) => {
         note.synced = false;
 
         await store.put(note);
+        console.log("[StorageWorker] Database updated for note:", noteId);
       }
       await tx.done;
     } catch (err) {

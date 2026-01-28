@@ -112,6 +112,13 @@ export class StrokeManager {
       }
     }
 
+    console.log(
+      "[StrokeManager] Posting SAVE_MEDIA to worker. Media count:",
+      media?.length,
+      "Deleted count:",
+      deletedMedia?.length,
+    );
+
     this.worker.postMessage({
       type: "SAVE_MEDIA",
       noteId: this.noteId,
