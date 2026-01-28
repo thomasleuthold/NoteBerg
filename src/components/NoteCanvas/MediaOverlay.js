@@ -6,7 +6,7 @@ import { getIcon } from "../../utils/icons.js";
 export class MediaOverlay {
   constructor(container, callbacks) {
     this.container = container;
-    this.callbacks = callbacks; // { onDelete: () => void }
+    this.callbacks = callbacks; // { onDelete, onCrop, onToFront, onToBack }
     this.element = null;
     this.menu = null;
     this.optionBtn = null;
@@ -15,6 +15,9 @@ export class MediaOverlay {
 
     this._onOptionClick = this._onOptionClick.bind(this);
     this._onDeleteClick = this._onDeleteClick.bind(this);
+    this._onCropClick = this._onCropClick.bind(this);
+    this._onToFrontClick = this._onToFrontClick.bind(this);
+    this._onToBackClick = this._onToBackClick.bind(this);
     this._handleDocumentClick = this._handleDocumentClick.bind(this);
 
     this._createDOM();
@@ -42,6 +45,18 @@ export class MediaOverlay {
     this.menu.innerHTML = `
       <div class="note-canvas-toolbar__options-content">
         <div class="note-canvas-toolbar__options-section">
+          <button class="note-canvas-toolbar__option-btn" id="media-crop-btn">
+            ${getIcon("crop", 16)} Crop
+          </button>
+          <button class="note-canvas-toolbar__option-btn" id="media-front-btn">
+            ${getIcon("arrowUp", 16)} Send to Front
+          </button>
+          <button class="note-canvas-toolbar__option-btn" id="media-back-btn">
+            ${getIcon("arrowDown", 16)} Send to Back
+          </button>
+        </div>
+        <div class="note-canvas-toolbar__separator"></div>
+        <div class="note-canvas-toolbar__options-section">
           <button class="note-canvas-toolbar__delete-btn" id="media-delete-btn">
             ${getIcon("trash", 16)} Delete
           </button>
@@ -52,6 +67,9 @@ export class MediaOverlay {
     this.menu.addEventListener("pointerdown", (e) => e.stopPropagation());
 
     this.menu.querySelector("#media-delete-btn").addEventListener("click", this._onDeleteClick);
+    this.menu.querySelector("#media-crop-btn").addEventListener("click", this._onCropClick);
+    this.menu.querySelector("#media-front-btn").addEventListener("click", this._onToFrontClick);
+    this.menu.querySelector("#media-back-btn").addEventListener("click", this._onToBackClick);
     this.element.appendChild(this.menu);
 
     this.container.appendChild(this.element);
@@ -72,20 +90,55 @@ export class MediaOverlay {
     this.menu.classList.remove("note-canvas-toolbar__options-dialog--open");
   }
 
-  updatePosition(mediaItem, zoom, scrollLeft, scrollTop, _viewportRect) {
+  updatePosition(mediaItem, zoom, scrollLeft, scrollTop, viewportRect) {
     if (!this.isVisible) return;
 
-    // Calculate screen position of the top-right corner of the image
-    // Note: We use the unrotated bounding box corner for the button to keep it simple and accessible
-    const screenX = mediaItem.x * zoom - scrollLeft;
-    const screenY = mediaItem.y * zoom - scrollTop;
-    const screenWidth = mediaItem.width * zoom;
-    const screenHeight = mediaItem.height * zoom;
+    const rotation = (mediaItem.rotation || 0) * (Math.PI / 180);
+    const width = mediaItem.width;
+    const height = mediaItem.height;
 
-    // Position button at center of image
+    // Calculate corners relative to center
+    const hw = width / 2;
+    const hh = height / 2;
+
+    const corners = [
+      { x: -hw, y: -hh },
+      { x: hw, y: -hh },
+      { x: hw, y: hh },
+      { x: -hw, y: hh },
+    ];
+
+    // Rotate corners to find bounding box
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+
+    let maxX = -Infinity;
+    let minY = Infinity;
+
+    corners.forEach((p) => {
+      const rx = p.x * cos - p.y * sin;
+      const ry = p.x * sin + p.y * cos;
+      maxX = Math.max(maxX, rx);
+      minY = Math.min(minY, ry);
+    });
+
+    // Center of image in content space
+    const cx = mediaItem.x + hw;
+    const cy = mediaItem.y + hh;
+
+    // Visual top-right corner in content space
+    const visualTopRightX = cx + maxX;
+    const visualTopRightY = cy + minY;
+
+    // Convert to screen space
+    const screenX = visualTopRightX * zoom - scrollLeft;
+    const screenY = visualTopRightY * zoom - scrollTop;
+
+    // Position button
     const btnSize = 32;
-    const btnLeft = screenX + screenWidth / 2 - btnSize / 2;
-    const btnTop = screenY + screenHeight / 2 - btnSize / 2;
+    // Margin: 30px from right, 10px from top
+    const btnLeft = screenX - btnSize - 30;
+    const btnTop = screenY + 10;
 
     // Position relative to viewport container
     this.optionBtn.style.left = `${btnLeft}px`;
@@ -93,7 +146,7 @@ export class MediaOverlay {
 
     // Update menu position relative to button
     if (this.menu.classList.contains("note-canvas-toolbar__options-dialog--open")) {
-      this._positionMenu(_viewportRect);
+      this._positionMenu(viewportRect);
     }
   }
 
@@ -127,6 +180,30 @@ export class MediaOverlay {
       this.callbacks.onDelete(this.activeMediaId);
     }
     this.hide();
+  }
+
+  _onCropClick(e) {
+    e.stopPropagation();
+    if (this.callbacks.onCrop) {
+      this.callbacks.onCrop(this.activeMediaId);
+    }
+    this.hide();
+  }
+
+  _onToFrontClick(e) {
+    e.stopPropagation();
+    if (this.callbacks.onToFront) {
+      this.callbacks.onToFront(this.activeMediaId);
+    }
+    this.menu.classList.remove("note-canvas-toolbar__options-dialog--open");
+  }
+
+  _onToBackClick(e) {
+    e.stopPropagation();
+    if (this.callbacks.onToBack) {
+      this.callbacks.onToBack(this.activeMediaId);
+    }
+    this.menu.classList.remove("note-canvas-toolbar__options-dialog--open");
   }
 
   _handleDocumentClick(e) {

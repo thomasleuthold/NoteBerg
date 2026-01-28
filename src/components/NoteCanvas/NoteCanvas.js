@@ -19,6 +19,7 @@ import {
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import { showConfirmDialog } from "../modals.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
+import { ImageCropper } from "./ImageCropper.js";
 import { InputHandler } from "./InputHandler.js";
 import { MediaManager } from "./MediaManager.js";
 import { MediaOverlay } from "./MediaOverlay.js";
@@ -291,6 +292,9 @@ export class NoteCanvas {
     // Initialize MediaOverlay
     this.mediaOverlay = new MediaOverlay(this.scroller.getViewportElement(), {
       onDelete: (id) => this.deleteSelectedMedia(id),
+      onCrop: (id) => this.cropSelectedMedia(id),
+      onToFront: (id) => this.moveSelectedMediaToFront(id),
+      onToBack: (id) => this.moveSelectedMediaToBack(id),
     });
 
     // Initialize renderer
@@ -1150,6 +1154,59 @@ export class NoteCanvas {
 
     console.log("[NoteCanvas] Media deleted, redrawing...");
     this.renderer.forceRedraw();
+  }
+
+  /**
+   * Crop the selected media item
+   */
+  async cropSelectedMedia(id) {
+    const item = this.mediaManager.getItems().find((i) => i.id === id);
+    const img = this.mediaManager.getImage(item?.fileId);
+
+    if (!item || !img) return;
+
+    const cropper = new ImageCropper();
+    const blob = await cropper.show(img);
+
+    if (blob) {
+      // Save new file
+      const newFileId = await saveFile(blob);
+
+      // Update item
+      // We need to update width/height to match new aspect ratio but keep same display width?
+      // Or reset to natural size? Let's keep width and adjust height.
+      const newImg = new Image();
+      newImg.src = URL.createObjectURL(blob);
+      await new Promise((r) => {
+        newImg.onload = r;
+      });
+
+      const ratio = newImg.height / newImg.width;
+      const newHeight = item.width * ratio;
+
+      this.mediaManager.updateItem(id, {
+        fileId: newFileId,
+        height: newHeight,
+      });
+
+      this._saveMediaChanges();
+      this.renderer.forceRedraw();
+      this._updateMediaOverlay();
+    }
+  }
+
+  moveSelectedMediaToFront(id) {
+    this.mediaManager.moveItemToFront(id);
+    this._saveMediaChanges();
+    this.renderer.forceRedraw();
+    this._updateMediaOverlay();
+  }
+
+  moveSelectedMediaToBack(id) {
+    this.mediaManager.moveItemToBack(id);
+    this._saveMediaChanges();
+    this.renderer.forceRedraw();
+    this._updateMediaOverlay();
   }
 
   /**

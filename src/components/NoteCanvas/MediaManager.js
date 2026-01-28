@@ -62,6 +62,42 @@ export class MediaManager {
   }
 
   /**
+   * Move an item to the front (end of array)
+   * @param {string} id
+   */
+  moveItemToFront(id) {
+    const index = this.mediaItems.findIndex((item) => item.id === id);
+    if (index !== -1 && index < this.mediaItems.length - 1) {
+      const item = this.mediaItems.splice(index, 1)[0];
+      this.mediaItems.push(item);
+    }
+  }
+
+  /**
+   * Move an item to the back (start of array)
+   * @param {string} id
+   */
+  moveItemToBack(id) {
+    const index = this.mediaItems.findIndex((item) => item.id === id);
+    if (index !== -1 && index > 0) {
+      const item = this.mediaItems.splice(index, 1)[0];
+      this.mediaItems.unshift(item);
+    }
+  }
+
+  /**
+   * Update an item's properties
+   * @param {string} id
+   * @param {Object} updates
+   */
+  updateItem(id, updates) {
+    const item = this.mediaItems.find((i) => i.id === id);
+    if (item) {
+      Object.assign(item, updates);
+    }
+  }
+
+  /**
    * Get the HTMLImageElement for a file ID if loaded
    * @param {string} fileId
    * @returns {HTMLImageElement|null}

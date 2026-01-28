@@ -444,6 +444,9 @@
   color: var(--text-primary);
   font-size: 0.875rem;
   font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   transition: background-color 0.2s;
 }
 
@@ -481,4 +484,139 @@
 
 .note-canvas-toolbar__delete-btn:hover {
   background-color: #dc2626;
+}
+
+/* ==========================================================================
+   Image Cropper
+   ========================================================================== */
+
+.crop-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.crop-container {
+  position: relative;
+  max-width: 90vw;
+  max-height: 80vh;
+}
+
+.crop-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.crop-area {
+  position: absolute;
+  border: 2px solid white;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+  cursor: move;
+}
+
+.crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border: 1px solid #3b82f6;
+}
+
+.crop-nw {
+  top: -6px;
+  left: -6px;
+  cursor: nw-resize;
+}
+.crop-ne {
+  top: -6px;
+  right: -6px;
+  cursor: ne-resize;
+}
+.crop-sw {
+  bottom: -6px;
+  left: -6px;
+  cursor: sw-resize;
+}
+.crop-se {
+  bottom: -6px;
+  right: -6px;
+  cursor: se-resize;
+}
+
+.perspective-area {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.perspective-corner {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background: rgba(59, 130, 246, 0.8);
+  border: 2px solid white;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  pointer-events: auto;
+  z-index: 10;
+}
+
+.perspective-line {
+  position: absolute;
+  height: 2px;
+  background: #3b82f6;
+  transform-origin: 0 50%;
+}
+
+.crop-controls {
+  position: absolute;
+  bottom: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+}
+
+.crop-mode-toggle {
+  position: absolute;
+  top: -50px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  background: white;
+  padding: 5px;
+  border-radius: 8px;
+}
+
+.crop-btn,
+.crop-mode-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.crop-apply-btn,
+.crop-mode-btn.active {
+  background: #3b82f6;
+  color: white;
+}
+.crop-cancel-btn,
+.crop-mode-btn {
+  background: #e5e7eb;
+  color: #374151;
 }
