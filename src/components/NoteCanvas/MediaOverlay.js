@@ -24,7 +24,6 @@ export class MediaOverlay {
   }
 
   _createDOM() {
-    console.log("[MediaOverlay] Creating DOM elements");
     this.element = document.createElement("div");
     this.element.className = "note-canvas__media-overlay";
 
@@ -174,7 +173,6 @@ export class MediaOverlay {
   }
 
   _onDeleteClick(e) {
-    console.log("[MediaOverlay] Delete button clicked for:", this.activeMediaId);
     e.stopPropagation();
     if (this.callbacks.onDelete) {
       this.callbacks.onDelete(this.activeMediaId);

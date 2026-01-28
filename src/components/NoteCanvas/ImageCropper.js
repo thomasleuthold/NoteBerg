@@ -268,10 +268,17 @@ export class ImageCropper {
     const dstCorners = [0, 0, outputWidth, 0, outputWidth, outputHeight, 0, outputHeight];
 
     if (!window.PerspT) {
-      throw new Error("Perspective transform library not loaded.");
+      console.error("[ImageCropper] Perspective transform library not loaded.");
+      return this._applySimpleCrop(imgRect); // Fallback to simple crop
     }
 
-    const perspT = window.PerspT(srcCorners, dstCorners);
+    let perspT;
+    try {
+      perspT = window.PerspT(srcCorners, dstCorners);
+    } catch (e) {
+      console.error("[ImageCropper] Failed to create perspective transform:", e);
+      return this._applySimpleCrop(imgRect); // Fallback to simple crop
+    }
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(outputWidth);
     canvas.height = Math.round(outputHeight);

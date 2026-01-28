@@ -57,3 +57,7 @@ fix-build:
 package-backend:
     dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
     Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"
+
+# Increase version (patch) and sync
+bump:
+    npm version patch

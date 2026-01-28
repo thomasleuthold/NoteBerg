@@ -54,11 +54,21 @@ export class MediaManager {
    * @param {string} id - The ID of the item to remove
    */
   removeItem(id) {
-    const initialCount = this.mediaItems.length;
-    this.mediaItems = this.mediaItems.filter((item) => item.id !== id);
-    console.log(
-      `[MediaManager] Removed item ${id}. Count: ${initialCount} -> ${this.mediaItems.length}`,
-    );
+    // Find the item to get its fileId before removal
+    const item = this.mediaItems.find((i) => i.id === id);
+
+    // Clean up blob URL to prevent memory leak
+    if (item?.fileId) {
+      const blobUrl = this.blobUrls.get(item.fileId);
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl);
+        this.blobUrls.delete(item.fileId);
+      }
+      this.images.delete(item.fileId);
+      this.loading.delete(item.fileId);
+    }
+
+    this.mediaItems = this.mediaItems.filter((i) => i.id !== id);
   }
 
   /**
@@ -111,7 +121,7 @@ export class MediaManager {
   }
 
   /**
-   * Check if a point intersects with any media item
+   * Check if a point intersects with any media item (accounts for rotation)
    * @param {number} x - Content X coordinate
    * @param {number} y - Content Y coordinate
    * @returns {Object|null} The intersected media item or null
@@ -120,7 +130,33 @@ export class MediaManager {
     // Iterate in reverse to find top-most item (rendered last)
     for (let i = this.mediaItems.length - 1; i >= 0; i--) {
       const item = this.mediaItems[i];
-      if (x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height) {
+
+      // Calculate center of the item
+      const cx = item.x + item.width / 2;
+      const cy = item.y + item.height / 2;
+
+      // If item has rotation, transform the test point into the item's local coordinate space
+      let localX = x;
+      let localY = y;
+
+      if (item.rotation) {
+        // Rotate the point around the item's center by -rotation to get local coords
+        const rad = (-item.rotation * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const dx = x - cx;
+        const dy = y - cy;
+        localX = cx + dx * cos - dy * sin;
+        localY = cy + dx * sin + dy * cos;
+      }
+
+      // Now check if local point is within the unrotated bounding box
+      if (
+        localX >= item.x &&
+        localX <= item.x + item.width &&
+        localY >= item.y &&
+        localY <= item.y + item.height
+      ) {
         return item;
       }
     }

@@ -234,8 +234,6 @@ export class NoteCanvas {
       return;
     }
 
-    console.log(`[NoteCanvas] Loading note with ${this.noteData.strokes?.length || 0} strokes`);
-
     // Ensure strokes array exists and is shared across modules
     if (!this.noteData.strokes) {
       this.noteData.strokes = [];
@@ -399,13 +397,6 @@ export class NoteCanvas {
     }
 
     this.isInitialized = true;
-
-    // Log stats for debugging
-    console.log("[NoteCanvas] Initialized:", {
-      strokes: this.noteData.strokes?.length || 0,
-      contentHeight: this.contentHeight,
-      indexStats: this.spatialIndex.getStats(),
-    });
 
     // Expose for debugging
     window.__noteCanvas = this;
@@ -1121,14 +1112,12 @@ export class NoteCanvas {
    */
   async deleteSelectedMedia(id = null) {
     const targetId = id || this.selectedMediaId;
-    console.log("[NoteCanvas] deleteSelectedMedia called for:", targetId);
     if (!targetId) return;
 
     // Find item to get fileId before removing
     const item = this.mediaManager.getItems().find((i) => i.id === targetId);
 
     if (!item) {
-      console.warn("[NoteCanvas] Media item not found for deletion:", targetId);
       return;
     }
 
@@ -1143,16 +1132,14 @@ export class NoteCanvas {
 
     // Save changes to note structure
     await this._saveMediaChanges();
-    console.log("[NoteCanvas] _saveMediaChanges completed");
 
     // Delete binary file from storage if it exists
     if (item?.fileId) {
-      await deleteFile(item.fileId).catch((e) =>
-        console.warn("[NoteCanvas] Failed to delete media file:", e),
-      );
+      await deleteFile(item.fileId).catch(() => {
+        // Silently ignore deletion errors (file may not exist)
+      });
     }
 
-    console.log("[NoteCanvas] Media deleted, redrawing...");
     this.renderer.forceRedraw();
   }
 

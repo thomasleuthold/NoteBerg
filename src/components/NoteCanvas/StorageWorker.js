@@ -61,12 +61,6 @@ self.onmessage = async (e) => {
   }
 
   if (type === "SAVE_MEDIA") {
-    console.log(
-      "[StorageWorker] Received SAVE_MEDIA. NoteId:",
-      noteId,
-      "Media count:",
-      media?.length,
-    );
     try {
       const db = await getDB();
       const tx = db.transaction("notes", "readwrite");
@@ -93,7 +87,6 @@ self.onmessage = async (e) => {
         note.synced = false;
 
         await store.put(note);
-        console.log("[StorageWorker] Database updated for note:", noteId);
       }
       await tx.done;
     } catch (err) {

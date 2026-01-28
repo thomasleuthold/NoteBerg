@@ -20,6 +20,9 @@ export class StrokeManager {
 
     // Initialize Web Worker
     this.worker = new Worker(new URL("./StorageWorker.js", import.meta.url), { type: "module" });
+    this.worker.onerror = (e) => {
+      console.error("[StrokeManager] Worker error:", e.message, e);
+    };
   }
 
   startStroke(props) {
@@ -111,13 +114,6 @@ export class StrokeManager {
         console.warn("[StrokeManager] Could not get encryption key:", e);
       }
     }
-
-    console.log(
-      "[StrokeManager] Posting SAVE_MEDIA to worker. Media count:",
-      media?.length,
-      "Deleted count:",
-      deletedMedia?.length,
-    );
 
     this.worker.postMessage({
       type: "SAVE_MEDIA",
