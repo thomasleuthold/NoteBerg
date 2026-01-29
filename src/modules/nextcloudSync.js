@@ -1577,7 +1577,7 @@ export async function fullSync(localNotebooks, localNotes) {
       const isDeletedRemotely = globalTombstone?.notebooks?.some((t) => t.id === local.id);
 
       if (isDeletedRemotely) {
-        if (local.synced === false) {
+        if (local.synced === false && !local.deleted) {
           // Conflict: Deleted remotely, Modified locally. Restore (re-upload).
           console.log(
             `[Sync] Notebook ${local.id} deleted remotely but modified locally. Restoring.`,
@@ -1632,6 +1632,13 @@ export async function fullSync(localNotebooks, localNotes) {
     // PRIORITY: If note is purged locally, queue it for processing immediately.
     // This bypasses conflict checks because purge is a final destructive action.
     if (local.purged) {
+      // If the parent notebook is also being purged in this sync, skip processing this note.
+      // The notebook purge will delete the entire folder structure, so individual note deletion is redundant and will fail.
+      const parentNotebookPurged =
+        local.notebookId && notebooksToUpload.some((n) => n.id === local.notebookId && n.purged);
+      if (parentNotebookPurged) {
+        continue;
+      }
       notesToUpload.push(local);
       continue;
     }
@@ -1645,7 +1652,7 @@ export async function fullSync(localNotebooks, localNotes) {
       const isDeletedRemotely = tombstone?.notes?.some((t) => t.id === local.id);
 
       if (isDeletedRemotely) {
-        if (local.synced === false) {
+        if (local.synced === false && !local.deleted) {
           // Conflict: Deleted remotely, Modified locally. Strategy: Restore (re-upload).
           console.log(
             `[Sync] Note ${local.id} was deleted remotely but modified locally. Restoring.`,
