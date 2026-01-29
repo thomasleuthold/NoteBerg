@@ -6,10 +6,13 @@
 import {
   getDeletedNotebooks,
   getDeletedNotes,
+  purgeNote,
+  purgeNotebook,
   restoreNote,
   restoreNotebook,
 } from "../modules/storage.js";
 import { getIcon } from "../utils/icons.js";
+import { showAlertDialog, showConfirmDialog } from "./modals.js";
 
 /**
  * Render recycle bin UI
@@ -26,6 +29,7 @@ export async function renderRecycleBin(container) {
     const notebookIcon = getIcon("notebook", 24);
     const noteIcon = getIcon("note", 24);
     const restoreIcon = getIcon("restore", 16);
+    const trashIcon = getIcon("trash", 16);
 
     // Build HTML for notebooks
     const notebooksHtml =
@@ -48,6 +52,10 @@ export async function renderRecycleBin(container) {
           <button class="btn-restore" data-type="notebook" data-id="${notebook.id}" title="Restore">
             ${restoreIcon}
             Restore
+          </button>
+          <button class="btn-purge" data-type="notebook" data-id="${notebook.id}" title="Delete Permanently">
+            ${trashIcon}
+            Purge
           </button>
         </div>
       </div>
@@ -77,6 +85,10 @@ export async function renderRecycleBin(container) {
           <button class="btn-restore" data-type="note" data-id="${note.id}" title="Restore">
             ${restoreIcon}
             Restore
+          </button>
+          <button class="btn-purge" data-type="note" data-id="${note.id}" title="Delete Permanently">
+            ${trashIcon}
+            Purge
           </button>
         </div>
       </div>
@@ -156,7 +168,49 @@ function attachRecycleBinListeners(container) {
         window.dispatchEvent(new CustomEvent("datachange"));
       } catch (error) {
         console.error("Error restoring item:", error);
-        alert(`Failed to restore item: ${error.message}`);
+        await showAlertDialog("Error", `Failed to restore item: ${error.message}`);
+      }
+    });
+  });
+
+  // Purge buttons
+  const purgeBtns = container.querySelectorAll(".btn-purge");
+  purgeBtns.forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const type = btn.dataset.type;
+      const id = btn.dataset.id;
+
+      let message =
+        "Are you sure you want to permanently delete this item? This will remove it from all synced devices and cannot be undone.";
+
+      if (type === "notebook") {
+        const deletedNotes = await getDeletedNotes();
+        const noteCount = deletedNotes.filter((n) => n.notebookId === id).length;
+        if (noteCount > 0) {
+          message = `Are you sure you want to permanently delete this notebook? This will also permanently delete ${noteCount} note(s) inside it. This will remove it from all synced devices and cannot be undone.`;
+        }
+      }
+
+      const confirmed = await showConfirmDialog(
+        "Delete Permanently",
+        message,
+        "Delete",
+        "btn-danger",
+      );
+
+      if (confirmed) {
+        try {
+          if (type === "note") {
+            await purgeNote(id);
+          }
+          if (type === "notebook") {
+            await purgeNotebook(id);
+          }
+          window.dispatchEvent(new CustomEvent("datachange"));
+        } catch (error) {
+          console.error("Error purging item:", error);
+          await showAlertDialog("Error", `Failed to permanently delete: ${error.message}`);
+        }
       }
     });
   });

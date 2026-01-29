@@ -255,6 +255,43 @@ export async function deleteNotebook(id) {
   return notebook;
 }
 
+/**
+ * Purge a notebook (mark for permanent deletion)
+ * This also purges all notes within the notebook
+ */
+export async function purgeNotebook(id) {
+  const notebook = await db.get("notebooks", id);
+  if (!notebook) return;
+
+  // Purge all notes in this notebook first
+  const notes = await db.getAllFromIndex("notes", "notebookId", id);
+  for (const note of notes) {
+    await purgeNote(note.id);
+  }
+
+  // Create a purged stub for the notebook
+  const stub = {
+    id: notebook.id,
+    title: notebook.title, // Keep title for logs/debugging
+    purged: true,
+    deleted: true,
+    synced: false, // Mark as unsynced to trigger upload/processing
+    modified: Date.now(),
+    lastSyncedEtag: notebook.lastSyncedEtag,
+  };
+
+  await db.put("notebooks", stub);
+  console.log("Notebook purged (stubbed):", id);
+}
+
+/**
+ * Permanently delete a notebook record from the database (after sync)
+ */
+export async function permanentlyDeleteNotebook(id) {
+  await db.delete("notebooks", id);
+  console.log("Notebook permanently deleted from DB:", id);
+}
+
 // ========== Note Operations ==========
 
 /**
@@ -392,6 +429,74 @@ export async function deleteNote(id) {
   return note;
 }
 
+/**
+ * Purge a note (mark for permanent deletion and remove content/media)
+ * This keeps a stub to ensure the deletion is synced to Nextcloud
+ */
+export async function purgeNote(id) {
+  const note = await db.get("notes", id);
+  if (!note) return;
+
+  // Delete local media files immediately to free space
+  // Handle both encrypted and unencrypted media arrays
+  let mediaItems = [];
+  try {
+    // If note is encrypted, decrypt to access media array
+    if (note.encrypted) {
+      const decrypted = await decryptNoteIfNeeded(note);
+      if (decrypted?.media && Array.isArray(decrypted.media)) {
+        mediaItems = decrypted.media;
+      }
+    } else if (note.media && Array.isArray(note.media)) {
+      mediaItems = note.media;
+    }
+  } catch (e) {
+    // If decryption fails (app locked), media files will be orphaned
+    // but purge should still proceed to maintain data consistency
+    console.warn("[Storage] Could not decrypt note for media cleanup during purge:", e);
+  }
+
+  for (const item of mediaItems) {
+    if (item.fileId) {
+      await deleteFile(item.fileId);
+    }
+  }
+
+  // Create a purged stub
+  const stub = {
+    id: note.id,
+    notebookId: note.notebookId,
+    purged: true, // Flag for sync
+    deleted: true,
+    synced: false, // Mark as unsynced to trigger upload/processing
+    modified: Date.now(),
+    lastSyncedEtag: note.lastSyncedEtag,
+    _currentFileEtag: note._currentFileEtag,
+  };
+
+  await db.put("notes", stub);
+  console.log("Note purged (stubbed):", id);
+}
+
+/**
+ * Permanently delete a note record from the database (after sync)
+ */
+export async function permanentlyDeleteNote(id) {
+  await db.delete("notes", id);
+  console.log("Note permanently deleted from DB:", id);
+}
+
+/**
+ * Permanently delete all notes belonging to a notebook (used when purging notebook)
+ */
+export async function permanentlyDeleteNotesInNotebook(notebookId) {
+  const notes = await db.getAllFromIndex("notes", "notebookId", notebookId);
+  for (const note of notes) {
+    await db.delete("notes", note.id);
+    console.log("Note permanently deleted from DB:", note.id);
+  }
+}
+
 // ========== Recycle Bin Operations ==========
 
 /**
@@ -399,7 +504,8 @@ export async function deleteNote(id) {
  */
 export async function getDeletedNotebooks() {
   const allNotebooks = await db.getAll("notebooks");
-  return allNotebooks.filter((n) => n.deleted).sort((a, b) => b.modified - a.modified);
+  // Filter out notebooks that are already purged (stubs)
+  return allNotebooks.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
 }
 
 /**
@@ -407,7 +513,8 @@ export async function getDeletedNotebooks() {
  */
 export async function getDeletedNotes() {
   const allNotes = await db.getAll("notes");
-  return allNotes.filter((n) => n.deleted).sort((a, b) => b.modified - a.modified);
+  // Filter out notes that are already purged (stubs)
+  return allNotes.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
 }
 
 /**

@@ -107,7 +107,7 @@
 
 .note-canvas-toolbar {
   display: flex;
-  gap: 16px;
+  gap: 8px;
   padding: 10px 20px;
   width: 100%;
   background-color: var(--bg-primary);
@@ -116,8 +116,8 @@
 }
 
 .note-canvas-toolbar__button {
-  width: 48px;
-  height: 48px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: 1px solid var(--border-primary, #e2e8f0);
   background-color: var(--bg-primary, #ffffff);
@@ -236,20 +236,6 @@
   visibility: visible;
   pointer-events: auto;
   transform: translateY(0);
-}
-
-/* Dialog arrow - positioned off-center to align with button */
-.note-canvas-toolbar__pen-dialog::before {
-  content: "";
-  position: absolute;
-  top: -6px;
-  left: 24px;
-  transform: rotate(45deg);
-  width: 12px;
-  height: 12px;
-  background-color: var(--bg-primary, #ffffff);
-  border-left: 1px solid var(--border-primary, #e2e8f0);
-  border-top: 1px solid var(--border-primary, #e2e8f0);
 }
 
 .note-canvas-toolbar__pen-dialog-section {
@@ -437,6 +423,7 @@
 .note-canvas-toolbar__option-btn {
   text-align: left;
   padding: 6px 8px;
+  white-space: nowrap;
   border: none;
   background: transparent;
   border-radius: 4px;
@@ -619,4 +606,24 @@
 .crop-mode-btn {
   background: #e5e7eb;
   color: #374151;
+}
+
+/* Recycle Bin Styles */
+.btn-purge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid #fee2e2;
+  background-color: #fef2f2;
+  color: #dc2626;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+
+.btn-purge:hover {
+  background-color: #fee2e2;
+  border-color: #fecaca;
 }

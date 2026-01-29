@@ -29,6 +29,7 @@ export function createEmptyTombstone() {
   return {
     notes: [],
     media: [],
+    notebooks: [],
   };
 }
 
@@ -78,6 +79,27 @@ export function addMediaTombstone(tombstone, noteId, filename) {
 }
 
 /**
+ * Add a deleted notebook to tombstone
+ */
+export function addNotebookTombstone(tombstone, notebookId) {
+  if (!tombstone.notebooks) {
+    tombstone.notebooks = [];
+  }
+
+  const existing = tombstone.notebooks.find((t) => t.id === notebookId);
+  if (existing) {
+    return tombstone;
+  }
+
+  tombstone.notebooks.push({
+    id: notebookId,
+    deletedAt: new Date().toISOString(),
+  });
+
+  return tombstone;
+}
+
+/**
  * Remove a note from tombstone (e.g., after successful cleanup)
  */
 export function removeNoteTombstone(tombstone, noteId) {
@@ -117,6 +139,10 @@ export function cleanupOldTombstones(tombstone) {
 
   if (tombstone.media) {
     tombstone.media = tombstone.media.filter((t) => t.deletedAt > cutoffTime);
+  }
+
+  if (tombstone.notebooks) {
+    tombstone.notebooks = tombstone.notebooks.filter((t) => t.deletedAt > cutoffTime);
   }
 
   return tombstone;
@@ -212,6 +238,23 @@ export function mergeTombstones(local, remote) {
   }
 
   merged.media = Array.from(mediaMap.values());
+
+  // Merge notebooks
+  const notebookMap = new Map();
+  if (local.notebooks) {
+    local.notebooks.forEach((n) => {
+      notebookMap.set(n.id, n);
+    });
+  }
+  if (remote.notebooks) {
+    remote.notebooks.forEach((n) => {
+      const existing = notebookMap.get(n.id);
+      if (!existing || n.deletedAt > existing.deletedAt) {
+        notebookMap.set(n.id, n);
+      }
+    });
+  }
+  merged.notebooks = Array.from(notebookMap.values());
 
   return merged;
 }
