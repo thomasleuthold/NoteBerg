@@ -263,7 +263,11 @@ export async function performSync({
       ) {
         console.warn(`[Sync] Race condition detected for note ${note.id}. Merging changes.`);
         const merged = attemptMerge(currentLocalNote, noteToSave);
-        await saveNote(merged);
+        if (merged) {
+          await saveNote(merged);
+        } else {
+          console.warn(`[Sync] Merge failed for note ${note.id} (content conflict). Keeping local version.`);
+        }
       } else {
         await saveNote(noteToSave);
       }

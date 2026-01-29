@@ -246,7 +246,7 @@ export async function clearCredentials() {
  */
 export async function isAuthenticated() {
   const creds = await getStoredCredentials();
-  return creds?.serverUrl && creds.loginName && creds.appPassword;
+  return !!(creds?.serverUrl && creds.loginName && creds.appPassword);
 }
 
 /**
@@ -1489,22 +1489,22 @@ export function attemptMerge(local, remote) {
   );
 
   // Attempt to merge text content.
+  const localContent = local.content || "";
+  const remoteContent = remote.content || "";
   let mergedContent;
-  if (local.content === remote.content) {
+  if (localContent === remoteContent) {
     // Content is identical, no merge needed.
-    mergedContent = local.content;
-  } else if (remote.content.includes(local.content)) {
+    mergedContent = localContent;
+  } else if (remoteContent.includes(localContent)) {
     // The remote content contains the local content, so it's likely an append. Use remote.
-    mergedContent = remote.content;
-  } else if (local.content.includes(remote.content)) {
+    mergedContent = remoteContent;
+  } else if (localContent.includes(remoteContent)) {
     // The local content contains the remote content, so it's likely an append. Use local.
-    mergedContent = local.content;
+    mergedContent = localContent;
   } else {
     // This is a true conflict where both texts have diverged.
-    // We apply a "last write wins" strategy based on the note's modified timestamp.
-    // This handles the case where one client changed text and another changed strokes,
-    // by picking the content from the more recent change.
-    mergedContent = newerNote.content;
+    // Return null to signal that manual conflict resolution is required.
+    return null;
   }
 
   // Merge title using "last write wins".
@@ -1512,6 +1512,27 @@ export function attemptMerge(local, remote) {
 
   // Merge tags by taking the union of both sets.
   const mergedTags = [...new Set([...(local.tags || []), ...(remote.tags || [])])];
+
+  // Merge media
+  const localMedia = local.media || [];
+  const remoteMedia = remote.media || [];
+  const localDeletedMedia = local.deletedMedia || [];
+  const remoteDeletedMedia = remote.deletedMedia || [];
+
+  const allDeletedMedia = new Set([...localDeletedMedia, ...remoteDeletedMedia]);
+  const mediaMap = new Map();
+
+  // Helper to add media (newer overwrites older if same ID)
+  const addMedia = (items) => {
+    for (const item of items) {
+      if (item.id && !allDeletedMedia.has(item.id)) {
+        mediaMap.set(item.id, item);
+      }
+    }
+  };
+
+  addMedia(localIsNewer ? remoteMedia : localMedia); // Add older first
+  addMedia(localIsNewer ? localMedia : remoteMedia); // Add newer second (wins)
 
   // Construct the merged note.
   return {
@@ -1523,6 +1544,8 @@ export function attemptMerge(local, remote) {
     content: mergedContent,
     strokes: mergedStrokeData.strokes,
     deletedStrokes: mergedStrokeData.deletedStrokes,
+    media: Array.from(mediaMap.values()),
+    deletedMedia: Array.from(allDeletedMedia),
     tags: mergedTags,
     deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
 
