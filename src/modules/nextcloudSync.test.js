@@ -3,15 +3,19 @@
  * Comprehensive unit tests for Nextcloud Sync with a stateful WebDAV mock.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetch } from "@tauri-apps/plugin-http";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attemptMerge,
+  cleanupLegacyFiles,
+  deleteRemoteNote,
+  deleteRemoteNotebook,
   downloadAllData,
   fullSync,
   isAuthenticated,
+  migrateToHierarchical,
+  needsMigration,
   startLoginFlow,
-  syncNotebooks,
   syncNotes,
 } from "./nextcloudSync.js";
 
@@ -56,6 +60,7 @@ vi.mock("./storage.js", async (importOriginal) => {
     permanentlyDeleteNotebook: vi.fn(),
     permanentlyDeleteNotesInNotebook: vi.fn(),
     getSetting: vi.fn(() => Promise.resolve(null)),
+    getStorageVersion: vi.fn(() => Promise.resolve(1)),
     isNextcloudEncryptionEnabled: vi.fn(() => Promise.resolve(false)),
     isLocalEncryptionEnabled: vi.fn(() => Promise.resolve(false)),
     initStorage: vi.fn(() => Promise.resolve()),
@@ -296,12 +301,12 @@ describe("Nextcloud Sync Module", () => {
     it("should complete login flow", async () => {
       vi.useFakeTimers();
       mockSecureStorage.clear();
-      
+
       const loginPromise = startLoginFlow("https://cloud.example.com");
-      
+
       // Advance time to trigger the poll interval (5000ms)
       await vi.advanceTimersByTimeAsync(6000);
-      
+
       const creds = await loginPromise;
 
       expect(creds).toEqual({
@@ -314,61 +319,61 @@ describe("Nextcloud Sync Module", () => {
     });
   });
 
-  describe("Sync Logic", () => {
-    it("should upload a new notebook", async () => {
-      const notebook = { id: "nb1", title: "Test Notebook", modified: Date.now() };
+  describe("Sync Logic (Incremental & Filtering)", () => {
+    it("should only download changed items (Incremental Sync)", async () => {
+      // Setup remote
+      const note1 = { id: "n1", content: "A", modified: 1000 };
+      const note2 = { id: "n2", content: "B", modified: 1000 };
 
-      const result = await syncNotebooks([notebook]);
-
-      expect(result.uploaded).toBe(1);
-      expect(mockServer.files.has("/oneJournal/notebooks/nb1")).toBe(true);
-      expect(mockServer.files.has("/oneJournal/notebooks/nb1/_notebook.json")).toBe(true);
-
-      const remoteContent = JSON.parse(
-        mockServer.files.get("/oneJournal/notebooks/nb1/_notebook.json").content,
-      );
-      expect(remoteContent.title).toBe("Test Notebook");
-      expect(remoteContent.synced).toBe(true);
-    });
-
-    it("should upload a new note", async () => {
-      const note = {
-        id: "note1",
-        notebookId: "nb1",
-        title: "Test Note",
-        content: "Hello",
-        modified: Date.now(),
-      };
-
-      // Ensure parent folders exist
-      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true });
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes", { isCollection: true });
-
-      const result = await syncNotes([note]);
-
-      expect(result.uploaded).toBe(1);
-      expect(mockServer.files.has("/oneJournal/notebooks/nb1/notes/note1.json")).toBe(true);
-    });
-
-    it("should download remote changes", async () => {
-      // Setup remote state
-      const remoteNotebook = { id: "nb1", title: "Remote Notebook", modified: Date.now() };
-      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true });
-      mockServer.files.set("/oneJournal/notebooks/nb1/_notebook.json", {
-        isCollection: false,
-        content: JSON.stringify(remoteNotebook),
-        etag: "etag1",
+      mockServer.files.set("/oneJournal/notebooks/nb1/notes/n1.json", {
+        content: JSON.stringify(note1),
+        etag: "etag-A",
+        mtime: new Date(),
+      });
+      mockServer.files.set("/oneJournal/notebooks/nb1/notes/n2.json", {
+        content: JSON.stringify(note2),
+        etag: "etag-B",
         mtime: new Date(),
       });
 
-      const { notebooks } = await downloadAllData([], []);
+      // Local state
+      const localNote1 = { id: "n1", notebookId: "nb1", lastSyncedEtag: "etag-A" }; // Match
+      const localNote2 = { id: "n2", notebookId: "nb1", lastSyncedEtag: "old-etag" }; // Mismatch
 
-      expect(notebooks).toHaveLength(1);
-      expect(notebooks[0].title).toBe("Remote Notebook");
-      expect(notebooks[0].lastSyncedEtag).toBe("etag1");
+      const result = await downloadAllData([], [localNote1, localNote2]);
+
+      // Should return both notes (one stub, one downloaded)
+      expect(result.notes).toHaveLength(2);
+
+      // n1 should be a stub (no content downloaded)
+      const resN1 = result.notes.find((n) => n.id === "n1");
+      expect(resN1.content).toBeUndefined();
+
+      // n2 should be downloaded
+      const resN2 = result.notes.find((n) => n.id === "n2");
+      expect(resN2.content).toBe("B");
     });
 
-    it("should handle conflict: local modified, remote modified (Remote Newer)", async () => {
+    it("should only upload modified items", async () => {
+      const nb1 = { id: "nb1", synced: true, lastSyncedEtag: "etag-1" };
+      const nb2 = { id: "nb2", synced: false }; // Modified
+
+      // Remote has nb1
+      mockServer.files.set("/oneJournal/notebooks/nb1/_notebook.json", {
+        content: JSON.stringify(nb1),
+        etag: "etag-1",
+      });
+
+      const result = await fullSync([nb1, nb2], []);
+
+      expect(result.uploaded.notebooks.uploaded).toBe(1);
+      expect(result.uploaded.notebooks.uploadedIds).toContain("nb2");
+      expect(result.uploaded.notebooks.uploadedIds).not.toContain("nb1");
+    });
+  });
+
+  describe("Conflict Resolution", () => {
+    it("should handle true conflict (divergent content)", async () => {
       const noteId = "note1";
       const notebookId = "nb1";
 
@@ -392,8 +397,14 @@ describe("Nextcloud Sync Module", () => {
         modified: 2000,
       };
 
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}`, { isCollection: true });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes`, { isCollection: true });
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
       mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
         isCollection: false,
         content: JSON.stringify(remoteNote),
@@ -409,6 +420,68 @@ describe("Nextcloud Sync Module", () => {
       expect(result.conflicts.notes[0].remote.title).toBe("Remote Title");
     });
 
+    it("should auto-merge when local content contains remote (No Conflict)", async () => {
+      const noteId = "n-merge";
+      const local = {
+        id: noteId,
+        notebookId: "nb1",
+        content: "Hello World",
+        modified: 2000,
+        synced: false,
+        lastSyncedEtag: "old",
+      };
+      const remote = {
+        id: noteId,
+        notebookId: "nb1",
+        content: "Hello",
+        modified: 1000,
+      };
+
+      // Setup remote
+      mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}.json`, {
+        content: JSON.stringify(remote),
+        etag: "new",
+        mtime: new Date(),
+      });
+
+      const result = await fullSync([], [local]);
+
+      // Should NOT report conflict
+      expect(result.conflicts.notes).toHaveLength(0);
+
+      // Should upload merged version (local wins content)
+      expect(result.uploaded.notes.uploaded).toBe(1);
+      const uploadedContent = JSON.parse(
+        mockServer.files.get(`/oneJournal/notebooks/nb1/notes/${noteId}.json`).content,
+      );
+      expect(uploadedContent.content).toBe("Hello World");
+    });
+
+    it("should restore locally modified item if deleted remotely", async () => {
+      const noteId = "n-restore";
+      const local = {
+        id: noteId,
+        notebookId: "nb1",
+        content: "I am alive",
+        modified: 2000,
+        synced: false,
+        deleted: false,
+      };
+
+      // Remote: Tombstone says deleted
+      const tombstone = { notes: [{ id: noteId, deletedAt: new Date().toISOString() }] };
+      mockServer.files.set("/oneJournal/notebooks/nb1/_tombstones.json", {
+        content: JSON.stringify(tombstone),
+      });
+
+      const result = await fullSync([], [local]);
+
+      expect(result.uploaded.notes.uploaded).toBe(1);
+      expect(mockServer.files.has(`/oneJournal/notebooks/nb1/notes/${noteId}.json`)).toBe(true);
+    });
+  });
+
+  describe("Media Handling", () => {
     it("should upload note with media", async () => {
       const noteId = "note-media-test";
       const fileId = "file-123";
@@ -422,8 +495,11 @@ describe("Nextcloud Sync Module", () => {
       };
 
       // Ensure parent folders exist
-      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true });
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes", { isCollection: true });
+      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/oneJournal/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
 
       const result = await syncNotes([note]);
       expect(result.uploaded).toBe(1);
@@ -443,16 +519,22 @@ describe("Nextcloud Sync Module", () => {
       const deleteFileId = "delete-me";
 
       // Setup remote state: Note folder with 2 files
-      mockServer.files.set(`/oneJournal/notebooks/nb1`, { isCollection: true });
-      mockServer.files.set(`/oneJournal/notebooks/nb1/notes`, { isCollection: true });
+      mockServer.files.set(`/oneJournal/notebooks/nb1`, { isCollection: true, mtime: new Date() });
+      mockServer.files.set(`/oneJournal/notebooks/nb1/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
       mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}_media`, {
         isCollection: true,
+        mtime: new Date(),
       });
       mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}_media/${keepFileId}.bin`, {
         content: "data",
+        mtime: new Date(),
       });
       mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}_media/${deleteFileId}.bin`, {
         content: "data",
+        mtime: new Date(),
       });
 
       // Local note only has one media item
@@ -509,38 +591,102 @@ describe("Nextcloud Sync Module", () => {
       // Should track deletions
       expect(merged.deletedMedia).toContain("media-B");
     });
+  });
 
-    it("should purge a single note", async () => {
-      const noteId = "note-purge-single";
-      mockServer.files.set(`/oneJournal/quickNotes`, { isCollection: true });
-      mockServer.files.set(`/oneJournal/quickNotes/${noteId}.json`, { content: "{}" });
+  describe("Edge Cases & Features", () => {
+    it("should sync quick notes (no notebook)", async () => {
+      const note = { id: "qn1", notebookId: null, title: "Quick", modified: Date.now() };
 
-      const note = { id: noteId, purged: true, deleted: true };
-      await syncNotes([note]);
+      await fullSync([], [note]);
 
-      expect(mockServer.files.has(`/oneJournal/quickNotes/${noteId}.json`)).toBe(false);
+      expect(mockServer.files.has("/oneJournal/quickNotes/qn1.json")).toBe(true);
+    });
+
+    it("should handle concurrent notebook and note purge", async () => {
+      // If notebook is purged, notes inside it shouldn't trigger individual delete requests
+      // because the parent folder deletion handles it.
+
+      const nb = { id: "nb-purge", purged: true };
+      const note = { id: "n-purge", notebookId: "nb-purge", purged: true };
+
+      // Setup remote
+      mockServer.files.set("/oneJournal/notebooks/nb-purge", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/oneJournal/notebooks/nb-purge/notes/n-purge.json", { content: "{}" });
+
+      const result = await fullSync([nb], [note]);
+
+      // Note should NOT be processed individually in syncNotes because fullSync filters it out
+      const noteInUploadList = result.notesToUpload.find((n) => n.id === "n-purge");
+      expect(noteInUploadList).toBeUndefined();
+
+      // Verify remote deletion happened via notebook purge
+      expect(mockServer.files.has("/oneJournal/notebooks/nb-purge")).toBe(false);
+    });
+
+    it("should retry upload on 412 Precondition Failed", async () => {
+      const note = {
+        id: "n-412",
+        notebookId: "nb1",
+        content: "New",
+        lastSyncedEtag: "wrong-etag",
+        synced: false,
+      };
+
+      // Remote exists with different etag
+      mockServer.files.set("/oneJournal/notebooks/nb1/notes/n-412.json", {
+        content: "{}",
+        etag: "real-etag",
+        mtime: new Date(),
+      });
+
+      // The sync logic will try to upload with If-Match: "wrong-etag"
+      // Mock server returns 412
+      // Logic should retry without If-Match
+
+      await fullSync([], [note]);
+
+      const file = mockServer.files.get("/oneJournal/notebooks/nb1/notes/n-412.json");
+      const content = JSON.parse(file.content);
+      expect(content.content).toBe("New");
+    });
+
+    it("should self-heal if synced: true but missing on server", async () => {
+      const note = { id: "n-heal", notebookId: "nb1", synced: true, content: "Heal Me" };
+
+      // Remote does NOT have file
+
+      const result = await fullSync([], [note]);
+
+      expect(result.uploaded.notes.uploaded).toBe(1);
+      expect(mockServer.files.has("/oneJournal/notebooks/nb1/notes/n-heal.json")).toBe(true);
     });
   });
 
-  describe("Purge Logic (Bug Reproduction)", () => {
+  describe("Purge Logic", () => {
     it("should correctly handle notebook purging", async () => {
-      // Scenario:
-      // 1. Notebook exists remotely
-      // 2. Client purges notebook locally
-      // 3. Sync should delete remote folder and update tombstone
-
       const notebookId = "nb-purge-test";
 
       // Setup remote state
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}`, { isCollection: true });
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
       mockServer.files.set(`/oneJournal/notebooks/${notebookId}/_notebook.json`, {
         isCollection: false,
         content: "{}",
+        mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes`, { isCollection: true });
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
       mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/note1.json`, {
         isCollection: false,
         content: "{}",
+        mtime: new Date(),
       });
 
       // Local state: Purged notebook
@@ -552,22 +698,10 @@ describe("Nextcloud Sync Module", () => {
         synced: false,
       };
 
-      // Also have a purged note inside it (simulating the bug condition)
-      const localNote = {
-        id: "note1",
-        notebookId: notebookId,
-        purged: true,
-        deleted: true,
-        synced: false,
-      };
-
-      const result = await fullSync([localNotebook], [localNote]);
+      const _result = await fullSync([localNotebook], []);
 
       // Verify remote deletion
       expect(mockServer.files.has(`/oneJournal/notebooks/${notebookId}`)).toBe(false);
-      expect(mockServer.files.has(`/oneJournal/notebooks/${notebookId}/notes/note1.json`)).toBe(
-        false,
-      );
 
       // Verify tombstone update
       expect(mockServer.files.has("/oneJournal/notebooks/_tombstones.json")).toBe(true);
@@ -575,22 +709,11 @@ describe("Nextcloud Sync Module", () => {
         mockServer.files.get("/oneJournal/notebooks/_tombstones.json").content,
       );
       expect(tombstone.notebooks.some((n) => n.id === notebookId)).toBe(true);
-
-      // Verify local cleanup instructions
-      // The sync function returns lists of items to delete locally
-      // Note: In the fixed implementation, purged items are handled inside syncNotebooks/syncNotes
-      // and don't necessarily appear in 'notebooksToDelete' which is for remote-driven deletions.
-      // However, we want to ensure no errors occurred.
-      expect(result.uploaded.notebooks.failed).toBe(0);
-      expect(result.uploaded.notes.failed).toBe(0);
+      // Verify deletedAt is present
+      expect(tombstone.notebooks.find((n) => n.id === notebookId).deletedAt).toBeTruthy();
     });
 
     it("should not re-upload purged notebook if another client syncs", async () => {
-      // Scenario:
-      // 1. Notebook is purged remotely (in tombstone)
-      // 2. Local client has it in recycle bin (deleted=true, purged=false)
-      // 3. Sync should detect remote purge and delete locally, NOT re-upload
-
       const notebookId = "nb-zombie";
 
       // Remote state: Tombstone exists, Folder gone
@@ -621,6 +744,89 @@ describe("Nextcloud Sync Module", () => {
 
       // Should instruct to delete locally
       expect(result.notebooksToDelete).toContain(notebookId);
+    });
+  });
+
+  describe("Standalone Operations", () => {
+    it("should delete remote note directly", async () => {
+      const noteId = "n-del-direct";
+      const notebookId = "nb1";
+
+      // Setup remote
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
+        content: "{}",
+      });
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/_tombstones.json`, {
+        content: "{}",
+      });
+
+      await deleteRemoteNote(noteId, notebookId);
+
+      expect(mockServer.files.has(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`)).toBe(
+        false,
+      );
+
+      const tombstone = JSON.parse(
+        mockServer.files.get(`/oneJournal/notebooks/${notebookId}/_tombstones.json`).content,
+      );
+      expect(tombstone.notes.some((n) => n.id === noteId)).toBe(true);
+    });
+
+    it("should handle errors in deleteRemoteNotebook", async () => {
+      const notebookId = "nb-error";
+
+      // Mock fetch to fail for this specific DELETE request
+      const originalFetch = fetch.getMockImplementation();
+      fetch.mockImplementation(async (url, options) => {
+        if (url.includes(notebookId) && options.method === "DELETE") {
+          return { ok: false, status: 500, statusText: "Server Error" };
+        }
+        return originalFetch(url, options);
+      });
+
+      const result = await deleteRemoteNotebook(notebookId);
+      expect(result).toBe(false);
+
+      // Restore fetch
+      fetch.mockImplementation(originalFetch);
+    });
+  });
+
+  describe("Migration Logic", () => {
+    it("should detect migration needed (Legacy files present, v1 storage)", async () => {
+      // Mock legacy files
+      mockServer.files.set("/oneJournal/notebook_old.json", { content: "{}", mtime: new Date() });
+
+      // Storage version is 1 by default in mocks
+      const needed = await needsMigration();
+      expect(needed).toBe(true);
+    });
+
+    it("should perform migration from flat to hierarchical", async () => {
+      // Setup legacy files
+      const nbContent = JSON.stringify({ id: "nb-mig", title: "Migrated" });
+      const noteContent = JSON.stringify({ id: "n-mig", notebookId: "nb-mig", title: "Note" });
+
+      mockServer.files.set("/oneJournal/notebook_nb-mig.json", { content: nbContent, mtime: new Date() });
+      mockServer.files.set("/oneJournal/note_n-mig.json", { content: noteContent, mtime: new Date() });
+
+      await migrateToHierarchical();
+
+      // Verify new structure exists
+      expect(mockServer.files.has("/oneJournal/notebooks/nb-mig/_notebook.json")).toBe(true);
+      expect(mockServer.files.has("/oneJournal/notebooks/nb-mig/notes/n-mig.json")).toBe(true);
+    });
+
+    it("should cleanup legacy files", async () => {
+      mockServer.files.set("/oneJournal/notebook_old.json", { content: "{}", mtime: new Date() });
+      mockServer.files.set("/oneJournal/note_old.json", { content: "{}", mtime: new Date() });
+      mockServer.files.set("/oneJournal/other.txt", { content: "{}", mtime: new Date() });
+
+      await cleanupLegacyFiles();
+
+      expect(mockServer.files.has("/oneJournal/notebook_old.json")).toBe(false);
+      expect(mockServer.files.has("/oneJournal/note_old.json")).toBe(false);
+      expect(mockServer.files.has("/oneJournal/other.txt")).toBe(true);
     });
   });
 });

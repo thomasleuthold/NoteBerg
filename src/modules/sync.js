@@ -266,7 +266,9 @@ export async function performSync({
         if (merged) {
           await saveNote(merged);
         } else {
-          console.warn(`[Sync] Merge failed for note ${note.id} (content conflict). Keeping local version.`);
+          console.warn(
+            `[Sync] Merge failed for note ${note.id} (content conflict). Keeping local version.`,
+          );
         }
       } else {
         await saveNote(noteToSave);
