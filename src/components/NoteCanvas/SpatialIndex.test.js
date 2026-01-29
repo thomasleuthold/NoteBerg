@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { SpatialIndex } from './SpatialIndex.js';
+import { beforeEach, describe, expect, it } from "vitest";
+import { SpatialIndex } from "./SpatialIndex.js";
 
-describe('SpatialIndex', () => {
+describe("SpatialIndex", () => {
   let spatialIndex;
   const bucketHeight = 100;
 
@@ -9,7 +9,7 @@ describe('SpatialIndex', () => {
     spatialIndex = new SpatialIndex(bucketHeight);
   });
 
-  it('should insert strokes into correct buckets', () => {
+  it("should insert strokes into correct buckets", () => {
     // Stroke 1: y=50 to y=150 (Spans Bucket 0 and 1)
     const stroke1 = { width: 2, x: [10, 20], y: [50, 150] };
     spatialIndex.insert(stroke1, 0);
@@ -24,10 +24,10 @@ describe('SpatialIndex', () => {
     expect(spatialIndex.buckets.get(2).has(1)).toBe(true);
   });
 
-  it('should query strokes visible in viewport', () => {
+  it("should query strokes visible in viewport", () => {
     const stroke1 = { width: 2, x: [10], y: [50, 150] }; // Index 0
     const stroke2 = { width: 2, x: [10], y: [250, 300] }; // Index 1
-    
+
     spatialIndex.insert(stroke1, 0);
     spatialIndex.insert(stroke2, 1);
 
@@ -42,24 +42,24 @@ describe('SpatialIndex', () => {
     expect(result2).not.toContain(0);
   });
 
-  it('should remove strokes correctly', () => {
+  it("should remove strokes correctly", () => {
     const stroke = { width: 2, x: [10], y: [50] };
     spatialIndex.insert(stroke, 0);
-    
+
     expect(spatialIndex.query(0, 100)).toContain(0);
 
     spatialIndex.remove(0);
     expect(spatialIndex.query(0, 100)).not.toContain(0);
   });
 
-  it('should handle bulk build', () => {
+  it("should handle bulk build", () => {
     const strokes = [
       { width: 2, x: [10], y: [50] },
-      { width: 2, x: [10], y: [150] }
+      { width: 2, x: [10], y: [150] },
     ];
-    
+
     spatialIndex.build(strokes);
-    
+
     expect(spatialIndex.totalStrokes).toBe(2);
     expect(spatialIndex.query(0, 100)).toContain(0);
     expect(spatialIndex.query(100, 200)).toContain(1);

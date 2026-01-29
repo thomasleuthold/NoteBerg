@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { InputHandler } from './InputHandler.js';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { InputHandler } from "./InputHandler.js";
 
 // Polyfill PointerEvent for jsdom
 global.PointerEvent = class PointerEvent extends Event {
@@ -9,18 +9,18 @@ global.PointerEvent = class PointerEvent extends Event {
     this.clientY = props.clientY || 0;
     this.pointerId = props.pointerId || 0;
     this.pressure = props.pressure || 0;
-    this.pointerType = props.pointerType || 'mouse';
+    this.pointerType = props.pointerType || "mouse";
   }
 };
 
-describe('InputHandler', () => {
+describe("InputHandler", () => {
   let element;
   let contextProvider;
   let callbacks;
   let inputHandler;
 
   beforeEach(() => {
-    element = document.createElement('div');
+    element = document.createElement("div");
     element.setPointerCapture = vi.fn();
     element.releasePointerCapture = vi.fn();
     element.hasPointerCapture = vi.fn(() => true);
@@ -42,25 +42,37 @@ describe('InputHandler', () => {
     inputHandler = new InputHandler(element, contextProvider, callbacks);
   });
 
-  it('handles pointer down', () => {
-    const event = new PointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerId: 1, pressure: 0.5 });
+  it("handles pointer down", () => {
+    const event = new PointerEvent("pointerdown", {
+      clientX: 10,
+      clientY: 10,
+      pointerId: 1,
+      pressure: 0.5,
+    });
     element.dispatchEvent(event);
 
-    expect(callbacks.onStrokeStart).toHaveBeenCalledWith(expect.objectContaining({
-      x: 10,
-      y: 10,
-      pressure: 0.5
-    }));
+    expect(callbacks.onStrokeStart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        x: 10,
+        y: 10,
+        pressure: 0.5,
+      }),
+    );
     expect(element.setPointerCapture).toHaveBeenCalledWith(1);
     expect(inputHandler.isDrawing).toBe(true);
   });
 
-  it('handles pointer move when drawing', () => {
+  it("handles pointer move when drawing", () => {
     // Start drawing first
-    const downEvent = new PointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerId: 1 });
+    const downEvent = new PointerEvent("pointerdown", { clientX: 10, clientY: 10, pointerId: 1 });
     element.dispatchEvent(downEvent);
 
-    const moveEvent = new PointerEvent('pointermove', { clientX: 20, clientY: 20, pointerId: 1, pressure: 0.6 });
+    const moveEvent = new PointerEvent("pointermove", {
+      clientX: 20,
+      clientY: 20,
+      pointerId: 1,
+      pressure: 0.6,
+    });
     element.dispatchEvent(moveEvent);
 
     expect(callbacks.onStrokeMove).toHaveBeenCalled();
@@ -68,18 +80,18 @@ describe('InputHandler', () => {
     expect(points[0]).toMatchObject({ x: 20, y: 20, pressure: 0.6 });
   });
 
-  it('ignores pointer move when not drawing', () => {
-    const moveEvent = new PointerEvent('pointermove', { clientX: 20, clientY: 20, pointerId: 1 });
+  it("ignores pointer move when not drawing", () => {
+    const moveEvent = new PointerEvent("pointermove", { clientX: 20, clientY: 20, pointerId: 1 });
     element.dispatchEvent(moveEvent);
     expect(callbacks.onStrokeMove).not.toHaveBeenCalled();
   });
 
-  it('handles pointer up', () => {
+  it("handles pointer up", () => {
     // Start drawing
-    const downEvent = new PointerEvent('pointerdown', { clientX: 10, clientY: 10, pointerId: 1 });
+    const downEvent = new PointerEvent("pointerdown", { clientX: 10, clientY: 10, pointerId: 1 });
     element.dispatchEvent(downEvent);
 
-    const upEvent = new PointerEvent('pointerup', { clientX: 20, clientY: 20, pointerId: 1 });
+    const upEvent = new PointerEvent("pointerup", { clientX: 20, clientY: 20, pointerId: 1 });
     element.dispatchEvent(upEvent);
 
     expect(callbacks.onStrokeEnd).toHaveBeenCalled();
@@ -87,23 +99,23 @@ describe('InputHandler', () => {
     expect(inputHandler.isDrawing).toBe(false);
   });
 
-  it('calculates coordinates with zoom and scroll', () => {
+  it("calculates coordinates with zoom and scroll", () => {
     contextProvider.getZoom.mockReturnValue(2);
     contextProvider.getScroll.mockReturnValue({ left: 50, top: 50 });
-    
+
     // Screen: 100, 100
     // Viewport relative: 100, 100
     // Content: (100 + 50) / 2 = 75
-    
+
     const coords = inputHandler.getContentCoordinates(100, 100);
     expect(coords).toEqual({ x: 75, y: 75 });
   });
 
-  it('applies offset correctly', () => {
+  it("applies offset correctly", () => {
     // Simulate centered canvas (offset x=20)
     contextProvider.getOffset.mockReturnValue({ x: 20, y: 0 });
-    
-    // Screen X = 100. 
+
+    // Screen X = 100.
     // Viewport relative = 100.
     // Content X = (100 - 20) / 1 = 80.
     const coords = inputHandler.getContentCoordinates(100, 100);
