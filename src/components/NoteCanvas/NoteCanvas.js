@@ -283,9 +283,7 @@ export class NoteCanvas {
     this.renderer.setData(inMemoryData.strokes, inMemoryData.background);
     // Redraw deferred to next interaction (scroll/zoom) to avoid interruption
 
-    console.log(
-      `[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`,
-    );
+    console.log(`[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`);
   }
 
   /**
