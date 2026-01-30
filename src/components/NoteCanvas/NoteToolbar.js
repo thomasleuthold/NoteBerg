@@ -78,6 +78,7 @@ export class NoteToolbar {
     // Pen settings state
     this.penWidth = this.penPresets[0].width;
     this.penColorIndex = this.penPresets[0].colorIndex;
+    this.lastSelectedPresetIndex = 0;
 
     // Bind methods
     this._handleDocumentPointerDown = this._handleDocumentPointerDown.bind(this);
@@ -203,6 +204,9 @@ export class NoteToolbar {
     // Render Presets
     const palette = getThemePalette();
     this.penPresets.forEach((preset, index) => {
+      const row = document.createElement("div");
+      row.className = "note-canvas-toolbar__preset-row";
+
       const btn = document.createElement("button");
       btn.className = "note-canvas-toolbar__preset-btn";
       if (this.penWidth === preset.width && this.penColorIndex === preset.colorIndex) {
@@ -223,6 +227,7 @@ export class NoteToolbar {
         e.stopPropagation();
         this.penWidth = preset.width;
         this.penColorIndex = preset.colorIndex;
+        this.lastSelectedPresetIndex = index;
         this._updatePenIconColor();
         this._notifyPenSettingsChange();
         this._updatePresetActiveStates();
@@ -231,25 +236,30 @@ export class NoteToolbar {
         }
       };
 
-      // Long press to save preset
-      let pressTimer;
-      const startPress = (e) => {
+      // Save Button
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "note-canvas-toolbar__save-preset-btn";
+      saveBtn.title = "Save current settings to this preset";
+      saveBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>`;
+      
+      saveBtn.onclick = (e) => {
         e.stopPropagation();
-        pressTimer = setTimeout(() => {
-          if (confirm("Update this preset with current settings?")) {
-            this.penPresets[index] = { width: this.penWidth, colorIndex: this.penColorIndex };
-            this.onPresetChange(this.penPresets);
-            this._renderDialogContent();
-          }
-        }, 600);
+        this.penPresets[index] = { width: this.penWidth, colorIndex: this.penColorIndex };
+
+        // Update visual state of the preset button immediately
+        const newColor = palette[this.penColorIndex] || palette[0];
+        const newSize = Math.min(20, Math.max(4, this.penWidth * 2));
+        dot.style.width = `${newSize}px`;
+        dot.style.height = `${newSize}px`;
+        dot.style.backgroundColor = newColor;
+
+        this.onPresetChange(this.penPresets);
+        this._updatePresetActiveStates();
       };
-      const cancelPress = () => clearTimeout(pressTimer);
 
-      btn.onpointerdown = startPress;
-      btn.onpointerup = cancelPress;
-      btn.onpointerleave = cancelPress;
-
-      presetsCol.appendChild(btn);
+      row.appendChild(btn);
+      row.appendChild(saveBtn);
+      presetsCol.appendChild(row);
     });
 
     this.penSettingsDialog.appendChild(presetsCol);
@@ -269,13 +279,36 @@ export class NoteToolbar {
    * @private
    */
   _updatePresetActiveStates() {
-    const btns = this.penSettingsDialog.querySelectorAll(".note-canvas-toolbar__preset-btn");
-    btns.forEach((btn, index) => {
-      const preset = this.penPresets[index];
+    // 1. Check if current settings match any preset exactly
+    let matchIndex = -1;
+    this.penPresets.forEach((preset, index) => {
       if (this.penWidth === preset.width && this.penColorIndex === preset.colorIndex) {
+        matchIndex = index;
+      }
+    });
+
+    // If we found a match, that becomes our "last selected" (contextually)
+    if (matchIndex !== -1) {
+      this.lastSelectedPresetIndex = matchIndex;
+    }
+
+    const btns = this.penSettingsDialog.querySelectorAll(".note-canvas-toolbar__preset-btn");
+    const saveBtns = this.penSettingsDialog.querySelectorAll(".note-canvas-toolbar__save-preset-btn");
+
+    btns.forEach((btn, index) => {
+      const saveBtn = saveBtns[index];
+      
+      if (index === matchIndex) {
         btn.classList.add("note-canvas-toolbar__preset-btn--active");
+        saveBtn.style.display = "none";
       } else {
         btn.classList.remove("note-canvas-toolbar__preset-btn--active");
+        // Show save button if this was the last selected preset and we are in a "modified" state (no exact match)
+        if (matchIndex === -1 && index === this.lastSelectedPresetIndex) {
+          saveBtn.style.display = "flex";
+        } else {
+          saveBtn.style.display = "none";
+        }
       }
     });
   }
