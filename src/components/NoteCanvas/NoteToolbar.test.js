@@ -20,7 +20,14 @@ describe("NoteToolbar", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     onModeChange = vi.fn();
-    toolbar = new NoteToolbar(container, onModeChange);
+    toolbar = new NoteToolbar(container, onModeChange, {
+      penPresets: [
+        { width: 2, colorIndex: 0 },
+        { width: 4, colorIndex: 1 },
+        { width: 6, colorIndex: 2 },
+        { width: 8, colorIndex: 3 },
+      ],
+    });
   });
 
   afterEach(() => {

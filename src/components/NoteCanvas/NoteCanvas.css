@@ -208,34 +208,89 @@
    ========================================================================== */
 
 .note-canvas-toolbar__pen-dialog {
+  display: none;
+  flex-direction: row;
   position: absolute;
   top: 100%;
   left: 0;
-  margin-top: 8px;
-  padding: 16px;
-  min-width: 220px;
+  margin-top: 0;
+  padding: 0;
   background-color: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-primary, #e2e8f0);
-  border-radius: 12px;
-  box-shadow:
-    0 10px 25px -5px rgba(0, 0, 0, 0.15),
-    0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  border-radius: 0;
+  border-left: none;
+  border-top: none;
+  box-shadow: 2px 4px 8px rgba(0, 0, 0, 0.1);
   z-index: 100;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition:
-    opacity 0.2s ease,
-    visibility 0.2s ease,
-    transform 0.2s ease;
-  transform: translateY(-4px);
+  overflow: hidden;
 }
 
 .note-canvas-toolbar__pen-dialog--open {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transform: translateY(0);
+  display: flex;
+}
+
+.note-canvas-toolbar__presets {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+  background: var(--bg-secondary, #f5f5f5);
+  border-right: 1px solid var(--border-primary, #e2e8f0);
+  align-items: center;
+}
+
+.note-canvas-toolbar__presets:last-child {
+  border-right: none;
+}
+
+.note-canvas-toolbar__settings-container {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 240px;
+}
+
+.note-canvas-toolbar__preset-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: white;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.note-canvas-toolbar__preset-btn:active {
+  transform: scale(0.95);
+}
+
+.note-canvas-toolbar__preset-btn--active {
+  border-color: var(--color-primary, #3b82f6);
+  background-color: #eef2ff;
+}
+
+.note-canvas-toolbar__expand-btn {
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--text-secondary, #64748b);
+  display: flex;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.note-canvas-toolbar__expand-btn:hover {
+  color: var(--text-primary, #1e293b);
+  background-color: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
 }
 
 .note-canvas-toolbar__pen-dialog-section {

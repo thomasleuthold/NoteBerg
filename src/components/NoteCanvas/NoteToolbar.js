@@ -70,9 +70,14 @@ export class NoteToolbar {
     this.optionsBtnContainer = null;
     this.currentMode = "pan";
 
+    // Presets state
+    this.penPresets = options.penPresets;
+    this.onPresetChange = options.onPresetChange || (() => {});
+    this.isExpanded = false; // Default to quick mode (collapsed)
+
     // Pen settings state
-    this.penWidth = 2;
-    this.penColorIndex = 0;
+    this.penWidth = this.penPresets[0].width;
+    this.penColorIndex = this.penPresets[0].colorIndex;
 
     // Bind methods
     this._handleDocumentPointerDown = this._handleDocumentPointerDown.bind(this);
@@ -83,6 +88,9 @@ export class NoteToolbar {
   _createDOM() {
     this.element = document.createElement("div");
     this.element.className = "note-canvas-toolbar";
+    this.element.style.position = "relative";
+    this.element.style.zIndex = "100";
+    this.element.style.overflow = "visible";
 
     const createBtn = (id, icon, title) => {
       const btn = document.createElement("button");
@@ -161,12 +169,136 @@ export class NoteToolbar {
   _createPenSettingsDialog() {
     this.penSettingsDialog = document.createElement("div");
     this.penSettingsDialog.className = "note-canvas-toolbar__pen-dialog";
-    this.penSettingsDialog.innerHTML = this._getPenDialogHTML();
 
-    this.drawBtnContainer.appendChild(this.penSettingsDialog);
+    this._renderDialogContent();
 
-    // Set up event listeners for dialog controls
-    this._setupPenDialogListeners();
+    this.element.appendChild(this.penSettingsDialog);
+  }
+
+  /**
+   * Render the dialog content based on expanded state
+   * @private
+   */
+  _renderDialogContent() {
+    this.penSettingsDialog.innerHTML = "";
+
+    // 1. Presets Column
+    const presetsCol = document.createElement("div");
+    presetsCol.className = "note-canvas-toolbar__presets";
+
+    // Expand/Collapse Button
+    const expandBtn = document.createElement("button");
+    expandBtn.className = "note-canvas-toolbar__expand-btn";
+    expandBtn.innerHTML = this.isExpanded
+      ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>` // Left arrow (collapse)
+      : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>`; // Right arrow (expand)
+    expandBtn.title = this.isExpanded ? "Collapse" : "Expand Settings";
+    expandBtn.onclick = (e) => {
+      e.stopPropagation();
+      this.isExpanded = !this.isExpanded;
+      this._renderDialogContent();
+    };
+    presetsCol.appendChild(expandBtn);
+
+    // Render Presets
+    const palette = getThemePalette();
+    this.penPresets.forEach((preset, index) => {
+      const btn = document.createElement("button");
+      btn.className = "note-canvas-toolbar__preset-btn";
+      if (this.penWidth === preset.width && this.penColorIndex === preset.colorIndex) {
+        btn.classList.add("note-canvas-toolbar__preset-btn--active");
+      }
+
+      const color = palette[preset.colorIndex] || palette[0];
+      const size = Math.min(20, Math.max(4, preset.width * 2));
+
+      const dot = document.createElement("div");
+      dot.style.width = `${size}px`;
+      dot.style.height = `${size}px`;
+      dot.style.backgroundColor = color;
+      dot.style.borderRadius = "50%";
+      btn.appendChild(dot);
+
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        this.penWidth = preset.width;
+        this.penColorIndex = preset.colorIndex;
+        this._updatePenIconColor();
+        this._notifyPenSettingsChange();
+        this._updatePresetActiveStates();
+        if (this.isExpanded) {
+          this._updateSettingsUI();
+        }
+      };
+
+      // Long press to save preset
+      let pressTimer;
+      const startPress = (e) => {
+        e.stopPropagation();
+        pressTimer = setTimeout(() => {
+          if (confirm("Update this preset with current settings?")) {
+            this.penPresets[index] = { width: this.penWidth, colorIndex: this.penColorIndex };
+            this.onPresetChange(this.penPresets);
+            this._renderDialogContent();
+          }
+        }, 600);
+      };
+      const cancelPress = () => clearTimeout(pressTimer);
+
+      btn.onpointerdown = startPress;
+      btn.onpointerup = cancelPress;
+      btn.onpointerleave = cancelPress;
+
+      presetsCol.appendChild(btn);
+    });
+
+    this.penSettingsDialog.appendChild(presetsCol);
+
+    // 2. Settings Column (Only if expanded)
+    if (this.isExpanded) {
+      const settingsCol = document.createElement("div");
+      settingsCol.className = "note-canvas-toolbar__settings-container";
+      settingsCol.innerHTML = this._getPenDialogHTML();
+      this.penSettingsDialog.appendChild(settingsCol);
+      this._setupPenDialogListeners();
+    }
+  }
+
+  /**
+   * Update preset buttons active state
+   * @private
+   */
+  _updatePresetActiveStates() {
+    const btns = this.penSettingsDialog.querySelectorAll(".note-canvas-toolbar__preset-btn");
+    btns.forEach((btn, index) => {
+      const preset = this.penPresets[index];
+      if (this.penWidth === preset.width && this.penColorIndex === preset.colorIndex) {
+        btn.classList.add("note-canvas-toolbar__preset-btn--active");
+      } else {
+        btn.classList.remove("note-canvas-toolbar__preset-btn--active");
+      }
+    });
+  }
+
+  /**
+   * Update settings UI (slider, swatches) to match current state
+   * @private
+   */
+  _updateSettingsUI() {
+    const slider = this.penSettingsDialog.querySelector(".note-canvas-toolbar__width-slider");
+    const widthValue = this.penSettingsDialog.querySelector(".note-canvas-toolbar__width-value");
+    if (slider) slider.value = this.penWidth;
+    if (widthValue) widthValue.textContent = this.penWidth;
+
+    // Update swatches
+    const swatches = this.penSettingsDialog.querySelectorAll(".note-canvas-toolbar__color-swatch");
+    swatches.forEach((swatch, i) => {
+      if (i === this.penColorIndex) {
+        swatch.classList.add("note-canvas-toolbar__color-swatch--active");
+      } else {
+        swatch.classList.remove("note-canvas-toolbar__color-swatch--active");
+      }
+    });
   }
 
   /**
@@ -314,6 +446,7 @@ export class NoteToolbar {
       if (slider) slider.value = newVal;
       if (widthValue) widthValue.textContent = newVal % 1 === 0 ? newVal : newVal.toFixed(1);
       this._notifyPenSettingsChange();
+      this._updatePresetActiveStates();
     };
 
     if (slider) {
@@ -414,7 +547,7 @@ export class NoteToolbar {
    * Select a color by index
    * @private
    */
-  _selectColor(index) {
+  _selectColor(index, notify = true) {
     this.penColorIndex = index;
 
     // Update active state on swatches
@@ -430,7 +563,10 @@ export class NoteToolbar {
     // Update pen icon color
     this._updatePenIconColor();
 
-    this._notifyPenSettingsChange();
+    if (notify) {
+      this._notifyPenSettingsChange();
+    }
+    this._updatePresetActiveStates();
   }
 
   /**
@@ -467,6 +603,8 @@ export class NoteToolbar {
     } else {
       // Switch to draw mode
       this.onModeChange("draw");
+      // Ensure dialog starts hidden when switching to draw mode
+      this._closePenDialog();
     }
   }
 
@@ -518,6 +656,7 @@ export class NoteToolbar {
   _openPenDialog() {
     // Refresh colors in case theme changed
     this._refreshColorSwatches();
+    this._renderDialogContent(); // Ensure correct state rendered
 
     this.penSettingsDialog.classList.add("note-canvas-toolbar__pen-dialog--open");
     document.addEventListener("pointerdown", this._handleDocumentPointerDown);
@@ -580,7 +719,11 @@ export class NoteToolbar {
       !this.penSettingsDialog.contains(e.target) &&
       !this.drawBtn.contains(e.target)
     ) {
-      this._closePenDialog();
+      // If in full mode (expanded), collapse to preset mode
+      if (this.isExpanded) {
+        this.isExpanded = false;
+        this._renderDialogContent();
+      }
     }
     // Check if click is outside options dialog and options button
     if (
@@ -629,6 +772,7 @@ export class NoteToolbar {
       const widthValue = this.penSettingsDialog?.querySelector(".note-canvas-toolbar__width-value");
       if (slider) slider.value = this.penWidth;
       if (widthValue) widthValue.textContent = this.penWidth;
+      this._updatePresetActiveStates();
     }
 
     if (settings.colorIndex !== undefined) {

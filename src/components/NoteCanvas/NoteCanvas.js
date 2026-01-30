@@ -178,6 +178,7 @@ export class NoteCanvas {
     this.activeSearchQuery = null; // Track active search query for highlighting
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
     this.selectedMediaId = null; // Track selected media item
+    this.penPresets = null; // Pen presets configuration
 
     // Long press state
     this.longPressTimer = null;
@@ -272,6 +273,7 @@ export class NoteCanvas {
     // the DB version for these.
     inMemoryData.media = freshDataFromDB.media || [];
     inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
+    inMemoryData.penPresets = freshDataFromDB.penPresets || inMemoryData.penPresets;
     inMemoryData.background = freshDataFromDB.background;
     inMemoryData.modified = freshDataFromDB.modified;
     inMemoryData.lastSyncedEtag = freshDataFromDB.lastSyncedEtag;
@@ -318,6 +320,18 @@ export class NoteCanvas {
     if (!this.noteData.deletedMedia) {
       this.noteData.deletedMedia = [];
     }
+
+    // Initialize pen presets
+    this.penPresets = this.noteData.penPresets || [
+      { width: 1.5, colorIndex: 0 },
+      { width: 2, colorIndex: 1 },
+      { width: 2, colorIndex: 2 },
+      { width: 2, colorIndex: 3 },
+    ];
+
+    // Set initial pen settings to match first preset
+    this.currentPenWidth = this.penPresets[0].width;
+    this.currentPenColorIndex = this.penPresets[0].colorIndex;
 
     // Clear container and setup layout
     this.containerElement.innerHTML = "";
@@ -427,6 +441,12 @@ export class NoteCanvas {
         this._setMode(mode);
       },
       {
+        penPresets: this.penPresets,
+        onPresetChange: async (updatedPresets) => {
+          this.penPresets = updatedPresets;
+          this.noteData.penPresets = updatedPresets;
+          await updateNote(this.noteId, { penPresets: updatedPresets, modified: Date.now() });
+        },
         onPenSettingsChange: ({ width, colorIndex }) => {
           this.currentPenWidth = width;
           this.currentPenColorIndex = colorIndex;
