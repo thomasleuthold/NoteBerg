@@ -409,6 +409,9 @@ export async function updateNote(id, updates) {
   await db.put("notes", encryptedNote);
   console.log("Note updated:", id);
 
+  // Dispatch event for auto-sync and live updates
+  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id } }));
+
   return updated; // Return unencrypted version to caller
 }
 

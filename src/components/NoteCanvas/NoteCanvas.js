@@ -138,6 +138,7 @@ export class NoteCanvas {
     // State
     this.noteId = null;
     this.noteData = null;
+    this.pendingLiveUpdate = false;
     this.isInitialized = false;
 
     // Zoom state
@@ -193,6 +194,7 @@ export class NoteCanvas {
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
     this._onKeyDown = this._onKeyDown.bind(this);
+    this._onDataChange = this._onDataChange.bind(this);
   }
 
   /**
@@ -215,6 +217,74 @@ export class NoteCanvas {
     // We ignore metadata changes like 'synced' or 'lastSyncedEtag'
     return (
       currentStrokesCount !== freshStrokesCount || this.noteData.background !== freshData.background
+    );
+  }
+
+  /**
+   * Applies live updates from storage (e.g., after a sync) without a full reload.
+   * This merges remote changes with local, in-memory changes to prevent data loss,
+   * especially for strokes drawn while the sync was in progress.
+   */
+  async applyLiveUpdate() {
+    if (!this.noteId || !this.isInitialized) return;
+
+    console.log(`[NoteCanvas] Applying live update for note ${this.noteId}`);
+
+    const freshDataFromDB = await getNote(this.noteId);
+    if (!freshDataFromDB) {
+      console.warn("[NoteCanvas] Note not found during live update. Cannot apply changes.");
+      return;
+    }
+
+    const inMemoryData = this.noteData;
+
+    // --- MERGE STROKES ---
+    const dbStrokes = freshDataFromDB.strokes || [];
+    const memStrokes = inMemoryData.strokes || [];
+    const dbDeleted = new Set(freshDataFromDB.deletedStrokes || []);
+    const memDeleted = new Set(inMemoryData.deletedStrokes || []);
+
+    const allDeletedIds = new Set([...dbDeleted, ...memDeleted]);
+    const mergedStrokesMap = new Map();
+
+    // Add all strokes from memory first, then overwrite with DB data.
+    // This ensures the just-finished stroke from memory is included,
+    // and any strokes updated by the sync take precedence.
+    [...memStrokes, ...dbStrokes].forEach((stroke) => {
+      if (stroke.id) mergedStrokesMap.set(stroke.id, stroke);
+    });
+
+    const finalStrokes = Array.from(mergedStrokesMap.values()).filter(
+      (stroke) => !allDeletedIds.has(stroke.id),
+    );
+
+    // --- UPDATE IN-MEMORY DATA IN-PLACE ---
+    // This is important so modules that hold a reference see the changes.
+    inMemoryData.strokes.length = 0;
+    Array.prototype.push.apply(inMemoryData.strokes, finalStrokes);
+
+    inMemoryData.deletedStrokes.length = 0;
+    Array.prototype.push.apply(inMemoryData.deletedStrokes, Array.from(allDeletedIds));
+
+    // For now, we assume media and other properties are less likely to have
+    // in-memory vs. DB conflicts during a drawing session. We prioritize
+    // the DB version for these.
+    inMemoryData.media = freshDataFromDB.media || [];
+    inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
+    inMemoryData.background = freshDataFromDB.background;
+    inMemoryData.modified = freshDataFromDB.modified;
+    inMemoryData.lastSyncedEtag = freshDataFromDB.lastSyncedEtag;
+    inMemoryData.synced = freshDataFromDB.synced;
+
+    // --- UPDATE MODULES ---
+    this.strokeManager.markDirty(); // The merged state needs to be saved back.
+    this.spatialIndex.build(inMemoryData.strokes);
+    this.mediaManager.setItems(inMemoryData.media);
+    this.renderer.setData(inMemoryData.strokes, inMemoryData.background);
+    // Redraw deferred to next interaction (scroll/zoom) to avoid interruption
+
+    console.log(
+      `[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`,
     );
   }
 
@@ -533,6 +603,7 @@ export class NoteCanvas {
    */
   _setupEventListeners() {
     // Theme changes
+    window.addEventListener("datachange", this._onDataChange);
     window.addEventListener("themechange", this._onThemeChange);
 
     // Zoom via mouse wheel
@@ -546,6 +617,28 @@ export class NoteCanvas {
     viewport.addEventListener("pointercancel", this._onPointerUpNav);
     viewport.addEventListener("pointerleave", this._onPointerUpNav);
     window.addEventListener("keydown", this._onKeyDown);
+  }
+
+  /**
+   * Handle external data changes (e.g., from sync)
+   * @private
+   */
+  async _onDataChange(e) {
+    const { noteId } = e.detail || {};
+
+    // Is this change for the currently open note?
+    if (!noteId || noteId !== this.noteId) {
+      return;
+    }
+
+    // The user is actively drawing. Defer the update until they finish.
+    if (this.inputHandler?.isDrawing) {
+      console.log("[NoteCanvas] Data change detected while drawing. Deferring update.");
+      this.pendingLiveUpdate = true;
+      return;
+    }
+
+    await this.applyLiveUpdate();
   }
 
   /**
@@ -836,6 +929,15 @@ export class NoteCanvas {
       const newIndex = this.noteData.strokes.length - 1;
       this.spatialIndex.insert(stroke, newIndex);
       this.strokesChanged = true;
+    }
+
+    // After stroke is finished, check if a deferred update is pending.
+    if (this.pendingLiveUpdate) {
+      this.pendingLiveUpdate = false;
+      console.log("[NoteCanvas] Applying deferred live update after stroke end.");
+      this.applyLiveUpdate().catch((err) => {
+        console.error("Failed to apply deferred live update:", err);
+      });
     }
   }
 
@@ -2117,6 +2219,7 @@ export class NoteCanvas {
 
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);
+    window.removeEventListener("datachange", this._onDataChange);
     window.removeEventListener("keydown", this._onKeyDown);
 
     if (this.scroller) {

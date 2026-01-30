@@ -22,6 +22,7 @@ import {
   permanentlyDeleteNotebook,
   permanentlyDeleteNotesInNotebook,
   saveFile,
+  updateNote,
 } from "./storage.js";
 import {
   getAllRequiredFolders,
@@ -1510,6 +1511,10 @@ export function attemptMerge(local, remote) {
   // Merge title using "last write wins".
   const mergedTitle = local.title !== remote.title ? newerNote.title : local.title;
 
+  // Merge background using "last write wins".
+  const mergedBackground =
+    local.background !== remote.background ? newerNote.background : local.background;
+
   // Merge tags by taking the union of both sets.
   const mergedTags = [...new Set([...(local.tags || []), ...(remote.tags || [])])];
 
@@ -1542,6 +1547,7 @@ export function attemptMerge(local, remote) {
 
     title: mergedTitle,
     content: mergedContent,
+    background: mergedBackground,
     strokes: mergedStrokeData.strokes,
     deletedStrokes: mergedStrokeData.deletedStrokes,
     media: Array.from(mediaMap.values()),
@@ -1707,6 +1713,9 @@ export async function fullSync(localNotebooks, localNotes) {
         // Use the remote's current file ETag for the upload to succeed via If-Match
         const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
         notesToUpload.push(mergedWithRemoteBase);
+
+        // Save merged note locally to ensure client sees merged state immediately
+        await updateNote(merged.id, merged);
       } else {
         conflicts.notes.push({ local, remote });
       }

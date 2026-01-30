@@ -19,6 +19,7 @@ import {
   syncNotebooks,
   syncNotes,
 } from "./nextcloudSync.js";
+import { updateNote } from "./storage.js";
 
 // --- Mocks ---
 
@@ -65,6 +66,7 @@ vi.mock("./storage.js", async (importOriginal) => {
     isNextcloudEncryptionEnabled: vi.fn(() => Promise.resolve(false)),
     isLocalEncryptionEnabled: vi.fn(() => Promise.resolve(false)),
     initStorage: vi.fn(() => Promise.resolve()),
+    updateNote: vi.fn(() => Promise.resolve()),
   };
 });
 
@@ -517,6 +519,121 @@ describe("Nextcloud Sync Module", () => {
 
       expect(result.uploaded.notes.uploaded).toBe(1);
       expect(mockServer.files.has(`/oneJournal/notebooks/nb1/notes/${noteId}.json`)).toBe(true);
+    });
+
+    it("should preserve background setting during merge", async () => {
+      const noteId = "n-bg-merge";
+      // Local is newer, has background
+      const local = {
+        id: noteId,
+        modified: 2000,
+        background: "grid-large",
+        strokes: [],
+      };
+      // Remote is older
+      const remote = {
+        id: noteId,
+        modified: 1000,
+        background: "none",
+        strokes: [],
+      };
+
+      const merged = attemptMerge(local, remote);
+      expect(merged.background).toBe("grid-large");
+    });
+  });
+
+  describe("Concurrent Editing & Merging", () => {
+    it("should merge strokes and update local note on conflict", async () => {
+      const noteId = "n-concurrent";
+      const notebookId = "nb1";
+
+      // Remote state: Has stroke S1 (Client A)
+      const remoteNote = {
+        id: noteId,
+        notebookId,
+        strokes: [{ id: "s1", x: [1], y: [1] }],
+        deletedStrokes: [],
+        modified: 1000,
+        _currentFileEtag: "etag-remote",
+      };
+
+      // Local state: Has stroke S2 (Client B)
+      const localNote = {
+        id: noteId,
+        notebookId,
+        strokes: [{ id: "s2", x: [2], y: [2] }],
+        deletedStrokes: [],
+        modified: 2000, // Newer
+        synced: false,
+        lastSyncedEtag: "etag-base", // Mismatch
+      };
+
+      // Setup remote file
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
+        content: JSON.stringify(remoteNote),
+        etag: "etag-remote",
+        mtime: new Date(),
+      });
+
+      const result = await fullSync([], [localNote]);
+
+      // Should upload merged version
+      expect(result.uploaded.notes.uploaded).toBe(1);
+
+      // Verify updateNote was called to show merged state locally immediately
+      expect(updateNote).toHaveBeenCalled();
+      const mergedArg = updateNote.mock.calls.find((call) => call[0] === noteId)[1];
+      expect(mergedArg.strokes).toHaveLength(2); // Should have S1 and S2
+      expect(mergedArg.strokes.find((s) => s.id === "s1")).toBeTruthy();
+      expect(mergedArg.strokes.find((s) => s.id === "s2")).toBeTruthy();
+    });
+
+    it("should propagate stroke deletions during merge", async () => {
+      const noteId = "n-del-merge";
+      const notebookId = "nb1";
+
+      // Remote: Stroke S1 was deleted by Client A
+      const remoteNote = {
+        id: noteId,
+        notebookId,
+        strokes: [],
+        deletedStrokes: ["s1"],
+        modified: 2000,
+        _currentFileEtag: "etag-remote",
+      };
+
+      // Local: Has Stroke S1 and S2, but S1 is modified locally (e.g. moved)
+      // Since remote deleted S1, the merge should respect the deletion.
+      const localNote = {
+        id: noteId,
+        notebookId,
+        strokes: [
+          { id: "s1", x: [10], y: [10] }, // Modified locally
+          { id: "s2", x: [2], y: [2] }, // New local stroke
+        ],
+        deletedStrokes: [],
+        modified: 1000, // Older (or newer, deletion usually wins in mergeStrokes logic)
+        synced: false,
+        lastSyncedEtag: "etag-base",
+      };
+
+      // Setup remote file
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
+        content: JSON.stringify(remoteNote),
+        etag: "etag-remote",
+        mtime: new Date(),
+      });
+
+      await fullSync([], [localNote]);
+
+      // Verify merged content passed to updateNote
+      const mergedArg = updateNote.mock.calls.find((call) => call[0] === noteId)[1];
+
+      // S1 should be gone (deleted remotely), S2 should be present
+      expect(mergedArg.strokes.find((s) => s.id === "s1")).toBeFalsy();
+      expect(mergedArg.strokes.find((s) => s.id === "s2")).toBeTruthy();
+      expect(mergedArg.deletedStrokes).toContain("s1");
     });
   });
 
