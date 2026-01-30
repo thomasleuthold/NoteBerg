@@ -16,6 +16,7 @@ import {
   migrateToHierarchical,
   needsMigration,
   startLoginFlow,
+  syncNotebooks,
   syncNotes,
 } from "./nextcloudSync.js";
 
@@ -180,7 +181,7 @@ class MockWebDAVServer {
 
       const addItem = (p, f) => {
         const href = this.rootPath + p.split("/").map(encodeURIComponent).join("/");
-        const mtime = f.mtime || new Date();
+        const mtime = f.mtime instanceof Date ? f.mtime : new Date();
         const type = f.isCollection ? "<d:collection/>" : "";
         xml += `
           <d:response>
@@ -314,12 +315,31 @@ describe("Nextcloud Sync Module", () => {
         loginName: "testuser",
         appPassword: "app-password-123",
       });
-      expect(mockSecureStorage.get("nextcloud_credentials")).toBeTruthy();
+      expect(mockSecureStorage.has("nextcloud_credentials")).toBe(true);
       vi.useRealTimers();
     });
   });
 
   describe("Sync Logic (Incremental & Filtering)", () => {
+    it("should upload a new notebook", async () => {
+      // Ensure parent notebooks folder exists
+      mockServer.files.set("/oneJournal/notebooks", { isCollection: true, mtime: new Date() });
+
+      const notebook = { id: "nb1", title: "Test Notebook", modified: Date.now() };
+
+      const result = await syncNotebooks([notebook]);
+
+      expect(result.uploaded).toBe(1);
+      expect(mockServer.files.has("/oneJournal/notebooks/nb1")).toBe(true);
+      expect(mockServer.files.has("/oneJournal/notebooks/nb1/_notebook.json")).toBe(true);
+
+      const remoteContent = JSON.parse(
+        mockServer.files.get("/oneJournal/notebooks/nb1/_notebook.json").content,
+      );
+      expect(remoteContent.title).toBe("Test Notebook");
+      expect(remoteContent.synced).toBe(true);
+    });
+
     it("should only download changed items (Incremental Sync)", async () => {
       // Setup remote
       const note1 = { id: "n1", content: "A", modified: 1000 };
@@ -358,10 +378,16 @@ describe("Nextcloud Sync Module", () => {
       const nb1 = { id: "nb1", synced: true, lastSyncedEtag: "etag-1" };
       const nb2 = { id: "nb2", synced: false }; // Modified
 
-      // Remote has nb1
+      // Remote has nb1 with proper folder structure
+      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/oneJournal/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
       mockServer.files.set("/oneJournal/notebooks/nb1/_notebook.json", {
         content: JSON.stringify(nb1),
         etag: "etag-1",
+        mtime: new Date(),
       });
 
       const result = await fullSync([nb1, nb2], []);
@@ -437,7 +463,12 @@ describe("Nextcloud Sync Module", () => {
         modified: 1000,
       };
 
-      // Setup remote
+      // Setup remote with proper folder structure
+      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/oneJournal/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
       mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}.json`, {
         content: JSON.stringify(remote),
         etag: "new",
@@ -468,10 +499,18 @@ describe("Nextcloud Sync Module", () => {
         deleted: false,
       };
 
+      // Setup remote folder structure
+      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/oneJournal/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+
       // Remote: Tombstone says deleted
       const tombstone = { notes: [{ id: noteId, deletedAt: new Date().toISOString() }] };
       mockServer.files.set("/oneJournal/notebooks/nb1/_tombstones.json", {
         content: JSON.stringify(tombstone),
+        mtime: new Date(),
       });
 
       const result = await fullSync([], [local]);
@@ -614,7 +653,10 @@ describe("Nextcloud Sync Module", () => {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set("/oneJournal/notebooks/nb-purge/notes/n-purge.json", { content: "{}" });
+      mockServer.files.set("/oneJournal/notebooks/nb-purge/notes/n-purge.json", {
+        content: "{}",
+        mtime: new Date(),
+      });
 
       const result = await fullSync([nb], [note]);
 
@@ -698,7 +740,7 @@ describe("Nextcloud Sync Module", () => {
         synced: false,
       };
 
-      const _result = await fullSync([localNotebook], []);
+      await fullSync([localNotebook], []);
 
       // Verify remote deletion
       expect(mockServer.files.has(`/oneJournal/notebooks/${notebookId}`)).toBe(false);
@@ -753,11 +795,21 @@ describe("Nextcloud Sync Module", () => {
       const notebookId = "nb1";
 
       // Setup remote
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
       mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
         content: "{}",
+        mtime: new Date(),
       });
       mockServer.files.set(`/oneJournal/notebooks/${notebookId}/_tombstones.json`, {
         content: "{}",
+        mtime: new Date(),
       });
 
       await deleteRemoteNote(noteId, notebookId);
@@ -807,8 +859,14 @@ describe("Nextcloud Sync Module", () => {
       const nbContent = JSON.stringify({ id: "nb-mig", title: "Migrated" });
       const noteContent = JSON.stringify({ id: "n-mig", notebookId: "nb-mig", title: "Note" });
 
-      mockServer.files.set("/oneJournal/notebook_nb-mig.json", { content: nbContent, mtime: new Date() });
-      mockServer.files.set("/oneJournal/note_n-mig.json", { content: noteContent, mtime: new Date() });
+      mockServer.files.set("/oneJournal/notebook_nb-mig.json", {
+        content: nbContent,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/oneJournal/note_n-mig.json", {
+        content: noteContent,
+        mtime: new Date(),
+      });
 
       await migrateToHierarchical();
 
