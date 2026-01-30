@@ -39,6 +39,20 @@ export class MediaManager {
   }
 
   /**
+   * Set all media items (replace existing)
+   * @param {Array} items
+   */
+  setItems(items) {
+    this.mediaItems = items || [];
+    // Trigger load for any items that have fileId
+    for (const item of this.mediaItems) {
+      if (item.fileId) {
+        this._loadImage(item.fileId);
+      }
+    }
+  }
+
+  /**
    * Add a new media item
    */
   addItem(item) {

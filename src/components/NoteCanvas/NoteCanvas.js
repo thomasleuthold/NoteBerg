@@ -139,6 +139,7 @@ export class NoteCanvas {
     this.noteId = null;
     this.noteData = null;
     this.pendingLiveUpdate = false;
+    this._pendingMediaUpdate = false;
     this.isInitialized = false;
 
     // Zoom state
@@ -281,7 +282,9 @@ export class NoteCanvas {
     this.spatialIndex.build(inMemoryData.strokes);
     this.mediaManager.setItems(inMemoryData.media);
     this.renderer.setData(inMemoryData.strokes, inMemoryData.background);
-    // Redraw deferred to next interaction (scroll/zoom) to avoid interruption
+
+    // Force redraw immediately to show updated state (we know we aren't drawing)
+    this.renderer.forceRedraw();
 
     console.log(`[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`);
   }
@@ -671,6 +674,13 @@ export class NoteCanvas {
         }
 
         if (!this.renderer) return;
+
+        // If we have a pending media update (from sync), force a redraw of the media layer
+        if (this._pendingMediaUpdate) {
+          this.renderer.forceRedraw();
+          this._pendingMediaUpdate = false;
+        }
+
         this.renderer.render(
           scrollTop,
           viewportHeight,
@@ -699,6 +709,12 @@ export class NoteCanvas {
 
     // Resize renderer
     this.renderer.resize(width, height / this.zoomScale);
+
+    // If we have a pending media update, force redraw now
+    if (this._pendingMediaUpdate) {
+      this.renderer.forceRedraw();
+      this._pendingMediaUpdate = false;
+    }
 
     // Re-render
     const scrollTop = this.scroller.getScrollTop();
@@ -1202,7 +1218,14 @@ export class NoteCanvas {
         const scrollLeft = this.scroller.getScrollLeft();
         const scrollTop = this.scroller.getScrollTop();
         const viewport = this.scroller.getViewportElement().getBoundingClientRect();
-        this.mediaOverlay.show(item, this.zoomScale, scrollLeft, scrollTop, viewport);
+
+        // Calculate offset (centering)
+        const viewportWidth = this.scroller.getViewportSize().width;
+        const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+        const offsetX =
+          scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+        this.mediaOverlay.show(item, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
       }
     }
   }
@@ -2172,6 +2195,11 @@ export class NoteCanvas {
     }
 
     if (this.renderer) {
+      if (this._pendingMediaUpdate) {
+        this.renderer.forceRedraw();
+        this._pendingMediaUpdate = false;
+      }
+
       const scrollTop = this.scroller?.getScrollTop() || 0;
       const scrollLeft = this.scroller?.getScrollLeft() || 0;
       this.renderer.setZoom(scale, {

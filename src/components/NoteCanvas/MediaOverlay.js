@@ -75,11 +75,11 @@ export class MediaOverlay {
     document.addEventListener("pointerdown", this._handleDocumentClick);
   }
 
-  show(mediaItem, zoom, scrollLeft, scrollTop, viewportRect) {
+  show(mediaItem, zoom, scrollLeft, scrollTop, viewportRect, offsetX = 0) {
     this.activeMediaId = mediaItem.id;
     this.isVisible = true;
     this.element.classList.add("note-canvas__media-overlay--visible");
-    this.updatePosition(mediaItem, zoom, scrollLeft, scrollTop, viewportRect);
+    this.updatePosition(mediaItem, zoom, scrollLeft, scrollTop, viewportRect, offsetX);
   }
 
   hide() {
@@ -89,7 +89,7 @@ export class MediaOverlay {
     this.menu.classList.remove("note-canvas-toolbar__options-dialog--open");
   }
 
-  updatePosition(mediaItem, zoom, scrollLeft, scrollTop, viewportRect) {
+  updatePosition(mediaItem, zoom, scrollLeft, scrollTop, viewportRect, offsetX = 0) {
     if (!this.isVisible) return;
 
     const rotation = (mediaItem.rotation || 0) * (Math.PI / 180);
@@ -130,7 +130,7 @@ export class MediaOverlay {
     const visualTopRightY = cy + minY;
 
     // Convert to screen space
-    const screenX = visualTopRightX * zoom - scrollLeft;
+    const screenX = visualTopRightX * zoom - scrollLeft + offsetX;
     const screenY = visualTopRightY * zoom - scrollTop;
 
     // Position button

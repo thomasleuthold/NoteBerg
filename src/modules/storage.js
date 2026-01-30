@@ -727,12 +727,14 @@ export async function saveNote(note, options = {}) {
   // If skipEncryption is true, save note as-is (it's already in the correct format)
   if (skipEncryption) {
     await db.put("notes", note);
-    return;
+  } else {
+    // Encrypt note before saving if local encryption is enabled
+    const encryptedNote = await encryptNoteIfEnabled(note);
+    await db.put("notes", encryptedNote);
   }
 
-  // Encrypt note before saving if local encryption is enabled
-  const encryptedNote = await encryptNoteIfEnabled(note);
-  await db.put("notes", encryptedNote);
+  // Dispatch event for auto-sync and live updates
+  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: note.id } }));
 }
 
 /**

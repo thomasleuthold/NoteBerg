@@ -46,6 +46,19 @@ describe("MediaManager", () => {
     expect(mediaManager.getItems()[0].id).toBe("2");
   });
 
+  it("sets items and triggers load", async () => {
+    const { getFile } = await import("../../modules/storage.js");
+    getFile.mockResolvedValue(new Blob(["fake"], { type: "image/png" }));
+
+    const newItems = [{ id: "3", type: "image", fileId: "f3", x: 0, y: 0, width: 50, height: 50 }];
+
+    mediaManager.setItems(newItems);
+
+    expect(mediaManager.getItems()).toHaveLength(1);
+    expect(mediaManager.getItems()[0].id).toBe("3");
+    expect(getFile).toHaveBeenCalledWith("f3");
+  });
+
   it("moves item to front", () => {
     mediaManager.moveItemToFront("1");
     const items = mediaManager.getItems();
