@@ -30,17 +30,17 @@ import { StrokeManager } from "./StrokeManager.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
 // Selection handle constants (exported for use by CanvasRenderer)
-export const SELECTION_HANDLE_SIZE = 10; // Visual size in content pixels (scaled by zoom)
-export const SELECTION_HANDLE_HIT_AREA = 20; // Hit area for touch/click detection
+export const SELECTION_HANDLE_SIZE = 15; // Visual size in content pixels (scaled by zoom)
+export const SELECTION_HANDLE_HIT_AREA = 25; // Hit area for touch/click detection
 export const ROTATION_HANDLE_OFFSET = 25; // Distance of rotation handle from top edge
-export const MEDIA_HANDLE_SIZE = 12; // Larger handles for media
+export const MEDIA_HANDLE_SIZE = 15; // Larger handles for media
 export const SELECTION_BOUNDS_PADDING = 2; // Padding around selection bounds
 export const MIN_SELECTION_SIZE = 10; // Minimum width/height during resize
 
 // Scratch-out gesture detection constants
 const SCRATCH_MIN_POINTS = 30; // Minimum points in stroke to consider as scratch
 const SCRATCH_MIN_SIZE = 30; // Minimum width/height to avoid accidental triggers
-const SCRATCH_DENSITY_THRESHOLD = 2.5; // Ink-to-diagonal ratio (scratches > 2.5, letters < 2.5)
+const SCRATCH_DENSITY_THRESHOLD = 5.0; // Ink-to-diagonal ratio (strokes < threshold < scratch)
 const SCRATCH_DIRECTION_THRESHOLD = 8; // Minimum movement to register direction change
 const SCRATCH_MIN_DIRECTION_CHANGES = 4; // Minimum back-and-forth changes (4 turns = 5 segments)
 const SCRATCH_ERASE_PADDING = 15; // Padding around gesture bounds for erasing
