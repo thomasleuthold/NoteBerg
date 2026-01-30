@@ -86,6 +86,13 @@ export function getQuickNotesTombstonePath() {
 }
 
 /**
+ * Get the path for the global notebook tombstone file
+ */
+export function getGlobalNotebookTombstonePath() {
+  return `${ROOT_FOLDER}/notebooks/_tombstones.json`;
+}
+
+/**
  * Get all required folders for the hierarchical structure
  */
 export function getAllRequiredFolders() {
@@ -101,6 +108,10 @@ export function parsePath(path) {
 
   if (parts[0] === "notebooks") {
     const notebookId = parts[1];
+
+    if (notebookId === "_tombstones.json") {
+      return { type: "tombstone", notebookId: "global_notebooks" };
+    }
 
     if (parts[2] === "_notebook.json") {
       return { type: "notebook", notebookId };

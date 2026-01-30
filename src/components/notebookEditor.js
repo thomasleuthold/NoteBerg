@@ -5382,11 +5382,17 @@ async function updateEditorContent(noteId) {
     // Update main state
     strokes = mergedStrokes;
     deletedStrokes = Array.from(new Set([...localDeletedStrokeIds, ...newDeletedStrokeIds]));
+
+    // Update media state
+    mediaItems = newNoteData.media || [];
+    deletedMedia = newNoteData.deletedMedia || [];
+
     console.log(`[NotebookEditor] Strokes merged. New total count: ${strokes.length}`);
 
     // Recalculate content bounds and redraw everything
     updateContentBounds();
     resizeCanvas();
+    redrawMedia();
   }
 
   // 5. Restore state

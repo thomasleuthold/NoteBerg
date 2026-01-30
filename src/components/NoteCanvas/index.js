@@ -5,6 +5,7 @@
  * Supports smooth scrolling, zoom, and stylus/pen drawing.
  */
 
+import { syncOnNoteClose } from "../../modules/autoSync.js";
 import { NoteCanvas } from "./NoteCanvas.js";
 
 // Module-level instance
@@ -54,7 +55,6 @@ export function initNoteCanvasComponent() {
     try {
       noteCanvasInstance = new NoteCanvas(container);
       await noteCanvasInstance.load(noteId, searchQuery);
-      console.log("[NoteCanvas] Component initialized for note:", noteId);
     } catch (error) {
       console.error("[NoteCanvas] Failed to initialize:", error);
 
@@ -71,9 +71,13 @@ export function initNoteCanvasComponent() {
   // Listen for navigation to clean up when leaving notebook mode
   window.addEventListener("navigate", (e) => {
     if (e.detail?.previousMode === "notebook" && noteCanvasInstance) {
-      console.log("[NoteCanvas] Cleaning up on navigation away");
+      const noteId = noteCanvasInstance.noteId;
       noteCanvasInstance.destroy();
       noteCanvasInstance = null;
+
+      if (noteId) {
+        syncOnNoteClose(noteId);
+      }
     }
   });
 
@@ -88,7 +92,11 @@ export function initNoteCanvasComponent() {
     // This prevents "vanishing strokes" when auto-sync updates the note status while drawing
     const changed = await noteCanvasInstance.hasContentChanged(noteId);
     if (!changed) {
-      console.log("[NoteCanvas] Ignoring datachange (content unchanged)");
+      return;
+    }
+
+    // Re-check instance validity after async operation (could have been destroyed during await)
+    if (!noteCanvasInstance || noteCanvasInstance.noteId !== noteId) {
       return;
     }
 
@@ -96,11 +104,8 @@ export function initNoteCanvasComponent() {
       noteCanvasInstance.destroy();
       noteCanvasInstance = new NoteCanvas(container);
       await noteCanvasInstance.load(noteId);
-      console.log("[NoteCanvas] Reloaded after external data change");
     }
   });
-
-  console.log("[NoteCanvas] Component registered");
 }
 
 export { CanvasRenderer } from "./CanvasRenderer.js";

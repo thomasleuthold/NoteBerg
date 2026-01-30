@@ -8,10 +8,21 @@
 
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { navigateTo } from "../../modules/router.js";
-import { deleteNote, getNote, updateNote } from "../../modules/storage.js";
+import {
+  deleteFile,
+  deleteNote,
+  generateId,
+  getNote,
+  saveFile,
+  updateNote,
+} from "../../modules/storage.js";
+import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import { showConfirmDialog } from "../modals.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
+import { ImageCropper } from "./ImageCropper.js";
 import { InputHandler } from "./InputHandler.js";
+import { MediaManager } from "./MediaManager.js";
+import { MediaOverlay } from "./MediaOverlay.js";
 import "./NoteCanvas.css";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { SpatialIndex } from "./SpatialIndex.js";
@@ -19,11 +30,20 @@ import { StrokeManager } from "./StrokeManager.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
 // Selection handle constants (exported for use by CanvasRenderer)
-export const SELECTION_HANDLE_SIZE = 10; // Visual size in content pixels (scaled by zoom)
-export const SELECTION_HANDLE_HIT_AREA = 20; // Hit area for touch/click detection
+export const SELECTION_HANDLE_SIZE = 15; // Visual size in content pixels (scaled by zoom)
+export const SELECTION_HANDLE_HIT_AREA = 25; // Hit area for touch/click detection
 export const ROTATION_HANDLE_OFFSET = 25; // Distance of rotation handle from top edge
+export const MEDIA_HANDLE_SIZE = 15; // Larger handles for media
 export const SELECTION_BOUNDS_PADDING = 2; // Padding around selection bounds
 export const MIN_SELECTION_SIZE = 10; // Minimum width/height during resize
+
+// Scratch-out gesture detection constants
+const SCRATCH_MIN_POINTS = 30; // Minimum points in stroke to consider as scratch
+const SCRATCH_MIN_SIZE = 30; // Minimum width/height to avoid accidental triggers
+const SCRATCH_DENSITY_THRESHOLD = 5.0; // Ink-to-diagonal ratio (strokes < threshold < scratch)
+const SCRATCH_DIRECTION_THRESHOLD = 8; // Minimum movement to register direction change
+const SCRATCH_MIN_DIRECTION_CHANGES = 4; // Minimum back-and-forth changes (4 turns = 5 segments)
+const SCRATCH_ERASE_PADDING = 15; // Padding around gesture bounds for erasing
 
 /**
  * Compute selection handle positions for a given bounds
@@ -50,6 +70,50 @@ export function getSelectionHandles(bounds, zoomScale) {
   ];
 }
 
+/**
+ * Compute media handle positions (rotated)
+ * @param {Object} item - Media item {x, y, width, height, rotation}
+ * @param {number} zoomScale - Current zoom level
+ * @returns {Array<{key: string, x: number, y: number}>}
+ */
+export function getMediaHandles(item, zoomScale) {
+  const { x, y, width, height, rotation = 0 } = item;
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  const rotateOffset = (ROTATION_HANDLE_OFFSET + 10) / zoomScale; // Slightly further out
+
+  // Helper to rotate a point around center
+  const rotatePoint = (px, py) => {
+    if (rotation === 0) return { x: px, y: py };
+    const rad = (rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    return {
+      x: cx + (px - cx) * cos - (py - cy) * sin,
+      y: cy + (px - cx) * sin + (py - cy) * cos,
+    };
+  };
+
+  // Define unrotated handle positions
+  const handles = [
+    { key: "rotate", x: cx, y: y - rotateOffset },
+    { key: "nw", x: x, y: y },
+    { key: "n", x: cx, y: y },
+    { key: "ne", x: x + width, y: y },
+    { key: "e", x: x + width, y: cy },
+    { key: "se", x: x + width, y: y + height },
+    { key: "s", x: cx, y: y + height },
+    { key: "sw", x: x, y: y + height },
+    { key: "w", x: x, y: cy },
+  ];
+
+  // Apply rotation
+  return handles.map((h) => {
+    const p = rotatePoint(h.x, h.y);
+    return { key: h.key, x: p.x, y: p.y };
+  });
+}
+
 export class NoteCanvas {
   /**
    * @param {HTMLElement} containerElement - Container to mount into
@@ -65,13 +129,17 @@ export class NoteCanvas {
     this.renderer = null;
     this.spatialIndex = null;
     this.inputHandler = null;
+    this.mediaManager = null;
     this.strokeManager = null;
+    this.mediaOverlay = null;
     this.toolbar = null;
     this.contentHeight = 0;
 
     // State
     this.noteId = null;
     this.noteData = null;
+    this.pendingLiveUpdate = false;
+    this._pendingMediaUpdate = false;
     this.isInitialized = false;
 
     // Zoom state
@@ -108,6 +176,12 @@ export class NoteCanvas {
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
     this.strokesChanged = false; // Track if strokes have been modified
     this.activeSearchQuery = null; // Track active search query for highlighting
+    this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
+    this.selectedMediaId = null; // Track selected media item
+
+    // Long press state
+    this.longPressTimer = null;
+    this.longPressStart = null;
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -120,6 +194,8 @@ export class NoteCanvas {
     this._onStrokeStart = this._onStrokeStart.bind(this);
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
+    this._onKeyDown = this._onKeyDown.bind(this);
+    this._onDataChange = this._onDataChange.bind(this);
   }
 
   /**
@@ -146,6 +222,74 @@ export class NoteCanvas {
   }
 
   /**
+   * Applies live updates from storage (e.g., after a sync) without a full reload.
+   * This merges remote changes with local, in-memory changes to prevent data loss,
+   * especially for strokes drawn while the sync was in progress.
+   */
+  async applyLiveUpdate() {
+    if (!this.noteId || !this.isInitialized) return;
+
+    console.log(`[NoteCanvas] Applying live update for note ${this.noteId}`);
+
+    const freshDataFromDB = await getNote(this.noteId);
+    if (!freshDataFromDB) {
+      console.warn("[NoteCanvas] Note not found during live update. Cannot apply changes.");
+      return;
+    }
+
+    const inMemoryData = this.noteData;
+
+    // --- MERGE STROKES ---
+    const dbStrokes = freshDataFromDB.strokes || [];
+    const memStrokes = inMemoryData.strokes || [];
+    const dbDeleted = new Set(freshDataFromDB.deletedStrokes || []);
+    const memDeleted = new Set(inMemoryData.deletedStrokes || []);
+
+    const allDeletedIds = new Set([...dbDeleted, ...memDeleted]);
+    const mergedStrokesMap = new Map();
+
+    // Add all strokes from memory first, then overwrite with DB data.
+    // This ensures the just-finished stroke from memory is included,
+    // and any strokes updated by the sync take precedence.
+    [...memStrokes, ...dbStrokes].forEach((stroke) => {
+      if (stroke.id) mergedStrokesMap.set(stroke.id, stroke);
+    });
+
+    const finalStrokes = Array.from(mergedStrokesMap.values()).filter(
+      (stroke) => !allDeletedIds.has(stroke.id),
+    );
+
+    // --- UPDATE IN-MEMORY DATA IN-PLACE ---
+    // This is important so modules that hold a reference see the changes.
+    inMemoryData.strokes.length = 0;
+    Array.prototype.push.apply(inMemoryData.strokes, finalStrokes);
+
+    inMemoryData.deletedStrokes.length = 0;
+    Array.prototype.push.apply(inMemoryData.deletedStrokes, Array.from(allDeletedIds));
+
+    // For now, we assume media and other properties are less likely to have
+    // in-memory vs. DB conflicts during a drawing session. We prioritize
+    // the DB version for these.
+    inMemoryData.media = freshDataFromDB.media || [];
+    inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
+    inMemoryData.background = freshDataFromDB.background;
+    inMemoryData.modified = freshDataFromDB.modified;
+    inMemoryData.lastSyncedEtag = freshDataFromDB.lastSyncedEtag;
+    inMemoryData.synced = freshDataFromDB.synced;
+
+    // --- UPDATE MODULES ---
+    this.strokeManager.markDirty(); // The merged state needs to be saved back.
+    this.spatialIndex.build(inMemoryData.strokes);
+    this.mediaManager.setItems(inMemoryData.media);
+    this.renderer.setData(inMemoryData.strokes, inMemoryData.background);
+
+    // Force redraw immediately to show updated state (we know we aren't drawing)
+    this.renderer.forceRedraw();
+
+    console.log(`[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`);
+  }
+
+  /**
    * Load and render a note
    * @param {string} noteId - ID of the note to load
    * @param {string|null} searchQuery - Optional search query to highlight
@@ -161,14 +305,18 @@ export class NoteCanvas {
       return;
     }
 
-    console.log(`[NoteCanvas] Loading note with ${this.noteData.strokes?.length || 0} strokes`);
-
     // Ensure strokes array exists and is shared across modules
     if (!this.noteData.strokes) {
       this.noteData.strokes = [];
     }
     if (!this.noteData.deletedStrokes) {
       this.noteData.deletedStrokes = [];
+    }
+    if (!this.noteData.media) {
+      this.noteData.media = [];
+    }
+    if (!this.noteData.deletedMedia) {
+      this.noteData.deletedMedia = [];
     }
 
     // Clear container and setup layout
@@ -206,12 +354,25 @@ export class NoteCanvas {
       : height;
     const contentWidth = this.maxContentWidth;
 
+    // Initialize MediaManager
+    this.mediaManager = new MediaManager(noteId, this.noteData.media);
+    this.mediaManager.setOnImageLoaded(() => this.renderer.forceRedraw());
+
+    // Initialize MediaOverlay
+    this.mediaOverlay = new MediaOverlay(this.scroller.getViewportElement(), {
+      onDelete: (id) => this.deleteSelectedMedia(id),
+      onCrop: (id) => this.cropSelectedMedia(id),
+      onToFront: (id) => this.moveSelectedMediaToFront(id),
+      onToBack: (id) => this.moveSelectedMediaToBack(id),
+    });
+
     // Initialize renderer
     this.renderer = new CanvasRenderer(this.scroller.getViewportElement(), {
       maxContentWidth: this.maxContentWidth,
     });
     this.renderer.setData(this.noteData.strokes, this.noteData.background);
     this.renderer.setSpatialIndex(this.spatialIndex);
+    this.renderer.setMediaManager(this.mediaManager);
     this.renderer.setContentSize(contentWidth, this.contentHeight);
     this.renderer.resize(width, height);
 
@@ -289,6 +450,10 @@ export class NoteCanvas {
             }
           }
         },
+        onAction: (action) => {
+          if (action === "insert-image") this.insertImage("picker");
+          if (action === "insert-camera") this.insertImage("camera");
+        },
       },
     );
     this.toolbar.updateMode(this.mode);
@@ -304,15 +469,80 @@ export class NoteCanvas {
 
     this.isInitialized = true;
 
-    // Log stats for debugging
-    console.log("[NoteCanvas] Initialized:", {
-      strokes: this.noteData.strokes?.length || 0,
-      contentHeight: this.contentHeight,
-      indexStats: this.spatialIndex.getStats(),
-    });
-
     // Expose for debugging
     window.__noteCanvas = this;
+  }
+
+  /**
+   * Insert an image into the note
+   * @param {string} source - 'picker' or 'camera'
+   */
+  async insertImage(source = "picker") {
+    try {
+      let files = [];
+      if (source === "camera") {
+        const file = await captureFromCamera();
+        if (file) files = [file];
+      } else {
+        files = await pickImages(true);
+      }
+
+      if (files.length === 0) {
+        return;
+      }
+
+      // Calculate center of viewport for insertion
+      const viewport = this.scroller.getViewportBounds();
+      const centerX = viewport.left + viewport.width / 2;
+      const centerY = viewport.top + viewport.height / 2;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        try {
+          const processed = await processImageFile(file);
+
+          // Convert DataURL to Blob for storage
+          let blob;
+          try {
+            const res = await fetch(processed.dataUrl);
+            blob = await res.blob();
+          } catch (fetchErr) {
+            console.warn("[NoteCanvas] fetch(dataUrl) failed, using fallback conversion", fetchErr);
+            const arr = processed.dataUrl.split(",");
+            const mime = arr[0].match(/:(.*?);/)[1];
+            const bstr = atob(arr[1]);
+            let n = bstr.length;
+            const u8arr = new Uint8Array(n);
+            while (n--) u8arr[n] = bstr.charCodeAt(n);
+            blob = new Blob([u8arr], { type: mime });
+          }
+
+          const fileId = await saveFile(blob);
+
+          const item = {
+            id: generateId(),
+            type: "image",
+            fileId: fileId,
+            x: centerX - processed.width / 4 + i * 20, // Offset slightly
+            y: centerY - processed.height / 4 + i * 20,
+            width: processed.width / 2, // Insert at 50% scale initially
+            height: processed.height / 2,
+            rotation: 0,
+          };
+
+          this.mediaManager.addItem(item);
+        } catch (err) {
+          console.error(`[NoteCanvas] Error processing file ${file.name}:`, err);
+        }
+      }
+
+      // Save changes
+      await this._saveMediaChanges();
+      this.renderer.forceRedraw();
+    } catch (error) {
+      console.error("[NoteCanvas] Failed to insert image:", error);
+    }
   }
 
   /**
@@ -374,6 +604,7 @@ export class NoteCanvas {
    */
   _setupEventListeners() {
     // Theme changes
+    window.addEventListener("datachange", this._onDataChange);
     window.addEventListener("themechange", this._onThemeChange);
 
     // Zoom via mouse wheel
@@ -386,6 +617,29 @@ export class NoteCanvas {
     viewport.addEventListener("pointerup", this._onPointerUpNav);
     viewport.addEventListener("pointercancel", this._onPointerUpNav);
     viewport.addEventListener("pointerleave", this._onPointerUpNav);
+    window.addEventListener("keydown", this._onKeyDown);
+  }
+
+  /**
+   * Handle external data changes (e.g., from sync)
+   * @private
+   */
+  async _onDataChange(e) {
+    const { noteId } = e.detail || {};
+
+    // Is this change for the currently open note?
+    if (!noteId || noteId !== this.noteId) {
+      return;
+    }
+
+    // The user is actively drawing. Defer the update until they finish.
+    if (this.inputHandler?.isDrawing) {
+      console.log("[NoteCanvas] Data change detected while drawing. Deferring update.");
+      this.pendingLiveUpdate = true;
+      return;
+    }
+
+    await this.applyLiveUpdate();
   }
 
   /**
@@ -420,12 +674,20 @@ export class NoteCanvas {
         }
 
         if (!this.renderer) return;
+
+        // If we have a pending media update (from sync), force a redraw of the media layer
+        if (this._pendingMediaUpdate) {
+          this.renderer.forceRedraw();
+          this._pendingMediaUpdate = false;
+        }
+
         this.renderer.render(
           scrollTop,
           viewportHeight,
           scrollLeft,
           this.strokeManager?.currentStroke,
         );
+        this._updateMediaOverlay();
       });
     }
   }
@@ -448,10 +710,17 @@ export class NoteCanvas {
     // Resize renderer
     this.renderer.resize(width, height / this.zoomScale);
 
+    // If we have a pending media update, force redraw now
+    if (this._pendingMediaUpdate) {
+      this.renderer.forceRedraw();
+      this._pendingMediaUpdate = false;
+    }
+
     // Re-render
     const scrollTop = this.scroller.getScrollTop();
     const scrollLeft = this.scroller.getScrollLeft();
     this.renderer.render(scrollTop, height, scrollLeft, this.strokeManager?.currentStroke);
+    this._updateMediaOverlay();
   }
 
   /**
@@ -482,6 +751,8 @@ export class NoteCanvas {
     this.autoSwitchedToDrawMode = false;
     this.lassoPoints = [];
     this.transformState = null;
+    this.mediaDragState = null;
+    this._clearLongPress();
 
     if (this.toolbar) {
       this.toolbar.updateMode(newMode);
@@ -506,6 +777,17 @@ export class NoteCanvas {
         this._setMode("draw");
         this.autoSwitchedToDrawMode = true;
       }
+    }
+
+    // Handle Media Interactions (Selection & Manipulation)
+    const mediaResult = this._handleMediaInteraction(
+      props.x,
+      props.y,
+      props.clientX,
+      props.clientY,
+    );
+    if (mediaResult.consumed) {
+      return true; // Started dragging selected media
     }
 
     if (this.mode === "pan") return false;
@@ -564,6 +846,20 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeMove(points) {
+    // Check long press movement threshold
+    if (this.longPressTimer) {
+      const lastPoint = points[points.length - 1];
+      this._checkLongPressMove(lastPoint.clientX, lastPoint.clientY);
+    }
+
+    if (this.mediaDragState) {
+      const lastPoint = points[points.length - 1];
+      this._handleMediaTransformMove(lastPoint.x, lastPoint.y);
+      this.renderer.forceRedraw();
+      this._updateMediaOverlay();
+      return;
+    }
+
     if (this.transformState) {
       const lastPoint = points[points.length - 1];
       this._handleTransformMove(lastPoint.x, lastPoint.y);
@@ -604,6 +900,14 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeEnd() {
+    this._clearLongPress();
+
+    if (this.mediaDragState) {
+      this.mediaDragState = null;
+      this._saveMediaChanges();
+      return;
+    }
+
     if (this.transformState) {
       this._endTransform();
       return;
@@ -640,6 +944,395 @@ export class NoteCanvas {
       this.spatialIndex.insert(stroke, newIndex);
       this.strokesChanged = true;
     }
+
+    // After stroke is finished, check if a deferred update is pending.
+    if (this.pendingLiveUpdate) {
+      this.pendingLiveUpdate = false;
+      console.log("[NoteCanvas] Applying deferred live update after stroke end.");
+      this.applyLiveUpdate().catch((err) => {
+        console.error("Failed to apply deferred live update:", err);
+      });
+    }
+  }
+
+  /**
+   * Handle keyboard events
+   * @private
+   */
+  _onKeyDown(e) {
+    if (e.key === "Delete" || e.key === "Backspace") {
+      if (this.selectedMediaId) {
+        this.deleteSelectedMedia();
+      }
+    }
+  }
+
+  /**
+   * Start long press detection
+   * @private
+   */
+  _startLongPress(item, clientX, clientY) {
+    this._clearLongPress();
+    this.longPressStart = { x: clientX, y: clientY };
+    this.longPressTimer = setTimeout(() => {
+      this._triggerLongPress(item);
+    }, 500); // 500ms for long press
+  }
+
+  /**
+   * Clear long press state
+   * @private
+   */
+  _clearLongPress() {
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
+    this.longPressStart = null;
+  }
+
+  /**
+   * Check if movement exceeds threshold for long press
+   * @private
+   */
+  _checkLongPressMove(clientX, clientY) {
+    if (!this.longPressStart) return;
+    const dist = Math.sqrt(
+      (clientX - this.longPressStart.x) ** 2 + (clientY - this.longPressStart.y) ** 2,
+    );
+    if (dist > 10) {
+      // 10px threshold
+      this._clearLongPress();
+    }
+  }
+
+  /**
+   * Trigger long press action (select item)
+   * @private
+   */
+  _triggerLongPress(item) {
+    this.longPressTimer = null;
+
+    // Select the item
+    this.selectedMediaId = item.id;
+    this.renderer.setSelectedMedia(item.id);
+    this._updateMediaOverlay();
+
+    // Cancel current stroke if drawing
+    if (this.strokeManager.currentStroke) {
+      this.strokeManager.cancelCurrentStroke();
+      this.renderer.forceRedraw(); // Clear the partial stroke
+    }
+
+    // Note: We don't automatically start dragging here to avoid jumps.
+    // The user sees the selection border and can then drag.
+  }
+
+  /**
+   * Handle media interaction at a point (shared logic for stroke and nav handlers)
+   * @private
+   * @param {number} x - Content X coordinate
+   * @param {number} y - Content Y coordinate
+   * @param {number} clientX - Screen X coordinate (for long press)
+   * @param {number} clientY - Screen Y coordinate (for long press)
+   * @returns {{ consumed: boolean, startedDrag: boolean }} Result of interaction check
+   */
+  _handleMediaInteraction(x, y, clientX, clientY) {
+    const hitItem = this.mediaManager.hitTest(x, y);
+
+    // Check handles first
+    let hitHandle = null;
+    if (this.selectedMediaId) {
+      const selectedItem = this.mediaManager.getItems().find((i) => i.id === this.selectedMediaId);
+      if (selectedItem) {
+        hitHandle = this._getMediaHandleAtPoint(x, y, selectedItem);
+      }
+    }
+
+    // Case 1: Interacting with an already selected item -> Start drag
+    if (hitHandle || (hitItem && hitItem.id === this.selectedMediaId)) {
+      const item = hitHandle
+        ? this.mediaManager.getItems().find((i) => i.id === this.selectedMediaId)
+        : hitItem;
+      this.mediaDragState = {
+        item: item,
+        mode: hitHandle ? (hitHandle === "rotate" ? "rotate" : "resize") : "move",
+        handle: hitHandle,
+        startX: x,
+        startY: y,
+        initialX: item.x,
+        initialY: item.y,
+        initialWidth: item.width,
+        initialHeight: item.height,
+        initialRotation: item.rotation || 0,
+        centerX: item.x + item.width / 2,
+        centerY: item.y + item.height / 2,
+      };
+      return { consumed: true, startedDrag: true };
+    }
+
+    // Case 2: Clicking outside selected item -> Deselect
+    if (this.selectedMediaId && (!hitItem || hitItem.id !== this.selectedMediaId)) {
+      this.selectedMediaId = null;
+      this.renderer.setSelectedMedia(null);
+      this.mediaOverlay.hide();
+    }
+
+    // Case 3: Long press detection on unselected item
+    if (hitItem && !this.selectedMediaId) {
+      this._startLongPress(hitItem, clientX, clientY);
+    }
+
+    return { consumed: false, startedDrag: false };
+  }
+
+  /**
+   * Check if point hits a media handle
+   * @private
+   */
+  _getMediaHandleAtPoint(x, y, item) {
+    const handles = getMediaHandles(item, this.zoomScale);
+    // Use larger hit area for touch
+    const hitRadius = SELECTION_HANDLE_HIT_AREA / this.zoomScale / 2;
+
+    for (const h of handles) {
+      if (Math.abs(x - h.x) <= hitRadius && Math.abs(y - h.y) <= hitRadius) {
+        return h.key;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Handle media transform (move/resize/rotate)
+   * @private
+   */
+  _handleMediaTransformMove(x, y) {
+    const state = this.mediaDragState;
+    const item = state.item;
+
+    if (state.mode === "move") {
+      const dx = x - state.startX;
+      const dy = y - state.startY;
+      item.x = state.initialX + dx;
+      item.y = state.initialY + dy;
+    } else if (state.mode === "rotate") {
+      // Calculate angle from center
+      const startAngle = Math.atan2(state.startY - state.centerY, state.startX - state.centerX);
+      const currentAngle = Math.atan2(y - state.centerY, x - state.centerX);
+      const deltaAngle = (currentAngle - startAngle) * (180 / Math.PI);
+      item.rotation = (state.initialRotation + deltaAngle) % 360;
+    } else if (state.mode === "resize") {
+      // Rotate point back to unrotated coordinate space for simpler resizing logic
+      // This is an approximation; full rotated resizing is complex.
+      // For simplicity, we calculate distance from center or opposite corner.
+
+      // Simple approach: Calculate distance change from center
+      // This works well for corner resizing while maintaining aspect ratio
+      const dx = x - state.startX;
+      const dy = y - state.startY;
+
+      // Determine resize direction based on handle
+      const isLeft = state.handle.includes("w");
+      const isTop = state.handle.includes("n");
+
+      // Rotate the delta vector by -rotation to align with item axes
+      const rad = (-(item.rotation || 0) * Math.PI) / 180;
+      const rdx = dx * Math.cos(rad) - dy * Math.sin(rad);
+      const rdy = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+      let newWidth = state.initialWidth;
+      let newHeight = state.initialHeight;
+      let newX = state.initialX;
+      let newY = state.initialY;
+
+      // Apply resize logic
+      if (state.handle.length === 2) {
+        // Corner (aspect ratio locked)
+        // Use the larger delta to drive the scale
+        const ratio = state.initialWidth / state.initialHeight;
+        let change = 0;
+
+        if (state.handle === "se") change = Math.max(rdx, rdy);
+        else if (state.handle === "nw") change = Math.max(-rdx, -rdy);
+        else if (state.handle === "ne") change = Math.max(rdx, -rdy);
+        else if (state.handle === "sw") change = Math.max(-rdx, rdy);
+
+        newWidth = Math.max(50, state.initialWidth + change);
+        newHeight = newWidth / ratio;
+
+        // Adjust position to keep opposite corner fixed (roughly)
+        // For perfect rotated resizing, we'd need to rotate the pivot point.
+        // Simplified: Center-based scaling if we don't want to do full matrix math here
+        // Let's do center-based scaling for now as it's robust for rotated items
+        const widthDiff = newWidth - state.initialWidth;
+        const heightDiff = newHeight - state.initialHeight;
+
+        // Adjust center based on handle
+        // This is a simplification. For full corner pinning, we need more math.
+        // But center-expansion is often acceptable for rotated items.
+        // Let's try to pin the center for now to avoid jumping.
+        newX = state.initialX - widthDiff / 2;
+        newY = state.initialY - heightDiff / 2;
+      } else {
+        // Side (one dimension)
+        if (state.handle === "e") newWidth += rdx;
+        else if (state.handle === "w") {
+          newWidth -= rdx;
+          newX -= rdx;
+        } // This X adjustment is only valid if rotation is 0
+        else if (state.handle === "s") newHeight += rdy;
+        else if (state.handle === "n") {
+          newHeight -= rdy;
+          newY -= rdy;
+        }
+
+        // For rotated side resizing, center-based is safer without full matrix logic
+        if (item.rotation) {
+          newX = state.initialX - (newWidth - state.initialWidth) / 2;
+          newY = state.initialY - (newHeight - state.initialHeight) / 2;
+        }
+      }
+
+      item.width = Math.max(50, newWidth);
+      item.height = Math.max(50, newHeight);
+      if (item.rotation) {
+        item.x = newX;
+        item.y = newY;
+      } else {
+        // Non-rotated logic (standard)
+        if (isLeft) item.x = state.initialX + (state.initialWidth - item.width);
+        if (isTop) item.y = state.initialY + (state.initialHeight - item.height);
+      }
+    }
+  }
+
+  /**
+   * Update media overlay position
+   * @private
+   */
+  _updateMediaOverlay() {
+    if (this.selectedMediaId && this.mediaOverlay) {
+      const item = this.mediaManager.getItems().find((i) => i.id === this.selectedMediaId);
+      if (item) {
+        const scrollLeft = this.scroller.getScrollLeft();
+        const scrollTop = this.scroller.getScrollTop();
+        const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+
+        // Calculate offset (centering)
+        const viewportWidth = this.scroller.getViewportSize().width;
+        const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+        const offsetX =
+          scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+        this.mediaOverlay.show(item, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
+      }
+    }
+  }
+
+  /**
+   * Delete the currently selected media item
+   */
+  async deleteSelectedMedia(id = null) {
+    const targetId = id || this.selectedMediaId;
+    if (!targetId) return;
+
+    // Find item to get fileId before removing
+    const item = this.mediaManager.getItems().find((i) => i.id === targetId);
+
+    if (!item) {
+      return;
+    }
+
+    // Track deleted media ID
+    this.noteData.deletedMedia.push(targetId);
+
+    // Remove from manager
+    this.mediaManager.removeItem(targetId);
+    this.selectedMediaId = null;
+    this.renderer.setSelectedMedia(null);
+    this.mediaOverlay.hide();
+
+    // Save changes to note structure
+    await this._saveMediaChanges();
+
+    // Delete binary file from storage if it exists
+    if (item?.fileId) {
+      await deleteFile(item.fileId).catch(() => {
+        // Silently ignore deletion errors (file may not exist)
+      });
+    }
+
+    this.renderer.forceRedraw();
+  }
+
+  /**
+   * Crop the selected media item
+   */
+  async cropSelectedMedia(id) {
+    const item = this.mediaManager.getItems().find((i) => i.id === id);
+    const img = this.mediaManager.getImage(item?.fileId);
+
+    if (!item || !img) return;
+
+    const cropper = new ImageCropper();
+    const blob = await cropper.show(img);
+
+    if (blob) {
+      // Save new file
+      const newFileId = await saveFile(blob);
+
+      // Update item
+      // We need to update width/height to match new aspect ratio but keep same display width?
+      // Or reset to natural size? Let's keep width and adjust height.
+      const newImg = new Image();
+      newImg.src = URL.createObjectURL(blob);
+      await new Promise((r) => {
+        newImg.onload = r;
+      });
+
+      const ratio = newImg.height / newImg.width;
+      const newHeight = item.width * ratio;
+
+      this.mediaManager.updateItem(id, {
+        fileId: newFileId,
+        height: newHeight,
+      });
+
+      this._saveMediaChanges();
+      this.renderer.forceRedraw();
+      this._updateMediaOverlay();
+    }
+  }
+
+  moveSelectedMediaToFront(id) {
+    this.mediaManager.moveItemToFront(id);
+    this._saveMediaChanges();
+    this.renderer.forceRedraw();
+    this._updateMediaOverlay();
+  }
+
+  moveSelectedMediaToBack(id) {
+    this.mediaManager.moveItemToBack(id);
+    this._saveMediaChanges();
+    this.renderer.forceRedraw();
+    this._updateMediaOverlay();
+  }
+
+  /**
+   * Save media changes to storage
+   * @private
+   */
+  async _saveMediaChanges() {
+    if (this.noteId && this.mediaManager) {
+      this.noteData.media = this.mediaManager.getItems();
+      // Use StrokeManager (which uses StorageWorker) to save media updates
+      // This prevents race conditions between stroke saving and media saving
+      this.strokeManager.saveMedia({
+        media: this.noteData.media,
+        deletedMedia: this.noteData.deletedMedia,
+      });
+    }
   }
 
   /**
@@ -648,7 +1341,7 @@ export class NoteCanvas {
    * @private
    */
   _isScratchGesture(stroke) {
-    if (!stroke || stroke.x.length < 30) return false;
+    if (!stroke || stroke.x.length < SCRATCH_MIN_POINTS) return false;
 
     // 1. Calculate bounds and total path length
     let minX = stroke.x[0],
@@ -673,11 +1366,11 @@ export class NoteCanvas {
     const diag = Math.sqrt(width * width + height * height);
 
     // Minimum size threshold to avoid accidental triggers on small letters
-    if (width < 30 && height < 30) return false;
+    if (width < SCRATCH_MIN_SIZE && height < SCRATCH_MIN_SIZE) return false;
 
     // Density check: Scratch-out has high ink-to-area ratio (vs straight line or simple curve)
-    // Letters like 'Z' or 'M' usually have ratio < 2.5. Scratches usually > 3.
-    if (diag === 0 || totalLength / diag < 2.5) return false;
+    // Letters like 'Z' or 'M' usually have ratio < threshold. Scratches usually > threshold.
+    if (diag === 0 || totalLength / diag < SCRATCH_DENSITY_THRESHOLD) return false;
 
     // 2. Analyze direction changes in primary axis (Horizontal or Vertical)
     const isHorizontal = width > height;
@@ -686,11 +1379,10 @@ export class NoteCanvas {
     let changes = 0;
     let currentDir = 0;
     let lastVal = primaryValues[0];
-    const threshold = 8; // Increased threshold to reduce noise sensitivity
 
     for (let i = 1; i < primaryValues.length; i++) {
       const d = primaryValues[i] - lastVal;
-      if (Math.abs(d) > threshold) {
+      if (Math.abs(d) > SCRATCH_DIRECTION_THRESHOLD) {
         const dir = Math.sign(d);
         if (currentDir !== 0 && dir !== currentDir) {
           changes++;
@@ -700,8 +1392,8 @@ export class NoteCanvas {
       }
     }
 
-    // Require at least 4 turns (5 segments) to avoid false positives like 'M', 'W', 'Z'
-    return changes >= 4;
+    // Require minimum direction changes to avoid false positives like 'M', 'W', 'Z'
+    return changes >= SCRATCH_MIN_DIRECTION_CHANGES;
   }
 
   /**
@@ -723,12 +1415,11 @@ export class NoteCanvas {
     }
 
     // Add padding to catch small nearby strokes (like 'i' dots)
-    const padding = 15;
     const eraseRect = {
-      minX: minX - padding,
-      maxX: maxX + padding,
-      minY: minY - padding,
-      maxY: maxY + padding,
+      minX: minX - SCRATCH_ERASE_PADDING,
+      maxX: maxX + SCRATCH_ERASE_PADDING,
+      minY: minY - SCRATCH_ERASE_PADDING,
+      maxY: maxY + SCRATCH_ERASE_PADDING,
     };
 
     // Use lasso logic to find strokes fully contained in the (rectangular) erase area
@@ -1263,6 +1954,17 @@ export class NoteCanvas {
    * @private
    */
   _onPointerDownNav(e) {
+    // Handle media hit testing for Pan mode
+    const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
+    const mediaResult = this._handleMediaInteraction(x, y, e.clientX, e.clientY);
+
+    if (mediaResult.consumed) {
+      // Started dragging selected media - consume event to prevent pan
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     // Ignore pen inputs for navigation (handled by InputHandler/StrokeManager)
     if (e.pointerType === "pen") return;
     // Allow mouse only if in Pan mode (not draw/eraser mode)
@@ -1302,6 +2004,20 @@ export class NoteCanvas {
    * @private
    */
   _onPointerMoveNav(e) {
+    // Check long press movement
+    if (this.longPressTimer) {
+      this._checkLongPressMove(e.clientX, e.clientY);
+    }
+
+    // Handle media dragging in Pan mode
+    if (this.mediaDragState) {
+      const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
+      this._handleMediaTransformMove(x, y);
+      this.renderer.forceRedraw();
+      this._updateMediaOverlay();
+      return;
+    }
+
     if (!this.activePointers.has(e.pointerId)) return;
 
     // Prevent panning if currently drawing (prevents palm movements from sliding canvas while writing)
@@ -1369,6 +2085,13 @@ export class NoteCanvas {
    * @private
    */
   _onPointerUpNav(e) {
+    this._clearLongPress();
+
+    if (this.mediaDragState) {
+      this.mediaDragState = null;
+      this._saveMediaChanges();
+    }
+
     if (this.activePointers.has(e.pointerId)) {
       this.activePointers.delete(e.pointerId);
       try {
@@ -1472,6 +2195,11 @@ export class NoteCanvas {
     }
 
     if (this.renderer) {
+      if (this._pendingMediaUpdate) {
+        this.renderer.forceRedraw();
+        this._pendingMediaUpdate = false;
+      }
+
       const scrollTop = this.scroller?.getScrollTop() || 0;
       const scrollLeft = this.scroller?.getScrollLeft() || 0;
       this.renderer.setZoom(scale, {
@@ -1517,6 +2245,8 @@ export class NoteCanvas {
 
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);
+    window.removeEventListener("datachange", this._onDataChange);
+    window.removeEventListener("keydown", this._onKeyDown);
 
     if (this.scroller) {
       const viewport = this.scroller.getViewportElement();
@@ -1544,6 +2274,16 @@ export class NoteCanvas {
     if (this.spatialIndex) {
       this.spatialIndex.clear();
       this.spatialIndex = null;
+    }
+
+    if (this.mediaManager) {
+      this.mediaManager.destroy();
+      this.mediaManager = null;
+    }
+
+    if (this.mediaOverlay) {
+      this.mediaOverlay.destroy();
+      this.mediaOverlay = null;
     }
 
     if (this.inputHandler) {

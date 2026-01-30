@@ -3,7 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = resolve(__dirname, '..');
+const rootDir = __dirname;
 
 const packagePath = resolve(rootDir, 'package.json');
 const tauriConfigPath = resolve(rootDir, 'src-tauri', 'tauri.conf.json');

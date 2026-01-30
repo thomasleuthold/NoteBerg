@@ -14,25 +14,55 @@ import {
   getSecureCredential,
   saveSecureCredential,
 } from "./secureStorage.js";
-import { isNextcloudEncryptionEnabled } from "./storage.js";
+import {
+  checkFileExists,
+  getFile,
+  isNextcloudEncryptionEnabled,
+  permanentlyDeleteNote,
+  permanentlyDeleteNotebook,
+  permanentlyDeleteNotesInNotebook,
+  saveFile,
+  updateNote,
+} from "./storage.js";
 import {
   getAllRequiredFolders,
+  getGlobalNotebookTombstonePath,
   getLegacyNotebookPath,
   getLegacyNotePath,
   getNotebookFolder,
   getNotebookNotesFolder,
   getNotebookPath,
   getNotebookTombstonePath,
+  getNoteMediaFolder,
   getNotePath,
   getQuickNotesTombstonePath,
   parsePath,
   ROOT_FOLDER,
   STORAGE_VERSION,
 } from "./storagePaths.js";
-import { addNoteTombstone, cleanupOldTombstones, createEmptyTombstone } from "./tombstones.js";
+import {
+  addNotebookTombstone,
+  addNoteTombstone,
+  cleanupOldTombstones,
+  createEmptyTombstone,
+} from "./tombstones.js";
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
 const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
+
+// Mime type mapping for file extensions
+const MIME_TYPES = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "image/svg+xml": ".svg",
+  "application/pdf": ".pdf",
+};
+
+function getExtensionFromMime(mimeType) {
+  return MIME_TYPES[mimeType] || ".bin";
+}
 
 // Helper for batching promises
 async function runInBatches(items, batchSize, fn) {
@@ -217,7 +247,7 @@ export async function clearCredentials() {
  */
 export async function isAuthenticated() {
   const creds = await getStoredCredentials();
-  return creds?.serverUrl && creds.loginName && creds.appPassword;
+  return !!(creds?.serverUrl && creds.loginName && creds.appPassword);
 }
 
 /**
@@ -539,7 +569,7 @@ async function uploadFile(path, content, mtime = null, etag = null) {
 /**
  * Download a file from Nextcloud using WebDAV
  */
-async function downloadFile(path) {
+async function downloadFile(path, asBinary = false) {
   const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
@@ -562,9 +592,179 @@ async function downloadFile(path) {
     throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
   }
 
+  if (asBinary) {
+    const content = await response.arrayBuffer();
+    const etag = response.headers.get("etag")?.replace(/"/g, "");
+    return { content, etag };
+  }
+
   const content = await response.text();
   const etag = response.headers.get("etag")?.replace(/"/g, "");
   return { content, etag };
+}
+
+/**
+ * Sync media files for a note (Upload)
+ * Ensures all binary files referenced in the note are uploaded to Nextcloud
+ * Uses parallel uploads for efficiency
+ */
+async function syncNoteMedia(note) {
+  if (!note.media || note.media.length === 0) return;
+
+  const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
+
+  // Ensure media folder exists
+  await createFolder(mediaFolder);
+
+  // Get list of existing files on server to avoid unnecessary uploads
+  let remoteFiles = [];
+  try {
+    remoteFiles = await listFiles(mediaFolder);
+  } catch (_e) {
+    // Ignore error if folder is empty/new
+  }
+  const remoteNames = new Set(remoteFiles.map((f) => f.name));
+
+  // Prepare upload tasks for items that need uploading
+  const uploadTasks = [];
+
+  for (const item of note.media) {
+    if (!item.fileId) continue;
+
+    // Get file from local storage
+    const blob = await getFile(item.fileId);
+    if (!blob) {
+      console.warn(
+        `[Sync] Local file not found for media item ${item.id} (fileId: ${item.fileId})`,
+      );
+      continue;
+    }
+
+    // Determine filename
+    const ext = getExtensionFromMime(blob.type);
+    const filename = `${item.fileId}${ext}`;
+
+    // Queue upload if not exists on server
+    if (!remoteNames.has(filename)) {
+      uploadTasks.push({ filename, blob, path: `${mediaFolder}/${filename}` });
+    }
+  }
+
+  // Upload in parallel batches
+  if (uploadTasks.length > 0) {
+    const MEDIA_UPLOAD_CONCURRENCY = 3;
+    await runInBatches(uploadTasks, MEDIA_UPLOAD_CONCURRENCY, async (task) => {
+      try {
+        console.log(`[Sync] Uploading media file: ${task.filename}`);
+        await uploadFile(task.path, task.blob);
+        return { success: true, filename: task.filename };
+      } catch (error) {
+        console.error(`[Sync] Failed to upload media file ${task.filename}:`, error);
+        return { success: false, filename: task.filename, error };
+      }
+    });
+  }
+}
+
+/**
+ * Clean up orphaned media files from Nextcloud
+ * Deletes files in the media folder that are no longer referenced by the note
+ * @param {Object} note - Note with media array and deletedMedia array
+ */
+async function cleanupOrphanedMedia(note) {
+  const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
+
+  // Get list of files currently on server
+  let remoteFiles = [];
+  try {
+    remoteFiles = await listFiles(mediaFolder);
+  } catch (_e) {
+    // Folder doesn't exist, nothing to clean up
+    return;
+  }
+
+  if (remoteFiles.length === 0) return;
+
+  // Build set of valid fileIds that should exist
+  const validFileIds = new Set();
+  if (note.media) {
+    for (const item of note.media) {
+      if (item.fileId) {
+        validFileIds.add(item.fileId);
+      }
+    }
+  }
+
+  // Find orphaned files (files on server not referenced in note.media)
+  const orphanedFiles = remoteFiles.filter((file) => {
+    // Extract fileId from filename (filename format: {fileId}.{ext})
+    const dotIndex = file.name.lastIndexOf(".");
+    const fileId = dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
+    return !validFileIds.has(fileId);
+  });
+
+  // Delete orphaned files
+  if (orphanedFiles.length > 0) {
+    console.log(
+      `[Sync] Cleaning up ${orphanedFiles.length} orphaned media files for note ${note.id}`,
+    );
+    for (const file of orphanedFiles) {
+      try {
+        await deleteFile(`${mediaFolder}/${file.name}`);
+        console.log(`[Sync] Deleted orphaned media file: ${file.name}`);
+      } catch (error) {
+        console.warn(`[Sync] Failed to delete orphaned media file ${file.name}:`, error);
+      }
+    }
+  }
+}
+
+/**
+ * Download media files for a note
+ * Ensures all binary files referenced in the note are downloaded to local storage
+ */
+async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
+  if (!note.media || note.media.length === 0) return;
+
+  const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
+  let remoteFiles = preloadedRemoteFiles;
+
+  for (const item of note.media) {
+    if (!item.fileId) continue;
+
+    // Check if file exists locally
+    const existing = await checkFileExists(item.fileId);
+    if (existing) continue;
+
+    // Need to find the remote filename. It should be fileId + extension.
+    // Since we don't store the extension in the note JSON explicitly in all versions,
+    // we list the folder once to find the matching file.
+    if (!remoteFiles) {
+      try {
+        remoteFiles = await listFiles(mediaFolder);
+      } catch (e) {
+        console.warn(`[Sync] Failed to list media folder ${mediaFolder}:`, e);
+        return; // Stop if folder doesn't exist
+      }
+    }
+
+    const remoteFile = remoteFiles.find((f) => f.name.startsWith(item.fileId));
+    if (remoteFile) {
+      console.log(`[Sync] Downloading media file: ${remoteFile.name}`);
+      const { content } = await downloadFile(`${mediaFolder}/${remoteFile.name}`, true); // Download as binary
+
+      if (content) {
+        // Infer mime type from extension
+        const ext = remoteFile.name.substring(remoteFile.name.lastIndexOf("."));
+        const mimeType =
+          Object.keys(MIME_TYPES).find((key) => MIME_TYPES[key] === ext) ||
+          "application/octet-stream";
+
+        const blob = new Blob([content], { type: mimeType });
+        await saveFile(blob, item.fileId);
+      }
+    }
+  }
 }
 
 /**
@@ -776,9 +976,63 @@ export async function syncNotebooks(notebooks) {
   // Ensure hierarchical folder structure exists
   await ensureHierarchicalStructure();
 
+  // Separate purged notebooks from active ones
+  const purgedNotebooks = notebooks.filter((n) => n.purged);
+  const activeNotebooks = notebooks.filter((n) => !n.purged);
+  const purgedResults = [];
+
+  // Process purged notebooks: Delete files FIRST, then update tombstone
+  // This prevents data loss if tombstone succeeds but deletion fails
+  if (purgedNotebooks.length > 0) {
+    try {
+      // Step 1: Attempt to delete remote folders first
+      const deleteResults = await runInBatches(purgedNotebooks, 5, async (notebook) => {
+        try {
+          console.log(`[Sync] Deleting remote notebook ${notebook.id}`);
+          await deleteRemoteNotebook(notebook.id);
+          return { success: true, id: notebook.id, action: "purge" };
+        } catch (e) {
+          console.error(`[Sync] Failed to delete remote notebook ${notebook.id}:`, e);
+          return { success: false, id: notebook.id, error: e.message, action: "purge" };
+        }
+      });
+
+      // Step 2: Only add successfully deleted notebooks to tombstone
+      const successfullyDeleted = deleteResults.filter((r) => r.success);
+
+      if (successfullyDeleted.length > 0) {
+        const tombstonePath = getGlobalNotebookTombstonePath();
+        let tombstone;
+        try {
+          const { content } = await downloadFile(tombstonePath);
+          tombstone = content ? JSON.parse(content) : createEmptyTombstone();
+        } catch (e) {
+          console.warn(`[Sync] Could not download global tombstone, creating new.`, e);
+          tombstone = createEmptyTombstone();
+        }
+
+        for (const result of successfullyDeleted) {
+          tombstone = addNotebookTombstone(tombstone, result.id);
+        }
+
+        await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+
+        // Step 3: Clean up local stubs only for successful deletions
+        for (const result of successfullyDeleted) {
+          await permanentlyDeleteNotesInNotebook(result.id);
+          await permanentlyDeleteNotebook(result.id);
+        }
+      }
+
+      purgedResults.push(...deleteResults);
+    } catch (error) {
+      console.error("[Sync] Failed to process purged notebooks:", error);
+    }
+  }
+
   const CONCURRENCY = 5;
 
-  const batchResults = await runInBatches(notebooks, CONCURRENCY, async (notebook) => {
+  const uploadResults = await runInBatches(activeNotebooks, CONCURRENCY, async (notebook) => {
     try {
       // Create notebook folder
       const notebookFolder = getNotebookFolder(notebook.id);
@@ -810,6 +1064,8 @@ export async function syncNotebooks(notebooks) {
     }
   });
 
+  const batchResults = [...purgedResults, ...uploadResults];
+
   const results = {
     uploaded: 0,
     failed: 0,
@@ -820,9 +1076,12 @@ export async function syncNotebooks(notebooks) {
 
   for (const res of batchResults) {
     if (res.success) {
-      results.uploaded++;
-      results.uploadedIds.push(res.id);
-      results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+      // Only count as uploaded if it wasn't a purge action
+      if (res.action !== "purge") {
+        results.uploaded++;
+        results.uploadedIds.push(res.id);
+        results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+      }
     } else {
       results.failed++;
       results.errors.push({ id: res.id, error: res.error });
@@ -843,9 +1102,92 @@ export async function syncNotes(notes) {
   // Ensure hierarchical folder structure exists
   await ensureHierarchicalStructure();
 
+  // Separate purged notes from active notes
+  const purgedNotes = notes.filter((n) => n.purged);
+  const activeNotes = notes.filter((n) => !n.purged);
+  const purgedResults = [];
+
+  // Process purged notes grouped by notebook to avoid tombstone race conditions
+  // Delete files FIRST, then update tombstone to prevent data loss
+  if (purgedNotes.length > 0) {
+    const byNotebook = {};
+    for (const note of purgedNotes) {
+      const key = note.notebookId || "quickNotes";
+      if (!byNotebook[key]) byNotebook[key] = [];
+      byNotebook[key].push(note);
+    }
+
+    for (const [key, groupNotes] of Object.entries(byNotebook)) {
+      const notebookId = key === "quickNotes" ? null : key;
+
+      try {
+        // Step 1: Delete files first (before updating tombstone)
+        const deleteResults = await runInBatches(groupNotes, 5, async (note) => {
+          try {
+            const notePath = getNotePath(note.id, note.notebookId);
+            const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
+
+            await deleteFile(notePath);
+            await deleteFile(mediaFolder).catch(() => {}); // Ignore if folder doesn't exist
+
+            return { success: true, id: note.id, action: "purge" };
+          } catch (e) {
+            console.error(`[Sync] Failed to delete purged note files ${note.id}:`, e);
+            return { success: false, id: note.id, error: e.message, action: "purge" };
+          }
+        });
+
+        // Step 2: Only add successfully deleted notes to tombstone
+        const successfullyDeleted = deleteResults.filter((r) => r.success);
+
+        if (successfullyDeleted.length > 0) {
+          const tombstonePath = notebookId
+            ? getNotebookTombstonePath(notebookId)
+            : getQuickNotesTombstonePath();
+
+          let tombstone;
+          try {
+            const { content: tombstoneContent } = await downloadFile(tombstonePath);
+            tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
+          } catch (e) {
+            console.warn(`[Sync] Could not download tombstone ${tombstonePath}, creating new.`, e);
+            tombstone = createEmptyTombstone();
+          }
+
+          // Add only successfully deleted notes to tombstone
+          for (const result of successfullyDeleted) {
+            tombstone = addNoteTombstone(tombstone, result.id);
+          }
+
+          // Upload updated tombstone
+          await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+
+          // Step 3: Clean up local stubs only for successful deletions
+          for (const result of successfullyDeleted) {
+            await permanentlyDeleteNote(result.id);
+            console.log(`[Sync] Purged note ${result.id} completely`);
+          }
+        }
+
+        purgedResults.push(...deleteResults);
+      } catch (error) {
+        console.error(`[Sync] Failed to process purged notes group for ${key}:`, error);
+        // Mark all in group as failed
+        for (const note of groupNotes) {
+          purgedResults.push({
+            success: false,
+            id: note.id,
+            error: error.message,
+            action: "purge",
+          });
+        }
+      }
+    }
+  }
+
   const CONCURRENCY = 5;
 
-  const batchResults = await runInBatches(notes, CONCURRENCY, async (note) => {
+  const uploadResults = await runInBatches(activeNotes, CONCURRENCY, async (note) => {
     try {
       // Get the correct path based on whether note is in a notebook or is a quick note
       const path = getNotePath(note.id, note.notebookId);
@@ -858,17 +1200,21 @@ export async function syncNotes(notes) {
         // Keep original modified timestamp to preserve history
       };
 
+      // Sync media files (upload binaries)
+      await syncNoteMedia(syncedNote);
+
+      // Clean up orphaned media files (deleted from note but still on server)
+      await cleanupOrphanedMedia(syncedNote);
+
       // Encrypt note for Nextcloud if encryption is enabled
       const encryptedNote = await encryptNoteForNextcloud(syncedNote);
 
       // Strip internal sync tracking fields before uploading
-      const {
-        lastSyncedEtag: _,
-        synced: __,
-        encrypted: ___,
-        _currentFileEtag: ____,
-        ...noteForUpload
-      } = encryptedNote;
+      const noteForUpload = { ...encryptedNote };
+      delete noteForUpload.lastSyncedEtag;
+      delete noteForUpload.synced;
+      delete noteForUpload.encrypted;
+      delete noteForUpload._currentFileEtag;
 
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
@@ -882,6 +1228,8 @@ export async function syncNotes(notes) {
     }
   });
 
+  const batchResults = [...purgedResults, ...uploadResults];
+
   const results = {
     uploaded: 0,
     failed: 0,
@@ -892,9 +1240,12 @@ export async function syncNotes(notes) {
 
   for (const res of batchResults) {
     if (res.success) {
-      results.uploaded++;
-      results.uploadedIds.push(res.id);
-      results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+      // Only count as uploaded if it wasn't a purge action
+      if (res.action !== "purge") {
+        results.uploaded++;
+        results.uploadedIds.push(res.id);
+        results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+      }
     } else {
       results.failed++;
       results.errors.push({ id: res.id, error: res.error });
@@ -930,6 +1281,7 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
   const notebooksToDownload = [];
   const notesToDownload = [];
   const tombstonesToDownload = [];
+  const mediaCheckQueue = []; // Notes that are unchanged but might need media checks
 
   // Step 2: Identify what needs downloading
   for (const file of remoteFiles) {
@@ -964,10 +1316,30 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
           // We don't need content for unchanged notes unless there's a local conflict,
           // in which case fullSync logic handles it (local modified + remote unchanged = upload local).
         });
+
+        if (local.media && local.media.length > 0) {
+          mediaCheckQueue.push(local);
+        }
       }
     } else if (parsed.type === "tombstone") {
       // Always download tombstones for now (they are small and critical)
       tombstonesToDownload.push({ ...parsed, path: file.path });
+    }
+  }
+
+  // Index remote media files for efficient lookup
+  // Map: noteId -> Array of { name, path }
+  const remoteMediaMap = new Map();
+  for (const file of remoteFiles) {
+    const parsed = parsePath(file.path);
+    if (parsed.type === "media" && parsed.noteId) {
+      if (!remoteMediaMap.has(parsed.noteId)) {
+        remoteMediaMap.set(parsed.noteId, []);
+      }
+      remoteMediaMap.get(parsed.noteId).push({
+        name: parsed.filename,
+        path: file.path,
+      });
     }
   }
 
@@ -1001,7 +1373,12 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
       if (content) {
         const note = JSON.parse(content);
         note._currentFileEtag = item.etag;
-        return await decryptNoteFromNextcloud(note);
+        const decrypted = await decryptNoteFromNextcloud(note);
+
+        // Download media files for this note
+        await downloadNoteMedia(decrypted, remoteMediaMap.get(decrypted.id));
+
+        return decrypted;
       }
     } catch (e) {
       console.error(`Failed to download note ${item.noteId}:`, e);
@@ -1009,6 +1386,15 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
     return null;
   });
   notes.push(...downloadedNotes.filter((n) => n));
+
+  // Check media for unchanged notes (fix for missing images)
+  if (mediaCheckQueue.length > 0) {
+    console.log(`[Sync] Checking media for ${mediaCheckQueue.length} unchanged notes...`);
+    await runInBatches(mediaCheckQueue, CONCURRENCY, async (note) => {
+      const remoteMedia = remoteMediaMap.get(note.id);
+      await downloadNoteMedia(note, remoteMedia);
+    });
+  }
 
   // Download Tombstones
   const downloadedTombstones = await runInBatches(
@@ -1104,29 +1490,54 @@ export function attemptMerge(local, remote) {
   );
 
   // Attempt to merge text content.
+  const localContent = local.content || "";
+  const remoteContent = remote.content || "";
   let mergedContent;
-  if (local.content === remote.content) {
+  if (localContent === remoteContent) {
     // Content is identical, no merge needed.
-    mergedContent = local.content;
-  } else if (remote.content.includes(local.content)) {
+    mergedContent = localContent;
+  } else if (remoteContent.includes(localContent)) {
     // The remote content contains the local content, so it's likely an append. Use remote.
-    mergedContent = remote.content;
-  } else if (local.content.includes(remote.content)) {
+    mergedContent = remoteContent;
+  } else if (localContent.includes(remoteContent)) {
     // The local content contains the remote content, so it's likely an append. Use local.
-    mergedContent = local.content;
+    mergedContent = localContent;
   } else {
     // This is a true conflict where both texts have diverged.
-    // We apply a "last write wins" strategy based on the note's modified timestamp.
-    // This handles the case where one client changed text and another changed strokes,
-    // by picking the content from the more recent change.
-    mergedContent = newerNote.content;
+    // Return null to signal that manual conflict resolution is required.
+    return null;
   }
 
   // Merge title using "last write wins".
   const mergedTitle = local.title !== remote.title ? newerNote.title : local.title;
 
+  // Merge background using "last write wins".
+  const mergedBackground =
+    local.background !== remote.background ? newerNote.background : local.background;
+
   // Merge tags by taking the union of both sets.
   const mergedTags = [...new Set([...(local.tags || []), ...(remote.tags || [])])];
+
+  // Merge media
+  const localMedia = local.media || [];
+  const remoteMedia = remote.media || [];
+  const localDeletedMedia = local.deletedMedia || [];
+  const remoteDeletedMedia = remote.deletedMedia || [];
+
+  const allDeletedMedia = new Set([...localDeletedMedia, ...remoteDeletedMedia]);
+  const mediaMap = new Map();
+
+  // Helper to add media (newer overwrites older if same ID)
+  const addMedia = (items) => {
+    for (const item of items) {
+      if (item.id && !allDeletedMedia.has(item.id)) {
+        mediaMap.set(item.id, item);
+      }
+    }
+  };
+
+  addMedia(localIsNewer ? remoteMedia : localMedia); // Add older first
+  addMedia(localIsNewer ? localMedia : remoteMedia); // Add newer second (wins)
 
   // Construct the merged note.
   return {
@@ -1136,8 +1547,11 @@ export function attemptMerge(local, remote) {
 
     title: mergedTitle,
     content: mergedContent,
+    background: mergedBackground,
     strokes: mergedStrokeData.strokes,
     deletedStrokes: mergedStrokeData.deletedStrokes,
+    media: Array.from(mediaMap.values()),
+    deletedMedia: Array.from(allDeletedMedia),
     tags: mergedTags,
     deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
 
@@ -1178,15 +1592,32 @@ export async function fullSync(localNotebooks, localNotes) {
 
   // Check which local notebooks should be uploaded
   for (const local of localNotebooks) {
+    // PRIORITY: If notebook is purged locally, queue it for processing immediately.
+    if (local.purged) {
+      notebooksToUpload.push(local);
+      continue;
+    }
+
     const remote = remoteNotebookMap.get(local.id);
 
     if (!remote) {
-      // Check if deleted remotely (via tombstone) - Notebook tombstones are stored inside the notebook folder usually,
-      // but if the notebook folder is gone, we can't read it.
-      // However, deleteRemoteNotebook implementation currently just marks it in the tombstone inside the folder.
-      // If the folder is gone, we assume it's deleted.
-      // But here we rely on downloadAllData which lists folders.
-      // If a notebook is missing from remoteData, it means the folder is missing or empty/invalid.
+      // Check global tombstone for deletion
+      const globalTombstone = remoteData.tombstones.get("global_notebooks");
+      const isDeletedRemotely = globalTombstone?.notebooks?.some((t) => t.id === local.id);
+
+      if (isDeletedRemotely) {
+        if (local.synced === false && !local.deleted) {
+          // Conflict: Deleted remotely, Modified locally. Restore (re-upload).
+          console.log(
+            `[Sync] Notebook ${local.id} deleted remotely but modified locally. Restoring.`,
+          );
+          notebooksToUpload.push({ ...local, lastSyncedEtag: null });
+        } else {
+          console.log(`[Sync] Notebook ${local.id} deleted remotely. Deleting locally.`);
+          notebooksToDelete.push(local.id);
+        }
+        continue;
+      }
 
       // For notebooks, if it's missing remotely and we are synced, we usually re-upload (self-heal).
       // There isn't a global tombstone for notebooks currently.
@@ -1227,6 +1658,20 @@ export async function fullSync(localNotebooks, localNotes) {
 
   // Check which local notes should be uploaded
   for (const local of localNotes) {
+    // PRIORITY: If note is purged locally, queue it for processing immediately.
+    // This bypasses conflict checks because purge is a final destructive action.
+    if (local.purged) {
+      // If the parent notebook is also being purged in this sync, skip processing this note.
+      // The notebook purge will delete the entire folder structure, so individual note deletion is redundant and will fail.
+      const parentNotebookPurged =
+        local.notebookId && notebooksToUpload.some((n) => n.id === local.notebookId && n.purged);
+      if (parentNotebookPurged) {
+        continue;
+      }
+      notesToUpload.push(local);
+      continue;
+    }
+
     const remote = remoteNoteMap.get(local.id);
 
     if (!remote) {
@@ -1236,7 +1681,7 @@ export async function fullSync(localNotebooks, localNotes) {
       const isDeletedRemotely = tombstone?.notes?.some((t) => t.id === local.id);
 
       if (isDeletedRemotely) {
-        if (local.synced === false) {
+        if (local.synced === false && !local.deleted) {
           // Conflict: Deleted remotely, Modified locally. Strategy: Restore (re-upload).
           console.log(
             `[Sync] Note ${local.id} was deleted remotely but modified locally. Restoring.`,
@@ -1268,6 +1713,9 @@ export async function fullSync(localNotebooks, localNotes) {
         // Use the remote's current file ETag for the upload to succeed via If-Match
         const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
         notesToUpload.push(mergedWithRemoteBase);
+
+        // Save merged note locally to ensure client sees merged state immediately
+        await updateNote(merged.id, merged);
       } else {
         conflicts.notes.push({ local, remote });
       }
@@ -1325,23 +1773,13 @@ export async function deleteRemoteNotebook(notebookId) {
   }
 
   try {
-    // For now, we could either:
-    // 1. Actually delete the folder (lose data)
-    // 2. Just mark all notes as deleted in tombstone
-    // Let's implement option 2 for safety
+    // Delete the notebook folder recursively
+    // This removes the notebook metadata, all notes, and media within it
+    const notebookFolder = getNotebookFolder(notebookId);
 
-    // Download current tombstone
-    const tombstonePath = getNotebookTombstonePath(notebookId);
-    const { content: tombstoneContent } = await downloadFile(tombstonePath);
-
-    const tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
-
-    // Mark notebook itself as deleted
-    tombstone.notebookDeleted = true;
-    tombstone.notebookDeletedAt = new Date().toISOString();
-
-    // Upload updated tombstone
-    await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+    console.log(`[Sync] Deleting remote notebook folder: ${notebookFolder}`);
+    // deleteFile uses WebDAV DELETE which works on folders
+    await deleteFile(notebookFolder);
 
     return true;
   } catch (error) {
@@ -1361,6 +1799,7 @@ export async function deleteRemoteNote(noteId, notebookId) {
   try {
     // Get paths
     const notePath = getNotePath(noteId, notebookId);
+    const mediaFolder = getNoteMediaFolder(noteId, notebookId);
     const tombstonePath = notebookId
       ? getNotebookTombstonePath(notebookId)
       : getQuickNotesTombstonePath();
@@ -1378,6 +1817,11 @@ export async function deleteRemoteNote(noteId, notebookId) {
     // Delete the actual note file
     await deleteFile(notePath);
 
+    // Delete the media folder if it exists
+    // deleteFile (WebDAV DELETE) works on folders too
+    await deleteFile(mediaFolder).catch(() => {}); // Ignore if folder doesn't exist
+
+    console.log(`[Sync] Deleted remote note ${noteId} and media`);
     return true;
   } catch (error) {
     console.error(`Failed to delete remote note ${noteId}:`, error);

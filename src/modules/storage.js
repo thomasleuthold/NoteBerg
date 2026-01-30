@@ -6,7 +6,7 @@
 import { openDB } from "idb";
 
 export const DB_NAME = "oneJournal";
-export const DB_VERSION = 1;
+export const DB_VERSION = 3;
 
 let db = null;
 
@@ -44,6 +44,11 @@ export async function initStorage() {
         });
         syncStore.createIndex("timestamp", "timestamp");
       }
+
+      // Create files store for binary data (blobs)
+      if (!database.objectStoreNames.contains("files")) {
+        database.createObjectStore("files", { keyPath: "id" });
+      }
     },
   });
 
@@ -51,7 +56,6 @@ export async function initStorage() {
 
   // Run migrations
   await migrateStrokeIds();
-  await migrateMediaFields();
 
   return db;
 }
@@ -101,52 +105,6 @@ async function migrateStrokeIds() {
 }
 
 /**
- * Migrate existing notes to add media fields
- * This ensures all notes have media, deletedMedia, and mediaVersion fields
- */
-async function migrateMediaFields() {
-  if (!db) return;
-
-  try {
-    const notes = await db.getAll("notes");
-    let migratedCount = 0;
-
-    for (const note of notes) {
-      let needsUpdate = false;
-
-      // Initialize media array if it doesn't exist
-      if (!note.media) {
-        note.media = [];
-        needsUpdate = true;
-      }
-
-      // Initialize deletedMedia array if it doesn't exist
-      if (!note.deletedMedia) {
-        note.deletedMedia = [];
-        needsUpdate = true;
-      }
-
-      // Initialize mediaVersion if it doesn't exist
-      if (!note.mediaVersion) {
-        note.mediaVersion = 1;
-        needsUpdate = true;
-      }
-
-      if (needsUpdate) {
-        await db.put("notes", note);
-        migratedCount++;
-      }
-    }
-
-    if (migratedCount > 0) {
-      console.log(`Migrated media fields for ${migratedCount} notes`);
-    }
-  } catch (error) {
-    console.error("Failed to migrate media fields:", error);
-  }
-}
-
-/**
  * Helper to generate ID (used during migration before generateId is defined)
  */
 function generateIdHelper() {
@@ -167,7 +125,11 @@ function generateIdHelper() {
 export function generateId() {
   // Try native crypto.randomUUID() first (works in secure contexts and Tauri)
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
+    try {
+      return crypto.randomUUID();
+    } catch (e) {
+      console.warn("crypto.randomUUID() failed, falling back to polyfill", e);
+    }
   }
 
   // Fallback for non-secure contexts (HTTP dev server on mobile)
@@ -293,6 +255,43 @@ export async function deleteNotebook(id) {
   return notebook;
 }
 
+/**
+ * Purge a notebook (mark for permanent deletion)
+ * This also purges all notes within the notebook
+ */
+export async function purgeNotebook(id) {
+  const notebook = await db.get("notebooks", id);
+  if (!notebook) return;
+
+  // Purge all notes in this notebook first
+  const notes = await db.getAllFromIndex("notes", "notebookId", id);
+  for (const note of notes) {
+    await purgeNote(note.id);
+  }
+
+  // Create a purged stub for the notebook
+  const stub = {
+    id: notebook.id,
+    title: notebook.title, // Keep title for logs/debugging
+    purged: true,
+    deleted: true,
+    synced: false, // Mark as unsynced to trigger upload/processing
+    modified: Date.now(),
+    lastSyncedEtag: notebook.lastSyncedEtag,
+  };
+
+  await db.put("notebooks", stub);
+  console.log("Notebook purged (stubbed):", id);
+}
+
+/**
+ * Permanently delete a notebook record from the database (after sync)
+ */
+export async function permanentlyDeleteNotebook(id) {
+  await db.delete("notebooks", id);
+  console.log("Notebook permanently deleted from DB:", id);
+}
+
 // ========== Note Operations ==========
 
 /**
@@ -305,6 +304,8 @@ export async function createNote({ title, notebookId = null }) {
     title,
     content: "", // Markdown content
     strokes: [], // Array of drawing strokes
+    media: [], // Array of media items (images, pdf pages)
+    deletedMedia: [], // Array of deleted media IDs
     formatVersion: 1, // Stroke format version
     background: "none", // Background pattern: none, ruled-narrow, ruled-medium, ruled-wide, grid-small, grid-medium, grid-large
     created: Date.now(),
@@ -408,6 +409,9 @@ export async function updateNote(id, updates) {
   await db.put("notes", encryptedNote);
   console.log("Note updated:", id);
 
+  // Dispatch event for auto-sync and live updates
+  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id } }));
+
   return updated; // Return unencrypted version to caller
 }
 
@@ -428,6 +432,74 @@ export async function deleteNote(id) {
   return note;
 }
 
+/**
+ * Purge a note (mark for permanent deletion and remove content/media)
+ * This keeps a stub to ensure the deletion is synced to Nextcloud
+ */
+export async function purgeNote(id) {
+  const note = await db.get("notes", id);
+  if (!note) return;
+
+  // Delete local media files immediately to free space
+  // Handle both encrypted and unencrypted media arrays
+  let mediaItems = [];
+  try {
+    // If note is encrypted, decrypt to access media array
+    if (note.encrypted) {
+      const decrypted = await decryptNoteIfNeeded(note);
+      if (decrypted?.media && Array.isArray(decrypted.media)) {
+        mediaItems = decrypted.media;
+      }
+    } else if (note.media && Array.isArray(note.media)) {
+      mediaItems = note.media;
+    }
+  } catch (e) {
+    // If decryption fails (app locked), media files will be orphaned
+    // but purge should still proceed to maintain data consistency
+    console.warn("[Storage] Could not decrypt note for media cleanup during purge:", e);
+  }
+
+  for (const item of mediaItems) {
+    if (item.fileId) {
+      await deleteFile(item.fileId);
+    }
+  }
+
+  // Create a purged stub
+  const stub = {
+    id: note.id,
+    notebookId: note.notebookId,
+    purged: true, // Flag for sync
+    deleted: true,
+    synced: false, // Mark as unsynced to trigger upload/processing
+    modified: Date.now(),
+    lastSyncedEtag: note.lastSyncedEtag,
+    _currentFileEtag: note._currentFileEtag,
+  };
+
+  await db.put("notes", stub);
+  console.log("Note purged (stubbed):", id);
+}
+
+/**
+ * Permanently delete a note record from the database (after sync)
+ */
+export async function permanentlyDeleteNote(id) {
+  await db.delete("notes", id);
+  console.log("Note permanently deleted from DB:", id);
+}
+
+/**
+ * Permanently delete all notes belonging to a notebook (used when purging notebook)
+ */
+export async function permanentlyDeleteNotesInNotebook(notebookId) {
+  const notes = await db.getAllFromIndex("notes", "notebookId", notebookId);
+  for (const note of notes) {
+    await db.delete("notes", note.id);
+    console.log("Note permanently deleted from DB:", note.id);
+  }
+}
+
 // ========== Recycle Bin Operations ==========
 
 /**
@@ -435,7 +507,8 @@ export async function deleteNote(id) {
  */
 export async function getDeletedNotebooks() {
   const allNotebooks = await db.getAll("notebooks");
-  return allNotebooks.filter((n) => n.deleted).sort((a, b) => b.modified - a.modified);
+  // Filter out notebooks that are already purged (stubs)
+  return allNotebooks.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
 }
 
 /**
@@ -443,7 +516,8 @@ export async function getDeletedNotebooks() {
  */
 export async function getDeletedNotes() {
   const allNotes = await db.getAll("notes");
-  return allNotes.filter((n) => n.deleted).sort((a, b) => b.modified - a.modified);
+  // Filter out notes that are already purged (stubs)
+  return allNotes.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
 }
 
 /**
@@ -478,6 +552,76 @@ export async function restoreNote(id) {
   await db.put("notes", note);
   console.log("Note restored:", id);
   return note;
+}
+
+// ========== File/Blob Operations ==========
+
+/**
+ * Save a binary file (blob)
+ * @param {Blob} blob - The file data
+ * @param {string} [id] - Optional ID (if syncing from server)
+ * @returns {Promise<string>} - The file ID
+ */
+export async function saveFile(blob, id = null) {
+  const fileId = id || generateId();
+
+  // Convert Blob to ArrayBuffer for maximum compatibility
+  // Some mobile WebViews have issues storing Blobs directly in IndexedDB
+  let dataToStore = blob;
+  const mimeType = blob.type;
+
+  if (blob instanceof Blob) {
+    try {
+      dataToStore = await blob.arrayBuffer();
+    } catch (e) {
+      console.warn(
+        "[Storage] Failed to convert Blob to ArrayBuffer, trying FileReader fallback",
+        e,
+      );
+      dataToStore = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+      });
+    }
+  }
+
+  await db.put("files", { id: fileId, data: dataToStore, type: mimeType, created: Date.now() });
+  return fileId;
+}
+
+/**
+ * Get a binary file (blob) by ID
+ */
+export async function getFile(id) {
+  const record = await db.get("files", id);
+  if (!record) return null;
+
+  // If stored as ArrayBuffer (new format), convert back to Blob
+  if (record.data instanceof ArrayBuffer) {
+    return new Blob([record.data], { type: record.type || "application/octet-stream" });
+  }
+
+  // If stored as Blob (legacy/direct support), return as is
+  return record.data;
+}
+
+/**
+ * Check if a file exists in storage without loading it
+ * @param {string} id - File ID
+ * @returns {Promise<boolean>}
+ */
+export async function checkFileExists(id) {
+  const count = await db.count("files", id);
+  return count > 0;
+}
+
+/**
+ * Delete a binary file
+ */
+export async function deleteFile(id) {
+  await db.delete("files", id);
 }
 
 // ========== Settings Operations ==========
@@ -583,12 +727,14 @@ export async function saveNote(note, options = {}) {
   // If skipEncryption is true, save note as-is (it's already in the correct format)
   if (skipEncryption) {
     await db.put("notes", note);
-    return;
+  } else {
+    // Encrypt note before saving if local encryption is enabled
+    const encryptedNote = await encryptNoteIfEnabled(note);
+    await db.put("notes", encryptedNote);
   }
 
-  // Encrypt note before saving if local encryption is enabled
-  const encryptedNote = await encryptNoteIfEnabled(note);
-  await db.put("notes", encryptedNote);
+  // Dispatch event for auto-sync and live updates
+  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: note.id } }));
 }
 
 /**

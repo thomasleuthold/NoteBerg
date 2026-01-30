@@ -1,6 +1,7 @@
 # oneJournal justfile - Task runner commands
 # Set shell for Windows compatibility
 set shell := ["powershell.exe", "-c"]
+version := `node -p "require('./package.json').version"`
 
 # Default recipe (show available commands)
 default:
@@ -20,8 +21,8 @@ build-w:
 
 build-a:
     npm run tauri android build --release
-    New-Item -ItemType Directory -Force -Path dist | Out-Null
-    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\*.apk" -Destination "builds\" -Force
+    New-Item -ItemType Directory -Force -Path builds | Out-Null
+    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\oneJournal_{{version}}_android_universal.apk" -Force
 
 preview:
     npm run preview
@@ -57,3 +58,7 @@ fix-build:
 package-backend:
     dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
     Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"
+
+# Increase version (patch) and sync
+bump:
+    npm version patch

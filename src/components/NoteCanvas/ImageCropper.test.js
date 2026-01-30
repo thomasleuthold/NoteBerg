@@ -1,0 +1,174 @@
+import { fireEvent } from "@testing-library/dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ImageCropper } from "./ImageCropper.js";
+
+describe("ImageCropper", () => {
+  let cropper;
+  let mockImage;
+
+  beforeEach(() => {
+    cropper = new ImageCropper();
+    mockImage = document.createElement("img");
+    mockImage.src =
+      "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+    // Mock natural dimensions
+    Object.defineProperty(mockImage, "naturalWidth", { value: 100 });
+    Object.defineProperty(mockImage, "naturalHeight", { value: 100 });
+
+    // Mock getBoundingClientRect
+    vi.spyOn(mockImage, "getBoundingClientRect").mockReturnValue({
+      width: 100,
+      height: 100,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      x: 0,
+      y: 0,
+    });
+
+    // Mock pointer capture methods on HTMLElement prototype
+    HTMLElement.prototype.setPointerCapture = vi.fn();
+    HTMLElement.prototype.releasePointerCapture = vi.fn();
+    HTMLElement.prototype.hasPointerCapture = vi.fn(() => true);
+  });
+
+  afterEach(() => {
+    // Cleanup DOM
+    const overlay = document.getElementById("crop-overlay");
+    if (overlay) {
+      overlay.remove();
+    }
+    vi.restoreAllMocks();
+  });
+
+  it("initializes and shows overlay", async () => {
+    const promise = cropper.show(mockImage);
+
+    const overlay = document.getElementById("crop-overlay");
+    expect(overlay).toBeTruthy();
+    expect(overlay.querySelector(".crop-container")).toBeTruthy();
+    expect(overlay.querySelector(".crop-image")).toBeTruthy();
+
+    // Close to resolve promise
+    cropper._close(null);
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it("switches modes", () => {
+    cropper.show(mockImage);
+    const overlay = document.getElementById("crop-overlay");
+
+    // Default is simple
+    expect(overlay.dataset.cropMode).toBe("simple");
+    expect(overlay.querySelector("#crop-area").style.display).not.toBe("none");
+    expect(overlay.querySelector("#perspective-area").style.display).toBe("none");
+
+    // Switch to perspective
+    cropper._switchCropMode("perspective");
+    expect(overlay.dataset.cropMode).toBe("perspective");
+    expect(overlay.querySelector("#perspective-area").style.display).toBe("block");
+    expect(overlay.querySelector("#crop-area").style.display).toBe("none");
+  });
+
+  it("applies simple crop", async () => {
+    const promise = cropper.show(mockImage);
+
+    // Mock canvas creation and context
+    const mockCtx = {
+      drawImage: vi.fn(),
+    };
+    const mockCanvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => mockCtx),
+      toBlob: vi.fn((cb) => cb(new Blob(["cropped"], { type: "image/jpeg" }))),
+    };
+    const originalCreateElement = document.createElement;
+    vi.spyOn(document, "createElement").mockImplementation((tag) => {
+      if (tag === "canvas") return mockCanvas;
+      return originalCreateElement.call(document, tag);
+    });
+
+    // Mock crop area rect
+    const cropArea = document.getElementById("crop-area");
+    vi.spyOn(cropArea, "getBoundingClientRect").mockReturnValue({
+      left: 10,
+      top: 10,
+      width: 50,
+      height: 50,
+    });
+
+    // This internal method triggers the promise resolution
+    cropper._applyCrop();
+
+    const result = await promise;
+    expect(result).toBeInstanceOf(Blob);
+    expect(mockCtx.drawImage).toHaveBeenCalled();
+  });
+
+  it("applies perspective crop", async () => {
+    // Mock PerspT library globally
+    window.PerspT = vi.fn().mockReturnValue({
+      transformInverse: vi.fn().mockReturnValue([0, 0]),
+    });
+
+    const promise = cropper.show(mockImage);
+    cropper._switchCropMode("perspective");
+
+    // Mock canvas context for perspective operation
+    const mockCtx = {
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(400) })),
+      createImageData: vi.fn(() => ({ data: new Uint8ClampedArray(400) })),
+      putImageData: vi.fn(),
+    };
+
+    // Mock createElement to return our mocked canvas
+    const originalCreateElement = document.createElement;
+    vi.spyOn(document, "createElement").mockImplementation((tag) => {
+      if (tag === "canvas") {
+        return {
+          width: 0,
+          height: 0,
+          getContext: vi.fn(() => mockCtx),
+          toBlob: vi.fn((cb) => cb(new Blob(["cropped"], { type: "image/jpeg" }))),
+        };
+      }
+      return originalCreateElement.call(document, tag);
+    });
+
+    // Trigger apply
+    cropper._applyCrop();
+
+    const result = await promise;
+    expect(result).toBeInstanceOf(Blob);
+    expect(window.PerspT).toHaveBeenCalled();
+
+    // Cleanup
+    delete window.PerspT;
+  });
+
+  it("handles crop area dragging", () => {
+    cropper.show(mockImage);
+
+    // Manually trigger onload to initialize crop area
+    const img = document.querySelector(".crop-image");
+    fireEvent.load(img);
+
+    const cropArea = document.getElementById("crop-area");
+
+    // Simulate drag start
+    fireEvent.pointerDown(cropArea, { clientX: 10, clientY: 10, pointerId: 1 });
+
+    // Simulate drag move
+    fireEvent.pointerMove(cropArea, { clientX: 20, clientY: 20, pointerId: 1 });
+
+    // Verify position updated (style.left/top are set by logic)
+    expect(cropArea.style.left).toBeTruthy();
+    expect(cropArea.style.top).toBeTruthy();
+
+    fireEvent.pointerUp(document, { pointerId: 1 });
+  });
+});

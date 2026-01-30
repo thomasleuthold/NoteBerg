@@ -20,6 +20,9 @@ export class StrokeManager {
 
     // Initialize Web Worker
     this.worker = new Worker(new URL("./StorageWorker.js", import.meta.url), { type: "module" });
+    this.worker.onerror = (e) => {
+      console.error("[StrokeManager] Worker error:", e.message, e);
+    };
   }
 
   startStroke(props) {
@@ -97,6 +100,28 @@ export class StrokeManager {
     });
 
     this.isDirty = false;
+  }
+
+  /**
+   * Save media changes via the worker to ensure sequential writes
+   */
+  saveMedia({ media, deletedMedia }) {
+    let key = null;
+    if (isAppUnlocked()) {
+      try {
+        key = getEncryptionKey();
+      } catch (e) {
+        console.warn("[StrokeManager] Could not get encryption key:", e);
+      }
+    }
+
+    this.worker.postMessage({
+      type: "SAVE_MEDIA",
+      noteId: this.noteId,
+      media,
+      deletedMedia,
+      key,
+    });
   }
 
   forceSave() {

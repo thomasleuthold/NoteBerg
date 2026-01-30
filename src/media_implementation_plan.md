@@ -19,11 +19,33 @@
     *   Strokes are recorded in absolute Y coordinates. The `SpatialIndex` naturally handles this, associating strokes with the visual location of the PDF page.
 
 ### Q3: Combine PDF and Markdown?
-**Decision:** **Mutually Exclusive Note Types.**
-*   **Reasoning:** A PDF has a fixed layout. Markdown reflows text. Trying to keep handwriting aligned to a PDF page *while* allowing Markdown text to push that PDF page down is a recipe for data misalignment (strokes drifting away from the text they highlight).
-*   **Approach:** Define two Note Modes:
-    1.  **Canvas Note:** Infinite background, optional Markdown text layer, floating images, handwriting.
-    2.  **Document Note (PDF):** Fixed background (PDF pages), handwriting on top. No reflowable text layer (only "Sticky Note" style text boxes if needed later).
+**Decision:** **Unified Note Type (Dynamic Background).**
+*   **Reasoning:** Users should not be forced to choose a note "mode" upfront.
+*   **Approach:**
+    *   **Default:** Background renders Grid/Lines/Dots.
+    *   **With PDF:** Background renders PDF pages (stacked vertically).
+    *   **Implementation:** The `CanvasRenderer` checks for an attached PDF. If present, it replaces the grid background with the PDF page rendering. All other tools (pen, highlighter, images) work identically on top.
+
+### Q4: How to handle large files (Storage/Memory)?
+**Decision:** **Binary Storage (Blobs), NOT Base64.**
+*   **Reasoning:** Base64 adds ~33% overhead. Storing a 150MB PDF as a string (~200MB) in memory/IndexedDB is inefficient and causes browser crashes.
+*   **Approach:**
+    *   **Storage:** Store files as `Blob` or `ArrayBuffer` directly in IndexedDB.
+    *   **Runtime:** Use `URL.createObjectURL(blob)` to generate a temporary URL for rendering. This avoids keeping the entire file data in the JavaScript heap.
+    *   **PDF.js:** Configure to read from the Blob URL or ArrayBuffer range.
+
+### Q5: What format for Synchronization?
+**Decision:** **Detached Binary Files.**
+*   **Reasoning:** Embedding 150MB+ files as Base64 in JSON causes OOM crashes and inefficient sync (re-uploading huge files on small edits).
+*   **Approach:**
+    *   **Note JSON:** Contains metadata reference: `{ type: "pdf", fileId: "uuid", filename: "doc.pdf" }`.
+    *   **WebDAV:** Upload binary files to a `_media` or `resources` subfolder.
+    *   **Protocol:** Sync logic checks `fileId` references. If the file is missing locally/remotely, it transfers the raw binary file separately.
+
+### Q6: Backward Compatibility?
+**Decision:** **No Backward Compatibility.**
+*   **Reasoning:** The old Base64 media storage is inefficient. We will not migrate old images.
+*   **Action:** Remove `mediaVersion` field. Old notes with Base64 images will either lose images or need manual re-import. The code will assume the new binary reference format.
 
 ---
 
@@ -33,7 +55,7 @@
 *Goal: Re-implement the image support from the old editor into the new virtualized architecture.*
 
 1.  **Data Model Update:**
-    *   Ensure `NoteData` structure supports `media: [{ id, type: 'image', x, y, width, height, src }]`.
+    *   Ensure `NoteData` structure supports `media: [{ id, type: 'image', x, y, width, height, fileId }]`.
 2.  **`MediaManager` Module:**
     *   Create `src/components/NoteCanvas/MediaManager.js`.
     *   Responsibilities: Load images, manage selection state, handle drag/resize logic.
@@ -63,8 +85,8 @@
     *   `pdf.js` (Mozilla) for rendering PDF pages to Images/Canvas in the browser.
 2.  **Import Logic:**
     *   User selects PDF.
-    *   App reads file, converts pages to Blob URLs or stores raw PDF data.
-    *   Creates a "Document Note".
+    *   App reads file as `ArrayBuffer` or `Blob`.
+    *   Stores raw data in IndexedDB (separate "Files" store or within Note if supported).
     *   Populates `media` array with pages: `{ type: 'pdf-page', pageIndex: 0, x: 0, y: 0, ... }`.
 3.  **Rendering:**
     *   `MediaManager` uses `pdf.js` to render the specific page into the viewport when visible.
@@ -78,7 +100,7 @@
 2.  **Export Logic (Document Note):**
     *   Load original PDF bytes using `pdf-lib`.
     *   Iterate through `NoteData.strokes`.
-    *   Map stroke coordinates to PDF Page coordinates.
+    *   Map stroke coordinates (relative to the PDF page in the vertical stack) to PDF Page coordinates.
     *   Draw strokes as SVG paths or vector lines onto the PDF pages using `pdf-lib` primitives.
     *   **Result:** A true PDF where original text is selectable and handwriting is vector data.
 3.  **Export Logic (Canvas Note):**
@@ -103,15 +125,14 @@
 ```javascript
 {
   id: "uuid",
-  type: "canvas" | "document", // NEW: Distinguish modes
-  content: "# Markdown...", // Used in 'canvas' mode
-  pdfSource: "base64_or_path", // NEW: Used in 'document' mode
+  content: "# Markdown...",
+  pdfSource: "blob_id_reference", // Reference to binary data in DB
   media: [
     {
       id: "uuid",
       type: "image" | "pdf-page",
       x: 0, y: 0, w: 500, h: 800,
-      src: "data:image/...", // For images
+      fileId: "uuid_of_file", // Reference to binary data in 'files' store
       pageIndex: 0 // For PDF pages
     }
   ],

@@ -16,7 +16,7 @@ function getDB() {
 }
 
 self.onmessage = async (e) => {
-  const { type, noteId, strokes, deletedStrokes, key } = e.data;
+  const { type, noteId, strokes, deletedStrokes, media, deletedMedia, key } = e.data;
 
   if (type === "SAVE_STROKES") {
     try {
@@ -57,6 +57,40 @@ self.onmessage = async (e) => {
       await tx.done;
     } catch (err) {
       console.error("[StorageWorker] Save failed:", err);
+    }
+  }
+
+  if (type === "SAVE_MEDIA") {
+    try {
+      const db = await getDB();
+      const tx = db.transaction("notes", "readwrite");
+      const store = tx.objectStore("notes");
+      const note = await store.get(noteId);
+
+      if (note) {
+        // Update media fields
+        if (media !== undefined) note.media = media;
+        if (deletedMedia !== undefined) note.deletedMedia = deletedMedia;
+
+        // Encrypt media if needed
+        if (note.encrypted && media) {
+          if (key) {
+            note.media = await encryptObject(media, key);
+          } else {
+            console.error("[StorageWorker] Cannot save encrypted media: Key missing");
+            return;
+          }
+        }
+
+        note.modified = Date.now();
+        note.version = (note.version || 0) + 1;
+        note.synced = false;
+
+        await store.put(note);
+      }
+      await tx.done;
+    } catch (err) {
+      console.error("[StorageWorker] Media save failed:", err);
     }
   }
 
