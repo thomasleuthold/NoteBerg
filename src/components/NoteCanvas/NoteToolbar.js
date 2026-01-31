@@ -5,6 +5,7 @@
 
 import { getIcon } from "../../utils/icons.js";
 import { getMarkerPalette, getThemePalette } from "../../utils/noteRenderer.js";
+import { getTheme } from "../../modules/theme.js";
 
 /**
  * Generate pen icon SVG with colored tip
@@ -173,6 +174,31 @@ export class NoteToolbar {
     this.optionsBtnContainer.appendChild(this.optionsBtn);
 
     this._createOptionsDialog();
+
+    // Inject theme styles for preset buttons
+    const style = document.createElement("style");
+    style.textContent = `
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn {
+        background-color: #333;
+        border: 1px solid #555;
+      }
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn:hover {
+        background-color: #444;
+      }
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn--active {
+        background-color: #555;
+        border-color: #999;
+      }
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn {
+        background-color: #333;
+        border: 1px solid #555;
+        color: #fff;
+      }
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn:hover {
+        background-color: #444;
+      }
+    `;
+    this.element.appendChild(style);
 
     this.element.appendChild(this.panBtn);
     this.element.appendChild(this.drawBtnContainer);
@@ -756,6 +782,13 @@ export class NoteToolbar {
   _openPenDialog() {
     // Refresh colors in case theme changed
     this._refreshColorSwatches();
+
+    if (getTheme() === "dark") {
+      this.penSettingsDialog.classList.add("theme-dark");
+    } else {
+      this.penSettingsDialog.classList.remove("theme-dark");
+    }
+
     this._renderDialogContent(); // Ensure correct state rendered
 
     this.penSettingsDialog.classList.add("note-canvas-toolbar__pen-dialog--open");
