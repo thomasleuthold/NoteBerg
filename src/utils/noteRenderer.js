@@ -6,6 +6,8 @@
 
 import { getTheme } from "../modules/theme.js";
 
+export const MARKER_ALPHA = 0.30;
+
 /**
  * Get color palette for current theme (15 colors)
  * @returns {string[]} Array of color hex values
@@ -129,7 +131,7 @@ export function drawStroke(ctx, stroke, palette = null, isSelected = false, fast
 
   // Apply transparency for markers
   if (isMarker) {
-    ctx.globalAlpha = 0.25;
+    ctx.globalAlpha = MARKER_ALPHA;
   }
 
   // Check for pressure data (skip in fast mode for scroll performance)

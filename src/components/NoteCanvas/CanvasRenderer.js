@@ -74,6 +74,10 @@ export class CanvasRenderer {
     this.contentWidth = 0;
     this.contentHeight = 0;
 
+    // Scroll state for overlay drawing
+    this.contentScrollTop = 0;
+    this.contentScrollLeft = 0;
+
     // Performance tracking
     this.lastRenderTime = 0;
 
@@ -255,6 +259,9 @@ export class CanvasRenderer {
     const contentScrollTop = scrollTop / this.zoomScale;
     const contentViewportHeight = viewportHeight / this.zoomScale;
 
+    this.contentScrollTop = contentScrollTop;
+    this.contentScrollLeft = scrollLeft / this.zoomScale;
+
     let resized = false;
     // Update viewport height if changed significantly
     if (Math.abs(contentViewportHeight - this.viewportHeight) > 1) {
@@ -271,6 +278,11 @@ export class CanvasRenderer {
     }
     // Always slide the canvas to match scroll position
     this._slideCanvas(contentScrollTop, scrollLeft);
+
+    // If active stroke is marker, update its preview on overlay (to handle scroll/zoom)
+    if (this.activeStroke && this.activeStroke.type === "marker") {
+      this._drawMarkerPreview(this.activeStroke, false);
+    }
   }
 
   /**
@@ -288,6 +300,12 @@ export class CanvasRenderer {
       this.lastDrawnPointIndex = 0;
     }
 
+    // Special handling for markers: draw full path on overlay to avoid alpha accumulation
+    if (stroke.type === "marker") {
+      this._drawMarkerPreview(stroke, isFinished);
+      return;
+    }
+
     const pointCount = stroke.x.length;
     if (pointCount < 2) return;
 
@@ -301,15 +319,6 @@ export class CanvasRenderer {
     this.ctx.strokeStyle = color;
     this.ctx.lineCap = "round";
     this.ctx.lineJoin = "round";
-
-    if (stroke.type === "marker") {
-      this.ctx.globalAlpha = 0.25;
-      // Use marker palette color if available
-      const markerColors = this.markerPalette || sharedGetMarkerPalette();
-      if (stroke.colorIndex !== undefined) {
-        this.ctx.strokeStyle = markerColors[stroke.colorIndex] || markerColors[0];
-      }
-    }
 
     const baseWidth = stroke.width || 2;
     const getWidth = (p) => Math.max(0.5, baseWidth * (0.5 + p));
@@ -364,6 +373,41 @@ export class CanvasRenderer {
     }
 
     this.ctx.restore();
+  }
+
+  /**
+   * Draw marker preview on overlay canvas
+   * @private
+   */
+  _drawMarkerPreview(stroke, isFinished) {
+    // Ensure palette is ready
+    if (!this.palette) {
+      this.palette = sharedGetThemePalette();
+      this.markerPalette = sharedGetMarkerPalette();
+    }
+
+    if (isFinished) {
+      // Final draw: Commit to main canvas
+      this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+
+      this.ctx.save();
+      this.ctx.translate(0, -this.bufferTop);
+      // Use sharedDrawStroke to ensure consistent rendering with final result
+      sharedDrawStroke(this.ctx, stroke, this.palette);
+      this.ctx.restore();
+
+      // Reset state
+      this.activeStrokeId = null;
+      this.lastDrawnPointIndex = 0;
+    } else {
+      // Preview draw: Draw full stroke on overlay
+      this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+
+      this.overlayCtx.save();
+      this.overlayCtx.translate(-this.contentScrollLeft, -this.contentScrollTop);
+      sharedDrawStroke(this.overlayCtx, stroke, this.palette);
+      this.overlayCtx.restore();
+    }
   }
 
   /**
@@ -586,7 +630,7 @@ export class CanvasRenderer {
     drawList(pens);
 
     // Draw active stroke on top if it exists (always full quality for responsiveness)
-    if (this.activeStroke) {
+    if (this.activeStroke && this.activeStroke.type !== "marker") {
       // If active stroke is marker, it should technically be drawn before pens,
       // but for responsiveness we draw it on top during creation.
       // It will be sorted correctly once finished and added to the main list.
