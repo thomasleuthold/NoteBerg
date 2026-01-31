@@ -215,6 +215,11 @@ export class NoteCanvas {
     const currentStrokesCount = this.noteData.strokes?.length || 0;
     const freshStrokesCount = freshData.strokes?.length || 0;
 
+    // If local has MORE strokes than DB, we are ahead (unsaved changes). Do not reload.
+    if (currentStrokesCount > freshStrokesCount) {
+      return false;
+    }
+
     // Simple check: if stroke count or background changed, we need reload
     // We ignore metadata changes like 'synced' or 'lastSyncedEtag'
     return (
@@ -445,7 +450,7 @@ export class NoteCanvas {
         onPresetChange: async (updatedPresets) => {
           this.penPresets = updatedPresets;
           this.noteData.penPresets = updatedPresets;
-          await updateNote(this.noteId, { penPresets: updatedPresets, modified: Date.now() });
+          this.strokeManager.savePresets(updatedPresets);
         },
         onPenSettingsChange: ({ width, colorIndex }) => {
           this.currentPenWidth = width;

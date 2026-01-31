@@ -124,6 +124,27 @@ export class StrokeManager {
     });
   }
 
+  /**
+   * Save pen presets via the worker
+   */
+  savePresets(presets) {
+    let key = null;
+    if (isAppUnlocked()) {
+      try {
+        key = getEncryptionKey();
+      } catch (e) {
+        console.warn("[StrokeManager] Could not get encryption key:", e);
+      }
+    }
+
+    this.worker.postMessage({
+      type: "SAVE_PRESETS",
+      noteId: this.noteId,
+      presets,
+      key,
+    });
+  }
+
   forceSave() {
     this._save();
   }

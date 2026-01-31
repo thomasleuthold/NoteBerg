@@ -16,7 +16,7 @@ function getDB() {
 }
 
 self.onmessage = async (e) => {
-  const { type, noteId, strokes, deletedStrokes, media, deletedMedia, key } = e.data;
+  const { type, noteId, strokes, deletedStrokes, media, deletedMedia, presets, key } = e.data;
 
   if (type === "SAVE_STROKES") {
     try {
@@ -91,6 +91,27 @@ self.onmessage = async (e) => {
       await tx.done;
     } catch (err) {
       console.error("[StorageWorker] Media save failed:", err);
+    }
+  }
+
+  if (type === "SAVE_PRESETS") {
+    try {
+      const db = await getDB();
+      const tx = db.transaction("notes", "readwrite");
+      const store = tx.objectStore("notes");
+      const note = await store.get(noteId);
+
+      if (note) {
+        note.penPresets = presets;
+        note.modified = Date.now();
+        note.version = (note.version || 0) + 1;
+        note.synced = false;
+
+        await store.put(note);
+      }
+      await tx.done;
+    } catch (err) {
+      console.error("[StorageWorker] Presets save failed:", err);
     }
   }
 

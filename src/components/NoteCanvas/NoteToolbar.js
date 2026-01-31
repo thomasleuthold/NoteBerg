@@ -225,8 +225,9 @@ export class NoteToolbar {
 
       btn.onclick = (e) => {
         e.stopPropagation();
-        this.penWidth = preset.width;
-        this.penColorIndex = preset.colorIndex;
+        const currentPreset = this.penPresets[index];
+        this.penWidth = currentPreset.width;
+        this.penColorIndex = currentPreset.colorIndex;
         this.lastSelectedPresetIndex = index;
         this._updatePenIconColor();
         this._notifyPenSettingsChange();
