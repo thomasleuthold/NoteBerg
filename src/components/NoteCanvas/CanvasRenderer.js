@@ -404,6 +404,7 @@ export class CanvasRenderer {
       this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
 
       this.overlayCtx.save();
+      this.overlayCtx.scale(this.zoomScale, this.zoomScale);
       this.overlayCtx.translate(-this.contentScrollLeft, -this.contentScrollTop);
       sharedDrawStroke(this.overlayCtx, stroke, this.palette);
       this.overlayCtx.restore();
