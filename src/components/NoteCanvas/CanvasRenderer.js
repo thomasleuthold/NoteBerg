@@ -403,7 +403,15 @@ export class CanvasRenderer {
       // Preview draw: Draw full stroke on overlay
       this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
 
+      // Calculate centering offset
+      const scaledContentWidth = this.viewportWidth * this.zoomScale;
+      const offsetX =
+        scaledContentWidth < this.screenViewportWidth
+          ? (this.screenViewportWidth - scaledContentWidth) / 2
+          : 0;
+
       this.overlayCtx.save();
+      this.overlayCtx.translate(offsetX, 0);
       this.overlayCtx.scale(this.zoomScale, this.zoomScale);
       this.overlayCtx.translate(-this.contentScrollLeft, -this.contentScrollTop);
       sharedDrawStroke(this.overlayCtx, stroke, this.palette);
