@@ -9,6 +9,7 @@ vi.mock("../../utils/icons.js", () => ({
 
 vi.mock("../../utils/noteRenderer.js", () => ({
   getThemePalette: () => ["#000000", "#ff0000", "#00ff00", "#0000ff", "#ffff00"],
+  getMarkerPalette: () => ["#FFFF00", "#00FF00", "#FF0000"],
 }));
 
 describe("NoteToolbar", () => {
@@ -26,10 +27,10 @@ describe("NoteToolbar", () => {
     onPresetChange = vi.fn();
     onPenSettingsChange = vi.fn();
     initialPresets = [
-      { width: 2, colorIndex: 0 },
-      { width: 4, colorIndex: 1 },
-      { width: 6, colorIndex: 2 },
-      { width: 8, colorIndex: 3 },
+      { width: 2, colorIndex: 0, type: "pen" },
+      { width: 4, colorIndex: 1, type: "pen" },
+      { width: 25, colorIndex: 0, type: "marker" },
+      { width: 8, colorIndex: 3, type: "pen" },
     ];
     toolbar = new NoteToolbar(container, onModeChange, {
       penPresets: initialPresets,
@@ -96,7 +97,7 @@ describe("NoteToolbar", () => {
 
     expect(toolbar.penWidth).toBe(4);
     expect(toolbar.penColorIndex).toBe(1);
-    expect(onPenSettingsChange).toHaveBeenCalledWith({ width: 4, colorIndex: 1 });
+    expect(onPenSettingsChange).toHaveBeenCalledWith({ width: 4, colorIndex: 1, type: "pen" });
     expect(presetBtns[1].classList.contains("note-canvas-toolbar__preset-btn--active")).toBe(true);
   });
 
@@ -143,7 +144,73 @@ describe("NoteToolbar", () => {
     // Verify callback
     expect(onPresetChange).toHaveBeenCalled();
     const updatedPresets = onPresetChange.mock.calls[0][0];
-    expect(updatedPresets[0]).toEqual({ width: 5, colorIndex: 0 });
+    expect(updatedPresets[0]).toEqual({ width: 5, colorIndex: 0, type: "pen" });
     expect(saveBtns[0].style.display).toBe("none");
+  });
+
+  it("updates settings and UI when switching to marker preset", () => {
+    // Expand to check UI changes
+    const expandBtn = container.querySelector(".note-canvas-toolbar__expand-btn");
+    fireEvent.click(expandBtn);
+
+    const presetBtns = container.querySelectorAll(".note-canvas-toolbar__preset-btn");
+    // Click marker preset (index 2)
+    fireEvent.click(presetBtns[2]);
+
+    expect(toolbar.penType).toBe("marker");
+    expect(toolbar.penWidth).toBe(25);
+    expect(onPenSettingsChange).toHaveBeenCalledWith({ width: 25, colorIndex: 0, type: "marker" });
+
+    // Check slider range for marker
+    const slider = container.querySelector(".note-canvas-toolbar__width-slider");
+    expect(slider.min).toBe("10");
+    expect(slider.max).toBe("50");
+    expect(slider.step).toBe("5");
+  });
+
+  it("updates settings and UI when switching back to pen preset", () => {
+    // Expand to check UI changes
+    const expandBtn = container.querySelector(".note-canvas-toolbar__expand-btn");
+    fireEvent.click(expandBtn);
+
+    const presetBtns = container.querySelectorAll(".note-canvas-toolbar__preset-btn");
+
+    // Switch to marker first
+    fireEvent.click(presetBtns[2]);
+
+    // Switch back to pen (index 0)
+    fireEvent.click(presetBtns[0]);
+
+    expect(toolbar.penType).toBe("pen");
+    expect(toolbar.penWidth).toBe(2);
+    expect(onPenSettingsChange).toHaveBeenCalledWith({ width: 2, colorIndex: 0, type: "pen" });
+
+    // Check slider range for pen
+    const slider = container.querySelector(".note-canvas-toolbar__width-slider");
+    expect(slider.min).toBe("0.2");
+    expect(slider.max).toBe("15");
+    expect(slider.step).toBe("0.1");
+  });
+
+  it("preserves pen type when saving preset", () => {
+    // Expand
+    const expandBtn = container.querySelector(".note-canvas-toolbar__expand-btn");
+    fireEvent.click(expandBtn);
+
+    const presetBtns = container.querySelectorAll(".note-canvas-toolbar__preset-btn");
+    // Select marker preset
+    fireEvent.click(presetBtns[2]);
+
+    // Change width via slider
+    const slider = container.querySelector(".note-canvas-toolbar__width-slider");
+    fireEvent.input(slider, { target: { value: "30" } });
+
+    // Save
+    const saveBtns = container.querySelectorAll(".note-canvas-toolbar__save-preset-btn");
+    fireEvent.click(saveBtns[2]);
+
+    expect(onPresetChange).toHaveBeenCalled();
+    const updatedPresets = onPresetChange.mock.calls[0][0];
+    expect(updatedPresets[2]).toEqual({ width: 30, colorIndex: 0, type: "marker" });
   });
 });

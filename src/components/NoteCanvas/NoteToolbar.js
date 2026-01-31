@@ -133,9 +133,10 @@ export class NoteToolbar {
     // Get initial pen color for icon
     const palette = this.penType === "marker" ? getMarkerPalette() : getThemePalette();
     const initialColor = palette[this.penColorIndex] || palette[0];
-    const penIcon = this.penType === "marker" 
-      ? getMarkerIconWithColor(initialColor, 24) 
-      : getPenIconWithColor(initialColor, 24);
+    const penIcon =
+      this.penType === "marker"
+        ? getMarkerIconWithColor(initialColor, 24)
+        : getPenIconWithColor(initialColor, 24);
 
     this.drawBtn = createBtn("draw", penIcon, "Draw Mode");
     this.drawBtn.onclick = (e) => this._handleDrawClick(e);
@@ -234,11 +235,15 @@ export class NoteToolbar {
 
       const btn = document.createElement("button");
       btn.className = "note-canvas-toolbar__preset-btn";
-      if (this.penWidth === preset.width && this.penColorIndex === preset.colorIndex && (preset.type || "pen") === this.penType) {
+      if (
+        this.penWidth === preset.width &&
+        this.penColorIndex === preset.colorIndex &&
+        (preset.type || "pen") === this.penType
+      ) {
         btn.classList.add("note-canvas-toolbar__preset-btn--active");
       }
 
-      const currentPalette = (preset.type === "marker") ? markerPalette : themePalette;
+      const currentPalette = preset.type === "marker" ? markerPalette : themePalette;
       const color = currentPalette[preset.colorIndex] || currentPalette[0];
       const size = Math.min(20, Math.max(4, preset.width * 2));
 
@@ -276,7 +281,11 @@ export class NoteToolbar {
 
       saveBtn.onclick = (e) => {
         e.stopPropagation();
-        this.penPresets[index] = { width: this.penWidth, colorIndex: this.penColorIndex, type: this.penType };
+        this.penPresets[index] = {
+          width: this.penWidth,
+          colorIndex: this.penColorIndex,
+          type: this.penType,
+        };
 
         // Update visual state of the preset button immediately
         const activePalette = this.penType === "marker" ? markerPalette : themePalette;
@@ -323,7 +332,11 @@ export class NoteToolbar {
     // 1. Check if current settings match any preset exactly
     let matchIndex = -1;
     this.penPresets.forEach((preset, index) => {
-      if (this.penWidth === preset.width && this.penColorIndex === preset.colorIndex && (preset.type || "pen") === this.penType) {
+      if (
+        this.penWidth === preset.width &&
+        this.penColorIndex === preset.colorIndex &&
+        (preset.type || "pen") === this.penType
+      ) {
         matchIndex = index;
       }
     });
@@ -361,7 +374,9 @@ export class NoteToolbar {
    * @private
    */
   _updateSettingsUI() {
-    const settingsContainer = this.penSettingsDialog.querySelector(".note-canvas-toolbar__settings-container");
+    const settingsContainer = this.penSettingsDialog.querySelector(
+      ".note-canvas-toolbar__settings-container",
+    );
     if (settingsContainer) {
       settingsContainer.innerHTML = this._getPenDialogHTML();
       this._setupPenDialogListeners();

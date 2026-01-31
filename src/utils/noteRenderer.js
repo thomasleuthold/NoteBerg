@@ -6,7 +6,7 @@
 
 import { getTheme } from "../modules/theme.js";
 
-export const MARKER_ALPHA = 0.30;
+export const MARKER_ALPHA = 0.3;
 
 /**
  * Get color palette for current theme (15 colors)
@@ -18,41 +18,41 @@ export function getThemePalette() {
   if (theme === "dark") {
     // Dark theme: white first, then colors visible on dark backgrounds
     return [
-      "#ffffff", 
-      "#ff7272", 
-      "#7cb7ff", 
-      "#38ffb6", 
-      "#ffec46", 
-      "#fc9e51", 
-      "#b39bfc", 
-      "#f472b6", 
-      "#2dd4bf", 
-      "#a3e635", 
-      "#e879f9", 
-      "#38bdf8", 
-      "#facc15", 
-      "#9ca3af", 
-      "#fcb58c", 
+      "#ffffff",
+      "#ff7272",
+      "#7cb7ff",
+      "#38ffb6",
+      "#ffec46",
+      "#fc9e51",
+      "#b39bfc",
+      "#f472b6",
+      "#2dd4bf",
+      "#a3e635",
+      "#e879f9",
+      "#38bdf8",
+      "#facc15",
+      "#9ca3af",
+      "#fcb58c",
     ];
   }
 
   // Light theme (default): black first, then colors visible on light backgrounds
   return [
-    "#000000", 
-    "#ef4444", 
-    "#3b82f6", 
-    "#10b981", 
-    "#f59e0b", 
-    "#8b5cf6", 
-    "#f97316", 
-    "#ec4899", 
-    "#14b8a6", 
-    "#84cc16", 
-    "#d946ef", 
-    "#0ea5e9", 
-    "#eab308", 
-    "#6b7280", 
-    "#78350f", 
+    "#000000",
+    "#ef4444",
+    "#3b82f6",
+    "#10b981",
+    "#f59e0b",
+    "#8b5cf6",
+    "#f97316",
+    "#ec4899",
+    "#14b8a6",
+    "#84cc16",
+    "#d946ef",
+    "#0ea5e9",
+    "#eab308",
+    "#6b7280",
+    "#78350f",
   ];
 }
 
@@ -64,18 +64,18 @@ export function getMarkerPalette() {
   const theme = getTheme();
 
   if (theme === "dark") {
-  return [
-    "#f8f0b0",
-    "#c4f7d6",
-    "#f7d4ad",
-    "#cadff8",
-    "#fcd4ea",
-    "#ead8fd",
-    "#fcdada",
-    "#ffd06b",
-    "#d8fdee",
-    "#cccccc",
-  ];
+    return [
+      "#f8f0b0",
+      "#c4f7d6",
+      "#f7d4ad",
+      "#cadff8",
+      "#fcd4ea",
+      "#ead8fd",
+      "#fcdada",
+      "#ffd06b",
+      "#d8fdee",
+      "#cccccc",
+    ];
   }
 
   return [
@@ -105,9 +105,7 @@ export function drawStroke(ctx, stroke, palette = null, isSelected = false, fast
 
   const isMarker = stroke.type === "marker";
   // Use marker palette if it's a marker, otherwise use provided palette or theme palette
-  const colors = isMarker
-    ? getMarkerPalette()
-    : palette || getThemePalette();
+  const colors = isMarker ? getMarkerPalette() : palette || getThemePalette();
 
   const baseWidth = stroke.width || 2;
   const color =

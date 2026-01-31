@@ -9,8 +9,8 @@
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
   drawStroke as sharedDrawStroke,
-  getThemePalette as sharedGetThemePalette,
   getMarkerPalette as sharedGetMarkerPalette,
+  getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
 import {
   getMediaHandles,
