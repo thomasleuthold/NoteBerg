@@ -35,6 +35,7 @@ export class StrokeManager {
       colorIndex: props.colorIndex || 0,
       width: props.width || 2,
       pointerType: props.pointerType,
+      type: props.type || "pen", // 'pen' or 'marker'
     };
     return this.currentStroke;
   }

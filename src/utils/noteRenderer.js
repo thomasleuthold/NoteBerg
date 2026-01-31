@@ -76,6 +76,21 @@ export function getThemePalette() {
 }
 
 /**
+ * Get color palette for marker pens (pale/bright colors)
+ * @returns {string[]} Array of color hex values
+ */
+export function getMarkerPalette() {
+  return [
+    "#fef08a", // Yellow (Pale)
+    "#bbf7d0", // Green (Pale)
+    "#fed7aa", // Orange (Pale)
+    "#bfdbfe", // Blue (Pale)
+    "#fbcfe8", // Pink (Pale)
+    "#e9d5ff", // Purple (Pale)
+  ];
+}
+
+/**
  * Draw a single stroke on a canvas context
  * @param {CanvasRenderingContext2D} ctx - Canvas context
  * @param {Object} stroke - Stroke data with x, y, width, color/colorIndex
@@ -86,7 +101,12 @@ export function getThemePalette() {
 export function drawStroke(ctx, stroke, palette = null, isSelected = false, fastMode = false) {
   if (!ctx || !stroke.x || stroke.x.length < 2) return;
 
-  const colors = palette || getThemePalette();
+  const isMarker = stroke.type === "marker";
+  // Use marker palette if it's a marker, otherwise use provided palette or theme palette
+  const colors = isMarker
+    ? getMarkerPalette()
+    : palette || getThemePalette();
+
   const baseWidth = stroke.width || 2;
   const color =
     stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
@@ -107,6 +127,11 @@ export function drawStroke(ctx, stroke, palette = null, isSelected = false, fast
   ctx.lineJoin = "round";
   ctx.strokeStyle = color;
 
+  // Apply transparency for markers
+  if (isMarker) {
+    ctx.globalAlpha = 0.25;
+  }
+
   // Check for pressure data (skip in fast mode for scroll performance)
   const usePressure = !fastMode && stroke.pressure && stroke.pressure.length === stroke.x.length;
 
@@ -117,6 +142,11 @@ export function drawStroke(ctx, stroke, palette = null, isSelected = false, fast
     ctx.beginPath();
     drawSimplePath(ctx, stroke);
     ctx.stroke();
+  }
+
+  // Reset alpha
+  if (isMarker) {
+    ctx.globalAlpha = 1.0;
   }
 }
 

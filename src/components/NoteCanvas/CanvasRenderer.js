@@ -10,6 +10,7 @@ import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
   drawStroke as sharedDrawStroke,
   getThemePalette as sharedGetThemePalette,
+  getMarkerPalette as sharedGetMarkerPalette,
 } from "../../utils/noteRenderer.js";
 import {
   getMediaHandles,
@@ -60,6 +61,7 @@ export class CanvasRenderer {
     this.spatialIndex = null;
     this.mediaManager = null; // Reference to MediaManager
     this.palette = null;
+    this.markerPalette = null;
     this.activeStroke = null; // Stroke currently being drawn
     this.selectedStrokeIndices = new Set();
     this.activeStrokeId = null; // ID of the stroke currently being drawn incrementally
@@ -116,6 +118,7 @@ export class CanvasRenderer {
     this.strokes = strokes || [];
     this.background = background || "none";
     this.palette = sharedGetThemePalette();
+    this.markerPalette = sharedGetMarkerPalette();
   }
 
   /**
@@ -298,6 +301,15 @@ export class CanvasRenderer {
     this.ctx.strokeStyle = color;
     this.ctx.lineCap = "round";
     this.ctx.lineJoin = "round";
+
+    if (stroke.type === "marker") {
+      this.ctx.globalAlpha = 0.25;
+      // Use marker palette color if available
+      const markerColors = this.markerPalette || sharedGetMarkerPalette();
+      if (stroke.colorIndex !== undefined) {
+        this.ctx.strokeStyle = markerColors[stroke.colorIndex] || markerColors[0];
+      }
+    }
 
     const baseWidth = stroke.width || 2;
     const getWidth = (p) => Math.max(0.5, baseWidth * (0.5 + p));
@@ -516,6 +528,7 @@ export class CanvasRenderer {
     // Ensure palette is current
     if (!this.palette) {
       this.palette = sharedGetThemePalette();
+      this.markerPalette = sharedGetMarkerPalette();
     }
 
     // Draw background for buffer region
@@ -539,16 +552,45 @@ export class CanvasRenderer {
       strokeIndices = this.strokes.map((_, i) => i);
     }
 
-    // Draw strokes with offset for buffer position
-    this.ctx.save();
-    this.ctx.translate(0, -this.bufferTop);
+    // Separate markers and pens to draw markers first (behind pens)
+    const markers = [];
+    const pens = [];
 
     for (const index of strokeIndices) {
       const stroke = this.strokes[index];
       if (stroke && !stroke._deleted && !stroke.isDeleted) {
+        if (stroke.type === "marker") {
+          markers.push(index);
+        } else {
+          pens.push(index);
+        }
+      }
+    }
+
+    // Draw strokes with offset for buffer position
+    this.ctx.save();
+    this.ctx.translate(0, -this.bufferTop);
+
+    // Helper to draw a list of indices
+    const drawList = (indices) => {
+      for (const index of indices) {
+        const stroke = this.strokes[index];
         const isSelected = this.selectedStrokeIndices.has(index);
         sharedDrawStroke(this.ctx, stroke, this.palette, isSelected, fastMode);
       }
+    };
+
+    // Draw markers first (lower z-index)
+    drawList(markers);
+    // Draw pens on top
+    drawList(pens);
+
+    // Draw active stroke on top if it exists (always full quality for responsiveness)
+    if (this.activeStroke) {
+      // If active stroke is marker, it should technically be drawn before pens,
+      // but for responsiveness we draw it on top during creation.
+      // It will be sorted correctly once finished and added to the main list.
+      sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
     }
 
     // Draw highlights
@@ -563,11 +605,6 @@ export class CanvasRenderer {
         this.ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
       }
       this.ctx.restore();
-    }
-
-    // Draw active stroke on top if it exists (always full quality for responsiveness)
-    if (this.activeStroke) {
-      sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
     }
 
     // Draw selection bounding box

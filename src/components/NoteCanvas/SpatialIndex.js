@@ -10,7 +10,7 @@ export class SpatialIndex {
    * @param {number} bucketHeight - Height of each bucket in pixels (typically viewport height)
    */
   constructor(bucketHeight = 800) {
-    this.bucketHeight = bucketHeight;
+    this.bucketHeight = Math.max(100, bucketHeight); // Ensure minimum height to prevent infinite loops
     this.buckets = new Map(); // bucketId -> Set of stroke indices
     this.strokeBounds = new Map(); // strokeIndex -> { minY, maxY }
     this.totalStrokes = 0;
@@ -186,7 +186,7 @@ export class SpatialIndex {
    * @param {Array} strokes - Original strokes array to rebuild from
    */
   setBucketHeight(newBucketHeight, strokes) {
-    this.bucketHeight = newBucketHeight;
+    this.bucketHeight = Math.max(100, newBucketHeight); // Ensure minimum height
     this.build(strokes);
   }
 
