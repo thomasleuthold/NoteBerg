@@ -18,62 +18,41 @@ export function getThemePalette() {
   if (theme === "dark") {
     // Dark theme: white first, then colors visible on dark backgrounds
     return [
-      "#ffffff", // White (primary)
-      "#f87171", // Red
-      "#60a5fa", // Blue
-      "#34d399", // Green
-      "#fbbf24", // Yellow
-      "#a78bfa", // Purple
-      "#fb923c", // Orange
-      "#f472b6", // Pink
-      "#2dd4bf", // Teal
-      "#a3e635", // Lime
-      "#e879f9", // Fuchsia
-      "#38bdf8", // Sky
-      "#facc15", // Amber
-      "#9ca3af", // Gray
-      "#fde047", // Bright Yellow
-    ];
-  }
-
-  if (theme === "epaper") {
-    // E-paper theme: black first, then muted colors for e-ink displays
-    return [
-      "#000000", // Black (primary)
-      "#800000", // Maroon
-      "#000080", // Navy
-      "#006400", // Dark Green
-      "#a52a2a", // Brown
-      "#4b0082", // Indigo
-      "#8b4513", // Saddle Brown
-      "#2f4f4f", // Dark Slate
-      "#556b2f", // Dark Olive
-      "#483d8b", // Dark Slate Blue
-      "#8b0000", // Dark Red
-      "#191970", // Midnight Blue
-      "#b8860b", // Dark Goldenrod
-      "#696969", // Dim Gray
-      "#5d4037", // Brown
+      "#ffffff", 
+      "#ff7272", 
+      "#7cb7ff", 
+      "#38ffb6", 
+      "#ffec46", 
+      "#fc9e51", 
+      "#b39bfc", 
+      "#f472b6", 
+      "#2dd4bf", 
+      "#a3e635", 
+      "#e879f9", 
+      "#38bdf8", 
+      "#facc15", 
+      "#9ca3af", 
+      "#fcb58c", 
     ];
   }
 
   // Light theme (default): black first, then colors visible on light backgrounds
   return [
-    "#000000", // Black (primary)
-    "#ef4444", // Red
-    "#3b82f6", // Blue
-    "#10b981", // Green
-    "#f59e0b", // Amber
-    "#8b5cf6", // Purple
-    "#f97316", // Orange
-    "#ec4899", // Pink
-    "#14b8a6", // Teal
-    "#84cc16", // Lime
-    "#d946ef", // Fuchsia
-    "#0ea5e9", // Sky
-    "#eab308", // Yellow
-    "#6b7280", // Gray
-    "#78350f", // Brown
+    "#000000", 
+    "#ef4444", 
+    "#3b82f6", 
+    "#10b981", 
+    "#f59e0b", 
+    "#8b5cf6", 
+    "#f97316", 
+    "#ec4899", 
+    "#14b8a6", 
+    "#84cc16", 
+    "#d946ef", 
+    "#0ea5e9", 
+    "#eab308", 
+    "#6b7280", 
+    "#78350f", 
   ];
 }
 
@@ -82,13 +61,34 @@ export function getThemePalette() {
  * @returns {string[]} Array of color hex values
  */
 export function getMarkerPalette() {
+  const theme = getTheme();
+
+  if (theme === "dark") {
   return [
-    "#fef08a", // Yellow (Pale)
-    "#bbf7d0", // Green (Pale)
-    "#fed7aa", // Orange (Pale)
-    "#bfdbfe", // Blue (Pale)
-    "#fbcfe8", // Pink (Pale)
-    "#e9d5ff", // Purple (Pale)
+    "#f8f0b0",
+    "#c4f7d6",
+    "#f7d4ad",
+    "#cadff8",
+    "#fcd4ea",
+    "#ead8fd",
+    "#fcdada",
+    "#ffd06b",
+    "#d8fdee",
+    "#cccccc",
+  ];
+  }
+
+  return [
+    "#faeb79",
+    "#9dfabd",
+    "#f8ca94",
+    "#a5caf7",
+    "#fda3d6",
+    "#d0a9fa",
+    "#ff7b7b",
+    "#e6af3a",
+    "#affcdd",
+    "#6e6e6e",
   ];
 }
 

@@ -642,10 +642,6 @@
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
 }
 
-.theme-toggle-swatch.epaper {
-  background: linear-gradient(135deg, #ffffff 0%, #edf2f7 50%, #cbd5e0 100%);
-}
-
 .theme-toggle-label {
   font-size: 0.875rem;
   font-weight: 500;

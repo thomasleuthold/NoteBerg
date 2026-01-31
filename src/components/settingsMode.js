@@ -58,10 +58,6 @@ export async function renderSettings(container) {
               <div class="theme-toggle-swatch dark"></div>
               <span class="theme-toggle-label">Dark</span>
             </button>
-            <button class="theme-toggle ${currentTheme === "epaper" ? "active" : ""}" data-theme="epaper">
-              <div class="theme-toggle-swatch epaper"></div>
-              <span class="theme-toggle-label">E-Paper</span>
-            </button>
           </div>
         </div>
       </div>
