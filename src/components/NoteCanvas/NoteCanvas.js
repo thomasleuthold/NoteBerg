@@ -605,7 +605,7 @@ export class NoteCanvas {
       if (!file) return;
 
       // Import PDF (saves file and extracts pages)
-      const { pages } = await importPdf(file);
+      const { pages, fileId } = await importPdf(file);
 
       if (pages.length > 0) {
         // Determine insertion point (center of viewport)
@@ -628,6 +628,11 @@ export class NoteCanvas {
           };
           currentY += newItem.height;
           this.mediaManager.addItem(newItem);
+        }
+
+        // Store reference to the PDF document at the note level
+        if (!this.noteData.pdfSource) {
+          this.noteData.pdfSource = fileId;
         }
 
         // Save changes
@@ -1497,6 +1502,7 @@ export class NoteCanvas {
       this.strokeManager.saveMedia({
         media: this.noteData.media,
         deletedMedia: this.noteData.deletedMedia,
+        pdfSource: this.noteData.pdfSource,
       });
     }
   }

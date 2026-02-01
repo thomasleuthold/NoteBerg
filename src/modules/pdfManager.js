@@ -26,7 +26,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
  */
 export async function importPdf(file) {
   // 1. Save the raw file to IndexedDB
-  const pdfId = await saveFile(file);
+  const fileId = await saveFile(file);
 
   // 2. Load the PDF to get dimensions
   // We need to read the file as ArrayBuffer for pdf.js
@@ -47,7 +47,7 @@ export async function importPdf(file) {
     pages.push({
       id: generateId(),
       type: "pdf-page",
-      pdfId: pdfId,
+      fileId: fileId, // Use fileId for consistency with images
       pageIndex: i, // pdf.js uses 1-based indexing
       width: viewport.width,
       height: viewport.height,
@@ -60,7 +60,7 @@ export async function importPdf(file) {
   }
 
   return {
-    pdfId,
+    fileId,
     pages,
     totalHeight: currentY,
   };
@@ -71,35 +71,35 @@ const documentCache = new Map();
 
 /**
  * Retrieves a PDF document proxy, using cache if available.
- * @param {string} pdfId
+ * @param {string} fileId
  * @returns {Promise<import('pdfjs-dist').PDFDocumentProxy>}
  */
-async function getPdfDocument(pdfId) {
-  if (documentCache.has(pdfId)) {
-    return documentCache.get(pdfId);
+async function getPdfDocument(fileId) {
+  if (documentCache.has(fileId)) {
+    return documentCache.get(fileId);
   }
 
   const loadingTaskPromise = (async () => {
-    const blob = await getFile(pdfId);
+    const blob = await getFile(fileId);
     if (!blob) {
-      throw new Error(`PDF file not found: ${pdfId}`);
+      throw new Error(`PDF file not found: ${fileId}`);
     }
     const arrayBuffer = await blob.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     return loadingTask.promise;
   })();
 
-  documentCache.set(pdfId, loadingTaskPromise);
+  documentCache.set(fileId, loadingTaskPromise);
   return loadingTaskPromise;
 }
 
 /**
  * Loads a specific page from a stored PDF ID
- * @param {string} pdfId - The ID of the stored PDF file
+ * @param {string} fileId - The ID of the stored PDF file
  * @param {number} pageIndex - 1-based page index
  * @returns {Promise<import('pdfjs-dist').PDFPageProxy>}
  */
-export async function loadPdfPage(pdfId, pageIndex) {
-  const pdfDoc = await getPdfDocument(pdfId);
+export async function loadPdfPage(fileId, pageIndex) {
+  const pdfDoc = await getPdfDocument(fileId);
   return pdfDoc.getPage(pageIndex);
 }

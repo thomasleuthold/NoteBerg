@@ -16,7 +16,8 @@ function getDB() {
 }
 
 self.onmessage = async (e) => {
-  const { type, noteId, strokes, deletedStrokes, media, deletedMedia, presets, key } = e.data;
+  const { type, noteId, strokes, deletedStrokes, media, deletedMedia, pdfSource, presets, key } =
+    e.data;
 
   if (type === "SAVE_STROKES") {
     try {
@@ -71,6 +72,7 @@ self.onmessage = async (e) => {
         // Update media fields
         if (media !== undefined) note.media = media;
         if (deletedMedia !== undefined) note.deletedMedia = deletedMedia;
+        if (pdfSource !== undefined) note.pdfSource = pdfSource;
 
         // Encrypt media if needed
         if (note.encrypted && media) {

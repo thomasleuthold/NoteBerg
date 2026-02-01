@@ -106,7 +106,7 @@ export class StrokeManager {
   /**
    * Save media changes via the worker to ensure sequential writes
    */
-  saveMedia({ media, deletedMedia }) {
+  saveMedia({ media, deletedMedia, pdfSource }) {
     let key = null;
     if (isAppUnlocked()) {
       try {
@@ -121,6 +121,7 @@ export class StrokeManager {
       noteId: this.noteId,
       media,
       deletedMedia,
+      pdfSource,
       key,
     });
   }

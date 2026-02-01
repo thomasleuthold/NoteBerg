@@ -41,7 +41,7 @@ export async function getRenderedMedia(item, scale = 1.0) {
 }
 
 async function renderPdfPage(item, scale) {
-  const page = await loadPdfPage(item.pdfId, item.pageIndex);
+  const page = await loadPdfPage(item.fileId, item.pageIndex);
 
   // Calculate PDF render scale to match item dimensions at current zoom
   // We need the natural dimensions to calculate the ratio
