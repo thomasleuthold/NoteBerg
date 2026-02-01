@@ -749,6 +749,18 @@ export class CanvasRenderer {
 
       if (item.type === "pdf-page") {
         this._drawPdfPage(item, fastMode);
+
+        // Draw page separator (dashed dark blue line)
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.strokeStyle = "#00008B"; // DarkBlue
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([10, 10]);
+        this.ctx.moveTo(item.x, item.y + item.height);
+        this.ctx.lineTo(item.x + item.width, item.y + item.height);
+        this.ctx.stroke();
+        this.ctx.restore();
+
         continue;
       }
 

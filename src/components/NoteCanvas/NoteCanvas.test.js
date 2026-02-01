@@ -1,6 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMediaHandles, getSelectionHandles, NoteCanvas } from "./NoteCanvas.js";
 
+// Polyfill DOMMatrix for pdfjs-dist (safeguard)
+if (!globalThis.DOMMatrix) {
+  globalThis.DOMMatrix = class DOMMatrix {
+    constructor() {
+      this.a = 1;
+      this.b = 0;
+      this.c = 0;
+      this.d = 1;
+      this.e = 0;
+      this.f = 0;
+    }
+    toString() {
+      return "matrix(1, 0, 0, 1, 0, 0)";
+    }
+    translate() {
+      return this;
+    }
+    scale() {
+      return this;
+    }
+    multiply() {
+      return this;
+    }
+  };
+}
+
 // Polyfill PointerEvent for jsdom
 globalThis.PointerEvent = class PointerEvent extends Event {
   constructor(type, props = {}) {
@@ -30,6 +56,15 @@ vi.mock("../../modules/storage.js", () => ({
   generateId: vi.fn(() => "mock-id"),
 }));
 
+vi.mock("../../modules/pdfManager.js", () => ({
+  importPdf: vi.fn(),
+  loadPdfPage: vi.fn(),
+}));
+
+vi.mock("../../modules/autoRecognition.js", () => ({
+  forceRecognition: vi.fn(),
+}));
+
 vi.mock("../../utils/imageUtils.js", () => ({
   pickImages: vi.fn(),
   processImageFile: vi.fn(),
@@ -48,6 +83,15 @@ vi.mock("./MediaManager.js");
 vi.mock("./MediaOverlay.js");
 vi.mock("./NoteToolbar.js");
 vi.mock("./StrokeManager.js");
+vi.mock("./PdfTextLayerManager.js", () => ({
+  PdfTextLayerManager: vi.fn().mockImplementation(() => ({
+    update: vi.fn(),
+    setMode: vi.fn(),
+    destroy: vi.fn(),
+    refresh: vi.fn(),
+    onPageRemoved: vi.fn(),
+  })),
+}));
 
 // Mock global window events
 window.scrollTo = vi.fn();
