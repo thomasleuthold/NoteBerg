@@ -6,6 +6,7 @@
  * scroll exceeds the safe zone (leapfrog).
  */
 
+import { getRenderedMedia } from "../../modules/mediaManager.js";
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
   drawStroke as sharedDrawStroke,
@@ -192,9 +193,9 @@ export class CanvasRenderer {
     this.viewportHeight = height;
     this.bufferHeight = height * this.bufferMultiplier;
 
-    // Resize overlay to match viewport exactly
+    // Resize overlay to match viewport exactly (in screen pixels)
     this.overlayCanvas.width = width;
-    this.overlayCanvas.height = height * this.zoomScale;
+    this.overlayCanvas.height = height;
 
     this._resizeCanvasBitmap();
     this._updateCanvasPosition();
@@ -202,18 +203,25 @@ export class CanvasRenderer {
 
   /**
    * Update canvas position (centering when needed)
+   * Now always uses absolute positioning with transform-based centering for consistency
    * @private
    */
   _updateCanvasPosition() {
-    const scaledContentWidth = this.viewportWidth * this.zoomScale;
+    // Always use absolute positioning - centering is now handled in _slideCanvas via transform
+    this.canvas.classList.remove("sliding-buffer-canvas--centered");
+  }
 
+  /**
+   * Calculate the X offset for centering the canvas when content is narrower than viewport
+   * @private
+   * @returns {number} The centering offset in screen pixels
+   */
+  _getCenteringOffset() {
+    const scaledContentWidth = this.viewportWidth * this.zoomScale;
     if (scaledContentWidth < this.screenViewportWidth) {
-      // Canvas is smaller than viewport - center it
-      this.canvas.classList.add("sliding-buffer-canvas--centered");
-    } else {
-      // Canvas fills or exceeds viewport - position absolutely
-      this.canvas.classList.remove("sliding-buffer-canvas--centered");
+      return (this.screenViewportWidth - scaledContentWidth) / 2;
     }
+    return 0;
   }
 
   /**
@@ -521,7 +529,9 @@ export class CanvasRenderer {
 
     // Apply CSS transform (scaled by zoom for screen pixels)
     const screenOffsetY = offset * this.zoomScale;
-    const screenOffsetX = -scrollLeft;
+    // Include centering offset for when content is narrower than viewport
+    const centeringOffset = this._getCenteringOffset();
+    const screenOffsetX = centeringOffset - scrollLeft;
     const cssScale = this.zoomScale;
     this.canvas.style.transform = `translate(${screenOffsetX}px, ${screenOffsetY}px) scale(${cssScale})`;
   }
@@ -737,6 +747,11 @@ export class CanvasRenderer {
         continue;
       }
 
+      if (item.type === "pdf-page") {
+        this._drawPdfPage(item, fastMode);
+        continue;
+      }
+
       if (item.type === "image" && item.fileId) {
         const img = this.mediaManager.getImage(item.fileId);
         this.ctx.save();
@@ -792,6 +807,47 @@ export class CanvasRenderer {
     }
 
     this.ctx.restore();
+  }
+
+  /**
+   * Draw a PDF page item
+   * @private
+   * Note: This method is called from _drawMedia which already has ctx.translate(0, -this.bufferTop) applied.
+   * Do NOT apply another bufferTop translation here.
+   */
+  _drawPdfPage(item, _fastMode) {
+    if (item.renderable && item.renderableScale === this.resolutionScale) {
+      this.ctx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
+    } else if (!item.loading) {
+      // Start loading regardless of fastMode to ensure pages eventually render
+      // The forceRedraw() on completion will show them once loaded
+      item.loading = true;
+      getRenderedMedia(item, this.resolutionScale)
+        .then((renderable) => {
+          item.loading = false;
+          if (renderable) {
+            item.renderable = renderable;
+            item.renderableScale = this.resolutionScale;
+          }
+          this.forceRedraw();
+        })
+        .catch((err) => {
+          console.error(`[CanvasRenderer] Failed to render PDF page ${item.id}:`, err);
+          item.loading = false;
+        });
+    }
+    // If loading but no cached renderable yet, draw a placeholder
+    else if (item.loading && !item.renderable) {
+      this.ctx.fillStyle = "rgba(200, 200, 200, 0.1)";
+      this.ctx.fillRect(item.x, item.y, item.width, item.height);
+    }
+
+    // Draw selection border if selected
+    if (item.id === this.selectedMediaId) {
+      this.ctx.strokeStyle = "#3b82f6";
+      this.ctx.lineWidth = 2;
+      this.ctx.strokeRect(item.x, item.y, item.width, item.height);
+    }
   }
 
   /**

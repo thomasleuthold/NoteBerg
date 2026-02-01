@@ -21,6 +21,10 @@ vi.mock("./NoteCanvas.js", () => ({
   SELECTION_HANDLE_SIZE: 10,
 }));
 
+vi.mock("../../modules/mediaManager.js", () => ({
+  getRenderedMedia: vi.fn(),
+}));
+
 describe("CanvasRenderer", () => {
   let viewportElement;
   let renderer;

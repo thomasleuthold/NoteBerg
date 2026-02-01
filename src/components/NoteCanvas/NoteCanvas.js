@@ -7,6 +7,7 @@
  */
 
 import { forceRecognition } from "../../modules/autoRecognition.js";
+import { importPdf } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
   deleteFile,
@@ -493,6 +494,7 @@ export class NoteCanvas {
         onAction: (action) => {
           if (action === "insert-image") this.insertImage("picker");
           if (action === "insert-camera") this.insertImage("camera");
+          if (action === "insert-pdf") this.insertPdf();
         },
       },
     );
@@ -584,6 +586,77 @@ export class NoteCanvas {
     } catch (error) {
       console.error("[NoteCanvas] Failed to insert image:", error);
     }
+  }
+
+  /**
+   * Insert a PDF into the note
+   */
+  async insertPdf() {
+    try {
+      const file = await this._pickPdfFile();
+      if (!file) return;
+
+      // Import PDF (saves file and extracts pages)
+      const { pages } = await importPdf(file);
+
+      if (pages.length > 0) {
+        // Determine insertion point (center of viewport)
+        const viewport = this.scroller.getViewportBounds();
+        const startY = viewport.top + 50;
+        // Use maxContentWidth to ensure it fills the canvas width (typically 1200px)
+        const targetWidth = this.maxContentWidth || 1200;
+        let currentY = startY;
+
+        // Add pages to media items
+        for (const page of pages) {
+          // Scale page to fit content width while maintaining aspect ratio
+          const scaleFactor = targetWidth / page.width;
+          const newItem = {
+            ...page,
+            width: targetWidth,
+            height: page.height * scaleFactor,
+            x: 0,
+            y: currentY,
+          };
+          currentY += newItem.height;
+          this.mediaManager.addItem(newItem);
+        }
+
+        // Save changes
+        await this._saveMediaChanges();
+        this.renderer.forceRedraw();
+
+        // Expand canvas if needed
+        const lastPage = pages[pages.length - 1];
+        const bottom = lastPage.y + lastPage.height;
+        if (bottom > this.contentHeight) {
+          this._expandCanvas(bottom - this.contentHeight + 500);
+        }
+      }
+    } catch (error) {
+      console.error("[NoteCanvas] Failed to insert PDF:", error);
+      alert(`Failed to import PDF: ${error.message}`);
+    }
+  }
+
+  /**
+   * Pick a PDF file from the file system
+   * @private
+   */
+  _pickPdfFile() {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "application/pdf";
+      input.onchange = (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          resolve(e.target.files[0]);
+        } else {
+          resolve(null);
+        }
+      };
+      input.click();
+    });
   }
 
   /**

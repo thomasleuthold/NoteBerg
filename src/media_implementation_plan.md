@@ -14,8 +14,9 @@
 **Decision:** **Vertical Stack Layout.**
 *   **Reasoning:** The `VirtualScroller` and `SpatialIndex` are already optimized for the Y-axis.
 *   **Approach:**
-    *   When a PDF is imported, render pages as individual "Media Items" stacked vertically with a fixed gap (e.g., 20px).
-    *   The `contentHeight` of the `NoteCanvas` becomes `(PageHeight + Gap) * PageCount`.
+    *   When a PDF is imported, render pages as individual "Media Items" stacked vertically with **zero gap** to simplify coordinate mapping.
+    *   Draw a visual separator (e.g., a horizontal line) at page boundaries to distinguish pages.
+    *   The `contentHeight` of the `NoteCanvas` becomes `PageHeight * PageCount`.
     *   Strokes are recorded in absolute Y coordinates. The `SpatialIndex` naturally handles this, associating strokes with the visual location of the PDF page.
 
 ### Q3: Combine PDF and Markdown?
@@ -24,7 +25,7 @@
 *   **Approach:**
     *   **Default:** Background renders Grid/Lines/Dots.
     *   **With PDF:** Background renders PDF pages (stacked vertically).
-    *   **Implementation:** The `CanvasRenderer` checks for an attached PDF. If present, it replaces the grid background with the PDF page rendering. All other tools (pen, highlighter, images) work identically on top.
+    *   **Implementation:** The `CanvasRenderer` checks for an attached PDF. If present, it uses `pdf.js` to render pages to off-screen canvases (cache), then draws those images onto the main `NoteCanvas` instead of the grid. All other tools (pen, highlighter, images) work identically on top.
 
 ### Q4: How to handle large files (Storage/Memory)?
 **Decision:** **Binary Storage (Blobs), NOT Base64.**
@@ -66,7 +67,47 @@
     *   Update `InputHandler` to detect clicks on media items vs. empty canvas.
     *   Implement "Image Mode" vs "Draw Mode" logic (similar to old editor but cleaner).
 
-### Phase 2: Markdown Text Layer
+### Phase 2: PDF Import & Rendering (Sub-divided)
+*Goal: Import PDF and render pages as background.*
+
+#### Phase 2a: Infrastructure & Storage (Done)
+1.  **Dependencies:**
+    *   `pdf.js` (Mozilla) for rendering PDF pages to Images/Canvas in the browser.
+2.  **Storage:**
+    *   Use existing `storage.js` service (IndexedDB wrapper) which handles `Blob` storage/retrieval by ID.
+
+#### Phase 2b: Import Logic (Done)
+1.  **Workflow:**
+    *   User selects PDF.
+    *   App reads file, saves to `storage.js`.
+    *   Use `pdf.js` to extract page count and dimensions.
+    *   Populate `NoteData.media` with pages stacked vertically.
+    *   Update `NoteData.contentHeight`.
+
+#### Phase 2c: Rendering (Done)
+1.  **Canvas Integration:**
+    *   `MediaManager` uses `pdf.js` to render the specific page into the viewport when visible.
+    *   Use a cache to prevent re-rendering PDF pages on every scroll frame.
+
+### Phase 3: PDF Export (High Fidelity)
+*Goal: Export annotations on top of original PDF vector data.*
+
+1.  **Dependencies:**
+    *   `pdf-lib` (for modifying existing PDFs).
+2.  **Export Logic (Document Note):**
+    *   Load original PDF bytes using `pdf-lib`.
+    *   Iterate through `NoteData.strokes` and `NoteData.media` (images).
+    *   **Strokes:** Map stroke coordinates (relative to the PDF page in the vertical stack) to PDF Page coordinates. Draw strokes as SVG paths or vector lines onto the PDF pages using `pdf-lib` primitives.
+    *   **Images:** For user-added images (overlaying the PDF):
+        *   Embed the image using `pdfDoc.embedPng` or `embedJpg`.
+        *   Draw the image onto the target PDF page using the relative coordinates.
+    *   **Result:** A true PDF where original text is selectable and handwriting is vector data.
+3.  **Export Logic (Canvas Note):**
+    *   Use `jspdf`.
+    *   Take snapshots of the canvas (raster) or convert strokes to PDF vectors.
+    *   Paginate based on A4 dimensions.
+
+### Phase 4: Markdown Text Layer
 *Goal: Add the text editing capability behind the canvas.*
 
 1.  **DOM Structure:**
@@ -77,36 +118,6 @@
     *   **Challenge:** If text pushes content down, strokes drawn *below* the text need to move.
     *   **Solution (MVP):** Text layer is static background (like lined paper). If user inserts new lines, strokes *do not* move automatically (standard whiteboard behavior).
     *   **Solution (Advanced):** "Insert Space" tool that shifts both text and strokes.
-
-### Phase 3: PDF Import & Rendering
-*Goal: Import PDF and render pages as background.*
-
-1.  **Dependencies:**
-    *   `pdf.js` (Mozilla) for rendering PDF pages to Images/Canvas in the browser.
-2.  **Import Logic:**
-    *   User selects PDF.
-    *   App reads file as `ArrayBuffer` or `Blob`.
-    *   Stores raw data in IndexedDB (separate "Files" store or within Note if supported).
-    *   Populates `media` array with pages: `{ type: 'pdf-page', pageIndex: 0, x: 0, y: 0, ... }`.
-3.  **Rendering:**
-    *   `MediaManager` uses `pdf.js` to render the specific page into the viewport when visible.
-    *   Use a cache to prevent re-rendering PDF pages on every scroll frame.
-
-### Phase 4: PDF Export (High Fidelity)
-*Goal: Export annotations on top of original PDF vector data.*
-
-1.  **Dependencies:**
-    *   `pdf-lib` (for modifying existing PDFs).
-2.  **Export Logic (Document Note):**
-    *   Load original PDF bytes using `pdf-lib`.
-    *   Iterate through `NoteData.strokes`.
-    *   Map stroke coordinates (relative to the PDF page in the vertical stack) to PDF Page coordinates.
-    *   Draw strokes as SVG paths or vector lines onto the PDF pages using `pdf-lib` primitives.
-    *   **Result:** A true PDF where original text is selectable and handwriting is vector data.
-3.  **Export Logic (Canvas Note):**
-    *   Use `jspdf`.
-    *   Take snapshots of the canvas (raster) or convert strokes to PDF vectors.
-    *   Paginate based on A4 dimensions.
 
 ---
 
