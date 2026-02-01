@@ -3,9 +3,9 @@
  * Manages Pan vs Draw vs Eraser mode switching and pen settings
  */
 
+import { getTheme } from "../../modules/theme.js";
 import { getIcon } from "../../utils/icons.js";
 import { getMarkerPalette, getThemePalette } from "../../utils/noteRenderer.js";
-import { getTheme } from "../../modules/theme.js";
 
 /**
  * Generate pen icon SVG with colored tip
