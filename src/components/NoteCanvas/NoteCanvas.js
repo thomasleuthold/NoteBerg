@@ -25,6 +25,7 @@ import { InputHandler } from "./InputHandler.js";
 import { MediaManager } from "./MediaManager.js";
 import { MediaOverlay } from "./MediaOverlay.js";
 import "./NoteCanvas.css";
+import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
@@ -133,6 +134,7 @@ export class NoteCanvas {
     this.mediaManager = null;
     this.strokeManager = null;
     this.mediaOverlay = null;
+    this.pdfTextLayerManager = null;
     this.toolbar = null;
     this.contentHeight = 0;
 
@@ -399,6 +401,12 @@ export class NoteCanvas {
       onToFront: (id) => this.moveSelectedMediaToFront(id),
       onToBack: (id) => this.moveSelectedMediaToBack(id),
     });
+
+    // Initialize PDF Text Layer Manager (for text selection in PDFs)
+    this.pdfTextLayerManager = new PdfTextLayerManager(
+      this.scroller.getViewportElement(),
+      this.mediaManager,
+    );
 
     // Initialize renderer
     this.renderer = new CanvasRenderer(this.scroller.getViewportElement(), {
@@ -802,8 +810,36 @@ export class NoteCanvas {
           this.strokeManager?.currentStroke,
         );
         this._updateMediaOverlay();
+        this._updatePdfTextLayers();
       });
     }
+  }
+
+  /**
+   * Update PDF text layer positions
+   * @private
+   */
+  _updatePdfTextLayers() {
+    if (!this.pdfTextLayerManager) return;
+
+    const viewportBounds = this.scroller.getViewportBounds();
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const { height: viewportHeight, width: viewportWidth } = this.scroller.getViewportSize();
+
+    // Calculate centering offset
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const centeringOffset =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    this.pdfTextLayerManager.update(
+      viewportBounds,
+      this.zoomScale,
+      scrollLeft,
+      scrollTop,
+      centeringOffset,
+      viewportHeight,
+    );
   }
 
   /**
@@ -835,6 +871,7 @@ export class NoteCanvas {
     const scrollLeft = this.scroller.getScrollLeft();
     this.renderer.render(scrollTop, height, scrollLeft, this.strokeManager?.currentStroke);
     this._updateMediaOverlay();
+    this._updatePdfTextLayers();
   }
 
   /**
@@ -876,6 +913,20 @@ export class NoteCanvas {
     if (this.renderer && newMode !== "pan" && newMode !== "lasso") {
       this.renderer.setSelectedStrokes(new Set(), null);
     }
+
+    // Update PDF text layer interactivity (only enabled in pan mode)
+    if (this.pdfTextLayerManager) {
+      this.pdfTextLayerManager.setMode(newMode);
+    }
+
+    // Add mode class to container for CSS-based behavior
+    this.containerElement.classList.remove(
+      "note-canvas--pan-mode",
+      "note-canvas--draw-mode",
+      "note-canvas--eraser-mode",
+      "note-canvas--lasso-mode",
+    );
+    this.containerElement.classList.add(`note-canvas--${newMode}-mode`);
   }
 
   /**
@@ -2326,6 +2377,9 @@ export class NoteCanvas {
         scrollLeft,
       });
     }
+
+    // Update PDF text layers after zoom
+    this._updatePdfTextLayers();
   }
 
   /**
@@ -2402,6 +2456,11 @@ export class NoteCanvas {
     if (this.mediaOverlay) {
       this.mediaOverlay.destroy();
       this.mediaOverlay = null;
+    }
+
+    if (this.pdfTextLayerManager) {
+      this.pdfTextLayerManager.destroy();
+      this.pdfTextLayerManager = null;
     }
 
     if (this.inputHandler) {
