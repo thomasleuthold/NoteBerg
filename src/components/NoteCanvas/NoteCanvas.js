@@ -178,6 +178,7 @@ export class NoteCanvas {
     this.activeSearchQuery = null; // Track active search query for highlighting
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
     this.selectedMediaId = null; // Track selected media item
+    this.penPresets = null; // Pen presets configuration
 
     // Long press state
     this.longPressTimer = null;
@@ -213,6 +214,11 @@ export class NoteCanvas {
     // Check strokes count
     const currentStrokesCount = this.noteData.strokes?.length || 0;
     const freshStrokesCount = freshData.strokes?.length || 0;
+
+    // If local has MORE strokes than DB, we are ahead (unsaved changes). Do not reload.
+    if (currentStrokesCount > freshStrokesCount) {
+      return false;
+    }
 
     // Simple check: if stroke count or background changed, we need reload
     // We ignore metadata changes like 'synced' or 'lastSyncedEtag'
@@ -272,6 +278,7 @@ export class NoteCanvas {
     // the DB version for these.
     inMemoryData.media = freshDataFromDB.media || [];
     inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
+    inMemoryData.penPresets = freshDataFromDB.penPresets || inMemoryData.penPresets;
     inMemoryData.background = freshDataFromDB.background;
     inMemoryData.modified = freshDataFromDB.modified;
     inMemoryData.lastSyncedEtag = freshDataFromDB.lastSyncedEtag;
@@ -318,6 +325,32 @@ export class NoteCanvas {
     if (!this.noteData.deletedMedia) {
       this.noteData.deletedMedia = [];
     }
+
+    // Initialize pen presets
+    this.penPresets = this.noteData.penPresets || [
+      { width: 1.5, colorIndex: 0, type: "pen" },
+      { width: 2, colorIndex: 1, type: "pen" },
+      { width: 2, colorIndex: 2, type: "pen" },
+      { width: 2, colorIndex: 3, type: "pen" },
+      { width: 25, colorIndex: 0, type: "marker" }, // Yellow
+      { width: 25, colorIndex: 1, type: "marker" }, // Green
+      { width: 25, colorIndex: 2, type: "marker" }, // Orange
+    ];
+
+    // Migration: Ensure markers exist in presets for old notes
+    if (!this.penPresets.some((p) => p.type === "marker")) {
+      this.penPresets.push(
+        { width: 25, colorIndex: 0, type: "marker" },
+        { width: 25, colorIndex: 1, type: "marker" },
+        { width: 25, colorIndex: 2, type: "marker" },
+      );
+      this.noteData.penPresets = this.penPresets;
+    }
+
+    // Set initial pen settings to match first preset
+    this.currentPenWidth = this.penPresets[0].width;
+    this.currentPenColorIndex = this.penPresets[0].colorIndex;
+    this.currentPenType = this.penPresets[0].type || "pen";
 
     // Clear container and setup layout
     this.containerElement.innerHTML = "";
@@ -427,9 +460,16 @@ export class NoteCanvas {
         this._setMode(mode);
       },
       {
-        onPenSettingsChange: ({ width, colorIndex }) => {
+        penPresets: this.penPresets,
+        onPresetChange: async (updatedPresets) => {
+          this.penPresets = updatedPresets;
+          this.noteData.penPresets = updatedPresets;
+          this.strokeManager.savePresets(updatedPresets);
+        },
+        onPenSettingsChange: ({ width, colorIndex, type }) => {
           this.currentPenWidth = width;
           this.currentPenColorIndex = colorIndex;
+          this.currentPenType = type;
         },
         onOptionsChange: async (action) => {
           if (action.type === "background") {
@@ -460,6 +500,7 @@ export class NoteCanvas {
     this.toolbar.setPenSettings({
       width: this.currentPenWidth,
       colorIndex: this.currentPenColorIndex,
+      type: this.currentPenType,
     });
 
     // Highlight search terms if provided
@@ -697,7 +738,7 @@ export class NoteCanvas {
    * @private
    */
   _onViewportResize(width, height) {
-    if (!this.renderer || !this.spatialIndex) return;
+    if (!this.renderer || !this.spatialIndex || height <= 0) return;
 
     // Only rebuild spatial index if height change is very significant (>2x or <0.5x)
     // This avoids expensive O(n) rebuilds on routine resize events
@@ -835,6 +876,7 @@ export class NoteCanvas {
       ...props,
       colorIndex: this.currentPenColorIndex,
       width: this.currentPenWidth,
+      type: this.currentPenType,
     });
 
     this.renderer.drawDirectStroke(stroke);
@@ -1342,6 +1384,9 @@ export class NoteCanvas {
    */
   _isScratchGesture(stroke) {
     if (!stroke || stroke.x.length < SCRATCH_MIN_POINTS) return false;
+
+    // Disable scratch-out for marker pens
+    if (stroke.type === "marker") return false;
 
     // 1. Calculate bounds and total path length
     let minX = stroke.x[0],

@@ -7,6 +7,8 @@ vi.mock("../../utils/noteRenderer.js", () => ({
   drawBackgroundPattern: vi.fn(),
   drawStroke: vi.fn(),
   getThemePalette: vi.fn(() => ["#000000", "#ff0000"]),
+  getMarkerPalette: vi.fn(() => ["#000000", "#ff0000"]),
+  MARKER_MAX_ALPHA: 0.6,
 }));
 
 vi.mock("./NoteCanvas.js", () => ({

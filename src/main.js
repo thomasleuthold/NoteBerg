@@ -6,7 +6,6 @@
 import "./styles/main.css";
 import "./styles/themes/light.css";
 import "./styles/themes/dark.css";
-import "./styles/themes/epaper.css";
 import "./styles/layout.css";
 import "./styles/components.css";
 import "./styles/notebookEditor.css";

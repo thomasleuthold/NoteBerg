@@ -9,6 +9,7 @@
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
   drawStroke as sharedDrawStroke,
+  getMarkerPalette as sharedGetMarkerPalette,
   getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
 import {
@@ -60,6 +61,7 @@ export class CanvasRenderer {
     this.spatialIndex = null;
     this.mediaManager = null; // Reference to MediaManager
     this.palette = null;
+    this.markerPalette = null;
     this.activeStroke = null; // Stroke currently being drawn
     this.selectedStrokeIndices = new Set();
     this.activeStrokeId = null; // ID of the stroke currently being drawn incrementally
@@ -71,6 +73,10 @@ export class CanvasRenderer {
     // Content bounds
     this.contentWidth = 0;
     this.contentHeight = 0;
+
+    // Scroll state for overlay drawing
+    this.contentScrollTop = 0;
+    this.contentScrollLeft = 0;
 
     // Performance tracking
     this.lastRenderTime = 0;
@@ -116,6 +122,7 @@ export class CanvasRenderer {
     this.strokes = strokes || [];
     this.background = background || "none";
     this.palette = sharedGetThemePalette();
+    this.markerPalette = sharedGetMarkerPalette();
   }
 
   /**
@@ -252,6 +259,9 @@ export class CanvasRenderer {
     const contentScrollTop = scrollTop / this.zoomScale;
     const contentViewportHeight = viewportHeight / this.zoomScale;
 
+    this.contentScrollTop = contentScrollTop;
+    this.contentScrollLeft = scrollLeft / this.zoomScale;
+
     let resized = false;
     // Update viewport height if changed significantly
     if (Math.abs(contentViewportHeight - this.viewportHeight) > 1) {
@@ -268,6 +278,11 @@ export class CanvasRenderer {
     }
     // Always slide the canvas to match scroll position
     this._slideCanvas(contentScrollTop, scrollLeft);
+
+    // If active stroke is marker, update its preview on overlay (to handle scroll/zoom)
+    if (this.activeStroke && this.activeStroke.type === "marker") {
+      this._drawMarkerPreview(this.activeStroke, false);
+    }
   }
 
   /**
@@ -283,6 +298,12 @@ export class CanvasRenderer {
     if (this.activeStrokeId !== stroke.id) {
       this.activeStrokeId = stroke.id;
       this.lastDrawnPointIndex = 0;
+    }
+
+    // Special handling for markers: draw full path on overlay to avoid alpha accumulation
+    if (stroke.type === "marker") {
+      this._drawMarkerPreview(stroke, isFinished);
+      return;
     }
 
     const pointCount = stroke.x.length;
@@ -352,6 +373,50 @@ export class CanvasRenderer {
     }
 
     this.ctx.restore();
+  }
+
+  /**
+   * Draw marker preview on overlay canvas
+   * @private
+   */
+  _drawMarkerPreview(stroke, isFinished) {
+    // Ensure palette is ready
+    if (!this.palette) {
+      this.palette = sharedGetThemePalette();
+      this.markerPalette = sharedGetMarkerPalette();
+    }
+
+    if (isFinished) {
+      // Final draw: Commit to main canvas
+      this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+
+      this.ctx.save();
+      this.ctx.translate(0, -this.bufferTop);
+      // Use sharedDrawStroke to ensure consistent rendering with final result
+      sharedDrawStroke(this.ctx, stroke, this.palette);
+      this.ctx.restore();
+
+      // Reset state
+      this.activeStrokeId = null;
+      this.lastDrawnPointIndex = 0;
+    } else {
+      // Preview draw: Draw full stroke on overlay
+      this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+
+      // Calculate centering offset
+      const scaledContentWidth = this.viewportWidth * this.zoomScale;
+      const offsetX =
+        scaledContentWidth < this.screenViewportWidth
+          ? (this.screenViewportWidth - scaledContentWidth) / 2
+          : 0;
+
+      this.overlayCtx.save();
+      this.overlayCtx.translate(offsetX, 0);
+      this.overlayCtx.scale(this.zoomScale, this.zoomScale);
+      this.overlayCtx.translate(-this.contentScrollLeft, -this.contentScrollTop);
+      sharedDrawStroke(this.overlayCtx, stroke, this.palette);
+      this.overlayCtx.restore();
+    }
   }
 
   /**
@@ -516,6 +581,7 @@ export class CanvasRenderer {
     // Ensure palette is current
     if (!this.palette) {
       this.palette = sharedGetThemePalette();
+      this.markerPalette = sharedGetMarkerPalette();
     }
 
     // Draw background for buffer region
@@ -539,16 +605,45 @@ export class CanvasRenderer {
       strokeIndices = this.strokes.map((_, i) => i);
     }
 
-    // Draw strokes with offset for buffer position
-    this.ctx.save();
-    this.ctx.translate(0, -this.bufferTop);
+    // Separate markers and pens to draw markers first (behind pens)
+    const markers = [];
+    const pens = [];
 
     for (const index of strokeIndices) {
       const stroke = this.strokes[index];
       if (stroke && !stroke._deleted && !stroke.isDeleted) {
+        if (stroke.type === "marker") {
+          markers.push(index);
+        } else {
+          pens.push(index);
+        }
+      }
+    }
+
+    // Draw strokes with offset for buffer position
+    this.ctx.save();
+    this.ctx.translate(0, -this.bufferTop);
+
+    // Helper to draw a list of indices
+    const drawList = (indices) => {
+      for (const index of indices) {
+        const stroke = this.strokes[index];
         const isSelected = this.selectedStrokeIndices.has(index);
         sharedDrawStroke(this.ctx, stroke, this.palette, isSelected, fastMode);
       }
+    };
+
+    // Draw markers first (lower z-index)
+    drawList(markers);
+    // Draw pens on top
+    drawList(pens);
+
+    // Draw active stroke on top if it exists (always full quality for responsiveness)
+    if (this.activeStroke && this.activeStroke.type !== "marker") {
+      // If active stroke is marker, it should technically be drawn before pens,
+      // but for responsiveness we draw it on top during creation.
+      // It will be sorted correctly once finished and added to the main list.
+      sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
     }
 
     // Draw highlights
@@ -563,11 +658,6 @@ export class CanvasRenderer {
         this.ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
       }
       this.ctx.restore();
-    }
-
-    // Draw active stroke on top if it exists (always full quality for responsiveness)
-    if (this.activeStroke) {
-      sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
     }
 
     // Draw selection bounding box

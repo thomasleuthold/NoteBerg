@@ -3,7 +3,7 @@
  * Handles theme switching between light, dark, and e-paper modes
  */
 
-const THEMES = ["light", "dark", "epaper"];
+const THEMES = ["light", "dark"];
 const DEFAULT_THEME = "light";
 const THEME_STORAGE_KEY = "theme";
 
@@ -40,7 +40,7 @@ export async function initTheme() {
 
 /**
  * Set the active theme
- * @param {string} theme - Theme name ('light', 'dark', or 'epaper')
+ * @param {string} theme - Theme name ('light', 'dark')
  */
 export async function setTheme(theme) {
   if (!THEMES.includes(theme)) {
@@ -76,7 +76,7 @@ export function getTheme() {
 
 /**
  * Toggle between themes
- * Cycles through: light → dark → epaper → light
+ * Cycles through: light → dark → light
  */
 export function cycleTheme() {
   const currentIndex = THEMES.indexOf(currentTheme);

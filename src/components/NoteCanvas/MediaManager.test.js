@@ -17,8 +17,8 @@ describe("MediaManager", () => {
 
   beforeEach(() => {
     // Mock URL APIs
-    global.URL.createObjectURL = vi.fn(() => "blob:url");
-    global.URL.revokeObjectURL = vi.fn();
+    window.URL.createObjectURL = vi.fn(() => "blob:url");
+    window.URL.revokeObjectURL = vi.fn();
 
     // Use deep copy to prevent test pollution (objects in array are references)
     mediaManager = new MediaManager(noteId, JSON.parse(JSON.stringify(initialMedia)));
@@ -123,7 +123,7 @@ describe("MediaManager", () => {
     expect(getFile).toHaveBeenCalledWith("f1");
 
     // Wait for promise resolution (simulated)
-    await new Promise(process.nextTick);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     // We can't easily test the onload callback of Image in jsdom without more mocking,
     // but we verified the storage call was made.
@@ -136,7 +136,7 @@ describe("MediaManager", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     mediaManager.getImage("f2");
-    await new Promise(process.nextTick);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(consoleSpy).toHaveBeenCalled();
   });

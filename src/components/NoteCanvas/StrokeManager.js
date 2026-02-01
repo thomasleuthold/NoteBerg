@@ -35,6 +35,7 @@ export class StrokeManager {
       colorIndex: props.colorIndex || 0,
       width: props.width || 2,
       pointerType: props.pointerType,
+      type: props.type || "pen", // 'pen' or 'marker'
     };
     return this.currentStroke;
   }
@@ -120,6 +121,27 @@ export class StrokeManager {
       noteId: this.noteId,
       media,
       deletedMedia,
+      key,
+    });
+  }
+
+  /**
+   * Save pen presets via the worker
+   */
+  savePresets(presets) {
+    let key = null;
+    if (isAppUnlocked()) {
+      try {
+        key = getEncryptionKey();
+      } catch (e) {
+        console.warn("[StrokeManager] Could not get encryption key:", e);
+      }
+    }
+
+    this.worker.postMessage({
+      type: "SAVE_PRESETS",
+      noteId: this.noteId,
+      presets,
       key,
     });
   }

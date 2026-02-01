@@ -3,8 +3,9 @@
  * Manages Pan vs Draw vs Eraser mode switching and pen settings
  */
 
+import { getTheme } from "../../modules/theme.js";
 import { getIcon } from "../../utils/icons.js";
-import { getThemePalette } from "../../utils/noteRenderer.js";
+import { getMarkerPalette, getThemePalette } from "../../utils/noteRenderer.js";
 
 /**
  * Generate pen icon SVG with colored tip
@@ -17,6 +18,21 @@ function getPenIconWithColor(tipColor, size = 24) {
     <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
     <path d="m15 5 4 4"/>
     <circle cx="4" cy="20" r="2" fill="${tipColor}" stroke="${tipColor}"/>
+  </svg>`;
+}
+
+/**
+ * Generate marker icon SVG with colored tip
+ * @param {string} tipColor - Color for the marker tip
+ * @param {number} size - Icon size
+ * @returns {string} SVG markup
+ */
+function getMarkerIconWithColor(tipColor, size = 24) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 19l7-7 3 3-7 7-3-3z" />
+    <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+    <path d="M2 2l7.586 7.586" />
+    <circle cx="11" cy="11" r="3" fill="${tipColor}" stroke="${tipColor}" />
   </svg>`;
 }
 
@@ -70,9 +86,16 @@ export class NoteToolbar {
     this.optionsBtnContainer = null;
     this.currentMode = "pan";
 
+    // Presets state
+    this.penPresets = options.penPresets;
+    this.onPresetChange = options.onPresetChange || (() => {});
+    this.isExpanded = false; // Default to quick mode (collapsed)
+
     // Pen settings state
-    this.penWidth = 2;
-    this.penColorIndex = 0;
+    this.penWidth = this.penPresets[0].width;
+    this.penColorIndex = this.penPresets[0].colorIndex;
+    this.penType = this.penPresets[0].type || "pen";
+    this.lastSelectedPresetIndex = 0;
 
     // Bind methods
     this._handleDocumentPointerDown = this._handleDocumentPointerDown.bind(this);
@@ -83,6 +106,9 @@ export class NoteToolbar {
   _createDOM() {
     this.element = document.createElement("div");
     this.element.className = "note-canvas-toolbar";
+    this.element.style.position = "relative";
+    this.element.style.zIndex = "100";
+    this.element.style.overflow = "visible";
 
     const createBtn = (id, icon, title) => {
       const btn = document.createElement("button");
@@ -106,9 +132,12 @@ export class NoteToolbar {
     this.drawBtnContainer.className = "note-canvas-toolbar__button-container";
 
     // Get initial pen color for icon
-    const palette = getThemePalette();
+    const palette = this.penType === "marker" ? getMarkerPalette() : getThemePalette();
     const initialColor = palette[this.penColorIndex] || palette[0];
-    const penIcon = getPenIconWithColor(initialColor, 24);
+    const penIcon =
+      this.penType === "marker"
+        ? getMarkerIconWithColor(initialColor, 24)
+        : getPenIconWithColor(initialColor, 24);
 
     this.drawBtn = createBtn("draw", penIcon, "Draw Mode");
     this.drawBtn.onclick = (e) => this._handleDrawClick(e);
@@ -146,6 +175,31 @@ export class NoteToolbar {
 
     this._createOptionsDialog();
 
+    // Inject theme styles for preset buttons
+    const style = document.createElement("style");
+    style.textContent = `
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn {
+        background-color: #333;
+        border: 1px solid #555;
+      }
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn:hover {
+        background-color: #444;
+      }
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn--active {
+        background-color: #555;
+        border-color: #999;
+      }
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn {
+        background-color: #333;
+        border: 1px solid #555;
+        color: #fff;
+      }
+      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn:hover {
+        background-color: #444;
+      }
+    `;
+    this.element.appendChild(style);
+
     this.element.appendChild(this.panBtn);
     this.element.appendChild(this.drawBtnContainer);
     this.element.appendChild(this.eraserBtn);
@@ -161,12 +215,198 @@ export class NoteToolbar {
   _createPenSettingsDialog() {
     this.penSettingsDialog = document.createElement("div");
     this.penSettingsDialog.className = "note-canvas-toolbar__pen-dialog";
-    this.penSettingsDialog.innerHTML = this._getPenDialogHTML();
 
-    this.drawBtnContainer.appendChild(this.penSettingsDialog);
+    // Prevent dialog clicks from closing it
+    this.penSettingsDialog.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
 
-    // Set up event listeners for dialog controls
-    this._setupPenDialogListeners();
+    this._renderDialogContent();
+
+    this.element.appendChild(this.penSettingsDialog);
+  }
+
+  /**
+   * Render the dialog content based on expanded state
+   * @private
+   */
+  _renderDialogContent() {
+    this.penSettingsDialog.innerHTML = "";
+
+    // 1. Presets Column
+    const presetsCol = document.createElement("div");
+    presetsCol.className = "note-canvas-toolbar__presets";
+
+    // Expand/Collapse Button
+    const expandBtn = document.createElement("button");
+    expandBtn.className = "note-canvas-toolbar__expand-btn";
+    expandBtn.innerHTML = this.isExpanded
+      ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>` // Left arrow (collapse)
+      : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>`; // Right arrow (expand)
+    expandBtn.title = this.isExpanded ? "Collapse" : "Expand Settings";
+    expandBtn.onclick = (e) => {
+      e.stopPropagation();
+      this.isExpanded = !this.isExpanded;
+      this._renderDialogContent();
+    };
+    presetsCol.appendChild(expandBtn);
+
+    // Render Presets
+    const themePalette = getThemePalette();
+    const markerPalette = getMarkerPalette();
+
+    this.penPresets.forEach((preset, index) => {
+      const row = document.createElement("div");
+      row.className = "note-canvas-toolbar__preset-row";
+
+      const btn = document.createElement("button");
+      btn.className = "note-canvas-toolbar__preset-btn";
+      if (
+        this.penWidth === preset.width &&
+        this.penColorIndex === preset.colorIndex &&
+        (preset.type || "pen") === this.penType
+      ) {
+        btn.classList.add("note-canvas-toolbar__preset-btn--active");
+      }
+
+      const currentPalette = preset.type === "marker" ? markerPalette : themePalette;
+      const color = currentPalette[preset.colorIndex] || currentPalette[0];
+      const size = Math.min(20, Math.max(4, preset.width * 2));
+
+      const dot = document.createElement("div");
+      dot.style.width = `${size}px`;
+      dot.style.height = `${size}px`;
+      dot.style.backgroundColor = color;
+      dot.style.borderRadius = "50%";
+      if (preset.type === "marker") {
+        dot.style.borderRadius = "2px";
+        dot.style.opacity = "0.6";
+      }
+      btn.appendChild(dot);
+
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const currentPreset = this.penPresets[index];
+        this.penWidth = currentPreset.width;
+        this.penColorIndex = currentPreset.colorIndex;
+        this.penType = currentPreset.type || "pen";
+        this.lastSelectedPresetIndex = index;
+        this._updatePenIconColor();
+        this._notifyPenSettingsChange();
+        this._updatePresetActiveStates();
+        if (this.isExpanded) {
+          this._updateSettingsUI();
+        }
+      };
+
+      // Save Button
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "note-canvas-toolbar__save-preset-btn";
+      saveBtn.title = "Save current settings to this preset";
+      saveBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>`;
+
+      saveBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.penPresets[index] = {
+          width: this.penWidth,
+          colorIndex: this.penColorIndex,
+          type: this.penType,
+        };
+
+        // Update visual state of the preset button immediately
+        const activePalette = this.penType === "marker" ? markerPalette : themePalette;
+        const newColor = activePalette[this.penColorIndex] || activePalette[0];
+        const newSize = Math.min(20, Math.max(4, this.penWidth * 2));
+        dot.style.width = `${newSize}px`;
+        dot.style.height = `${newSize}px`;
+        dot.style.backgroundColor = newColor;
+
+        if (this.penType === "marker") {
+          dot.style.borderRadius = "2px";
+          dot.style.opacity = "0.6";
+        } else {
+          dot.style.borderRadius = "50%";
+          dot.style.opacity = "1";
+        }
+
+        this.onPresetChange(this.penPresets);
+        this._updatePresetActiveStates();
+      };
+
+      row.appendChild(btn);
+      row.appendChild(saveBtn);
+      presetsCol.appendChild(row);
+    });
+
+    this.penSettingsDialog.appendChild(presetsCol);
+
+    // 2. Settings Column (Only if expanded)
+    if (this.isExpanded) {
+      const settingsCol = document.createElement("div");
+      settingsCol.className = "note-canvas-toolbar__settings-container";
+      settingsCol.innerHTML = this._getPenDialogHTML();
+      this.penSettingsDialog.appendChild(settingsCol);
+      this._setupPenDialogListeners();
+    }
+  }
+
+  /**
+   * Update preset buttons active state
+   * @private
+   */
+  _updatePresetActiveStates() {
+    // 1. Check if current settings match any preset exactly
+    let matchIndex = -1;
+    this.penPresets.forEach((preset, index) => {
+      if (
+        this.penWidth === preset.width &&
+        this.penColorIndex === preset.colorIndex &&
+        (preset.type || "pen") === this.penType
+      ) {
+        matchIndex = index;
+      }
+    });
+
+    // If we found a match, that becomes our "last selected" (contextually)
+    if (matchIndex !== -1) {
+      this.lastSelectedPresetIndex = matchIndex;
+    }
+
+    const btns = this.penSettingsDialog.querySelectorAll(".note-canvas-toolbar__preset-btn");
+    const saveBtns = this.penSettingsDialog.querySelectorAll(
+      ".note-canvas-toolbar__save-preset-btn",
+    );
+
+    btns.forEach((btn, index) => {
+      const saveBtn = saveBtns[index];
+
+      if (index === matchIndex) {
+        btn.classList.add("note-canvas-toolbar__preset-btn--active");
+        saveBtn.style.display = "none";
+      } else {
+        btn.classList.remove("note-canvas-toolbar__preset-btn--active");
+        // Show save button if this was the last selected preset and we are in a "modified" state (no exact match)
+        if (matchIndex === -1 && index === this.lastSelectedPresetIndex) {
+          saveBtn.style.display = "flex";
+        } else {
+          saveBtn.style.display = "none";
+        }
+      }
+    });
+  }
+
+  /**
+   * Update settings UI (slider, swatches) to match current state
+   * @private
+   */
+  _updateSettingsUI() {
+    const settingsContainer = this.penSettingsDialog.querySelector(
+      ".note-canvas-toolbar__settings-container",
+    );
+    if (settingsContainer) {
+      settingsContainer.innerHTML = this._getPenDialogHTML();
+      this._setupPenDialogListeners();
+    }
   }
 
   /**
@@ -174,7 +414,11 @@ export class NoteToolbar {
    * @private
    */
   _getPenDialogHTML() {
-    const palette = getThemePalette();
+    const isMarker = this.penType === "marker";
+    const palette = isMarker ? getMarkerPalette() : getThemePalette();
+    const minWidth = isMarker ? 10 : 0.2;
+    const maxWidth = isMarker ? 50 : 15;
+    const step = isMarker ? 5 : 0.1;
 
     const colorSwatches = palette
       .map(
@@ -199,9 +443,9 @@ export class NoteToolbar {
           <input
             type="range"
             class="note-canvas-toolbar__width-slider"
-            min="0.2"
-            max="15"
-            step="0.1"
+            min="${minWidth}"
+            max="${maxWidth}"
+            step="${step}"
             value="${this.penWidth}"
           />
           <button class="note-canvas-toolbar__width-btn" data-action="increase">+</button>
@@ -299,6 +543,10 @@ export class NoteToolbar {
     const increaseBtn = this.penSettingsDialog.querySelector('[data-action="increase"]');
 
     const snapValue = (val) => {
+      if (this.penType === "marker") {
+        // Snap to nearest 5 for marker
+        return Math.round(val / 5) * 5;
+      }
       if (val <= 2) {
         // Snap to nearest 0.2
         const snapped = Math.round(val * 5) / 5;
@@ -314,6 +562,7 @@ export class NoteToolbar {
       if (slider) slider.value = newVal;
       if (widthValue) widthValue.textContent = newVal % 1 === 0 ? newVal : newVal.toFixed(1);
       this._notifyPenSettingsChange();
+      this._updatePresetActiveStates();
     };
 
     if (slider) {
@@ -331,10 +580,15 @@ export class NoteToolbar {
         current = Math.round(current * 10) / 10;
 
         let next;
-        if (current <= 2.001) {
-          next = current - 0.2;
+        if (this.penType === "marker") {
+          next = current - 5;
+          if (next < 10) next = 10;
         } else {
-          next = current - 1;
+          if (current <= 2.001) {
+            next = current - 0.2;
+          } else {
+            next = current - 1;
+          }
         }
         updateWidth(next);
       });
@@ -346,7 +600,12 @@ export class NoteToolbar {
         let current = this.penWidth;
         current = Math.round(current * 10) / 10;
 
-        const next = current < 2 ? current + 0.2 : current + 1;
+        let next;
+        if (this.penType === "marker") {
+          next = current + 5;
+        } else {
+          next = current < 2 ? current + 0.2 : current + 1;
+        }
         updateWidth(next);
       });
     }
@@ -359,11 +618,6 @@ export class NoteToolbar {
         const index = parseInt(swatch.dataset.colorIndex, 10);
         this._selectColor(index);
       });
-    });
-
-    // Prevent dialog clicks from closing it
-    this.penSettingsDialog.addEventListener("click", (e) => {
-      e.stopPropagation();
     });
   }
 
@@ -414,7 +668,7 @@ export class NoteToolbar {
    * Select a color by index
    * @private
    */
-  _selectColor(index) {
+  _selectColor(index, notify = true) {
     this.penColorIndex = index;
 
     // Update active state on swatches
@@ -430,7 +684,10 @@ export class NoteToolbar {
     // Update pen icon color
     this._updatePenIconColor();
 
-    this._notifyPenSettingsChange();
+    if (notify) {
+      this._notifyPenSettingsChange();
+    }
+    this._updatePresetActiveStates();
   }
 
   /**
@@ -438,9 +695,13 @@ export class NoteToolbar {
    * @private
    */
   _updatePenIconColor() {
-    const palette = getThemePalette();
+    const palette = this.penType === "marker" ? getMarkerPalette() : getThemePalette();
     const color = palette[this.penColorIndex] || palette[0];
-    this.drawBtn.innerHTML = getPenIconWithColor(color, 24);
+    if (this.penType === "marker") {
+      this.drawBtn.innerHTML = getMarkerIconWithColor(color, 24);
+    } else {
+      this.drawBtn.innerHTML = getPenIconWithColor(color, 24);
+    }
   }
 
   /**
@@ -451,6 +712,7 @@ export class NoteToolbar {
     this.onPenSettingsChange({
       width: this.penWidth,
       colorIndex: this.penColorIndex,
+      type: this.penType,
     });
   }
 
@@ -467,6 +729,8 @@ export class NoteToolbar {
     } else {
       // Switch to draw mode
       this.onModeChange("draw");
+      // Ensure dialog starts hidden when switching to draw mode
+      this._closePenDialog();
     }
   }
 
@@ -518,6 +782,14 @@ export class NoteToolbar {
   _openPenDialog() {
     // Refresh colors in case theme changed
     this._refreshColorSwatches();
+
+    if (getTheme() === "dark") {
+      this.penSettingsDialog.classList.add("theme-dark");
+    } else {
+      this.penSettingsDialog.classList.remove("theme-dark");
+    }
+
+    this._renderDialogContent(); // Ensure correct state rendered
 
     this.penSettingsDialog.classList.add("note-canvas-toolbar__pen-dialog--open");
     document.addEventListener("pointerdown", this._handleDocumentPointerDown);
@@ -580,7 +852,11 @@ export class NoteToolbar {
       !this.penSettingsDialog.contains(e.target) &&
       !this.drawBtn.contains(e.target)
     ) {
-      this._closePenDialog();
+      // If in full mode (expanded), collapse to preset mode
+      if (this.isExpanded) {
+        this.isExpanded = false;
+        this._renderDialogContent();
+      }
     }
     // Check if click is outside options dialog and options button
     if (
@@ -605,7 +881,7 @@ export class NoteToolbar {
    * @private
    */
   _refreshColorSwatches() {
-    const palette = getThemePalette();
+    const palette = this.penType === "marker" ? getMarkerPalette() : getThemePalette();
     const swatches = this.penSettingsDialog.querySelectorAll(".note-canvas-toolbar__color-swatch");
 
     swatches.forEach((swatch, index) => {
@@ -620,7 +896,7 @@ export class NoteToolbar {
 
   /**
    * Update current pen settings (called externally to sync state)
-   * @param {Object} settings - { width, colorIndex }
+   * @param {Object} settings - { width, colorIndex, type }
    */
   setPenSettings(settings) {
     if (settings.width !== undefined) {
@@ -629,10 +905,15 @@ export class NoteToolbar {
       const widthValue = this.penSettingsDialog?.querySelector(".note-canvas-toolbar__width-value");
       if (slider) slider.value = this.penWidth;
       if (widthValue) widthValue.textContent = this.penWidth;
+      this._updatePresetActiveStates();
     }
 
     if (settings.colorIndex !== undefined) {
       this._selectColor(settings.colorIndex);
+    }
+
+    if (settings.type !== undefined) {
+      this.penType = settings.type;
     }
   }
 
