@@ -164,8 +164,8 @@ export class PdfTextLayerManager {
       this.activeLayers.set(pageId, { element: div, textLayer: null, viewport: null, item });
       this.container.appendChild(div);
 
-      // Load PDF page
-      const page = await loadPdfPage(item.pdfId, item.pageIndex);
+      // Load PDF page (fileId is the storage key for the PDF file)
+      const page = await loadPdfPage(item.fileId, item.pageIndex);
 
       // Get text content (cached or fetch)
       let textContent = this.textContentCache.get(pageId);

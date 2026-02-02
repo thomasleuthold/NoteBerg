@@ -854,12 +854,36 @@ export class CanvasRenderer {
       this.ctx.fillRect(item.x, item.y, item.width, item.height);
     }
 
+    // Draw page break line at bottom of PDF page (dashed dark blue line)
+    this._drawPdfPageBreak(item);
+
     // Draw selection border if selected
     if (item.id === this.selectedMediaId) {
       this.ctx.strokeStyle = "#3b82f6";
       this.ctx.lineWidth = 2;
       this.ctx.strokeRect(item.x, item.y, item.width, item.height);
     }
+  }
+
+  /**
+   * Draw a dashed page break line at the bottom of a PDF page
+   * @private
+   */
+  _drawPdfPageBreak(item) {
+    const y = item.y + item.height;
+    const lineWidth = 1 / this.resolutionScale; // Keep line crisp at any zoom
+
+    this.ctx.save();
+    this.ctx.strokeStyle = "#1e3a5f"; // Dark blue
+    this.ctx.lineWidth = lineWidth;
+    this.ctx.setLineDash([8, 4]); // Dashed pattern: 8px dash, 4px gap
+
+    this.ctx.beginPath();
+    this.ctx.moveTo(item.x, y);
+    this.ctx.lineTo(item.x + item.width, y);
+    this.ctx.stroke();
+
+    this.ctx.restore();
   }
 
   /**
