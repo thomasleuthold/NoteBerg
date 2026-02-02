@@ -19,7 +19,7 @@ import {
 } from "../../modules/storage.js";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
-import { showConfirmDialog } from "../modals.js";
+import { showAlertDialog, showConfirmDialog } from "../modals.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { ImageCropper } from "./ImageCropper.js";
 import { InputHandler } from "./InputHandler.js";
@@ -179,6 +179,7 @@ export class NoteCanvas {
     this.stylusDetected = false; // Track if a stylus has been used in this session
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
     this.strokesChanged = false; // Track if strokes have been modified
+    this.mediaChanged = false; // Track if media has been modified
     this.activeSearchQuery = null; // Track active search query for highlighting
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
     this.selectedMediaId = null; // Track selected media item
@@ -361,6 +362,7 @@ export class NoteCanvas {
     // Clear container and setup layout
     this.containerElement.innerHTML = "";
     this.containerElement.className = "note-canvas";
+    this.containerElement.style.touchAction = "none"; // Prevent browser gestures
 
     // 1. Toolbar Container (Fixed height at top)
     const toolbarContainer = document.createElement("div");
@@ -605,6 +607,14 @@ export class NoteCanvas {
    * Insert a PDF into the note
    */
   async insertPdf() {
+    if (this.noteData.pdfSource) {
+      await showAlertDialog(
+        "PDF Already Imported",
+        "Only one PDF can be imported per note. Please remove the current PDF before importing a new one.",
+      );
+      return;
+    }
+
     try {
       const file = await this._pickPdfFile();
       if (!file) return;
@@ -1644,6 +1654,7 @@ export class NoteCanvas {
    */
   async _saveMediaChanges() {
     if (this.noteId && this.mediaManager) {
+      this.mediaChanged = true;
       this.noteData.media = this.mediaManager.getItems();
       // Use StrokeManager (which uses StorageWorker) to save media updates
       // This prevents race conditions between stroke saving and media saving
@@ -2666,7 +2677,7 @@ export class NoteCanvas {
     // Save thumbnail if changes were made or if it's missing
     if (
       (this.strokesChanged ||
-        this.noteData?.media?.length > 0 ||
+        this.mediaChanged ||
         !this.noteData?.thumbnailFileId) &&
       this.noteId
     ) {

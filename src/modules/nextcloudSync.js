@@ -609,7 +609,7 @@ async function downloadFile(path, asBinary = false) {
  * Uses parallel uploads for efficiency
  */
 async function syncNoteMedia(note) {
-  if ((!note.media || note.media.length === 0) && !note.pdfSource) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !note.thumbnailFileId) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
@@ -633,6 +633,9 @@ async function syncNoteMedia(note) {
   const itemsToSync = [...(note.media || [])];
   if (note.pdfSource) {
     itemsToSync.push({ fileId: note.pdfSource, id: "pdf-source" });
+  }
+  if (note.thumbnailFileId) {
+    itemsToSync.push({ fileId: note.thumbnailFileId, id: "thumbnail" });
   }
 
   for (const item of itemsToSync) {
@@ -704,6 +707,9 @@ async function cleanupOrphanedMedia(note) {
   if (note.pdfSource) {
     validFileIds.add(note.pdfSource);
   }
+  if (note.thumbnailFileId) {
+    validFileIds.add(note.thumbnailFileId);
+  }
 
   // Find orphaned files (files on server not referenced in note.media)
   const orphanedFiles = remoteFiles.filter((file) => {
@@ -734,7 +740,7 @@ async function cleanupOrphanedMedia(note) {
  * Ensures all binary files referenced in the note are downloaded to local storage
  */
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
-  if ((!note.media || note.media.length === 0) && !note.pdfSource) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !note.thumbnailFileId) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
@@ -744,6 +750,9 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
   const itemsToDownload = [...(note.media || [])];
   if (note.pdfSource) {
     itemsToDownload.push({ fileId: note.pdfSource });
+  }
+  if (note.thumbnailFileId) {
+    itemsToDownload.push({ fileId: note.thumbnailFileId });
   }
 
   for (const item of itemsToDownload) {

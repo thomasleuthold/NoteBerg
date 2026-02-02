@@ -139,6 +139,47 @@ function setupEventListeners() {
     settingsBtn.innerHTML = getIcon("settings", 24);
     settingsBtn.addEventListener("click", () => navigateTo("settings"));
   }
+
+  // Prevent global browser zoom (Ctrl+Wheel and Pinch-to-Zoom on trackpad)
+  window.addEventListener(
+    "wheel",
+    (e) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+      }
+    },
+    { passive: false },
+  );
+
+  // Prevent global keyboard zoom (Ctrl + / -)
+  window.addEventListener("keydown", (e) => {
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      (e.key === "+" || e.key === "-" || e.key === "=" || e.key === "_")
+    ) {
+      e.preventDefault();
+    }
+  });
+
+  // Prevent global gesture zooming (Safari/iOS)
+  window.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
+  window.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
+
+  // Prevent pinch-to-zoom on touch devices (Android/Chrome)
+  window.addEventListener(
+    "touchmove",
+    (e) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    },
+    { passive: false },
+  );
+
+  // Prevent context menu in production builds (allow in dev for debugging)
+  if (import.meta.env.PROD) {
+    window.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
 }
 
 // Initialize app when DOM is ready
