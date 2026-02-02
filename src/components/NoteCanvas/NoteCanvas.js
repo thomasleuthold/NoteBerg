@@ -2461,8 +2461,8 @@ export class NoteCanvas {
    * @private
    */
   _startMomentumScroll() {
-    const friction = 0.75;
-    const stopThreshold = 0.05;
+    const friction = 0.95; // Increased from 0.75 for natural, longer glide
+    const stopThreshold = 0.05; // Lower threshold for smoother stop
     let lastTime = performance.now();
 
     const animate = (time) => {
@@ -2475,8 +2475,11 @@ export class NoteCanvas {
 
         this.scroller.scrollBy(-dx, -dy);
 
-        this.velocityX *= friction;
-        this.velocityY *= friction;
+        // Apply friction adjusted for time delta (normalize to ~60fps)
+        const timeFactor = dt / 16.67;
+        const currentFriction = friction ** timeFactor;
+        this.velocityX *= currentFriction;
+        this.velocityY *= currentFriction;
       }
 
       if (Math.abs(this.velocityX) > stopThreshold || Math.abs(this.velocityY) > stopThreshold) {

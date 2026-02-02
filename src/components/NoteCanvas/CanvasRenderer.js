@@ -970,7 +970,7 @@ export class CanvasRenderer {
     const contentHeight = height / scale;
 
     targetCtx.save();
-    
+
     // Fill white background first (prevents black background on JPEGs for transparent notes)
     targetCtx.fillStyle = "#ffffff";
     targetCtx.fillRect(0, 0, width, height);
