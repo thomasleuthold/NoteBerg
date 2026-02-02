@@ -958,6 +958,95 @@ export class CanvasRenderer {
   }
 
   /**
+   * Render a snapshot of the note (e.g. for thumbnail)
+   * @param {CanvasRenderingContext2D} targetCtx
+   * @param {number} width - Target width
+   * @param {number} height - Target height
+   */
+  renderSnapshot(targetCtx, width, height) {
+    // Calculate scale to fit content width into target width
+    // We assume we want to capture the full width of the note
+    const scale = width / this.maxContentWidth;
+    const contentHeight = height / scale;
+
+    targetCtx.save();
+    
+    // Fill white background first (prevents black background on JPEGs for transparent notes)
+    targetCtx.fillStyle = "#ffffff";
+    targetCtx.fillRect(0, 0, width, height);
+
+    targetCtx.scale(scale, scale);
+
+    // Ensure palette is ready
+    if (!this.palette) {
+      this.palette = sharedGetThemePalette();
+    }
+
+    // 1. Background
+    if (this.background && this.background !== "none") {
+      sharedDrawBackgroundPattern(
+        targetCtx,
+        this.background,
+        this.maxContentWidth,
+        contentHeight,
+        0,
+      );
+    }
+
+    // 2. Media
+    if (this.mediaManager) {
+      const items = this.mediaManager.getItems();
+      for (const item of items) {
+        // Visibility check (simple Y bounds)
+        if (item.y > contentHeight || item.y + item.height < 0) continue;
+
+        targetCtx.save();
+
+        if (item.type === "pdf-page" && item.renderable) {
+          targetCtx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
+        } else if (item.type === "image" && item.fileId) {
+          const img = this.mediaManager.getImage(item.fileId);
+          if (img) {
+            if (item.rotation) {
+              const cx = item.x + item.width / 2;
+              const cy = item.y + item.height / 2;
+              targetCtx.translate(cx, cy);
+              targetCtx.rotate((item.rotation * Math.PI) / 180);
+              targetCtx.translate(-cx, -cy);
+            }
+            targetCtx.drawImage(img, item.x, item.y, item.width, item.height);
+          }
+        }
+        targetCtx.restore();
+      }
+    }
+
+    // 3. Strokes
+    // Query spatial index for top region
+    const strokeIndices = this.spatialIndex
+      ? this.spatialIndex.query(0, contentHeight)
+      : this.strokes.map((_, i) => i);
+
+    const markers = [];
+    const pens = [];
+
+    for (const index of strokeIndices) {
+      const stroke = this.strokes[index];
+      if (stroke && !stroke._deleted && !stroke.isDeleted) {
+        if (stroke.type === "marker") markers.push(stroke);
+        else pens.push(stroke);
+      }
+    }
+
+    // Draw markers then pens
+    [...markers, ...pens].forEach((stroke) => {
+      sharedDrawStroke(targetCtx, stroke, this.palette, false, false);
+    });
+
+    targetCtx.restore();
+  }
+
+  /**
    * Clean up resources
    */
   destroy() {

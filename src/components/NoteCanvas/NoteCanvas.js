@@ -2406,6 +2406,60 @@ export class NoteCanvas {
   }
 
   /**
+   * Generate and save a thumbnail for the current note
+   * @private
+   */
+  async _saveThumbnail() {
+    if (!this.noteId || !this.renderer || !this.noteData) return;
+
+    // Capture state synchronously before async operations
+    const noteId = this.noteId;
+    const oldThumbnailId = this.noteData.thumbnailFileId;
+
+    try {
+      // 1. Create offscreen canvas
+      const thumbWidth = 800; // Match display resolution (800x600) to avoid blur
+      const thumbHeight = 600; // 4:3 aspect ratio
+      const canvas = document.createElement("canvas");
+      canvas.width = thumbWidth;
+      canvas.height = thumbHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      // 2. Render snapshot
+      this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
+
+      // 3. Convert to Blob
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.7));
+
+      if (!blob) return;
+
+      // 4. Save to storage
+      const fileId = await saveFile(blob);
+
+      // 5. Update note metadata
+      const timestamp = Date.now();
+
+      // Update in-memory data if still valid
+      if (this.noteData && this.noteId === noteId) {
+        this.noteData.thumbnailFileId = fileId;
+        this.noteData.thumbnailTimestamp = timestamp;
+      }
+
+      await updateNote(noteId, {
+        thumbnailFileId: fileId,
+        thumbnailTimestamp: timestamp,
+      });
+
+      if (oldThumbnailId) {
+        deleteFile(oldThumbnailId).catch(() => {});
+      }
+    } catch (error) {
+      console.error("[NoteCanvas] Failed to save thumbnail:", error);
+    }
+  }
+
+  /**
    * Clean up all resources
    */
   destroy() {
@@ -2417,6 +2471,16 @@ export class NoteCanvas {
           console.error("[NoteCanvas] Recognition failed:", e),
         );
       }
+    }
+
+    // Save thumbnail if changes were made or if it's missing
+    if (
+      (this.strokesChanged ||
+        this.noteData?.media?.length > 0 ||
+        !this.noteData?.thumbnailFileId) &&
+      this.noteId
+    ) {
+      this._saveThumbnail();
     }
 
     // Cancel pending scroll RAF
