@@ -235,6 +235,10 @@
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
+  /* Font size calculated from PDF.js --font-height and our --scale-factor */
+  font-size: calc(var(--font-height) * var(--scale-factor));
+  /* Horizontal scale for character width adjustment (set by PDF.js per span) */
+  transform: scaleX(var(--scale-x, 1));
 }
 
 /* Highlight text selection */

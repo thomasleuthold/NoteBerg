@@ -171,10 +171,15 @@ export class PdfTextLayerManager {
         this.textContentCache.set(pageId, textContent);
       }
 
-      // Get viewport at scale 1.0 (we'll scale via CSS transform)
+      // Get viewport at scale 1.0 - we'll handle all scaling via CSS
       const viewport = page.getViewport({ scale: 1.0 });
 
-      // Create text layer using PDF.js TextLayer API
+      // Calculate the scale needed to match the item's display width
+      // This is the scale from PDF units to content pixels
+      const displayScale = item.width / viewport.width;
+
+      // Create text layer using PDF.js TextLayer API with unscaled viewport
+      // PDF.js will position spans using percentages relative to viewport dimensions
       const textLayer = new TextLayer({
         textContentSource: textContent,
         container: div,
@@ -188,6 +193,7 @@ export class PdfTextLayerManager {
       if (layer) {
         layer.textLayer = textLayer;
         layer.viewport = viewport;
+        layer.displayScale = displayScale;
         this._updateLayerPosition(pageId);
       }
     } catch (error) {
@@ -205,25 +211,45 @@ export class PdfTextLayerManager {
     const layer = this.activeLayers.get(pageId);
     if (!layer || !layer.viewport) return;
 
-    const { element, viewport, item } = layer;
-
-    // Calculate scale: PDF viewport units -> display pixels at current zoom
-    // item.width is the display width in content coords
-    // viewport.width is the PDF page width in PDF units
-    const displayScale = item.width / viewport.width;
-    const totalScale = displayScale * this.zoom;
+    const { element, item, displayScale } = layer;
 
     // Position in screen space
     const screenX = item.x * this.zoom - this.scrollLeft + this.centeringOffset;
     const screenY = item.y * this.zoom - this.scrollTop;
 
-    // Apply transform
-    element.style.transform = `translate(${screenX}px, ${screenY}px) scale(${totalScale})`;
-    element.style.transformOrigin = "top left";
+    // Strategy:
+    // - Container sized to screen dimensions (item.width * zoom, item.height * zoom)
+    // - This makes percentage positions (left: 6.05%) resolve to correct screen pixels
+    // - --scale-factor handles font sizing: fontSize = fontHeight * --scale-factor
+    // - No CSS transform needed
+    //
+    // The tricky part: PDF.js span positions use percentages based on the viewport
+    // passed to TextLayer constructor (scale 1.0). So "left: 6.05%" means
+    // 6.05% of viewport.width (595px) = 36px in PDF units.
+    //
+    // When container is screen-sized, that same 6.05% resolves to
+    // 6.05% of (item.width * zoom) = 6.05% of (1200 * zoom) in screen pixels.
+    // This is correct because 1200/595 = displayScale, so positions scale correctly.
 
-    // Set dimensions to match PDF viewport (will be scaled by transform)
-    element.style.width = `${viewport.width}px`;
-    element.style.height = `${viewport.height}px`;
+    const screenWidth = item.width * this.zoom;
+    const screenHeight = item.height * this.zoom;
+
+    // Container at screen size - percentage positions resolve correctly
+    element.style.width = `${screenWidth}px`;
+    element.style.height = `${screenHeight}px`;
+
+    // Position the container
+    element.style.left = `${screenX}px`;
+    element.style.top = `${screenY}px`;
+
+    // --scale-factor for font sizing
+    // PDF.js calculates: fontSize = fontHeight * --scale-factor
+    // fontHeight is in PDF units, we need screen pixels
+    // So --scale-factor = displayScale * zoom
+    element.style.setProperty("--scale-factor", displayScale * this.zoom);
+
+    // No transform - container is already at screen size
+    element.style.transform = "";
   }
 
   /**
