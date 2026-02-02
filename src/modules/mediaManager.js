@@ -84,4 +84,3 @@ async function renderImage(item) {
     img.src = url;
   });
 }
-
