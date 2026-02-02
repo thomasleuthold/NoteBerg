@@ -17,6 +17,7 @@ import {
   saveFile,
   updateNote,
 } from "../../modules/storage.js";
+import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import { showConfirmDialog } from "../modals.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
@@ -282,6 +283,7 @@ export class NoteCanvas {
     inMemoryData.media = freshDataFromDB.media || [];
     inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
     inMemoryData.penPresets = freshDataFromDB.penPresets || inMemoryData.penPresets;
+    inMemoryData.pdfSource = freshDataFromDB.pdfSource;
     inMemoryData.background = freshDataFromDB.background;
     inMemoryData.modified = freshDataFromDB.modified;
     inMemoryData.lastSyncedEtag = freshDataFromDB.lastSyncedEtag;
@@ -295,6 +297,7 @@ export class NoteCanvas {
 
     // Force redraw immediately to show updated state (we know we aren't drawing)
     this.renderer.forceRedraw();
+    this._renderPdfControls();
 
     console.log(`[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`);
   }
@@ -367,6 +370,7 @@ export class NoteCanvas {
     // 2. Scroller Container (Canvas Area - fills remaining space)
     const scrollerContainer = document.createElement("div");
     scrollerContainer.className = "note-canvas__scroller-container";
+    scrollerContainer.style.position = "relative"; // Ensure positioning context for PDF controls
     this.containerElement.appendChild(scrollerContainer);
 
     // Initialize scroller
@@ -519,6 +523,7 @@ export class NoteCanvas {
     }
 
     this.isInitialized = true;
+    this._renderPdfControls();
 
     // Expose for debugging
     window.__noteCanvas = this;
@@ -638,6 +643,7 @@ export class NoteCanvas {
         // Save changes
         await this._saveMediaChanges();
         this.renderer.forceRedraw();
+        this._renderPdfControls();
 
         // Expand canvas if needed
         const lastPage = pages[pages.length - 1];
@@ -650,6 +656,141 @@ export class NoteCanvas {
       console.error("[NoteCanvas] Failed to insert PDF:", error);
       alert(`Failed to import PDF: ${error.message}`);
     }
+  }
+
+  /**
+   * Render the PDF option button if a PDF is present
+   * @private
+   */
+  _renderPdfControls() {
+    // Remove existing if any
+    const existing = this.containerElement.querySelector(".note-canvas__pdf-controls");
+    if (existing) existing.remove();
+
+    if (!this.noteData.pdfSource) return;
+
+    const scrollerContainer = this.containerElement.querySelector(
+      ".note-canvas__scroller-container",
+    );
+    if (!scrollerContainer) return;
+
+    const controls = document.createElement("div");
+    controls.className = "note-canvas__pdf-controls";
+    controls.style.position = "absolute";
+    controls.style.zIndex = "50"; // Above canvas
+
+    const btn = document.createElement("button");
+    btn.className = "note-canvas__pdf-btn";
+    btn.title = "PDF Options";
+    btn.style.background = "var(--bg-secondary)";
+    btn.style.border = "1px solid var(--border-color)";
+    btn.style.borderRadius = "50%";
+    btn.style.width = "40px";
+    btn.style.height = "40px";
+    btn.style.display = "flex";
+    btn.style.alignItems = "center";
+    btn.style.justifyContent = "center";
+    btn.style.cursor = "pointer";
+    btn.style.boxShadow = "0 2px 5px rgba(0,0,0,0.1)";
+    btn.style.color = "var(--text-primary)";
+
+    btn.innerHTML = getIcon("pdf", 20);
+
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      this._showPdfOptions(e.clientX, e.clientY);
+    };
+
+    controls.appendChild(btn);
+    scrollerContainer.appendChild(controls);
+    this._updatePdfControlsPosition();
+  }
+
+  /**
+   * Update position of PDF controls to stick to the first page
+   * @private
+   */
+  _updatePdfControlsPosition() {
+    const controls = this.containerElement.querySelector(".note-canvas__pdf-controls");
+    if (!controls || !this.noteData.pdfSource) return;
+
+    const pdfPages = this.mediaManager.getItems().filter((i) => i.type === "pdf-page");
+    if (pdfPages.length === 0) return;
+
+    // Find first page (min Y)
+    let firstPage = pdfPages[0];
+    for (let i = 1; i < pdfPages.length; i++) {
+      if (pdfPages[i].y < firstPage.y) firstPage = pdfPages[i];
+    }
+
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    const pageRightX = firstPage.x + firstPage.width;
+    const pageTopY = firstPage.y;
+    const screenX = pageRightX * this.zoomScale - scrollLeft + offsetX;
+    const screenY = pageTopY * this.zoomScale - scrollTop;
+    controls.style.left = `${screenX - 50}px`; // 50px from right edge (40px btn + 10px margin)
+    controls.style.top = `${screenY + 10}px`;
+  }
+
+  /**
+   * Show PDF options menu
+   * @private
+   */
+  _showPdfOptions(x, y) {
+    const existing = document.getElementById("pdf-options-menu");
+    if (existing) existing.remove();
+
+    const menu = document.createElement("div");
+    menu.id = "pdf-options-menu";
+    menu.className =
+      "note-canvas-toolbar__options-dialog note-canvas-toolbar__options-dialog--open";
+    menu.style.position = "fixed";
+
+    // Calculate position to prevent cutoff
+    const menuWidth = 180;
+    let left = x - menuWidth + 40;
+    if (left + menuWidth > window.innerWidth - 10) {
+      left = window.innerWidth - menuWidth - 10;
+    }
+    menu.style.left = `${left}px`;
+    menu.style.top = `${y + 10}px`;
+    menu.style.zIndex = "1000";
+
+    menu.innerHTML = `
+      <div class="note-canvas-toolbar__options-content">
+        <div class="note-canvas-toolbar__options-section">
+          <button class="note-canvas-toolbar__delete-btn" id="pdf-delete-btn">
+            ${getIcon("trash", 16)} Delete PDF
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(menu);
+
+    const deleteBtn = menu.querySelector("#pdf-delete-btn");
+    deleteBtn.onclick = () => {
+      this.deletePdf();
+      menu.remove();
+      document.removeEventListener("pointerdown", closeMenu);
+    };
+
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener("pointerdown", closeMenu);
+      }
+    };
+
+    setTimeout(() => {
+      document.addEventListener("pointerdown", closeMenu);
+    }, 0);
   }
 
   /**
@@ -816,6 +957,7 @@ export class NoteCanvas {
         );
         this._updateMediaOverlay();
         this._updatePdfTextLayers();
+        this._updatePdfControlsPosition();
       });
     }
   }
@@ -877,6 +1019,7 @@ export class NoteCanvas {
     this.renderer.render(scrollTop, height, scrollLeft, this.strokeManager?.currentStroke);
     this._updateMediaOverlay();
     this._updatePdfTextLayers();
+    this._updatePdfControlsPosition();
   }
 
   /**
@@ -2391,6 +2534,7 @@ export class NoteCanvas {
 
     // Update PDF text layers after zoom
     this._updatePdfTextLayers();
+    this._updatePdfControlsPosition();
   }
 
   /**
@@ -2457,6 +2601,49 @@ export class NoteCanvas {
     } catch (error) {
       console.error("[NoteCanvas] Failed to save thumbnail:", error);
     }
+  }
+
+  /**
+   * Delete the imported PDF and all its pages
+   */
+  async deletePdf() {
+    if (!this.noteData.pdfSource) return;
+
+    const confirmed = await showConfirmDialog(
+      "Delete PDF",
+      "Are you sure you want to remove the PDF document? This will remove all pages.",
+      "Delete",
+      "btn-danger",
+    );
+
+    if (!confirmed) return;
+
+    // 1. Identify and remove PDF pages
+    const pdfPages = this.mediaManager.getItems().filter((i) => i.type === "pdf-page");
+
+    pdfPages.forEach((p) => {
+      this.noteData.deletedMedia.push(p.id);
+      this.mediaManager.removeItem(p.id);
+      if (this.pdfTextLayerManager) {
+        this.pdfTextLayerManager.onPageRemoved(p.id);
+      }
+    });
+
+    // 2. Remove source reference
+    const sourceFileId = this.noteData.pdfSource;
+    this.noteData.pdfSource = null;
+
+    // 3. Save changes (triggers sync via dirty flag in StrokeManager)
+    await this._saveMediaChanges();
+
+    // 4. Cleanup local file (fire and forget)
+    if (sourceFileId) {
+      deleteFile(sourceFileId).catch(() => {});
+    }
+
+    this.renderer.forceRedraw();
+    this._renderPdfControls();
+    this._saveThumbnail();
   }
 
   /**
