@@ -85,18 +85,3 @@ async function renderImage(item) {
   });
 }
 
-/**
- * Clear cache for a specific item or all
- */
-export function clearMediaCache(itemId = null) {
-  if (itemId) {
-    // Clear all scales for this item
-    for (const key of renderCache.keys()) {
-      if (key.startsWith(`${itemId}-`)) {
-        renderCache.delete(key);
-      }
-    }
-  } else {
-    renderCache.clear();
-  }
-}

@@ -36,9 +36,6 @@ export class PdfTextLayerManager {
     this.centeringOffset = 0;
     this.viewportHeight = 0;
 
-    // Buffer pages above/below viewport
-    this.bufferPages = 1;
-
     // Debounce layer creation to avoid thrashing
     this._createLayerDebounceTimers = new Map();
     this._createLayerDebounceMs = 100;

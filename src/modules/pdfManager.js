@@ -10,11 +10,11 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
  * Imports a PDF file, saves it to storage, and extracts page metadata.
  * @param {File} file - The PDF file object from input
  * @returns {Promise<{
- *   pdfId: string,
+ *   fileId: string,
  *   pages: Array<{
  *     id: string,
  *     type: 'pdf-page',
- *     pdfId: string,
+ *     fileId: string,
  *     pageIndex: number,
  *     width: number,
  *     height: number,

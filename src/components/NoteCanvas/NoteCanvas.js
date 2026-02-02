@@ -1424,6 +1424,11 @@ export class NoteCanvas {
     this.renderer.setSelectedMedia(null);
     this.mediaOverlay.hide();
 
+    // Clean up PDF text layer if this was a PDF page
+    if (item.type === "pdf-page" && this.pdfTextLayerManager) {
+      this.pdfTextLayerManager.onPageRemoved(targetId);
+    }
+
     // Save changes to note structure
     await this._saveMediaChanges();
 
