@@ -106,7 +106,7 @@ export class StrokeManager {
   /**
    * Save media changes via the worker to ensure sequential writes
    */
-  saveMedia({ media, deletedMedia }) {
+  saveMedia({ media, deletedMedia, pdfSource }) {
     let key = null;
     if (isAppUnlocked()) {
       try {
@@ -121,6 +121,7 @@ export class StrokeManager {
       noteId: this.noteId,
       media,
       deletedMedia,
+      pdfSource,
       key,
     });
   }
@@ -143,6 +144,21 @@ export class StrokeManager {
       noteId: this.noteId,
       presets,
       key,
+    });
+  }
+
+  /**
+   * Save thumbnail metadata via the worker
+   * This ensures thumbnail saves are serialized with media saves to prevent race conditions
+   */
+  saveThumbnail({ thumbnailFileId, thumbnailTimestamp }) {
+    if (!this.worker) return;
+
+    this.worker.postMessage({
+      type: "SAVE_THUMBNAIL",
+      noteId: this.noteId,
+      thumbnailFileId,
+      thumbnailTimestamp,
     });
   }
 

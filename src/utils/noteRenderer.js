@@ -133,7 +133,9 @@ export function drawStroke(ctx, stroke, palette = null, isSelected = false, fast
   }
 
   // Check for pressure data (skip in fast mode for scroll performance)
-  const usePressure = !fastMode && stroke.pressure && stroke.pressure.length === stroke.x.length;
+  // Also skip pressure for markers to avoid alpha stacking artifacts (overlapping segments)
+  const usePressure =
+    !fastMode && !isMarker && stroke.pressure && stroke.pressure.length === stroke.x.length;
 
   if (usePressure) {
     drawPressurePath(ctx, stroke, baseWidth);

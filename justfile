@@ -62,3 +62,11 @@ package-backend:
 # Increase version (patch) and sync
 bump:
     npm version patch
+
+# Increase version (patch) and sync
+bump-minor:
+    npm version minor
+
+# Increase version (patch) and sync
+bump-major:
+    npm version major

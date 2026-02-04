@@ -7,6 +7,7 @@
  */
 
 import { forceRecognition } from "../../modules/autoRecognition.js";
+import { importPdf } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
   deleteFile,
@@ -16,8 +17,9 @@ import {
   saveFile,
   updateNote,
 } from "../../modules/storage.js";
+import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
-import { showConfirmDialog } from "../modals.js";
+import { showAlertDialog, showConfirmDialog } from "../modals.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { ImageCropper } from "./ImageCropper.js";
 import { InputHandler } from "./InputHandler.js";
@@ -25,6 +27,7 @@ import { MediaManager } from "./MediaManager.js";
 import { MediaOverlay } from "./MediaOverlay.js";
 import "./NoteCanvas.css";
 import { NoteToolbar } from "./NoteToolbar.js";
+import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
 import { VirtualScroller } from "./VirtualScroller.js";
@@ -132,6 +135,7 @@ export class NoteCanvas {
     this.mediaManager = null;
     this.strokeManager = null;
     this.mediaOverlay = null;
+    this.pdfTextLayerManager = null;
     this.toolbar = null;
     this.contentHeight = 0;
 
@@ -175,6 +179,7 @@ export class NoteCanvas {
     this.stylusDetected = false; // Track if a stylus has been used in this session
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
     this.strokesChanged = false; // Track if strokes have been modified
+    this.mediaChanged = false; // Track if media has been modified
     this.activeSearchQuery = null; // Track active search query for highlighting
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
     this.selectedMediaId = null; // Track selected media item
@@ -279,6 +284,7 @@ export class NoteCanvas {
     inMemoryData.media = freshDataFromDB.media || [];
     inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
     inMemoryData.penPresets = freshDataFromDB.penPresets || inMemoryData.penPresets;
+    inMemoryData.pdfSource = freshDataFromDB.pdfSource;
     inMemoryData.background = freshDataFromDB.background;
     inMemoryData.modified = freshDataFromDB.modified;
     inMemoryData.lastSyncedEtag = freshDataFromDB.lastSyncedEtag;
@@ -292,6 +298,7 @@ export class NoteCanvas {
 
     // Force redraw immediately to show updated state (we know we aren't drawing)
     this.renderer.forceRedraw();
+    this._renderPdfControls();
 
     console.log(`[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`);
   }
@@ -355,6 +362,7 @@ export class NoteCanvas {
     // Clear container and setup layout
     this.containerElement.innerHTML = "";
     this.containerElement.className = "note-canvas";
+    this.containerElement.style.touchAction = "none"; // Prevent browser gestures
 
     // 1. Toolbar Container (Fixed height at top)
     const toolbarContainer = document.createElement("div");
@@ -364,6 +372,7 @@ export class NoteCanvas {
     // 2. Scroller Container (Canvas Area - fills remaining space)
     const scrollerContainer = document.createElement("div");
     scrollerContainer.className = "note-canvas__scroller-container";
+    scrollerContainer.style.position = "relative"; // Ensure positioning context for PDF controls
     this.containerElement.appendChild(scrollerContainer);
 
     // Initialize scroller
@@ -380,11 +389,21 @@ export class NoteCanvas {
     this.spatialIndex = new SpatialIndex(height || 800);
     this.spatialIndex.build(this.noteData.strokes);
 
-    // Calculate content dimensions
+    // Calculate content dimensions from strokes
     const contentBounds = this.spatialIndex.getContentBounds();
-    this.contentHeight = contentBounds
-      ? Math.max(contentBounds.maxY + 500, height) // Add padding below content
-      : height;
+    let maxContentY = contentBounds ? contentBounds.maxY : 0;
+
+    // Include media items (images, PDF pages) in content height calculation
+    if (this.noteData.media && this.noteData.media.length > 0) {
+      for (const item of this.noteData.media) {
+        const itemBottom = (item.y || 0) + (item.height || 0);
+        if (itemBottom > maxContentY) {
+          maxContentY = itemBottom;
+        }
+      }
+    }
+
+    this.contentHeight = Math.max(maxContentY + 500, height); // Add padding below content
     const contentWidth = this.maxContentWidth;
 
     // Initialize MediaManager
@@ -398,6 +417,12 @@ export class NoteCanvas {
       onToFront: (id) => this.moveSelectedMediaToFront(id),
       onToBack: (id) => this.moveSelectedMediaToBack(id),
     });
+
+    // Initialize PDF Text Layer Manager (for text selection in PDFs)
+    this.pdfTextLayerManager = new PdfTextLayerManager(
+      this.scroller.getViewportElement(),
+      this.mediaManager,
+    );
 
     // Initialize renderer
     this.renderer = new CanvasRenderer(this.scroller.getViewportElement(), {
@@ -493,6 +518,7 @@ export class NoteCanvas {
         onAction: (action) => {
           if (action === "insert-image") this.insertImage("picker");
           if (action === "insert-camera") this.insertImage("camera");
+          if (action === "insert-pdf") this.insertPdf();
         },
       },
     );
@@ -509,6 +535,7 @@ export class NoteCanvas {
     }
 
     this.isInitialized = true;
+    this._renderPdfControls();
 
     // Expose for debugging
     window.__noteCanvas = this;
@@ -584,6 +611,230 @@ export class NoteCanvas {
     } catch (error) {
       console.error("[NoteCanvas] Failed to insert image:", error);
     }
+  }
+
+  /**
+   * Insert a PDF into the note
+   */
+  async insertPdf() {
+    // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
+    const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
+    if (this.noteData.pdfSource || hasPdfPages) {
+      await showAlertDialog(
+        "PDF Already Imported",
+        "Only one PDF can be imported per note. Please remove the current PDF before importing a new one.",
+      );
+      return;
+    }
+
+    try {
+      const file = await this._pickPdfFile();
+      if (!file) return;
+
+      // Import PDF (saves file and extracts pages)
+      const { pages, fileId } = await importPdf(file);
+
+      if (pages.length > 0) {
+        // Determine insertion point (center of viewport)
+        const viewport = this.scroller.getViewportBounds();
+        const startY = viewport.top + 50;
+        // Use maxContentWidth to ensure it fills the canvas width (typically 1200px)
+        const targetWidth = this.maxContentWidth || 1200;
+        let currentY = startY;
+
+        // Add pages to media items
+        for (const page of pages) {
+          // Scale page to fit content width while maintaining aspect ratio
+          const scaleFactor = targetWidth / page.width;
+          const newItem = {
+            ...page,
+            width: targetWidth,
+            height: page.height * scaleFactor,
+            x: 0,
+            y: currentY,
+          };
+          currentY += newItem.height;
+          this.mediaManager.addItem(newItem);
+        }
+
+        // Store reference to the PDF document at the note level
+        if (!this.noteData.pdfSource) {
+          this.noteData.pdfSource = fileId;
+        }
+
+        // Save changes
+        await this._saveMediaChanges();
+        this.renderer.forceRedraw();
+        this._renderPdfControls();
+
+        // Expand canvas if needed
+        const lastPage = pages[pages.length - 1];
+        const bottom = lastPage.y + lastPage.height;
+        if (bottom > this.contentHeight) {
+          this._expandCanvas(bottom - this.contentHeight + 500);
+        }
+      }
+    } catch (error) {
+      console.error("[NoteCanvas] Failed to insert PDF:", error);
+      alert(`Failed to import PDF: ${error.message}`);
+    }
+  }
+
+  /**
+   * Render the PDF option button if a PDF is present
+   * @private
+   */
+  _renderPdfControls() {
+    // Remove existing if any
+    const existing = this.containerElement.querySelector(".note-canvas__pdf-controls");
+    if (existing) existing.remove();
+
+    // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
+    const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
+    if (!this.noteData.pdfSource && !hasPdfPages) return;
+
+    const scrollerContainer = this.containerElement.querySelector(
+      ".note-canvas__scroller-container",
+    );
+    if (!scrollerContainer) return;
+
+    const controls = document.createElement("div");
+    controls.className = "note-canvas__pdf-controls";
+    controls.style.position = "absolute";
+    controls.style.zIndex = "1"; // Above canvas
+
+    const btn = document.createElement("button");
+    btn.className = "note-canvas__pdf-btn";
+    btn.title = "PDF Options";
+    btn.style.background = "var(--bg-secondary)";
+    btn.style.border = "1px solid var(--border-color)";
+    btn.style.borderRadius = "50%";
+    btn.style.width = "40px";
+    btn.style.height = "40px";
+    btn.style.display = "flex";
+    btn.style.alignItems = "center";
+    btn.style.justifyContent = "center";
+    btn.style.cursor = "pointer";
+    btn.style.boxShadow = "0 2px 5px rgba(0,0,0,0.1)";
+    btn.style.color = "var(--text-primary)";
+
+    btn.innerHTML = getIcon("pdf", 20);
+
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      this._showPdfOptions(e.clientX, e.clientY);
+    };
+
+    controls.appendChild(btn);
+    scrollerContainer.appendChild(controls);
+    this._updatePdfControlsPosition();
+  }
+
+  /**
+   * Update position of PDF controls to stick to the first page
+   * @private
+   */
+  _updatePdfControlsPosition() {
+    const controls = this.containerElement.querySelector(".note-canvas__pdf-controls");
+    if (!controls) return;
+
+    const pdfPages = this.mediaManager.getItems().filter((i) => i.type === "pdf-page");
+    if (pdfPages.length === 0) return;
+
+    // Find first page (min Y)
+    let firstPage = pdfPages[0];
+    for (let i = 1; i < pdfPages.length; i++) {
+      if (pdfPages[i].y < firstPage.y) firstPage = pdfPages[i];
+    }
+
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    const pageRightX = firstPage.x + firstPage.width;
+    const pageTopY = firstPage.y;
+    const screenX = pageRightX * this.zoomScale - scrollLeft + offsetX;
+    const screenY = pageTopY * this.zoomScale - scrollTop;
+    controls.style.left = `${screenX - 50}px`; // 50px from right edge (40px btn + 10px margin)
+    controls.style.top = `${screenY + 10}px`;
+  }
+
+  /**
+   * Show PDF options menu
+   * @private
+   */
+  _showPdfOptions(x, y) {
+    const existing = document.getElementById("pdf-options-menu");
+    if (existing) existing.remove();
+
+    const menu = document.createElement("div");
+    menu.id = "pdf-options-menu";
+    menu.className =
+      "note-canvas-toolbar__options-dialog note-canvas-toolbar__options-dialog--open";
+    menu.style.position = "fixed";
+
+    // Calculate position to prevent cutoff
+    const menuWidth = 180;
+    let left = x - menuWidth + 40;
+    if (left + menuWidth > window.innerWidth - 10) {
+      left = window.innerWidth - menuWidth - 10;
+    }
+    menu.style.left = `${left}px`;
+    menu.style.top = `${y + 10}px`;
+    menu.style.zIndex = "1000";
+
+    menu.innerHTML = `
+      <div class="note-canvas-toolbar__options-content">
+        <div class="note-canvas-toolbar__options-section">
+          <button class="note-canvas-toolbar__delete-btn" id="pdf-delete-btn">
+            ${getIcon("trash", 16)} Delete PDF
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(menu);
+
+    const deleteBtn = menu.querySelector("#pdf-delete-btn");
+    deleteBtn.onclick = () => {
+      this.deletePdf();
+      menu.remove();
+      document.removeEventListener("pointerdown", closeMenu);
+    };
+
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener("pointerdown", closeMenu);
+      }
+    };
+
+    setTimeout(() => {
+      document.addEventListener("pointerdown", closeMenu);
+    }, 0);
+  }
+
+  /**
+   * Pick a PDF file from the file system
+   * @private
+   */
+  _pickPdfFile() {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "application/pdf";
+      input.onchange = (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          resolve(e.target.files[0]);
+        } else {
+          resolve(null);
+        }
+      };
+      input.click();
+    });
   }
 
   /**
@@ -729,8 +980,37 @@ export class NoteCanvas {
           this.strokeManager?.currentStroke,
         );
         this._updateMediaOverlay();
+        this._updatePdfTextLayers();
+        this._updatePdfControlsPosition();
       });
     }
+  }
+
+  /**
+   * Update PDF text layer positions
+   * @private
+   */
+  _updatePdfTextLayers() {
+    if (!this.pdfTextLayerManager) return;
+
+    const viewportBounds = this.scroller.getViewportBounds();
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const { height: viewportHeight, width: viewportWidth } = this.scroller.getViewportSize();
+
+    // Calculate centering offset
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const centeringOffset =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    this.pdfTextLayerManager.update(
+      viewportBounds,
+      this.zoomScale,
+      scrollLeft,
+      scrollTop,
+      centeringOffset,
+      viewportHeight,
+    );
   }
 
   /**
@@ -762,6 +1042,8 @@ export class NoteCanvas {
     const scrollLeft = this.scroller.getScrollLeft();
     this.renderer.render(scrollTop, height, scrollLeft, this.strokeManager?.currentStroke);
     this._updateMediaOverlay();
+    this._updatePdfTextLayers();
+    this._updatePdfControlsPosition();
   }
 
   /**
@@ -803,6 +1085,20 @@ export class NoteCanvas {
     if (this.renderer && newMode !== "pan" && newMode !== "lasso") {
       this.renderer.setSelectedStrokes(new Set(), null);
     }
+
+    // Update PDF text layer interactivity (only enabled in pan mode)
+    if (this.pdfTextLayerManager) {
+      this.pdfTextLayerManager.setMode(newMode);
+    }
+
+    // Add mode class to container for CSS-based behavior
+    this.containerElement.classList.remove(
+      "note-canvas--pan-mode",
+      "note-canvas--draw-mode",
+      "note-canvas--eraser-mode",
+      "note-canvas--lasso-mode",
+    );
+    this.containerElement.classList.add(`note-canvas--${newMode}-mode`);
   }
 
   /**
@@ -1120,8 +1416,8 @@ export class NoteCanvas {
       this.mediaOverlay.hide();
     }
 
-    // Case 3: Long press detection on unselected item
-    if (hitItem && !this.selectedMediaId) {
+    // Case 3: Long press detection on unselected item (but not PDF pages)
+    if (hitItem && !this.selectedMediaId && hitItem.type !== "pdf-page") {
       this._startLongPress(hitItem, clientX, clientY);
     }
 
@@ -1295,6 +1591,11 @@ export class NoteCanvas {
     this.renderer.setSelectedMedia(null);
     this.mediaOverlay.hide();
 
+    // Clean up PDF text layer if this was a PDF page
+    if (item.type === "pdf-page" && this.pdfTextLayerManager) {
+      this.pdfTextLayerManager.onPageRemoved(targetId);
+    }
+
     // Save changes to note structure
     await this._saveMediaChanges();
 
@@ -1367,12 +1668,26 @@ export class NoteCanvas {
    */
   async _saveMediaChanges() {
     if (this.noteId && this.mediaManager) {
-      this.noteData.media = this.mediaManager.getItems();
+      this.mediaChanged = true;
+      const items = this.mediaManager.getItems();
+      // Strip non-serializable properties (renderable, loading, error) before sending to worker
+      // These are runtime-only properties used for rendering, not persisted data
+      const serializableMedia = items.map(
+        ({
+          renderable: _renderable,
+          renderableScale: _renderableScale,
+          loading: _loading,
+          error: _error,
+          ...rest
+        }) => rest,
+      );
+      this.noteData.media = serializableMedia;
       // Use StrokeManager (which uses StorageWorker) to save media updates
       // This prevents race conditions between stroke saving and media saving
       this.strokeManager.saveMedia({
-        media: this.noteData.media,
+        media: serializableMedia,
         deletedMedia: this.noteData.deletedMedia,
+        pdfSource: this.noteData.pdfSource,
       });
     }
   }
@@ -2183,8 +2498,8 @@ export class NoteCanvas {
    * @private
    */
   _startMomentumScroll() {
-    const friction = 0.75;
-    const stopThreshold = 0.05;
+    const friction = 0.95; // Increased from 0.75 for natural, longer glide
+    const stopThreshold = 0.05; // Lower threshold for smoother stop
     let lastTime = performance.now();
 
     const animate = (time) => {
@@ -2197,8 +2512,11 @@ export class NoteCanvas {
 
         this.scroller.scrollBy(-dx, -dy);
 
-        this.velocityX *= friction;
-        this.velocityY *= friction;
+        // Apply friction adjusted for time delta (normalize to ~60fps)
+        const timeFactor = dt / 16.67;
+        const currentFriction = friction ** timeFactor;
+        this.velocityX *= currentFriction;
+        this.velocityY *= currentFriction;
       }
 
       if (Math.abs(this.velocityX) > stopThreshold || Math.abs(this.velocityY) > stopThreshold) {
@@ -2253,6 +2571,10 @@ export class NoteCanvas {
         scrollLeft,
       });
     }
+
+    // Update PDF text layers after zoom
+    this._updatePdfTextLayers();
+    this._updatePdfControlsPosition();
   }
 
   /**
@@ -2268,6 +2590,118 @@ export class NoteCanvas {
   }
 
   /**
+   * Generate and save a thumbnail for the current note
+   * Stores promise on instance so destroy() can wait for completion
+   * @private
+   */
+  _saveThumbnail() {
+    if (!this.noteId || !this.renderer || !this.noteData || !this.strokeManager?.worker) return;
+
+    // Capture all required state SYNCHRONOUSLY before any async work
+    const noteId = this.noteId;
+    const oldThumbnailId = this.noteData.thumbnailFileId;
+    const worker = this.strokeManager.worker;
+
+    // 1. Create offscreen canvas and render SYNCHRONOUSLY
+    const thumbWidth = 800; // Match display resolution (800x600) to avoid blur
+    const thumbHeight = 600; // 4:3 aspect ratio
+    const canvas = document.createElement("canvas");
+    canvas.width = thumbWidth;
+    canvas.height = thumbHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // 2. Render snapshot SYNCHRONOUSLY (before destroy() nullifies renderer)
+    this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
+
+    // Store the promise so destroy() can wait for it
+    this._pendingThumbnailSave = this._doSaveThumbnail(canvas, noteId, oldThumbnailId, worker);
+  }
+
+  /**
+   * Internal async implementation of thumbnail save
+   * All synchronous state is captured and passed as parameters
+   * @private
+   */
+  async _doSaveThumbnail(canvas, noteId, oldThumbnailId, worker) {
+    try {
+      // 3. Convert to Blob (async)
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.7));
+
+      if (!blob) return;
+
+      // 4. Save to storage (async)
+      const fileId = await saveFile(blob);
+
+      // 5. Update note metadata
+      const timestamp = Date.now();
+
+      // Update in-memory data if still valid
+      if (this.noteData && this.noteId === noteId) {
+        this.noteData.thumbnailFileId = fileId;
+        this.noteData.thumbnailTimestamp = timestamp;
+      }
+
+      // Post to worker - this must happen before CLOSE is sent
+      worker.postMessage({
+        type: "SAVE_THUMBNAIL",
+        noteId: noteId,
+        thumbnailFileId: fileId,
+        thumbnailTimestamp: timestamp,
+      });
+
+      if (oldThumbnailId) {
+        deleteFile(oldThumbnailId).catch(() => {});
+      }
+    } catch (error) {
+      console.error("[NoteCanvas] Failed to save thumbnail:", error);
+    }
+  }
+
+  /**
+   * Delete the imported PDF and all its pages
+   */
+  async deletePdf() {
+    if (!this.noteData.pdfSource) return;
+
+    const confirmed = await showConfirmDialog(
+      "Delete PDF",
+      "Are you sure you want to remove the PDF document? This will remove all pages.",
+      "Delete",
+      "btn-danger",
+    );
+
+    if (!confirmed) return;
+
+    // 1. Identify and remove PDF pages
+    const pdfPages = this.mediaManager.getItems().filter((i) => i.type === "pdf-page");
+
+    pdfPages.forEach((p) => {
+      this.noteData.deletedMedia.push(p.id);
+      this.mediaManager.removeItem(p.id);
+      if (this.pdfTextLayerManager) {
+        this.pdfTextLayerManager.onPageRemoved(p.id);
+      }
+    });
+
+    // 2. Remove source reference
+    const sourceFileId = this.noteData.pdfSource;
+    this.noteData.pdfSource = null;
+
+    // 3. Save changes (triggers sync via dirty flag in StrokeManager)
+    await this._saveMediaChanges();
+
+    // 4. Cleanup local file (fire and forget)
+    if (sourceFileId) {
+      deleteFile(sourceFileId).catch(() => {});
+    }
+
+    this.renderer.forceRedraw();
+    this._renderPdfControls();
+    this._saveThumbnail();
+  }
+
+  /**
    * Clean up all resources
    */
   destroy() {
@@ -2279,6 +2713,15 @@ export class NoteCanvas {
           console.error("[NoteCanvas] Recognition failed:", e),
         );
       }
+    }
+
+    // Save thumbnail if changes were made or if it's missing
+    // This initiates the async save and stores promise in _pendingThumbnailSave
+    if (
+      (this.strokesChanged || this.mediaChanged || !this.noteData?.thumbnailFileId) &&
+      this.noteId
+    ) {
+      this._saveThumbnail();
     }
 
     // Cancel pending scroll RAF
@@ -2305,7 +2748,7 @@ export class NoteCanvas {
       }
     }
 
-    // Destroy modules
+    // Destroy modules (except strokeManager - must wait for thumbnail)
     if (this.renderer) {
       this.renderer.destroy();
       this.renderer = null;
@@ -2331,19 +2774,35 @@ export class NoteCanvas {
       this.mediaOverlay = null;
     }
 
+    if (this.pdfTextLayerManager) {
+      this.pdfTextLayerManager.destroy();
+      this.pdfTextLayerManager = null;
+    }
+
     if (this.inputHandler) {
       this.inputHandler.destroy();
       this.inputHandler = null;
     }
 
-    if (this.strokeManager) {
-      this.strokeManager.forceSave();
-      this.strokeManager.destroy();
-    }
-
     if (this.toolbar) {
       this.toolbar.destroy();
       this.toolbar = null;
+    }
+
+    // Wait for pending thumbnail save before destroying strokeManager
+    // This ensures SAVE_THUMBNAIL message is sent before CLOSE
+    const cleanupStrokeManager = () => {
+      if (this.strokeManager) {
+        this.strokeManager.forceSave();
+        this.strokeManager.destroy();
+        this.strokeManager = null;
+      }
+    };
+
+    if (this._pendingThumbnailSave) {
+      this._pendingThumbnailSave.then(cleanupStrokeManager).catch(cleanupStrokeManager);
+    } else {
+      cleanupStrokeManager();
     }
 
     // Clear state

@@ -479,6 +479,9 @@ export class NoteToolbar {
         <button class="note-canvas-toolbar__option-btn" data-action="insert-camera">
           ${getIcon("camera", 16)} Take Photo
         </button>
+        <button class="note-canvas-toolbar__option-btn" data-action="insert-pdf">
+          ${getIcon("pdf", 16)} Insert PDF
+        </button>
       </div>
     `;
     this.insertDialog.appendChild(content);

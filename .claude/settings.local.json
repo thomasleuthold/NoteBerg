@@ -18,7 +18,10 @@
       "Bash(npm run dev:*)",
       "Bash(npm install:*)",
       "Bash(just check:*)",
-      "Bash(npx eslint:*)"
+      "Bash(npx eslint:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(npm test:*)",
+      "Bash(grep:*)"
     ]
   }
 }

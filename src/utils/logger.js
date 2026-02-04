@@ -98,6 +98,9 @@ function captureConsoleMessage(level, args) {
   const timestamp = new Date().toISOString();
   const message = args
     .map((arg) => {
+      if (arg instanceof Error) {
+        return `${arg.name}: ${arg.message}${arg.stack ? `\n${arg.stack}` : ""}`;
+      }
       if (typeof arg === "object") {
         try {
           return JSON.stringify(arg);

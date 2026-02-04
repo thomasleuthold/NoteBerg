@@ -204,6 +204,67 @@
 /* Reuse .note-canvas-toolbar__options-dialog styles for the menu */
 
 /* ==========================================================================
+   PDF Text Layers (for text selection)
+   ========================================================================== */
+
+.note-canvas__text-layers {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5; /* Above canvas (0), below overlay (10) */
+  overflow: hidden;
+}
+
+.note-canvas__text-layer {
+  position: absolute;
+  text-align: initial;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+/* PDF.js TextLayer standard styles */
+.note-canvas__text-layer span,
+.note-canvas__text-layer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  /* Font size calculated from PDF.js --font-height and our --scale-factor */
+  font-size: calc(var(--font-height) * var(--scale-factor));
+  /* Horizontal scale for character width adjustment (set by PDF.js per span) */
+  transform: scaleX(var(--scale-x, 1));
+}
+
+/* Highlight text selection */
+.note-canvas__text-layer ::selection {
+  background: rgba(0, 0, 255, 0.25);
+}
+
+.note-canvas__text-layer ::-moz-selection {
+  background: rgba(0, 0, 255, 0.25);
+}
+
+/* Disable text selection in non-pan modes */
+.note-canvas--draw-mode .note-canvas__text-layers,
+.note-canvas--eraser-mode .note-canvas__text-layers,
+.note-canvas--lasso-mode .note-canvas__text-layers {
+  pointer-events: none;
+}
+
+.note-canvas--draw-mode .note-canvas__text-layer,
+.note-canvas--eraser-mode .note-canvas__text-layer,
+.note-canvas--lasso-mode .note-canvas__text-layer {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ==========================================================================
    Pen Settings Dialog
    ========================================================================== */
 

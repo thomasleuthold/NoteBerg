@@ -609,7 +609,7 @@ async function downloadFile(path, asBinary = false) {
  * Uses parallel uploads for efficiency
  */
 async function syncNoteMedia(note) {
-  if (!note.media || note.media.length === 0) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !note.thumbnailFileId) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
@@ -627,22 +627,34 @@ async function syncNoteMedia(note) {
 
   // Prepare upload tasks for items that need uploading
   const uploadTasks = [];
+  const processedIds = new Set(); // Track processed IDs to avoid duplicates (e.g. multiple PDF pages)
 
-  for (const item of note.media) {
-    if (!item.fileId) continue;
+  // Collect all file IDs (media items + pdfSource)
+  const itemsToSync = [...(note.media || [])];
+  if (note.pdfSource) {
+    itemsToSync.push({ fileId: note.pdfSource, id: "pdf-source" });
+  }
+  if (note.thumbnailFileId) {
+    itemsToSync.push({ fileId: note.thumbnailFileId, id: "thumbnail" });
+  }
+
+  for (const item of itemsToSync) {
+    const fileId = item.fileId;
+    if (!fileId) continue;
+
+    if (processedIds.has(fileId)) continue;
+    processedIds.add(fileId);
 
     // Get file from local storage
-    const blob = await getFile(item.fileId);
+    const blob = await getFile(fileId);
     if (!blob) {
-      console.warn(
-        `[Sync] Local file not found for media item ${item.id} (fileId: ${item.fileId})`,
-      );
+      console.warn(`[Sync] Local file not found for media item ${item.id} (fileId: ${fileId})`);
       continue;
     }
 
     // Determine filename
     const ext = getExtensionFromMime(blob.type);
-    const filename = `${item.fileId}${ext}`;
+    const filename = `${fileId}${ext}`;
 
     // Queue upload if not exists on server
     if (!remoteNames.has(filename)) {
@@ -689,10 +701,14 @@ async function cleanupOrphanedMedia(note) {
   const validFileIds = new Set();
   if (note.media) {
     for (const item of note.media) {
-      if (item.fileId) {
-        validFileIds.add(item.fileId);
-      }
+      if (item.fileId) validFileIds.add(item.fileId);
     }
+  }
+  if (note.pdfSource) {
+    validFileIds.add(note.pdfSource);
+  }
+  if (note.thumbnailFileId) {
+    validFileIds.add(note.thumbnailFileId);
   }
 
   // Find orphaned files (files on server not referenced in note.media)
@@ -724,16 +740,30 @@ async function cleanupOrphanedMedia(note) {
  * Ensures all binary files referenced in the note are downloaded to local storage
  */
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
-  if (!note.media || note.media.length === 0) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !note.thumbnailFileId) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
+  const processedIds = new Set();
 
-  for (const item of note.media) {
-    if (!item.fileId) continue;
+  // Collect all file IDs (media items + pdfSource)
+  const itemsToDownload = [...(note.media || [])];
+  if (note.pdfSource) {
+    itemsToDownload.push({ fileId: note.pdfSource });
+  }
+  if (note.thumbnailFileId) {
+    itemsToDownload.push({ fileId: note.thumbnailFileId });
+  }
+
+  for (const item of itemsToDownload) {
+    const fileId = item.fileId;
+    if (!fileId) continue;
+
+    if (processedIds.has(fileId)) continue;
+    processedIds.add(fileId);
 
     // Check if file exists locally
-    const existing = await checkFileExists(item.fileId);
+    const existing = await checkFileExists(fileId);
     if (existing) continue;
 
     // Need to find the remote filename. It should be fileId + extension.
@@ -748,7 +778,7 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
       }
     }
 
-    const remoteFile = remoteFiles.find((f) => f.name.startsWith(item.fileId));
+    const remoteFile = remoteFiles.find((f) => f.name.startsWith(fileId));
     if (remoteFile) {
       console.log(`[Sync] Downloading media file: ${remoteFile.name}`);
       const { content } = await downloadFile(`${mediaFolder}/${remoteFile.name}`, true); // Download as binary
@@ -761,7 +791,7 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
           "application/octet-stream";
 
         const blob = new Blob([content], { type: mimeType });
-        await saveFile(blob, item.fileId);
+        await saveFile(blob, fileId);
       }
     }
   }

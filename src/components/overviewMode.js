@@ -8,6 +8,7 @@ import {
   deleteNote,
   deleteNotebook,
   getAllNotebooks,
+  getFile,
   getNote,
   getNotebook,
   getNotesByNotebook,
@@ -532,10 +533,10 @@ export function initOverview() {
   console.log("Overview component initialized");
 }
 
-function renderNotePreviews(container, notes) {
+async function renderNotePreviews(container, notes) {
   const canvases = container.querySelectorAll(".note-preview-canvas");
 
-  canvases.forEach((canvas) => {
+  const promises = Array.from(canvases).map(async (canvas) => {
     const noteId = canvas.dataset.noteId;
     const note = notes.find((n) => n.id === noteId);
     if (!note) return;
@@ -543,21 +544,56 @@ function renderNotePreviews(container, notes) {
     // Check if this is a full-size canvas that needs to be rendered at 800x600
     const isFullSize = canvas.dataset.fullSize === "true";
 
+    // Setup layout scaling (must happen for both thumbnails and live rendering)
     if (isFullSize) {
-      // Render at full size (800x600) without scaling
-      renderNotePreview(canvas, note, {
-        padding: 20,
-        fullSize: true,
-      });
+      // Set bitmap size to match the CSS size of the scaler
+      canvas.width = 800;
+      canvas.height = 600;
 
       // Calculate and apply the scale transform to the parent scaler div
       const scaler = canvas.closest(".preview-scaler");
       const previewContainer = canvas.closest(".note-card-preview");
       if (scaler && previewContainer) {
         const containerRect = previewContainer.getBoundingClientRect();
-        const scale = Math.min(containerRect.width / 800, containerRect.height / 600);
+        // Use a default if rect is zero (e.g. hidden) to avoid divide by zero
+        const containerWidth = containerRect.width || 300;
+        const containerHeight = containerRect.height || 300;
+        const scale = Math.min(containerWidth / 800, containerHeight / 600);
         scaler.style.transform = `scale(${scale})`;
       }
+    }
+
+    // Check if we have a stored thumbnail
+    if (note.thumbnailFileId) {
+      try {
+        const blob = await getFile(note.thumbnailFileId);
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const ctx = canvas.getContext("2d");
+          const img = new Image();
+
+          await new Promise((resolve, reject) => {
+            img.onload = () => {
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              URL.revokeObjectURL(url);
+              resolve();
+            };
+            img.onerror = reject;
+            img.src = url;
+          });
+          return; // Success, skip legacy rendering
+        }
+      } catch (err) {
+        console.warn("Failed to load thumbnail for note", noteId, err);
+      }
+    }
+
+    // Fallback: Live rendering (Strokes only)
+    if (isFullSize) {
+      renderNotePreview(canvas, note, {
+        padding: 20,
+        fullSize: true,
+      });
     } else {
       // Legacy rendering for scaled canvas
       renderNotePreview(canvas, note, {
@@ -566,4 +602,6 @@ function renderNotePreviews(container, notes) {
       });
     }
   });
+
+  await Promise.all(promises);
 }
