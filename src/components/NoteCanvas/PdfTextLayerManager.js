@@ -40,6 +40,9 @@ export class PdfTextLayerManager {
     this._createLayerDebounceTimers = new Map();
     this._createLayerDebounceMs = 100;
 
+    // Semaphore for text layer creation
+    this.isCreatingLayer = false;
+
     this._createContainer();
   }
 
@@ -98,6 +101,16 @@ export class PdfTextLayerManager {
         this._updateLayerPosition(pageId);
       }
     }
+
+    // Prune text content cache to prevent unbounded growth
+    if (this.textContentCache.size > 50) {
+      for (const pageId of this.textContentCache.keys()) {
+        // If page is not currently visible, remove from cache
+        if (!visiblePageIds.has(pageId)) {
+          this.textContentCache.delete(pageId);
+        }
+      }
+    }
   }
 
   /**
@@ -151,6 +164,9 @@ export class PdfTextLayerManager {
    * @private
    */
   async _createLayer(pageId, item) {
+    if (this.isCreatingLayer) return; // Busy, try next update
+    this.isCreatingLayer = true;
+
     try {
       // Create container div
       const div = document.createElement("div");
@@ -200,6 +216,8 @@ export class PdfTextLayerManager {
       console.error(`[PdfTextLayerManager] Failed to create text layer for ${pageId}:`, error);
       // Remove failed layer
       this._removeLayer(pageId);
+    } finally {
+      this.isCreatingLayer = false;
     }
   }
 

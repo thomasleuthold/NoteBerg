@@ -2676,9 +2676,7 @@ export class NoteCanvas {
 
     // Save thumbnail if changes were made or if it's missing
     if (
-      (this.strokesChanged ||
-        this.mediaChanged ||
-        !this.noteData?.thumbnailFileId) &&
+      (this.strokesChanged || this.mediaChanged || !this.noteData?.thumbnailFileId) &&
       this.noteId
     ) {
       this._saveThumbnail();

@@ -6,7 +6,7 @@
  * scroll exceeds the safe zone (leapfrog).
  */
 
-import { getRenderedMedia } from "../../modules/mediaManager.js";
+import { clearRenderCache, getRenderedMedia } from "../../modules/mediaManager.js";
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
   drawStroke as sharedDrawStroke,
@@ -91,6 +91,14 @@ export class CanvasRenderer {
     this._qualityRenderTimeout = null;
     this._qualityRenderDebounce = 150; // ms after scroll stops
     this._lastRenderWasFastMode = false;
+
+    // PDF Loading Semaphore
+    this.activePdfLoads = 0;
+    this.maxConcurrentPdfLoads = 2;
+    this._pdfQueueCheckTimeout = null;
+
+    // Track if initial draw has happened
+    this._needsInitialDraw = true;
 
     // Initialize
     this._createCanvas();
@@ -283,6 +291,9 @@ export class CanvasRenderer {
     // Check if we need to leapfrog (reposition buffer)
     if (resized || this._shouldLeapfrog(contentScrollTop)) {
       this._repositionBuffer(contentScrollTop);
+    } else {
+      // Even if not leapfrogging, we might want to cleanup occasionally during small scrolls
+      // But _repositionBuffer handles the bulk of it.
     }
     // Always slide the canvas to match scroll position
     this._slideCanvas(contentScrollTop, scrollLeft);
@@ -506,15 +517,25 @@ export class CanvasRenderer {
    */
   _shouldLeapfrog(scrollTop) {
     // First render always needs a leapfrog
-    if (this.bufferHeight === 0) return true;
+    if (this.bufferHeight === 0 || this._needsInitialDraw) return true;
+
+    const contentViewportHeight = this.viewportHeight;
+    const bufferContentHeight = this.bufferHeight;
 
     // Calculate safe zone (1 viewport from buffer edges)
-    const safeMargin = this.viewportHeight;
+    const safeMargin = contentViewportHeight * 0.3;
     const safeTop = this.bufferTop + safeMargin;
-    const safeBottom = this.bufferTop + this.bufferHeight - this.viewportHeight - safeMargin;
+    const safeBottom = this.bufferTop + bufferContentHeight - contentViewportHeight - safeMargin;
 
-    // Leapfrog if scroll is outside safe zone
-    return scrollTop < safeTop || scrollTop > safeBottom;
+    // Leapfrog if scroll is outside safe zone, BUT respect document bounds
+    // If buffer is at the very top (0), don't leapfrog just because we are near top
+    if (scrollTop < safeTop && this.bufferTop > 0) return true;
+
+    // If buffer is at the very bottom, don't leapfrog just because we are near bottom
+    const maxBufferTop = Math.max(0, this.contentHeight - bufferContentHeight);
+    if (scrollTop > safeBottom && this.bufferTop < maxBufferTop - 1) return true; // -1 for float precision
+
+    return false;
   }
 
   /**
@@ -542,15 +563,24 @@ export class CanvasRenderer {
    * @param {number} scrollTop - Scroll position in content coordinates
    */
   _repositionBuffer(scrollTop) {
+    // Clear initial draw flag
+    this._needsInitialDraw = false;
+
+    const contentViewportHeight = this.viewportHeight;
+    const bufferContentHeight = this.bufferHeight;
+
     // Center buffer on viewport
-    const newBufferTop = Math.max(0, scrollTop - this.viewportHeight);
+    const newBufferTop = Math.max(0, scrollTop - contentViewportHeight);
 
     // Clamp to content bounds
-    const maxBufferTop = Math.max(0, this.contentHeight - this.bufferHeight);
+    const maxBufferTop = Math.max(0, this.contentHeight - bufferContentHeight);
     this.bufferTop = Math.min(newBufferTop, maxBufferTop);
 
     // Redraw the buffer in fast mode (no pressure) for scroll performance
     this._drawBuffer(true);
+
+    // Clean up off-screen resources (PDF bitmaps) to prevent OOM
+    this._cleanupOffscreenResources();
 
     // Schedule high-quality re-render after scroll stops
     this._scheduleQualityRender();
@@ -580,6 +610,8 @@ export class CanvasRenderer {
    * @param {boolean} fastMode - Skip pressure rendering for scroll performance
    */
   _drawBuffer(fastMode = false) {
+    if (this.bufferHeight <= 0) return;
+
     const startTime = performance.now();
 
     // Clear canvas
@@ -634,87 +666,89 @@ export class CanvasRenderer {
     this.ctx.save();
     this.ctx.translate(0, -this.bufferTop);
 
-    // Helper to draw a list of indices
-    const drawList = (indices) => {
-      for (const index of indices) {
-        const stroke = this.strokes[index];
-        const isSelected = this.selectedStrokeIndices.has(index);
-        sharedDrawStroke(this.ctx, stroke, this.palette, isSelected, fastMode);
-      }
-    };
-
-    // Draw markers first (lower z-index)
-    drawList(markers);
-    // Draw pens on top
-    drawList(pens);
-
-    // Draw active stroke on top if it exists (always full quality for responsiveness)
-    if (this.activeStroke && this.activeStroke.type !== "marker") {
-      // If active stroke is marker, it should technically be drawn before pens,
-      // but for responsiveness we draw it on top during creation.
-      // It will be sorted correctly once finished and added to the main list.
-      sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
-    }
-
-    // Draw highlights
-    if (this.highlightRects.length > 0) {
-      this.ctx.save();
-      this.ctx.fillStyle = HIGHLIGHT_FILL_STYLE;
-      this.ctx.strokeStyle = HIGHLIGHT_STROKE_STYLE;
-      this.ctx.lineWidth = HIGHLIGHT_LINE_WIDTH;
-
-      for (const rect of this.highlightRects) {
-        this.ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-        this.ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-      }
-      this.ctx.restore();
-    }
-
-    // Draw selection bounding box
-    if (this.selectionBounds) {
-      const { minX, minY, maxX, maxY } = this.selectionBounds;
-      const width = maxX - minX;
-      const height = maxY - minY;
-
-      this.ctx.save();
-      this.ctx.strokeStyle = "rgba(0, 100, 255, 0.6)";
-      this.ctx.lineWidth = 1 / this.resolutionScale; // Keep line thin regardless of zoom
-      this.ctx.setLineDash([5, 5]);
-      this.ctx.strokeRect(minX, minY, width, height);
-      this.ctx.restore();
-
-      // Draw resize handles using shared handle positions
-      const handleSize = SELECTION_HANDLE_SIZE / this.zoomScale; // Constant screen size
-      const half = handleSize / 2;
-      this.ctx.save();
-      this.ctx.fillStyle = "#ffffff";
-      this.ctx.strokeStyle = "#3b82f6";
-      this.ctx.lineWidth = 1 / this.resolutionScale;
-
-      const handles = getSelectionHandles(this.selectionBounds, this.zoomScale);
-
-      for (const { key, x: hx, y: hy } of handles) {
-        if (key === "rotate") {
-          // Draw rotation handle with stem
-          this.ctx.beginPath();
-          this.ctx.moveTo(hx, minY);
-          this.ctx.lineTo(hx, hy);
-          this.ctx.stroke();
-
-          this.ctx.beginPath();
-          this.ctx.arc(hx, hy, half, 0, Math.PI * 2);
-          this.ctx.fill();
-          this.ctx.stroke();
-        } else {
-          // Draw square handle for resize
-          this.ctx.fillRect(hx - half, hy - half, handleSize, handleSize);
-          this.ctx.strokeRect(hx - half, hy - half, handleSize, handleSize);
+    try {
+      // Helper to draw a list of indices
+      const drawList = (indices) => {
+        for (const index of indices) {
+          const stroke = this.strokes[index];
+          const isSelected = this.selectedStrokeIndices.has(index);
+          sharedDrawStroke(this.ctx, stroke, this.palette, isSelected, fastMode);
         }
+      };
+
+      // Draw markers first (lower z-index)
+      drawList(markers);
+      // Draw pens on top
+      drawList(pens);
+
+      // Draw active stroke on top if it exists (always full quality for responsiveness)
+      if (this.activeStroke && this.activeStroke.type !== "marker") {
+        // If active stroke is marker, it should technically be drawn before pens,
+        // but for responsiveness we draw it on top during creation.
+        // It will be sorted correctly once finished and added to the main list.
+        sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
       }
+
+      // Draw highlights
+      if (this.highlightRects.length > 0) {
+        this.ctx.save();
+        this.ctx.fillStyle = HIGHLIGHT_FILL_STYLE;
+        this.ctx.strokeStyle = HIGHLIGHT_STROKE_STYLE;
+        this.ctx.lineWidth = HIGHLIGHT_LINE_WIDTH;
+
+        for (const rect of this.highlightRects) {
+          this.ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+          this.ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+        }
+        this.ctx.restore();
+      }
+
+      // Draw selection bounding box
+      if (this.selectionBounds) {
+        const { minX, minY, maxX, maxY } = this.selectionBounds;
+        const width = maxX - minX;
+        const height = maxY - minY;
+
+        this.ctx.save();
+        this.ctx.strokeStyle = "rgba(0, 100, 255, 0.6)";
+        this.ctx.lineWidth = 1 / this.resolutionScale; // Keep line thin regardless of zoom
+        this.ctx.setLineDash([5, 5]);
+        this.ctx.strokeRect(minX, minY, width, height);
+        this.ctx.restore();
+
+        // Draw resize handles using shared handle positions
+        const handleSize = SELECTION_HANDLE_SIZE / this.zoomScale; // Constant screen size
+        const half = handleSize / 2;
+        this.ctx.save();
+        this.ctx.fillStyle = "#ffffff";
+        this.ctx.strokeStyle = "#3b82f6";
+        this.ctx.lineWidth = 1 / this.resolutionScale;
+
+        const handles = getSelectionHandles(this.selectionBounds, this.zoomScale);
+
+        for (const { key, x: hx, y: hy } of handles) {
+          if (key === "rotate") {
+            // Draw rotation handle with stem
+            this.ctx.beginPath();
+            this.ctx.moveTo(hx, minY);
+            this.ctx.lineTo(hx, hy);
+            this.ctx.stroke();
+
+            this.ctx.beginPath();
+            this.ctx.arc(hx, hy, half, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.stroke();
+          } else {
+            // Draw square handle for resize
+            this.ctx.fillRect(hx - half, hy - half, handleSize, handleSize);
+            this.ctx.strokeRect(hx - half, hy - half, handleSize, handleSize);
+          }
+        }
+        this.ctx.restore();
+      }
+    } finally {
       this.ctx.restore();
     }
-
-    this.ctx.restore();
 
     this._lastRenderWasFastMode = fastMode;
     this.lastRenderTime = performance.now() - startTime;
@@ -816,30 +850,93 @@ export class CanvasRenderer {
    * Do NOT apply another bufferTop translation here.
    */
   _drawPdfPage(item, _fastMode) {
-    if (item.renderable && item.renderableScale === this.resolutionScale) {
+    // 1. Try to draw existing renderable if it matches current scale
+    if (
+      item.renderable &&
+      item.renderableScale === this.resolutionScale &&
+      item.renderable.width > 0
+    ) {
       this.ctx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
-    } else if (!item.loading) {
+      // Draw page break and selection even for cached pages
+      this._drawPdfPageBreak(item);
+      if (item.id === this.selectedMediaId) {
+        this.ctx.strokeStyle = "#3b82f6";
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(item.x, item.y, item.width, item.height);
+      }
+      return;
+    }
+
+    // 2. If we have an existing renderable but scale mismatch (e.g. zooming), draw it anyway as placeholder
+    if (item.renderable && item.renderable.width > 0) {
+      this.ctx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
+    }
+
+    // 3. Trigger load for correct scale if not already loading
+    if (!item.loading && !item.error && this.activePdfLoads < this.maxConcurrentPdfLoads) {
       // Start loading regardless of fastMode to ensure pages eventually render
       // The forceRedraw() on completion will show them once loaded
       item.loading = true;
+      this.activePdfLoads++;
+
       getRenderedMedia(item, this.resolutionScale)
         .then((renderable) => {
           item.loading = false;
-          if (renderable) {
+          this.activePdfLoads--;
+
+          // Only store if item is still within a reasonable range of the viewport
+          // This prevents storing bitmaps for pages that were scrolled past quickly
+          const inKeepZone = this._isItemInKeepZone(item);
+
+          if (inKeepZone && renderable) {
+            // If replacing an existing bitmap (e.g. zoom level change), close the old one first
+            if (item.renderable && typeof item.renderable.close === "function") {
+              item.renderable.close();
+            }
             item.renderable = renderable;
             item.renderableScale = this.resolutionScale;
+            this.forceRedraw();
+          } else if (renderable) {
+            // CRITICAL: If we are not keeping this bitmap (scrolled away), we MUST close it immediately.
+            // Otherwise it leaks in GPU memory until GC kicks in (which is too slow).
+            if (typeof renderable.close === "function") {
+              renderable.close();
+            } else if (renderable.width !== undefined) {
+              renderable.width = 0;
+              renderable.height = 0;
+            }
+            // Don't forceRedraw - item is off-screen anyway
+          } else if (inKeepZone) {
+            // No renderable and still in view - mark as error to prevent infinite retry loop
+            item.error = true;
+            this.forceRedraw(); // Redraw to show error state
           }
-          this.forceRedraw();
+          // Note: If not in keep zone and no renderable, do nothing - item is off-screen
+          // The next scroll will trigger a fresh load if needed
+
+          // Schedule a debounced check to pick up any queued pages waiting for a load slot
+          this._schedulePdfQueueCheck();
         })
         .catch((err) => {
           console.error(`[CanvasRenderer] Failed to render PDF page ${item.id}:`, err);
           item.loading = false;
+          item.error = true;
+          this.activePdfLoads--;
+          this.forceRedraw(); // Redraw to show error state
+          this._schedulePdfQueueCheck();
         });
     }
     // If loading but no cached renderable yet, draw a placeholder
     else if (item.loading && !item.renderable) {
       this.ctx.fillStyle = "rgba(200, 200, 200, 0.1)";
       this.ctx.fillRect(item.x, item.y, item.width, item.height);
+      this._drawLoadingIndicator(item);
+    }
+    // If error, draw error placeholder
+    else if (item.error) {
+      this.ctx.fillStyle = "rgba(255, 0, 0, 0.05)";
+      this.ctx.fillRect(item.x, item.y, item.width, item.height);
+      this._drawErrorIndicator(item);
     }
 
     // Draw page break line at bottom of PDF page (dashed dark blue line)
@@ -851,6 +948,66 @@ export class CanvasRenderer {
       this.ctx.lineWidth = 2;
       this.ctx.strokeRect(item.x, item.y, item.width, item.height);
     }
+  }
+
+  /**
+   * Draw a loading indicator for a PDF page
+   * @private
+   */
+  _drawLoadingIndicator(item) {
+    const cx = item.x + item.width / 2;
+    const cy = item.y + item.height / 2;
+
+    this.ctx.save();
+
+    // Pill background
+    this.ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+    this.ctx.beginPath();
+    if (this.ctx.roundRect) {
+      this.ctx.roundRect(cx - 40, cy - 15, 80, 30, 15);
+    } else {
+      this.ctx.rect(cx - 40, cy - 15, 80, 30);
+    }
+    this.ctx.fill();
+
+    // Text
+    this.ctx.fillStyle = "#374151";
+    this.ctx.font = "12px sans-serif";
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText("Loading...", cx, cy);
+
+    this.ctx.restore();
+  }
+
+  /**
+   * Draw an error indicator for a PDF page
+   * @private
+   */
+  _drawErrorIndicator(item) {
+    const cx = item.x + item.width / 2;
+    const cy = item.y + item.height / 2;
+
+    this.ctx.save();
+
+    // Pill background
+    this.ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    this.ctx.beginPath();
+    if (this.ctx.roundRect) {
+      this.ctx.roundRect(cx - 50, cy - 15, 100, 30, 15);
+    } else {
+      this.ctx.rect(cx - 50, cy - 15, 100, 30);
+    }
+    this.ctx.fill();
+
+    // Text
+    this.ctx.fillStyle = "#ef4444"; // Red
+    this.ctx.font = "12px sans-serif";
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText("Error loading page", cx, cy);
+
+    this.ctx.restore();
   }
 
   /**
@@ -872,6 +1029,84 @@ export class CanvasRenderer {
     this.ctx.stroke();
 
     this.ctx.restore();
+  }
+
+  /**
+   * Check if an item is within the "keep zone" (buffer + margin)
+   * Used to determine if we should keep/store its bitmap
+   * @private
+   */
+  _isItemInKeepZone(item) {
+    // Keep zone = Buffer +/- 1 viewport height
+    // This is generous enough to prevent flickering but tight enough to save memory
+    const contentViewportHeight = this.viewportHeight;
+    const margin = contentViewportHeight * 0.5;
+    const keepTop = this.bufferTop - margin;
+    const keepBottom = this.bufferTop + this.bufferHeight + margin;
+
+    return item.y + item.height >= keepTop && item.y <= keepBottom;
+  }
+
+  /**
+   * Clean up resources for items that have moved out of the keep zone
+   * @private
+   */
+  _cleanupOffscreenResources() {
+    if (!this.mediaManager) return;
+
+    const items = this.mediaManager.getItems();
+
+    for (const item of items) {
+      if (item.type === "pdf-page" && item.renderable) {
+        if (!this._isItemInKeepZone(item)) {
+          this._releaseItemMemory(item);
+        }
+      }
+    }
+  }
+
+  _releaseItemMemory(item) {
+    // CRITICAL: Clear the render cache FIRST, before destroying the renderable.
+    // Otherwise the cache holds a reference to a destroyed canvas/bitmap,
+    // causing getRenderedMedia to return corrupted resources.
+    clearRenderCache(item.id);
+
+    if (item.renderable) {
+      // Explicitly close ImageBitmap to free GPU memory immediately
+      if (typeof item.renderable.close === "function") {
+        item.renderable.close();
+      } else if (item.renderable.width !== undefined) {
+        // If it's a canvas, resize to 0 to free backing store
+        item.renderable.width = 0;
+        item.renderable.height = 0;
+      }
+    }
+    item.renderable = null;
+    item.renderableScale = null;
+    // Do NOT reset item.loading = false here.
+    // If a load is pending, let it finish (and discard result).
+    // Resetting it here would allow _drawPdfPage to trigger a duplicate load immediately,
+    // causing a race condition and potential infinite load loop during rapid scrolling.
+  }
+
+  /**
+   * Schedule a debounced check to pick up queued PDF pages
+   * This prevents immediate forceRedraw cascades while still ensuring
+   * pages waiting for a load slot eventually get loaded
+   * @private
+   */
+  _schedulePdfQueueCheck() {
+    if (this._pdfQueueCheckTimeout) {
+      clearTimeout(this._pdfQueueCheckTimeout);
+    }
+    this._pdfQueueCheckTimeout = setTimeout(() => {
+      this._pdfQueueCheckTimeout = null;
+      // Only redraw if there are still load slots available
+      // This triggers _drawMedia which will start loading queued pages
+      if (this.activePdfLoads < this.maxConcurrentPdfLoads) {
+        this.forceRedraw();
+      }
+    }, 50); // Short delay to batch multiple completions
   }
 
   /**
@@ -929,6 +1164,7 @@ export class CanvasRenderer {
       this._resizeCanvasBitmap();
       if (options.scrollTop !== undefined) {
         this._repositionBuffer(contentScrollTop);
+        this._cleanupOffscreenResources();
       }
     } else {
       // Debounced full re-render - capture current scale
@@ -941,6 +1177,7 @@ export class CanvasRenderer {
         this._resizeCanvasBitmap();
         if (options.scrollTop !== undefined) {
           this._repositionBuffer(options.scrollTop / targetScale);
+          this._cleanupOffscreenResources();
         }
       }, this.zoomRenderDebounce);
     }
@@ -1056,6 +1293,10 @@ export class CanvasRenderer {
 
     if (this._qualityRenderTimeout) {
       clearTimeout(this._qualityRenderTimeout);
+    }
+
+    if (this._pdfQueueCheckTimeout) {
+      clearTimeout(this._pdfQueueCheckTimeout);
     }
 
     if (this.canvas?.parentElement) {

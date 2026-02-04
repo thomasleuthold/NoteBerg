@@ -6,6 +6,19 @@ import { getFile } from "./storage.js";
 const renderCache = new Map();
 
 /**
+ * Clears cached renderables for a specific item (all scales).
+ * Call this when releasing item memory to prevent returning stale/closed resources.
+ * @param {string} itemId - The item ID to clear from cache
+ */
+export function clearRenderCache(itemId) {
+  for (const key of renderCache.keys()) {
+    if (key.startsWith(`${itemId}-`)) {
+      renderCache.delete(key);
+    }
+  }
+}
+
+/**
  * Gets a renderable image (Canvas or ImageBitmap) for a media item.
  * Handles caching automatically.
  * @param {Object} item - The media item from note data
