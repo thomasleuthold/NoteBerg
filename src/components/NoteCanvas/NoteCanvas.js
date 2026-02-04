@@ -617,7 +617,9 @@ export class NoteCanvas {
    * Insert a PDF into the note
    */
   async insertPdf() {
-    if (this.noteData.pdfSource) {
+    // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
+    const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
+    if (this.noteData.pdfSource || hasPdfPages) {
       await showAlertDialog(
         "PDF Already Imported",
         "Only one PDF can be imported per note. Please remove the current PDF before importing a new one.",
@@ -687,7 +689,9 @@ export class NoteCanvas {
     const existing = this.containerElement.querySelector(".note-canvas__pdf-controls");
     if (existing) existing.remove();
 
-    if (!this.noteData.pdfSource) return;
+    // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
+    const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
+    if (!this.noteData.pdfSource && !hasPdfPages) return;
 
     const scrollerContainer = this.containerElement.querySelector(
       ".note-canvas__scroller-container",
@@ -697,7 +701,7 @@ export class NoteCanvas {
     const controls = document.createElement("div");
     controls.className = "note-canvas__pdf-controls";
     controls.style.position = "absolute";
-    controls.style.zIndex = "50"; // Above canvas
+    controls.style.zIndex = "1"; // Above canvas
 
     const btn = document.createElement("button");
     btn.className = "note-canvas__pdf-btn";
@@ -732,7 +736,7 @@ export class NoteCanvas {
    */
   _updatePdfControlsPosition() {
     const controls = this.containerElement.querySelector(".note-canvas__pdf-controls");
-    if (!controls || !this.noteData.pdfSource) return;
+    if (!controls) return;
 
     const pdfPages = this.mediaManager.getItems().filter((i) => i.type === "pdf-page");
     if (pdfPages.length === 0) return;
@@ -1412,8 +1416,8 @@ export class NoteCanvas {
       this.mediaOverlay.hide();
     }
 
-    // Case 3: Long press detection on unselected item
-    if (hitItem && !this.selectedMediaId) {
+    // Case 3: Long press detection on unselected item (but not PDF pages)
+    if (hitItem && !this.selectedMediaId && hitItem.type !== "pdf-page") {
       this._startLongPress(hitItem, clientX, clientY);
     }
 
@@ -1669,7 +1673,13 @@ export class NoteCanvas {
       // Strip non-serializable properties (renderable, loading, error) before sending to worker
       // These are runtime-only properties used for rendering, not persisted data
       const serializableMedia = items.map(
-        ({ renderable: _renderable, renderableScale: _renderableScale, loading: _loading, error: _error, ...rest }) => rest,
+        ({
+          renderable: _renderable,
+          renderableScale: _renderableScale,
+          loading: _loading,
+          error: _error,
+          ...rest
+        }) => rest,
       );
       this.noteData.media = serializableMedia;
       // Use StrokeManager (which uses StorageWorker) to save media updates
@@ -2790,9 +2800,7 @@ export class NoteCanvas {
     };
 
     if (this._pendingThumbnailSave) {
-      this._pendingThumbnailSave
-        .then(cleanupStrokeManager)
-        .catch(cleanupStrokeManager);
+      this._pendingThumbnailSave.then(cleanupStrokeManager).catch(cleanupStrokeManager);
     } else {
       cleanupStrokeManager();
     }

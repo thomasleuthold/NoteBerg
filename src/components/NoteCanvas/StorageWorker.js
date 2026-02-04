@@ -22,9 +22,11 @@ let messageQueue = Promise.resolve();
 
 self.onmessage = (e) => {
   // Chain the processing of messages to ensure sequential execution
-  messageQueue = messageQueue.then(() => processMessage(e)).catch((err) => {
-    console.error("[StorageWorker] Error processing message:", err);
-  });
+  messageQueue = messageQueue
+    .then(() => processMessage(e))
+    .catch((err) => {
+      console.error("[StorageWorker] Error processing message:", err);
+    });
 };
 
 async function processMessage(e) {
