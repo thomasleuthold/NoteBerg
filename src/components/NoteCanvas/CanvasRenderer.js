@@ -205,8 +205,18 @@ export class CanvasRenderer {
     this.overlayCanvas.width = width;
     this.overlayCanvas.height = height;
 
+    // Track if canvas bitmap dimensions actually changed (which clears the canvas)
+    const oldWidth = this.canvas.width;
+    const oldHeight = this.canvas.height;
+
     this._resizeCanvasBitmap();
     this._updateCanvasPosition();
+
+    // If canvas was resized, it was cleared by the browser - mark that we need a redraw
+    // The next render() call will trigger _repositionBuffer via _needsInitialDraw
+    if (this.canvas.width !== oldWidth || this.canvas.height !== oldHeight) {
+      this._needsInitialDraw = true;
+    }
   }
 
   /**
