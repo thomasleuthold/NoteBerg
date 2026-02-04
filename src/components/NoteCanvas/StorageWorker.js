@@ -15,7 +15,19 @@ function getDB() {
   return dbPromise;
 }
 
-self.onmessage = async (e) => {
+// Queue for sequential processing of messages
+// This prevents race conditions where concurrent read-modify-write operations
+// on the same note could overwrite each other (e.g., SAVE_MEDIA vs SAVE_THUMBNAIL)
+let messageQueue = Promise.resolve();
+
+self.onmessage = (e) => {
+  // Chain the processing of messages to ensure sequential execution
+  messageQueue = messageQueue.then(() => processMessage(e)).catch((err) => {
+    console.error("[StorageWorker] Error processing message:", err);
+  });
+};
+
+async function processMessage(e) {
   const { type, noteId, strokes, deletedStrokes, media, deletedMedia, pdfSource, presets, key } =
     e.data;
 
@@ -23,31 +35,32 @@ self.onmessage = async (e) => {
     try {
       const db = await getDB();
 
-      // Use a transaction to ensure atomicity
+      // First, check if we need to encrypt (read note metadata outside transaction)
+      const noteCheck = await db.get("notes", noteId);
+      if (!noteCheck) return;
+
+      // Encrypt data BEFORE starting the transaction to avoid auto-commit issues
+      // (IndexedDB transactions auto-commit when awaiting non-IDB promises)
+      let strokesData = strokes;
+      if (noteCheck.encrypted) {
+        if (key) {
+          strokesData = await encryptObject(strokes, key);
+        } else {
+          console.error("[StorageWorker] Cannot save encrypted note: Key missing");
+          return;
+        }
+      }
+
+      // Now do the actual update in a transaction
       const tx = db.transaction("notes", "readwrite");
       const store = tx.objectStore("notes");
-
       const note = await store.get(noteId);
 
       if (note) {
-        // 1. Update deleted strokes
         if (deletedStrokes) {
           note.deletedStrokes = deletedStrokes;
         }
-
-        // 2. Update strokes (encrypt if needed)
-        if (note.encrypted) {
-          if (key) {
-            note.strokes = await encryptObject(strokes, key);
-          } else {
-            console.error("[StorageWorker] Cannot save encrypted note: Key missing");
-            return;
-          }
-        } else {
-          note.strokes = strokes;
-        }
-
-        // 3. Update metadata to match storage.js logic
+        note.strokes = strokesData;
         note.modified = Date.now();
         note.version = (note.version || 0) + 1;
         note.synced = false;
@@ -64,25 +77,31 @@ self.onmessage = async (e) => {
   if (type === "SAVE_MEDIA") {
     try {
       const db = await getDB();
+
+      // First, check if we need to encrypt (read note metadata outside transaction)
+      const noteCheck = await db.get("notes", noteId);
+      if (!noteCheck) return;
+
+      // Encrypt data BEFORE starting the transaction to avoid auto-commit issues
+      let mediaData = media;
+      if (noteCheck.encrypted && media) {
+        if (key) {
+          mediaData = await encryptObject(media, key);
+        } else {
+          console.error("[StorageWorker] Cannot save encrypted media: Key missing");
+          return;
+        }
+      }
+
+      // Now do the actual update in a transaction
       const tx = db.transaction("notes", "readwrite");
       const store = tx.objectStore("notes");
       const note = await store.get(noteId);
 
       if (note) {
-        // Update media fields
-        if (media !== undefined) note.media = media;
+        if (media !== undefined) note.media = mediaData;
         if (deletedMedia !== undefined) note.deletedMedia = deletedMedia;
         if (pdfSource !== undefined) note.pdfSource = pdfSource;
-
-        // Encrypt media if needed
-        if (note.encrypted && media) {
-          if (key) {
-            note.media = await encryptObject(media, key);
-          } else {
-            console.error("[StorageWorker] Cannot save encrypted media: Key missing");
-            return;
-          }
-        }
 
         note.modified = Date.now();
         note.version = (note.version || 0) + 1;
@@ -117,7 +136,30 @@ self.onmessage = async (e) => {
     }
   }
 
+  if (type === "SAVE_THUMBNAIL") {
+    const { thumbnailFileId, thumbnailTimestamp } = e.data;
+    try {
+      const db = await getDB();
+      const tx = db.transaction("notes", "readwrite");
+      const store = tx.objectStore("notes");
+      const note = await store.get(noteId);
+
+      if (note) {
+        note.thumbnailFileId = thumbnailFileId;
+        note.thumbnailTimestamp = thumbnailTimestamp;
+        note.modified = Date.now();
+        note.version = (note.version || 0) + 1;
+        note.synced = false;
+
+        await store.put(note);
+      }
+      await tx.done;
+    } catch (err) {
+      console.error("[StorageWorker] Thumbnail save failed:", err);
+    }
+  }
+
   if (type === "CLOSE") {
     self.close();
   }
-};
+}

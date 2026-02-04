@@ -147,6 +147,21 @@ export class StrokeManager {
     });
   }
 
+  /**
+   * Save thumbnail metadata via the worker
+   * This ensures thumbnail saves are serialized with media saves to prevent race conditions
+   */
+  saveThumbnail({ thumbnailFileId, thumbnailTimestamp }) {
+    if (!this.worker) return;
+
+    this.worker.postMessage({
+      type: "SAVE_THUMBNAIL",
+      noteId: this.noteId,
+      thumbnailFileId,
+      thumbnailTimestamp,
+    });
+  }
+
   forceSave() {
     this._save();
   }

@@ -1665,11 +1665,17 @@ export class NoteCanvas {
   async _saveMediaChanges() {
     if (this.noteId && this.mediaManager) {
       this.mediaChanged = true;
-      this.noteData.media = this.mediaManager.getItems();
+      const items = this.mediaManager.getItems();
+      // Strip non-serializable properties (renderable, loading, error) before sending to worker
+      // These are runtime-only properties used for rendering, not persisted data
+      const serializableMedia = items.map(
+        ({ renderable: _renderable, renderableScale: _renderableScale, loading: _loading, error: _error, ...rest }) => rest,
+      );
+      this.noteData.media = serializableMedia;
       // Use StrokeManager (which uses StorageWorker) to save media updates
       // This prevents race conditions between stroke saving and media saving
       this.strokeManager.saveMedia({
-        media: this.noteData.media,
+        media: serializableMedia,
         deletedMedia: this.noteData.deletedMedia,
         pdfSource: this.noteData.pdfSource,
       });
@@ -2575,34 +2581,46 @@ export class NoteCanvas {
 
   /**
    * Generate and save a thumbnail for the current note
+   * Stores promise on instance so destroy() can wait for completion
    * @private
    */
-  async _saveThumbnail() {
-    if (!this.noteId || !this.renderer || !this.noteData) return;
+  _saveThumbnail() {
+    if (!this.noteId || !this.renderer || !this.noteData || !this.strokeManager?.worker) return;
 
-    // Capture state synchronously before async operations
+    // Capture all required state SYNCHRONOUSLY before any async work
     const noteId = this.noteId;
     const oldThumbnailId = this.noteData.thumbnailFileId;
+    const worker = this.strokeManager.worker;
 
+    // 1. Create offscreen canvas and render SYNCHRONOUSLY
+    const thumbWidth = 800; // Match display resolution (800x600) to avoid blur
+    const thumbHeight = 600; // 4:3 aspect ratio
+    const canvas = document.createElement("canvas");
+    canvas.width = thumbWidth;
+    canvas.height = thumbHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // 2. Render snapshot SYNCHRONOUSLY (before destroy() nullifies renderer)
+    this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
+
+    // Store the promise so destroy() can wait for it
+    this._pendingThumbnailSave = this._doSaveThumbnail(canvas, noteId, oldThumbnailId, worker);
+  }
+
+  /**
+   * Internal async implementation of thumbnail save
+   * All synchronous state is captured and passed as parameters
+   * @private
+   */
+  async _doSaveThumbnail(canvas, noteId, oldThumbnailId, worker) {
     try {
-      // 1. Create offscreen canvas
-      const thumbWidth = 800; // Match display resolution (800x600) to avoid blur
-      const thumbHeight = 600; // 4:3 aspect ratio
-      const canvas = document.createElement("canvas");
-      canvas.width = thumbWidth;
-      canvas.height = thumbHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      // 2. Render snapshot
-      this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
-
-      // 3. Convert to Blob
+      // 3. Convert to Blob (async)
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.7));
 
       if (!blob) return;
 
-      // 4. Save to storage
+      // 4. Save to storage (async)
       const fileId = await saveFile(blob);
 
       // 5. Update note metadata
@@ -2614,7 +2632,10 @@ export class NoteCanvas {
         this.noteData.thumbnailTimestamp = timestamp;
       }
 
-      await updateNote(noteId, {
+      // Post to worker - this must happen before CLOSE is sent
+      worker.postMessage({
+        type: "SAVE_THUMBNAIL",
+        noteId: noteId,
         thumbnailFileId: fileId,
         thumbnailTimestamp: timestamp,
       });
@@ -2685,6 +2706,7 @@ export class NoteCanvas {
     }
 
     // Save thumbnail if changes were made or if it's missing
+    // This initiates the async save and stores promise in _pendingThumbnailSave
     if (
       (this.strokesChanged || this.mediaChanged || !this.noteData?.thumbnailFileId) &&
       this.noteId
@@ -2716,7 +2738,7 @@ export class NoteCanvas {
       }
     }
 
-    // Destroy modules
+    // Destroy modules (except strokeManager - must wait for thumbnail)
     if (this.renderer) {
       this.renderer.destroy();
       this.renderer = null;
@@ -2752,14 +2774,27 @@ export class NoteCanvas {
       this.inputHandler = null;
     }
 
-    if (this.strokeManager) {
-      this.strokeManager.forceSave();
-      this.strokeManager.destroy();
-    }
-
     if (this.toolbar) {
       this.toolbar.destroy();
       this.toolbar = null;
+    }
+
+    // Wait for pending thumbnail save before destroying strokeManager
+    // This ensures SAVE_THUMBNAIL message is sent before CLOSE
+    const cleanupStrokeManager = () => {
+      if (this.strokeManager) {
+        this.strokeManager.forceSave();
+        this.strokeManager.destroy();
+        this.strokeManager = null;
+      }
+    };
+
+    if (this._pendingThumbnailSave) {
+      this._pendingThumbnailSave
+        .then(cleanupStrokeManager)
+        .catch(cleanupStrokeManager);
+    } else {
+      cleanupStrokeManager();
     }
 
     // Clear state
