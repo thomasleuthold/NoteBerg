@@ -389,11 +389,21 @@ export class NoteCanvas {
     this.spatialIndex = new SpatialIndex(height || 800);
     this.spatialIndex.build(this.noteData.strokes);
 
-    // Calculate content dimensions
+    // Calculate content dimensions from strokes
     const contentBounds = this.spatialIndex.getContentBounds();
-    this.contentHeight = contentBounds
-      ? Math.max(contentBounds.maxY + 500, height) // Add padding below content
-      : height;
+    let maxContentY = contentBounds ? contentBounds.maxY : 0;
+
+    // Include media items (images, PDF pages) in content height calculation
+    if (this.noteData.media && this.noteData.media.length > 0) {
+      for (const item of this.noteData.media) {
+        const itemBottom = (item.y || 0) + (item.height || 0);
+        if (itemBottom > maxContentY) {
+          maxContentY = itemBottom;
+        }
+      }
+    }
+
+    this.contentHeight = Math.max(maxContentY + 500, height); // Add padding below content
     const contentWidth = this.maxContentWidth;
 
     // Initialize MediaManager

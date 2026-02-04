@@ -895,7 +895,8 @@ export class CanvasRenderer {
             }
             item.renderable = renderable;
             item.renderableScale = this.resolutionScale;
-            this.forceRedraw();
+            // Don't call forceRedraw directly - use debounced queue check instead
+            // This prevents cascading redraws when many pages load in succession
           } else if (renderable) {
             // CRITICAL: If we are not keeping this bitmap (scrolled away), we MUST close it immediately.
             // Otherwise it leaks in GPU memory until GC kicks in (which is too slow).
@@ -909,12 +910,12 @@ export class CanvasRenderer {
           } else if (inKeepZone) {
             // No renderable and still in view - mark as error to prevent infinite retry loop
             item.error = true;
-            this.forceRedraw(); // Redraw to show error state
+            // Debounced redraw will show error state
           }
           // Note: If not in keep zone and no renderable, do nothing - item is off-screen
           // The next scroll will trigger a fresh load if needed
 
-          // Schedule a debounced check to pick up any queued pages waiting for a load slot
+          // Schedule a debounced redraw to show loaded pages and pick up queued ones
           this._schedulePdfQueueCheck();
         })
         .catch((err) => {
@@ -922,7 +923,7 @@ export class CanvasRenderer {
           item.loading = false;
           item.error = true;
           this.activePdfLoads--;
-          this.forceRedraw(); // Redraw to show error state
+          // Debounced redraw will show error state and pick up queued pages
           this._schedulePdfQueueCheck();
         });
     }
@@ -1090,7 +1091,7 @@ export class CanvasRenderer {
   }
 
   /**
-   * Schedule a debounced check to pick up queued PDF pages
+   * Schedule a debounced redraw to pick up queued PDF pages and show loaded ones
    * This prevents immediate forceRedraw cascades while still ensuring
    * pages waiting for a load slot eventually get loaded
    * @private
@@ -1101,12 +1102,9 @@ export class CanvasRenderer {
     }
     this._pdfQueueCheckTimeout = setTimeout(() => {
       this._pdfQueueCheckTimeout = null;
-      // Only redraw if there are still load slots available
-      // This triggers _drawMedia which will start loading queued pages
-      if (this.activePdfLoads < this.maxConcurrentPdfLoads) {
-        this.forceRedraw();
-      }
-    }, 50); // Short delay to batch multiple completions
+      // Redraw to show newly loaded pages and trigger loading for queued pages
+      this.forceRedraw();
+    }, 100); // Debounce to batch multiple load completions
   }
 
   /**
