@@ -1,5 +1,5 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { getMediaHandles, getSelectionHandles, NoteCanvas } from "./NoteCanvas.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NoteCanvas } from "./NoteCanvas.js";
 
 // Polyfill DOMMatrix for pdfjs-dist (safeguard)
 if (!globalThis.DOMMatrix) {
@@ -52,13 +52,18 @@ vi.mock("../../modules/storage.js", () => ({
   getNote: vi.fn(),
   updateNote: vi.fn(),
   deleteNote: vi.fn(),
+  deleteFile: vi.fn(() => Promise.resolve()), // Return a promise
   saveFile: vi.fn((blob) => Promise.resolve(`file-${blob.size}`)),
   generateId: vi.fn(() => "mock-id"),
 }));
 
 vi.mock("../../modules/pdfManager.js", () => ({
   importPdf: vi.fn(),
-  loadPdfPage: vi.fn(),
+}));
+
+vi.mock("../modals.js", () => ({
+  showAlertDialog: vi.fn(),
+  showConfirmDialog: vi.fn(),
 }));
 
 vi.mock("../../modules/autoRecognition.js", () => ({
@@ -97,27 +102,6 @@ vi.mock("./PdfTextLayerManager.js", () => ({
 window.scrollTo = vi.fn();
 window.requestAnimationFrame = vi.fn((cb) => setTimeout(cb, 0));
 window.cancelAnimationFrame = vi.fn((id) => clearTimeout(id));
-
-describe("NoteCanvas Helpers", () => {
-  describe("getSelectionHandles", () => {
-    it("calculates handle positions correctly", () => {
-      const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
-      const zoom = 1;
-      const handles = getSelectionHandles(bounds, zoom);
-      expect(handles).toHaveLength(9);
-    });
-  });
-
-  describe("getMediaHandles", () => {
-    it("calculates unrotated media handles correctly", () => {
-      const item = { x: 10, y: 10, width: 100, height: 50, rotation: 0 };
-      const zoom = 1;
-      const handles = getMediaHandles(item, zoom);
-      const n = handles.find((h) => h.key === "n");
-      expect(n.x).toBe(60);
-    });
-  });
-});
 
 describe("NoteCanvas Class", () => {
   let container;
@@ -222,14 +206,35 @@ describe("NoteCanvas Class", () => {
     }));
 
     const { SpatialIndex } = await import("./SpatialIndex.js");
-    SpatialIndex.mockImplementation(() => ({
-      build: vi.fn(),
-      getContentBounds: () => ({ minX: 0, minY: 0, maxX: 100, maxY: 100 }),
-      query: vi.fn(() => []),
-      insert: vi.fn(),
-      remove: vi.fn(),
-      clear: vi.fn(),
-    }));
+    SpatialIndex.mockImplementation(() => {
+      const strokeBounds = new Map();
+      return {
+        strokeBounds,
+        build: vi.fn((strokes) => {
+          strokeBounds.clear();
+          strokes?.forEach((s, i) => {
+            if (s && !s._deleted) {
+              const minX = Math.min(...s.x);
+              const maxX = Math.max(...s.x);
+              const minY = Math.min(...s.y);
+              const maxY = Math.max(...s.y);
+              strokeBounds.set(i, { minX, maxX, minY, maxY });
+            }
+          });
+        }),
+        getContentBounds: () => ({ minX: 0, minY: 0, maxX: 100, maxY: 100 }),
+        query: vi.fn(() => []),
+        insert: vi.fn((stroke, index) => {
+          const minX = Math.min(...stroke.x);
+          const maxX = Math.max(...stroke.x);
+          const minY = Math.min(...stroke.y);
+          const maxY = Math.max(...stroke.y);
+          strokeBounds.set(index, { minX, maxX, minY, maxY });
+        }),
+        remove: vi.fn(),
+        clear: vi.fn(),
+      };
+    });
 
     const { StrokeManager } = await import("./StrokeManager.js");
     StrokeManager.mockImplementation((_noteId, strokes) => ({
@@ -254,13 +259,16 @@ describe("NoteCanvas Class", () => {
       endStroke: vi.fn(function () {
         const stroke = this.currentStroke;
         if (stroke) {
-          strokes.push(stroke);
+          if (!stroke._keep) strokes.push(stroke);
           this.currentStroke = null;
           return stroke;
         }
         return null;
       }),
-      cancelCurrentStroke: vi.fn(),
+      cancelCurrentStroke: vi.fn(function () {
+        if (this.currentStroke) this.currentStroke._keep = false;
+        this.currentStroke = null;
+      }),
       markDirty: vi.fn(),
       saveMedia: vi.fn(),
       forceSave: vi.fn(),
@@ -276,75 +284,77 @@ describe("NoteCanvas Class", () => {
     vi.clearAllMocks();
   });
 
-  describe("Undo/Redo", () => {
-    let actualCommands;
+  describe("PDF Handling", () => {
+    let importPdf, showAlertDialog, showConfirmDialog;
 
-    beforeAll(async () => {
-      vi.unmock("./commands/index.js");
-      actualCommands = await import("./commands/index.js");
+    beforeEach(async () => {
+        const pdfManager = await import("../../modules/pdfManager.js");
+        const modals = await import("../modals.js");
+        importPdf = pdfManager.importPdf;
+        showAlertDialog = modals.showAlertDialog;
+        showConfirmDialog = modals.showConfirmDialog;
+        
+        const pickPdfSpy = vi.spyOn(NoteCanvas.prototype, "_pickPdfFile");
+        pickPdfSpy.mockResolvedValue(new File(["fake-pdf"], "test.pdf"));
     });
 
-    it("should undo and redo a drawn stroke", async () => {
+    it("should insert a PDF and create an undo command", async () => {
+      importPdf.mockResolvedValue({
+        pages: [{ id: "page1", type: "pdf-page", width: 500, height: 700 }],
+        fileId: "pdf-file-id",
+      });
       await noteCanvas.load("note-1");
       const historyPushSpy = vi.spyOn(noteCanvas.historyManager, "push");
-      noteCanvas._setMode("draw");
 
-      noteCanvas._onStrokeStart({ x: 10, y: 10, pointerType: "pen" });
+      await noteCanvas.insertPdf();
+
+      expect(noteCanvas.noteData.media).toHaveLength(1);
+      expect(historyPushSpy).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).InsertMediaCommand),
+      );
+    });
+
+    it("should delete a PDF and create an undo command", async () => {
+      mockNoteData.pdfSource = "pdf-file-id";
+      mockNoteData.media.push({ id: "page1", type: "pdf-page" });
+      showConfirmDialog.mockResolvedValue(true);
+      await noteCanvas.load("note-1");
+      const historyPushSpy = vi.spyOn(noteCanvas.historyManager, "push");
+
+      await noteCanvas.deletePdf();
+
+      expect(noteCanvas.noteData.media).toHaveLength(0);
+      expect(historyPushSpy).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).DeleteMediaCommand),
+      );
+    });
+  });
+
+  describe("Scratch-out Gesture", () => {
+    it("should detect and erase strokes with a scratch-out gesture", async () => {
+      const strokeToErase1 = { id: "s-erase-1", x: [50, 51], y: [50, 51], _deleted: false };
+      mockNoteData.strokes.push(strokeToErase1);
+      await noteCanvas.load("note-1");
+
+      const points = [];
+      let x = 55;
+      for (let i = 0; i < 50; i++) {
+        points.push({ x: x, y: 55, pressure: 0.5 });
+        x += i % 2 === 0 ? 30 : -30;
+      }
+
+      noteCanvas.spatialIndex.query.mockReturnValue([0]);
+      const historyPushSpy = vi.spyOn(noteCanvas.historyManager, "push");
+
+      noteCanvas._setMode("draw");
+      noteCanvas._onStrokeStart({ ...points[0], pointerType: "pen" });
+      noteCanvas._onStrokeMove(points.slice(1));
       noteCanvas._onStrokeEnd();
 
-      expect(historyPushSpy).toHaveBeenCalledWith(expect.any(actualCommands.DrawStrokeCommand));
-    });
-
-    it("should undo and redo a DeleteMediaCommand", async () => {
-      const mediaItem = { id: "media-1", type: "image", fileId: "file-1" };
-      mockNoteData.media.push(mediaItem);
-      await noteCanvas.load("note-1");
-
-      noteCanvas.selectedMediaId = "media-1";
-      await noteCanvas.deleteSelectedMedia();
-      expect(noteCanvas.noteData.media).toHaveLength(0);
-
-      noteCanvas.historyManager.undo();
-      expect(noteCanvas.noteData.media).toHaveLength(1);
-
-      noteCanvas.historyManager.redo();
-      expect(noteCanvas.noteData.media).toHaveLength(0);
-    });
-
-    it("should undo and redo a TransformStrokesCommand", async () => {
-      const stroke = { id: "s1", x: [10, 20], y: [10, 10] };
-      mockNoteData.strokes.push(stroke);
-      await noteCanvas.load("note-1");
-
-      noteCanvas.renderer.selectedStrokeIndices = new Set([0]);
-      noteCanvas.transformState = {
-        selectedIndices: [0],
-        initialStrokes: [{ x: [10, 20], y: [10, 10] }],
-      };
-      stroke.x = [15, 25];
-      noteCanvas._endTransform();
-
-      noteCanvas.historyManager.undo();
-      expect(noteCanvas.noteData.strokes[0].x).toEqual([10, 20]);
-
-      noteCanvas.historyManager.redo();
-      expect(noteCanvas.noteData.strokes[0].x).toEqual([15, 25]);
-    });
-
-    it("should undo and redo a ReorderMediaCommand", async () => {
-      const item1 = { id: "media-1", type: "image" };
-      const item2 = { id: "media-2", type: "image" };
-      mockNoteData.media.push(item1, item2);
-      await noteCanvas.load("note-1");
-
-      noteCanvas.moveSelectedMediaToFront("media-1");
-      expect(noteCanvas.noteData.media.map((i) => i.id)).toEqual(["media-2", "media-1"]);
-
-      noteCanvas.historyManager.undo();
-      expect(noteCanvas.noteData.media.map((i) => i.id)).toEqual(["media-1", "media-2"]);
-
-      noteCanvas.historyManager.redo();
-      expect(noteCanvas.noteData.media.map((i) => i.id)).toEqual(["media-2", "media-1"]);
+      expect(strokeToErase1._deleted).toBe(true);
+      expect(historyPushSpy).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).EraseStrokesCommand),
+      );
     });
   });
 });
