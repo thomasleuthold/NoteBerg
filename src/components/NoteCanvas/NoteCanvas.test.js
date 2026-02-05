@@ -285,17 +285,17 @@ describe("NoteCanvas Class", () => {
   });
 
   describe("PDF Handling", () => {
-    let importPdf, showAlertDialog, showConfirmDialog;
+    let importPdf, _showAlertDialog, showConfirmDialog;
 
     beforeEach(async () => {
-        const pdfManager = await import("../../modules/pdfManager.js");
-        const modals = await import("../modals.js");
-        importPdf = pdfManager.importPdf;
-        showAlertDialog = modals.showAlertDialog;
-        showConfirmDialog = modals.showConfirmDialog;
-        
-        const pickPdfSpy = vi.spyOn(NoteCanvas.prototype, "_pickPdfFile");
-        pickPdfSpy.mockResolvedValue(new File(["fake-pdf"], "test.pdf"));
+      const pdfManager = await import("../../modules/pdfManager.js");
+      const modals = await import("../modals.js");
+      importPdf = pdfManager.importPdf;
+      _showAlertDialog = modals.showAlertDialog;
+      showConfirmDialog = modals.showConfirmDialog;
+
+      const pickPdfSpy = vi.spyOn(NoteCanvas.prototype, "_pickPdfFile");
+      pickPdfSpy.mockResolvedValue(new File(["fake-pdf"], "test.pdf"));
     });
 
     it("should insert a PDF and create an undo command", async () => {
