@@ -33,6 +33,7 @@ import {
   EraseStrokesCommand,
   InsertMediaCommand,
   ReorderMediaCommand,
+  ShiftContentCommand,
   TransformMediaCommand,
   TransformStrokesCommand,
 } from "./commands/index.js";
@@ -202,6 +203,7 @@ export class NoteCanvas {
 
     // Undo/redo history
     this.historyManager = null;
+    this.insertSpaceState = null; // { startY: number, currentY: number }
 
     // Eraser batching for undo (multiple strokes erased in one gesture = one undo)
     this._eraserBatch = null;
@@ -548,6 +550,7 @@ export class NoteCanvas {
           if (action === "insert-image") this.insertImage("picker");
           if (action === "insert-camera") this.insertImage("camera");
           if (action === "insert-pdf") this.insertPdf();
+          if (action === "insert-space") this._setMode("insert-space");
         },
         onUndo: () => this.historyManager?.undo(),
         onRedo: () => this.historyManager?.redo(),
@@ -1120,6 +1123,7 @@ export class NoteCanvas {
     this.lassoPoints = [];
     this.transformState = null;
     this.mediaDragState = null;
+    this.insertSpaceState = null;
     this._clearLongPress();
 
     if (this.toolbar) {
@@ -1142,6 +1146,7 @@ export class NoteCanvas {
       "note-canvas--draw-mode",
       "note-canvas--eraser-mode",
       "note-canvas--lasso-mode",
+      "note-canvas--insert-space-mode",
     );
     this.containerElement.classList.add(`note-canvas--${newMode}-mode`);
   }
@@ -1151,6 +1156,12 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeStart(props) {
+    if (this.mode === "insert-space") {
+      this.insertSpaceState = { startY: props.y, currentY: props.y };
+      this.renderer.drawInsertSpaceIndicator(this.insertSpaceState);
+      return true;
+    }
+
     // Detect stylus usage
     if (props.pointerType === "pen") {
       this.stylusDetected = true;
@@ -1229,6 +1240,16 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeMove(points) {
+    if (this.insertSpaceState) {
+      const lastPoint = points[points.length - 1];
+      // Only allow dragging down
+      if (lastPoint.y > this.insertSpaceState.startY) {
+        this.insertSpaceState.currentY = lastPoint.y;
+        this.renderer.drawInsertSpaceIndicator(this.insertSpaceState);
+      }
+      return;
+    }
+
     // Check long press movement threshold
     if (this.longPressTimer) {
       const lastPoint = points[points.length - 1];
@@ -1283,6 +1304,46 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeEnd() {
+    if (this.insertSpaceState) {
+      const { startY, currentY } = this.insertSpaceState;
+      const yShift = currentY - startY;
+
+      if (yShift > 0) {
+        const affectedStrokeIds = [];
+        const affectedMediaIds = [];
+
+        // Find strokes to shift
+        this.noteData.strokes.forEach((stroke, index) => {
+          if (stroke._deleted || !stroke.id) return;
+          const bounds = this.spatialIndex.strokeBounds.get(index);
+          if (bounds && bounds.minY > startY) {
+            affectedStrokeIds.push(stroke.id);
+          }
+        });
+
+        // Find media to shift (excluding PDF pages)
+        this.noteData.media.forEach((media) => {
+          if (media.type !== "pdf-page" && media.y > startY) {
+            affectedMediaIds.push(media.id);
+          }
+        });
+
+        if (affectedStrokeIds.length > 0 || affectedMediaIds.length > 0) {
+          // Create and push command BEFORE changing data
+          const command = new ShiftContentCommand(yShift, affectedStrokeIds, affectedMediaIds);
+          this.historyManager?.push(command);
+
+          // Apply the shift
+          command.redo(this);
+        }
+      }
+
+      this.insertSpaceState = null;
+      this.renderer.clearOverlay();
+      this._setMode("pan"); // Revert to pan mode after action
+      return;
+    }
+
     this._clearLongPress();
 
     if (this.mediaDragState) {
@@ -1774,6 +1835,7 @@ export class NoteCanvas {
         }) => rest,
       );
       this.noteData.media = serializableMedia;
+      this.mediaManager.setItems(serializableMedia);
       // Use StrokeManager (which uses StorageWorker) to save media updates
       // This prevents race conditions between stroke saving and media saving
       this.strokeManager.saveMedia({

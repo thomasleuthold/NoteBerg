@@ -520,6 +520,17 @@ export class NoteToolbar {
           ${getIcon("pdf", 16)} Insert PDF
         </button>
       </div>
+      <div class="note-canvas-toolbar__separator"></div>
+      <div class="note-canvas-toolbar__options-section">
+        <button class="note-canvas-toolbar__option-btn" data-action="insert-space">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+            <path d="M12 8v8m-4-4 4 4 4-4"/>
+            <path d="M4 4h16"/>
+            <path d="M4 20h16"/>
+          </svg>
+          Insert Vertical Space
+        </button>
+      </div>
     `;
     this.insertDialog.appendChild(content);
 
