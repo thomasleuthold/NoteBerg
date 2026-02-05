@@ -58,6 +58,24 @@ function getLassoIcon(size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22a5 5 0 0 1-2-4"/><path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1"/><path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
 }
 
+/**
+ * Generate undo icon SVG
+ * @param {number} size - Icon size
+ * @returns {string} SVG markup
+ */
+function getUndoIcon(size = 24) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>`;
+}
+
+/**
+ * Generate redo icon SVG
+ * @param {number} size - Icon size
+ * @returns {string} SVG markup
+ */
+function getRedoIcon(size = 24) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>`;
+}
+
 export class NoteToolbar {
   /**
    * @param {HTMLElement} container - Container to append toolbar to
@@ -66,6 +84,8 @@ export class NoteToolbar {
    * @param {Function} options.onPenSettingsChange - Callback ({ width, colorIndex }) => void
    * @param {Function} options.onOptionsChange - Callback ({ type, value }) => void
    * @param {Function} options.onAction - Callback (action) => void
+   * @param {Function} options.onUndo - Callback for undo action
+   * @param {Function} options.onRedo - Callback for redo action
    */
   constructor(container, onModeChange, options = {}) {
     this.container = container;
@@ -73,11 +93,15 @@ export class NoteToolbar {
     this.onPenSettingsChange = options.onPenSettingsChange || (() => {});
     this.onOptionsChange = options.onOptionsChange || (() => {});
     this.onAction = options.onAction || (() => {});
+    this.onUndo = options.onUndo || (() => {});
+    this.onRedo = options.onRedo || (() => {});
     this.element = null;
     this.panBtn = null;
     this.drawBtn = null;
     this.eraserBtn = null;
     this.lassoBtn = null;
+    this.undoBtn = null;
+    this.redoBtn = null;
     this.insertBtn = null;
     this.insertDialog = null;
     this.penSettingsDialog = null;
@@ -153,6 +177,17 @@ export class NoteToolbar {
     this.lassoBtn = createBtn("lasso", lassoIcon, "Lasso Select");
     this.lassoBtn.onclick = () => this.onModeChange("lasso");
 
+    // Undo/Redo buttons
+    this.undoBtn = createBtn("undo", getUndoIcon(24), "Undo (Ctrl+Z)");
+    this.undoBtn.onclick = () => this.onUndo();
+    this.undoBtn.disabled = true;
+    this.undoBtn.classList.add("note-canvas-toolbar__button--disabled");
+
+    this.redoBtn = createBtn("redo", getRedoIcon(24), "Redo (Ctrl+Y)");
+    this.redoBtn.onclick = () => this.onRedo();
+    this.redoBtn.disabled = true;
+    this.redoBtn.classList.add("note-canvas-toolbar__button--disabled");
+
     // Options button container (aligned right)
     this.optionsBtnContainer = document.createElement("div");
     this.optionsBtnContainer.className = "note-canvas-toolbar__button-container";
@@ -204,6 +239,8 @@ export class NoteToolbar {
     this.element.appendChild(this.drawBtnContainer);
     this.element.appendChild(this.eraserBtn);
     this.element.appendChild(this.lassoBtn);
+    this.element.appendChild(this.undoBtn);
+    this.element.appendChild(this.redoBtn);
     this.element.appendChild(this.optionsBtnContainer);
     this.container.appendChild(this.element);
   }
@@ -942,6 +979,30 @@ export class NoteToolbar {
     }
   }
 
+  /**
+   * Update undo/redo button states
+   * @param {{ canUndo: boolean, canRedo: boolean }} state
+   */
+  updateHistoryState(state) {
+    if (this.undoBtn) {
+      this.undoBtn.disabled = !state.canUndo;
+      if (state.canUndo) {
+        this.undoBtn.classList.remove("note-canvas-toolbar__button--disabled");
+      } else {
+        this.undoBtn.classList.add("note-canvas-toolbar__button--disabled");
+      }
+    }
+
+    if (this.redoBtn) {
+      this.redoBtn.disabled = !state.canRedo;
+      if (state.canRedo) {
+        this.redoBtn.classList.remove("note-canvas-toolbar__button--disabled");
+      } else {
+        this.redoBtn.classList.add("note-canvas-toolbar__button--disabled");
+      }
+    }
+  }
+
   destroy() {
     document.removeEventListener("pointerdown", this._handleDocumentPointerDown);
 
@@ -954,6 +1015,8 @@ export class NoteToolbar {
     this.drawBtnContainer = null;
     this.eraserBtn = null;
     this.lassoBtn = null;
+    this.undoBtn = null;
+    this.redoBtn = null;
     this.insertBtn = null;
     this.insertDialog = null;
     this.penSettingsDialog = null;

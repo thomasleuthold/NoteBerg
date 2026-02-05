@@ -26,6 +26,17 @@ import { InputHandler } from "./InputHandler.js";
 import { MediaManager } from "./MediaManager.js";
 import { MediaOverlay } from "./MediaOverlay.js";
 import "./NoteCanvas.css";
+import {
+  CropImageCommand,
+  DeleteMediaCommand,
+  DrawStrokeCommand,
+  EraseStrokesCommand,
+  InsertMediaCommand,
+  ReorderMediaCommand,
+  TransformMediaCommand,
+  TransformStrokesCommand,
+} from "./commands/index.js";
+import { HistoryManager } from "./HistoryManager.js";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
@@ -189,6 +200,12 @@ export class NoteCanvas {
     this.longPressTimer = null;
     this.longPressStart = null;
 
+    // Undo/redo history
+    this.historyManager = null;
+
+    // Eraser batching for undo (multiple strokes erased in one gesture = one undo)
+    this._eraserBatch = null;
+
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
     this._onViewportResize = this._onViewportResize.bind(this);
@@ -299,6 +316,9 @@ export class NoteCanvas {
     // Force redraw immediately to show updated state (we know we aren't drawing)
     this.renderer.forceRedraw();
     this._renderPdfControls();
+
+    // Clear history after sync (external changes invalidate undo commands)
+    this.historyManager?.clear();
 
     console.log(`[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`);
   }
@@ -441,6 +461,15 @@ export class NoteCanvas {
       this.noteData.deletedStrokes,
     );
 
+    // Initialize history manager for undo/redo
+    this.historyManager = new HistoryManager({
+      maxHistory: 50,
+      onStateChange: (state) => {
+        this.toolbar?.updateHistoryState?.(state);
+      },
+    });
+    this.historyManager.setNoteCanvas(this);
+
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, this.contentHeight);
 
@@ -520,6 +549,8 @@ export class NoteCanvas {
           if (action === "insert-camera") this.insertImage("camera");
           if (action === "insert-pdf") this.insertPdf();
         },
+        onUndo: () => this.historyManager?.undo(),
+        onRedo: () => this.historyManager?.redo(),
       },
     );
     this.toolbar.updateMode(this.mode);
@@ -564,6 +595,8 @@ export class NoteCanvas {
       const centerX = viewport.left + viewport.width / 2;
       const centerY = viewport.top + viewport.height / 2;
 
+      const insertedItems = [];
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
 
@@ -600,6 +633,7 @@ export class NoteCanvas {
           };
 
           this.mediaManager.addItem(item);
+          insertedItems.push(item);
         } catch (err) {
           console.error(`[NoteCanvas] Error processing file ${file.name}:`, err);
         }
@@ -608,6 +642,11 @@ export class NoteCanvas {
       // Save changes
       await this._saveMediaChanges();
       this.renderer.forceRedraw();
+
+      // Record undo command for inserted images
+      if (insertedItems.length > 0) {
+        this.historyManager?.push(new InsertMediaCommand(insertedItems));
+      }
     } catch (error) {
       console.error("[NoteCanvas] Failed to insert image:", error);
     }
@@ -642,6 +681,8 @@ export class NoteCanvas {
         const targetWidth = this.maxContentWidth || 1200;
         let currentY = startY;
 
+        const insertedPages = [];
+
         // Add pages to media items
         for (const page of pages) {
           // Scale page to fit content width while maintaining aspect ratio
@@ -655,6 +696,7 @@ export class NoteCanvas {
           };
           currentY += newItem.height;
           this.mediaManager.addItem(newItem);
+          insertedPages.push(newItem);
         }
 
         // Store reference to the PDF document at the note level
@@ -666,6 +708,9 @@ export class NoteCanvas {
         await this._saveMediaChanges();
         this.renderer.forceRedraw();
         this._renderPdfControls();
+
+        // Record undo command for PDF insert (all pages + pdfSource)
+        this.historyManager?.push(new InsertMediaCommand(insertedPages, fileId));
 
         // Expand canvas if needed
         const lastPage = pages[pages.length - 1];
@@ -1252,7 +1297,10 @@ export class NoteCanvas {
     }
 
     if (this.mode === "eraser" || this.mode === "lasso") {
-      if (this.mode === "lasso") {
+      if (this.mode === "eraser") {
+        // Commit eraser batch to history (multiple strokes = one undo)
+        this._commitEraserBatch();
+      } else if (this.mode === "lasso") {
         this._handleLassoEnd();
       }
 
@@ -1281,6 +1329,9 @@ export class NoteCanvas {
       const newIndex = this.noteData.strokes.length - 1;
       this.spatialIndex.insert(stroke, newIndex);
       this.strokesChanged = true;
+
+      // Record undo command for drawing
+      this.historyManager?.push(new DrawStrokeCommand(stroke, newIndex));
     }
 
     // After stroke is finished, check if a deferred update is pending.
@@ -1298,6 +1349,20 @@ export class NoteCanvas {
    * @private
    */
   _onKeyDown(e) {
+    // Undo: Ctrl+Z (or Cmd+Z on Mac)
+    if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+      e.preventDefault();
+      this.historyManager?.undo();
+      return;
+    }
+
+    // Redo: Ctrl+Y or Ctrl+Shift+Z (or Cmd+Shift+Z on Mac)
+    if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+      e.preventDefault();
+      this.historyManager?.redo();
+      return;
+    }
+
     if (e.key === "Delete" || e.key === "Backspace") {
       if (this.selectedMediaId) {
         this.deleteSelectedMedia();
@@ -1582,6 +1647,9 @@ export class NoteCanvas {
       return;
     }
 
+    // Record undo command BEFORE deleting (need full item data)
+    this.historyManager?.push(new DeleteMediaCommand([{ ...item }]));
+
     // Track deleted media ID
     this.noteData.deletedMedia.push(targetId);
 
@@ -1599,12 +1667,8 @@ export class NoteCanvas {
     // Save changes to note structure
     await this._saveMediaChanges();
 
-    // Delete binary file from storage if it exists
-    if (item?.fileId) {
-      await deleteFile(item.fileId).catch(() => {
-        // Silently ignore deletion errors (file may not exist)
-      });
-    }
+    // Note: We do NOT delete binary files on user delete action
+    // This allows undo to restore the media. Files are cleaned up separately.
 
     this.renderer.forceRedraw();
   }
@@ -1617,6 +1681,10 @@ export class NoteCanvas {
     const img = this.mediaManager.getImage(item?.fileId);
 
     if (!item || !img) return;
+
+    // Capture original state for undo
+    const originalFileId = item.fileId;
+    const originalDimensions = { width: item.width, height: item.height };
 
     const cropper = new ImageCropper();
     const blob = await cropper.show(img);
@@ -1637,6 +1705,14 @@ export class NoteCanvas {
       const ratio = newImg.height / newImg.width;
       const newHeight = item.width * ratio;
 
+      // Record undo command BEFORE applying changes
+      this.historyManager?.push(
+        new CropImageCommand(id, originalFileId, originalDimensions, newFileId, {
+          width: item.width,
+          height: newHeight,
+        }),
+      );
+
       this.mediaManager.updateItem(id, {
         fileId: newFileId,
         height: newHeight,
@@ -1649,6 +1725,14 @@ export class NoteCanvas {
   }
 
   moveSelectedMediaToFront(id) {
+    // Find original index for undo
+    const items = this.mediaManager.getItems();
+    const originalIndex = items.findIndex((i) => i.id === id);
+
+    if (originalIndex !== -1 && originalIndex !== items.length - 1) {
+      this.historyManager?.push(new ReorderMediaCommand(id, "front", originalIndex));
+    }
+
     this.mediaManager.moveItemToFront(id);
     this._saveMediaChanges();
     this.renderer.forceRedraw();
@@ -1656,6 +1740,14 @@ export class NoteCanvas {
   }
 
   moveSelectedMediaToBack(id) {
+    // Find original index for undo
+    const items = this.mediaManager.getItems();
+    const originalIndex = items.findIndex((i) => i.id === id);
+
+    if (originalIndex !== -1 && originalIndex !== 0) {
+      this.historyManager?.push(new ReorderMediaCommand(id, "back", originalIndex));
+    }
+
     this.mediaManager.moveItemToBack(id);
     this._saveMediaChanges();
     this.renderer.forceRedraw();
@@ -1800,13 +1892,22 @@ export class NoteCanvas {
     const { selectedIndices } = this._findStrokesInPolygon(polygon, eraseRect);
 
     if (selectedIndices.size > 0) {
+      // Collect erased strokes for undo command
+      const erasedStrokes = [];
+
       selectedIndices.forEach((index) => {
         const s = this.noteData.strokes[index];
         if (s) {
           s._deleted = true;
+          erasedStrokes.push({ index, id: s.id });
           if (s.id) this.noteData.deletedStrokes.push(s.id);
         }
       });
+
+      // Record undo command for scratch erase
+      if (erasedStrokes.length > 0) {
+        this.historyManager?.push(new EraseStrokesCommand(erasedStrokes));
+      }
 
       this.strokesChanged = true;
       this.strokeManager.markDirty();
@@ -1989,7 +2090,7 @@ export class NoteCanvas {
 
     // Query potential hits
     const candidates = this.spatialIndex.query(contentY - queryPadding, contentY + queryPadding);
-    let didErase = false;
+    const newlyErased = [];
 
     for (const index of candidates) {
       const stroke = this.noteData.strokes[index];
@@ -1997,19 +2098,37 @@ export class NoteCanvas {
 
       if (this._strokeIntersectsCircle(stroke, contentX, contentY, contentRadius)) {
         stroke._deleted = true;
-        didErase = true;
+        newlyErased.push({ index, id: stroke.id });
         if (stroke.id) {
           this.noteData.deletedStrokes.push(stroke.id);
         }
       }
     }
 
-    if (didErase) {
+    if (newlyErased.length > 0) {
+      // Add to eraser batch for undo (multiple strokes in one gesture = one undo)
+      if (!this._eraserBatch) {
+        this._eraserBatch = [];
+      }
+      this._eraserBatch.push(...newlyErased);
+
       this.renderer.forceRedraw();
       this.strokeManager.markDirty();
       this.strokeManager.forceSave(); // Save changes
       this.strokesChanged = true;
     }
+  }
+
+  /**
+   * Commit the eraser batch to history (called when eraser gesture ends)
+   * @private
+   */
+  _commitEraserBatch() {
+    if (this._eraserBatch && this._eraserBatch.length > 0) {
+      const cmd = new EraseStrokesCommand(this._eraserBatch);
+      this.historyManager?.push(cmd);
+    }
+    this._eraserBatch = null;
   }
 
   _strokeIntersectsCircle(stroke, cx, cy, r) {
@@ -2254,7 +2373,28 @@ export class NoteCanvas {
    * @private
    */
   _endTransform() {
-    const { selectedIndices } = this.transformState;
+    const { selectedIndices, initialStrokes } = this.transformState;
+
+    // Capture final coordinates for undo command
+    const finalCoords = selectedIndices.map((index) => {
+      const stroke = this.noteData.strokes[index];
+      return {
+        x: stroke.x.slice(),
+        y: stroke.y.slice(),
+      };
+    });
+
+    // Check if anything actually changed
+    const hasChanges = initialStrokes.some((initial, i) => {
+      const final = finalCoords[i];
+      return initial.x.some((x, j) => x !== final.x[j] || initial.y[j] !== final.y[j]);
+    });
+
+    // Record undo command if there were changes
+    if (hasChanges) {
+      const cmd = new TransformStrokesCommand(selectedIndices, initialStrokes, finalCoords);
+      this.historyManager?.push(cmd);
+    }
 
     // Update spatial index (with validation to handle stale references)
     selectedIndices.forEach((index) => {
@@ -2448,6 +2588,40 @@ export class NoteCanvas {
     this._clearLongPress();
 
     if (this.mediaDragState) {
+      const state = this.mediaDragState;
+      const item = state.item;
+
+      // Check if transform actually changed anything
+      const hasChanged =
+        item.x !== state.initialX ||
+        item.y !== state.initialY ||
+        item.width !== state.initialWidth ||
+        item.height !== state.initialHeight ||
+        (item.rotation || 0) !== state.initialRotation;
+
+      if (hasChanged) {
+        // Record undo command with initial and final states
+        this.historyManager?.push(
+          new TransformMediaCommand(
+            item.id,
+            {
+              x: state.initialX,
+              y: state.initialY,
+              width: state.initialWidth,
+              height: state.initialHeight,
+              rotation: state.initialRotation,
+            },
+            {
+              x: item.x,
+              y: item.y,
+              width: item.width,
+              height: item.height,
+              rotation: item.rotation || 0,
+            },
+          ),
+        );
+      }
+
       this.mediaDragState = null;
       this._saveMediaChanges();
     }
@@ -2673,9 +2847,22 @@ export class NoteCanvas {
 
     if (!confirmed) return;
 
-    // 1. Identify and remove PDF pages
+    // 1. Identify PDF pages and capture data for undo
     const pdfPages = this.mediaManager.getItems().filter((i) => i.type === "pdf-page");
+    const sourceFileId = this.noteData.pdfSource;
 
+    // Record undo command BEFORE deleting (need full item data)
+    if (pdfPages.length > 0) {
+      this.historyManager?.push(
+        new DeleteMediaCommand(
+          pdfPages.map((p) => ({ ...p })),
+          true,
+          sourceFileId,
+        ),
+      );
+    }
+
+    // 2. Remove PDF pages
     pdfPages.forEach((p) => {
       this.noteData.deletedMedia.push(p.id);
       this.mediaManager.removeItem(p.id);
@@ -2684,8 +2871,7 @@ export class NoteCanvas {
       }
     });
 
-    // 2. Remove source reference
-    const sourceFileId = this.noteData.pdfSource;
+    // 3. Remove source reference
     this.noteData.pdfSource = null;
 
     // 3. Save changes (triggers sync via dirty flag in StrokeManager)
@@ -2772,6 +2958,11 @@ export class NoteCanvas {
     if (this.mediaOverlay) {
       this.mediaOverlay.destroy();
       this.mediaOverlay = null;
+    }
+
+    if (this.historyManager) {
+      this.historyManager.destroy();
+      this.historyManager = null;
     }
 
     if (this.pdfTextLayerManager) {
