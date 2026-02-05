@@ -524,7 +524,6 @@ export class CanvasRenderer {
     if (!state) return;
 
     const { startY, currentY } = state;
-    if (currentY <= startY) return;
 
     const ctx = this.overlayCtx;
     ctx.save();
@@ -548,28 +547,32 @@ export class CanvasRenderer {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // 2. Draw arrows
-    const arrowX1 = this.contentWidth * 0.25;
-    const arrowX2 = this.contentWidth * 0.75;
+    // 2. Draw arrows (only if dragged)
+    if (Math.abs(currentY - startY) >= 1) {
+      const arrowX1 = this.contentWidth * 0.25;
+      const arrowX2 = this.contentWidth * 0.75;
+      const direction = currentY >= startY ? 1 : -1;
 
-    const drawArrow = (x, y1, y2) => {
-      ctx.beginPath();
-      ctx.moveTo(x, y1);
-      ctx.lineTo(x, y2);
-      ctx.stroke();
+      const drawArrow = (x, y1, y2) => {
+        ctx.beginPath();
+        ctx.moveTo(x, y1);
+        ctx.lineTo(x, y2);
+        ctx.stroke();
 
-      // Arrowhead
-      ctx.beginPath();
-      ctx.moveTo(x, y2);
-      ctx.lineTo(x - arrowSize / 2, y2 - arrowSize);
-      ctx.lineTo(x + arrowSize / 2, y2 - arrowSize);
-      ctx.closePath();
-      ctx.fillStyle = "rgba(0, 100, 255, 0.8)";
-      ctx.fill();
-    };
+        // Arrowhead
+        ctx.beginPath();
+        ctx.moveTo(x, y2);
+        const baseOffset = arrowSize * direction;
+        ctx.lineTo(x - arrowSize / 2, y2 - baseOffset);
+        ctx.lineTo(x + arrowSize / 2, y2 - baseOffset);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(0, 100, 255, 0.8)";
+        ctx.fill();
+      };
 
-    drawArrow(arrowX1, startY, currentY);
-    drawArrow(arrowX2, startY, currentY);
+      drawArrow(arrowX1, startY, currentY);
+      drawArrow(arrowX2, startY, currentY);
+    }
 
     ctx.restore();
   }

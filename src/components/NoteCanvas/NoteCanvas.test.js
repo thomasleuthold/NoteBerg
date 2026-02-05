@@ -285,13 +285,12 @@ describe("NoteCanvas Class", () => {
   });
 
   describe("PDF Handling", () => {
-    let importPdf, _showAlertDialog, showConfirmDialog;
+    let importPdf, showConfirmDialog;
 
     beforeEach(async () => {
       const pdfManager = await import("../../modules/pdfManager.js");
       const modals = await import("../modals.js");
       importPdf = pdfManager.importPdf;
-      _showAlertDialog = modals.showAlertDialog;
       showConfirmDialog = modals.showConfirmDialog;
 
       const pickPdfSpy = vi.spyOn(NoteCanvas.prototype, "_pickPdfFile");

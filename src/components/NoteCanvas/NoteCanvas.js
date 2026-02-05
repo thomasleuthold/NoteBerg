@@ -1135,6 +1135,10 @@ export class NoteCanvas {
       this.renderer.setSelectedStrokes(new Set(), null);
     }
 
+    if (this.renderer) {
+      this.renderer.clearOverlay();
+    }
+
     // Update PDF text layer interactivity (only enabled in pan mode)
     if (this.pdfTextLayerManager) {
       this.pdfTextLayerManager.setMode(newMode);
@@ -1242,11 +1246,9 @@ export class NoteCanvas {
   _onStrokeMove(points) {
     if (this.insertSpaceState) {
       const lastPoint = points[points.length - 1];
-      // Only allow dragging down
-      if (lastPoint.y > this.insertSpaceState.startY) {
-        this.insertSpaceState.currentY = lastPoint.y;
-        this.renderer.drawInsertSpaceIndicator(this.insertSpaceState);
-      }
+      // Allow dragging up and down
+      this.insertSpaceState.currentY = lastPoint.y;
+      this.renderer.drawInsertSpaceIndicator(this.insertSpaceState);
       return;
     }
 
@@ -1308,7 +1310,7 @@ export class NoteCanvas {
       const { startY, currentY } = this.insertSpaceState;
       const yShift = currentY - startY;
 
-      if (yShift > 0) {
+      if (yShift !== 0) {
         const affectedStrokeIds = [];
         const affectedMediaIds = [];
 
@@ -2571,6 +2573,11 @@ export class NoteCanvas {
       this._checkLongPressMove(e.clientX, e.clientY);
     }
 
+    if (this.mode === "insert-space" && !this.insertSpaceState) {
+      const { y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
+      this.renderer.drawInsertSpaceIndicator({ startY: y, currentY: y });
+    }
+
     // Handle media dragging in Pan mode
     if (this.mediaDragState) {
       const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
@@ -2648,6 +2655,10 @@ export class NoteCanvas {
    */
   _onPointerUpNav(e) {
     this._clearLongPress();
+
+    if (this.mode === "insert-space" && !this.insertSpaceState) {
+      this.renderer.clearOverlay();
+    }
 
     if (this.mediaDragState) {
       const state = this.mediaDragState;
