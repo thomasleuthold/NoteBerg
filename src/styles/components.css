@@ -1,82 +1,6 @@
 /* Component-specific styles */
 
-/* Note Card */
-.note-card {
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-md);
-  margin-bottom: var(--spacing-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.note-card:hover {
-  background-color: var(--bg-hover);
-  border-color: var(--border-secondary);
-  box-shadow: var(--shadow-sm);
-}
-
-.note-card.active {
-  border-color: var(--color-primary);
-  background-color: var(--color-primary-light);
-}
-
-.note-card-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: var(--spacing-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.note-card-preview {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.note-card-meta {
-  font-size: 0.7rem;
-  color: var(--text-tertiary);
-  margin-top: var(--spacing-xs);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.note-card-indicators {
-  display: flex;
-  gap: var(--spacing-xs);
-  align-items: center;
-}
-
-.note-indicator {
-  font-size: 0.7rem;
-  opacity: 0.6;
-}
-
-.note-indicator.has-text::before {
-  content: "📝";
-  margin-right: 2px;
-}
-
-.note-indicator.has-strokes::before {
-  content: "✏️";
-  margin-right: 2px;
-}
-
 /* Empty state */
-.empty-state {
-  padding: var(--spacing-2xl) var(--spacing-lg);
-  text-align: center;
-  color: var(--text-tertiary);
-}
-
 .empty-state-icon {
   font-size: 3rem;
   margin-bottom: var(--spacing-md);
@@ -130,53 +54,6 @@
 .update-notification-content .btn-secondary {
   font-size: 0.75rem;
   padding: var(--spacing-xs) var(--spacing-sm);
-}
-
-/* Overview Mode - Quick Notes List */
-.quick-notes-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 16px;
-}
-
-/* Overview Mode - Notes Grid */
-.notes-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 16px;
-}
-
-/* Preview text layer - scaled down versions of text-editor styles */
-.preview-text-layer.text-editor h1 {
-  font-size: 16px; /* 2em of 8px */
-  font-weight: 700;
-  margin: 8px 0;
-}
-
-.preview-text-layer.text-editor h2 {
-  font-size: 12px; /* 1.5em of 8px */
-  font-weight: 700;
-  margin: 6px 0;
-}
-
-.preview-text-layer.text-editor h3 {
-  font-size: 10px; /* 1.25em of 8px */
-  font-weight: 700;
-  margin: 5px 0;
-}
-
-.preview-text-layer.text-editor p {
-  margin: 6px 0;
-}
-
-.preview-text-layer.text-editor ul,
-.preview-text-layer.text-editor ol {
-  margin: 6px 0;
-  padding-left: 20px;
-}
-
-.preview-text-layer.text-editor li {
-  margin: 2px 0;
 }
 
 /* Licenses Dialog */

@@ -725,6 +725,14 @@
   transform-origin: 0 50%;
 }
 
+.corner-label {
+  font-size: 10px;
+  font-weight: bold;
+  color: white;
+  user-select: none;
+  pointer-events: none;
+}
+
 .crop-controls {
   position: absolute;
   bottom: -60px;
