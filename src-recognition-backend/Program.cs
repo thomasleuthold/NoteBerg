@@ -69,52 +69,54 @@ app.MapPost("/recognize", async (HttpContext context, [FromBody] List<JsStroke> 
         const int BATCH_SIZE = 500;
         var allRecognizedWords = new List<RecognizedWord>();
         var jsStrokeBatches = strokes.Chunk(BATCH_SIZE);
-        bool isFirstBatch = true; // Flag to control one-time logging
+
+        // Instantiate the recognizer and builder once per request to reduce COM object churn.
+        // Excessive creation/destruction of these objects in a loop can cause AccessViolationException during Finalize.
+        var recognizerContainer = new InkRecognizerContainer();
+        var strokeBuilder = new InkStrokeBuilder();
+
+        // Set Language for the container
+        if (!string.IsNullOrEmpty(language))
+        {
+            try 
+            {
+                var allRecognizers = recognizerContainer.GetRecognizers();
+                if (allRecognizers.Count == 0)
+                {
+                    Log.Warning("No handwriting recognizers found. Ensure language packs are installed for the current user ({User}).", System.Security.Principal.WindowsIdentity.GetCurrent().Name);
+                }
+
+                var culture = new CultureInfo(language);
+                var langName = culture.EnglishName; 
+                var nativeName = culture.NativeName;
+                var isoName = culture.Name; // e.g. "de-DE"
+                
+                var targetRecognizer = allRecognizers.FirstOrDefault(r => 
+                    r.Name.Contains(langName, StringComparison.OrdinalIgnoreCase) ||
+                    r.Name.Contains(nativeName, StringComparison.OrdinalIgnoreCase) ||
+                    // Only search for ISO code if it's specific (has a hyphen) to avoid matching "de" inside "United States"
+                    (isoName.Contains('-') && r.Name.Contains(isoName, StringComparison.OrdinalIgnoreCase)));
+
+                if (targetRecognizer != null)
+                {
+                    recognizerContainer.SetDefaultRecognizer(targetRecognizer);
+                    Log.Information("Set handwriting recognizer to: {Name}", targetRecognizer.Name);
+                }
+                else if (allRecognizers.Count > 0)
+                {
+                    var available = string.Join(", ", allRecognizers.Select(r => r.Name));
+                    Log.Warning("No recognizer found for language {Language} (looked for '{Name}', '{NativeName}' or '{IsoName}'). Using default. Available: {Available}", language, langName, nativeName, isoName, available);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning("Error setting recognition language: {Error}", ex.Message);
+            }
+        }
 
         foreach (var batch in jsStrokeBatches)
         {
-            // Create a new container for each batch to ensure isolation
-            var recognizerContainer = new InkRecognizerContainer();
-            
-            // Set Language for the new container
-            if (!string.IsNullOrEmpty(language))
-            {
-                try 
-                {
-                    var allRecognizers = recognizerContainer.GetRecognizers();
-                    var culture = new CultureInfo(language);
-                    var langName = culture.EnglishName; 
-                    
-                    var targetRecognizer = allRecognizers.FirstOrDefault(r => 
-                        r.Name.Contains(langName, StringComparison.OrdinalIgnoreCase));
-
-                    if (targetRecognizer != null)
-                    {
-                        recognizerContainer.SetDefaultRecognizer(targetRecognizer);
-                        if (isFirstBatch) 
-                        {
-                            Log.Information("Set handwriting recognizer to: {Name}", targetRecognizer.Name);
-                        }
-                    }
-                    else
-                    {
-                        if (isFirstBatch)
-                        {
-                            Log.Warning("No recognizer found for language {Language} (looked for '{Name}'). Using default.", language, langName);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    if (isFirstBatch)
-                    {
-                        Log.Warning("Error setting recognition language: {Error}", ex.Message);
-                    }
-                }
-            }
-
             var strokeContainer = new InkStrokeContainer();
-            var strokeBuilder = new InkStrokeBuilder();
             var strokeIdMap = new Dictionary<uint, string>();
 
             Log.Information("Processing a batch of {BatchSize} strokes.", batch.Length);
@@ -170,8 +172,6 @@ app.MapPost("/recognize", async (HttpContext context, [FromBody] List<JsStroke> 
                     StrokeIds = mappedIds
                 });
             }
-            
-            isFirstBatch = false; // Ensure logging only happens on the first pass
         }
 
         return Results.Ok(allRecognizedWords);
@@ -186,6 +186,7 @@ app.MapPost("/recognize", async (HttpContext context, [FromBody] List<JsStroke> 
 try
 {
     Log.Information("Starting Handwriting Recognition Service on port {Port}", port);
+    Log.Information("Running as user: {UserIdentity}", System.Security.Principal.WindowsIdentity.GetCurrent().Name);
     app.Run();
 }
 catch (Exception ex)
