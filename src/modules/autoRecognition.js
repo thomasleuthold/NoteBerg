@@ -59,6 +59,8 @@ async function performRecognition(noteId, strokes) {
 
     // Format strokes for the Web Service
     // Expected format: { id: "uuid", points: [{x, y, pressure, ...}] }
+    // Strokes are sent in temporal order — the recognition service handles
+    // spatial analysis internally to group strokes into words/lines.
     const formattedStrokes = strokes.map((s) => ({
       id: s.id,
       points: s.x.map((x, i) => ({
@@ -115,7 +117,9 @@ async function performRecognition(noteId, strokes) {
             // updateNote automatically updates 'modified' timestamp
             // This will trigger a sync, which is desirable so the search index propagates to other devices
           });
-          console.log(`[Recognition] Success for note ${noteId}`);
+          console.log(`[Recognition] Success for note ${noteId}: ${result.length} words`);
+        } else {
+          console.log(`[Recognition] No change for note ${noteId}, skipping update`);
         }
       }
     }

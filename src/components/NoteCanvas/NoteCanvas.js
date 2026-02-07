@@ -2965,10 +2965,11 @@ export class NoteCanvas {
    */
   destroy() {
     // Trigger handwriting recognition if strokes changed
+    let pendingRecognition = null;
     if (this.strokesChanged && this.noteId && this.noteData?.strokes) {
       const activeStrokes = this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted);
       if (activeStrokes.length > 0) {
-        forceRecognition(this.noteId, activeStrokes).catch((e) =>
+        pendingRecognition = forceRecognition(this.noteId, activeStrokes).catch((e) =>
           console.error("[NoteCanvas] Recognition failed:", e),
         );
       }
@@ -3063,12 +3064,6 @@ export class NoteCanvas {
       }
     };
 
-    if (this._pendingThumbnailSave) {
-      this._pendingThumbnailSave.then(cleanupStrokeManager).catch(cleanupStrokeManager);
-    } else {
-      cleanupStrokeManager();
-    }
-
     // Clear state
     this.noteId = null;
     this.noteData = null;
@@ -3078,5 +3073,21 @@ export class NoteCanvas {
     if (window.__noteCanvas === this) {
       window.__noteCanvas = null;
     }
+
+    // Return promise that resolves when all async work (thumbnail + recognition) completes
+    let pendingThumbnail;
+    if (this._pendingThumbnailSave) {
+      pendingThumbnail = this._pendingThumbnailSave
+        .then(cleanupStrokeManager)
+        .catch(cleanupStrokeManager);
+    } else {
+      cleanupStrokeManager();
+      pendingThumbnail = Promise.resolve();
+    }
+
+    // Wait for both thumbnail save and recognition to complete before sync
+    return pendingRecognition
+      ? Promise.all([pendingThumbnail, pendingRecognition]).then(() => {})
+      : pendingThumbnail;
   }
 }

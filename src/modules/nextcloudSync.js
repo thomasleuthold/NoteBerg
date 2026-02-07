@@ -649,6 +649,10 @@ async function syncNoteMedia(note) {
     const blob = await getFile(fileId);
     if (!blob) {
       console.warn(`[Sync] Local file not found for media item ${item.id} (fileId: ${fileId})`);
+      // Clear stale thumbnail reference so it gets regenerated on next open
+      if (item.id === "thumbnail") {
+        await updateNote(note.id, { thumbnailFileId: null, thumbnailTimestamp: null });
+      }
       continue;
     }
 

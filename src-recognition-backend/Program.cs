@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Numerics;
 using Windows.Foundation;
 using Windows.UI.Input.Inking;
+using Windows.UI.Input.Inking.Analysis;
 using Serilog;
 using System.Globalization;
 using System.IO;
@@ -66,47 +67,56 @@ app.MapPost("/recognize", async (HttpContext context, [FromBody] List<JsStroke> 
     {
         Log.Information("Received {StrokeCount} strokes for recognition from {IPAddress}.", strokes.Count, ipAddress);
 
-        const int BATCH_SIZE = 500;
-        var allRecognizedWords = new List<RecognizedWord>();
-        var jsStrokeBatches = strokes.Chunk(BATCH_SIZE);
+        var recognizedWords = new List<RecognizedWord>();
 
-        // Instantiate the recognizer and builder once per request to reduce COM object churn.
-        // Excessive creation/destruction of these objects in a loop can cause AccessViolationException during Finalize.
-        var recognizerContainer = new InkRecognizerContainer();
+        // Build InkStroke objects and track ID mapping
         var strokeBuilder = new InkStrokeBuilder();
+        var inkStrokes = new List<InkStroke>();
+        var strokeIdMap = new Dictionary<uint, string>();
 
-        // Set Language for the container
+        foreach (var jsStroke in strokes)
+        {
+            if (jsStroke.Points == null || jsStroke.Points.Count == 0) continue;
+
+            var inkPoints = jsStroke.Points
+                .Select(p => new InkPoint(new Point(p.X, p.Y), p.Pressure))
+                .ToList();
+
+            if (inkPoints.Count == 0) continue;
+
+            var stroke = strokeBuilder.CreateStrokeFromInkPoints(inkPoints, Matrix3x2.Identity);
+            strokeIdMap[stroke.Id] = jsStroke.Id;
+            inkStrokes.Add(stroke);
+        }
+
+        if (inkStrokes.Count == 0)
+        {
+            return Results.Ok(recognizedWords);
+        }
+
+        Log.Information("Processing {StrokeCount} strokes using InkAnalyzer.", inkStrokes.Count);
+
+        // Use InkAnalyzer instead of InkRecognizerContainer — it performs spatial
+        // analysis to group strokes into words/lines regardless of temporal order,
+        // and supports SetStrokeDataKind to ensure all strokes are treated as text.
+        var inkAnalyzer = new InkAnalyzer();
+        inkAnalyzer.AddDataForStrokes(inkStrokes);
+
+        // Mark all strokes as writing so the analyzer doesn't classify any as drawings
+        foreach (var stroke in inkStrokes)
+        {
+            inkAnalyzer.SetStrokeDataKind(stroke.Id, InkAnalysisStrokeKind.Writing);
+        }
+
+        // Set language hint if provided
         if (!string.IsNullOrEmpty(language))
         {
-            try 
+            try
             {
-                var allRecognizers = recognizerContainer.GetRecognizers();
-                if (allRecognizers.Count == 0)
-                {
-                    Log.Warning("No handwriting recognizers found. Ensure language packs are installed for the current user ({User}).", System.Security.Principal.WindowsIdentity.GetCurrent().Name);
-                }
-
-                var culture = new CultureInfo(language);
-                var langName = culture.EnglishName; 
-                var nativeName = culture.NativeName;
-                var isoName = culture.Name; // e.g. "de-DE"
-                
-                var targetRecognizer = allRecognizers.FirstOrDefault(r => 
-                    r.Name.Contains(langName, StringComparison.OrdinalIgnoreCase) ||
-                    r.Name.Contains(nativeName, StringComparison.OrdinalIgnoreCase) ||
-                    // Only search for ISO code if it's specific (has a hyphen) to avoid matching "de" inside "United States"
-                    (isoName.Contains('-') && r.Name.Contains(isoName, StringComparison.OrdinalIgnoreCase)));
-
-                if (targetRecognizer != null)
-                {
-                    recognizerContainer.SetDefaultRecognizer(targetRecognizer);
-                    Log.Information("Set handwriting recognizer to: {Name}", targetRecognizer.Name);
-                }
-                else if (allRecognizers.Count > 0)
-                {
-                    var available = string.Join(", ", allRecognizers.Select(r => r.Name));
-                    Log.Warning("No recognizer found for language {Language} (looked for '{Name}', '{NativeName}' or '{IsoName}'). Using default. Available: {Available}", language, langName, nativeName, isoName, available);
-                }
+                // InkAnalyzer doesn't use InkRecognizerContainer for language selection.
+                // Instead, we log the language for diagnostics. The analyzer uses the
+                // system's installed handwriting recognizers automatically.
+                Log.Information("Recognition language requested: {Language}", language);
             }
             catch (Exception ex)
             {
@@ -114,67 +124,56 @@ app.MapPost("/recognize", async (HttpContext context, [FromBody] List<JsStroke> 
             }
         }
 
-        foreach (var batch in jsStrokeBatches)
+        var analysisResult = await inkAnalyzer.AnalyzeAsync();
+
+        if (analysisResult.Status == InkAnalysisStatus.Updated)
         {
-            var strokeContainer = new InkStrokeContainer();
-            var strokeIdMap = new Dictionary<uint, string>();
+            // Extract recognized words from the analysis tree
+            var wordNodes = inkAnalyzer.AnalysisRoot.FindNodes(InkAnalysisNodeKind.InkWord);
+            var recognizedStrokeIds = new HashSet<uint>();
 
-            Log.Information("Processing a batch of {BatchSize} strokes.", batch.Length);
-
-            foreach (var jsStroke in batch)
+            foreach (InkAnalysisInkWord wordNode in wordNodes)
             {
-                if (jsStroke.Points == null || jsStroke.Points.Count == 0) continue;
-
-                var inkPoints = jsStroke.Points
-                    .Select(p => new InkPoint(new Point(p.X, p.Y), p.Pressure))
-                    .ToList();
-                
-                if (inkPoints.Count == 0) continue;
-
-                var stroke = strokeBuilder.CreateStrokeFromInkPoints(inkPoints, Matrix3x2.Identity);
-                strokeIdMap[stroke.Id] = jsStroke.Id;
-                strokeContainer.AddStroke(stroke);
-            }
-
-            if (strokeContainer.GetStrokes().Count == 0) continue;
-
-            // Perform Recognition
-            var results = await recognizerContainer.RecognizeAsync(strokeContainer, InkRecognitionTarget.All);
-
-            // Extract Results
-            foreach (var result in results)
-            {
-                var text = result.GetTextCandidates().FirstOrDefault();
+                var text = wordNode.RecognizedText;
                 if (string.IsNullOrWhiteSpace(text)) continue;
 
-                var rect = result.BoundingRect;
-                var resultStrokes = result.GetStrokes();
+                var rect = wordNode.BoundingRect;
+                var wordStrokeIds = wordNode.GetStrokeIds();
                 var mappedIds = new List<string>();
 
-                foreach (var s in resultStrokes)
+                foreach (var strokeId in wordStrokeIds)
                 {
-                    if (strokeIdMap.TryGetValue(s.Id, out var originalId))
+                    recognizedStrokeIds.Add(strokeId);
+                    if (strokeIdMap.TryGetValue(strokeId, out var originalId))
                     {
                         mappedIds.Add(originalId);
                     }
                 }
 
-                allRecognizedWords.Add(new RecognizedWord
+                recognizedWords.Add(new RecognizedWord
                 {
                     Text = text,
-                    BoundingRect = new RectData 
-                    { 
-                        X = (float)rect.X, 
-                        Y = (float)rect.Y, 
-                        Width = (float)rect.Width, 
-                        Height = (float)rect.Height 
+                    BoundingRect = new RectData
+                    {
+                        X = (float)rect.X,
+                        Y = (float)rect.Y,
+                        Width = (float)rect.Width,
+                        Height = (float)rect.Height
                     },
                     StrokeIds = mappedIds
                 });
             }
+
+            var unrecognizedCount = strokeIdMap.Keys.Count(id => !recognizedStrokeIds.Contains(id));
+            Log.Information("Recognition complete: {WordCount} words, {RecognizedStrokes}/{TotalStrokes} strokes recognized, {UnrecognizedStrokes} unrecognized.",
+                recognizedWords.Count, recognizedStrokeIds.Count, strokeIdMap.Count, unrecognizedCount);
+        }
+        else
+        {
+            Log.Warning("InkAnalyzer returned status: {Status}", analysisResult.Status);
         }
 
-        return Results.Ok(allRecognizedWords);
+        return Results.Ok(recognizedWords);
     }
     catch (Exception ex)
     {
@@ -183,9 +182,11 @@ app.MapPost("/recognize", async (HttpContext context, [FromBody] List<JsStroke> 
     }
 });
 
+const string SERVICE_VERSION = "1.3.0";
+
 try
 {
-    Log.Information("Starting Handwriting Recognition Service on port {Port}", port);
+    Log.Information("Starting Handwriting Recognition Service v{Version} on port {Port}", SERVICE_VERSION, port);
     Log.Information("Running as user: {UserIdentity}", System.Security.Principal.WindowsIdentity.GetCurrent().Name);
     app.Run();
 }

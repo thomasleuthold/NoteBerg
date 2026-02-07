@@ -300,8 +300,7 @@ function attachRootOverviewListeners(container) {
 
       updateClearBtn();
       searchResults.style.display = "block";
-      searchResults.innerHTML =
-        '<div class="search-status">Searching...</div>';
+      searchResults.innerHTML = '<div class="search-status">Searching...</div>';
 
       try {
         const notebooks = await getAllNotebooks();
@@ -326,8 +325,7 @@ function attachRootOverviewListeners(container) {
         renderSearchResultsList(searchResults, results);
       } catch (error) {
         console.error("Search error:", error);
-        searchResults.innerHTML =
-          '<div class="search-error">Error performing search</div>';
+        searchResults.innerHTML = '<div class="search-error">Error performing search</div>';
       }
     };
 
@@ -377,8 +375,7 @@ async function handleDeleteNote(e, noteId) {
 
 function renderSearchResultsList(container, results) {
   if (results.length === 0) {
-    container.innerHTML =
-      '<div class="search-status">No notes found matching your search.</div>';
+    container.innerHTML = '<div class="search-status">No notes found matching your search.</div>';
     return;
   }
 
