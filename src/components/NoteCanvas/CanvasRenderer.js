@@ -515,6 +515,68 @@ export class CanvasRenderer {
     this.overlayCtx.stroke();
   }
 
+  /**
+   * Draw the visual indicator for inserting vertical space
+   * @param {{startY: number, currentY: number}} state
+   */
+  drawInsertSpaceIndicator(state) {
+    this.clearOverlay();
+    if (!state) return;
+
+    const { startY, currentY } = state;
+
+    const ctx = this.overlayCtx;
+    ctx.save();
+
+    // Transform from content space to screen space for drawing on overlay
+    const centeringOffset = this._getCenteringOffset();
+    ctx.translate(centeringOffset, 0);
+    ctx.scale(this.zoomScale, this.zoomScale);
+    ctx.translate(-this.contentScrollLeft, -this.contentScrollTop);
+
+    const lineWidth = 1 / this.zoomScale; // Keep line crisp
+    const arrowSize = 8 / this.zoomScale;
+
+    // 1. Draw horizontal line
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(0, 100, 255, 0.8)";
+    ctx.lineWidth = lineWidth;
+    ctx.setLineDash([5, 5]);
+    ctx.moveTo(0, startY);
+    ctx.lineTo(this.contentWidth, startY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 2. Draw arrows (only if dragged)
+    if (Math.abs(currentY - startY) >= 1) {
+      const arrowX1 = this.contentWidth * 0.25;
+      const arrowX2 = this.contentWidth * 0.75;
+      const direction = currentY >= startY ? 1 : -1;
+
+      const drawArrow = (x, y1, y2) => {
+        ctx.beginPath();
+        ctx.moveTo(x, y1);
+        ctx.lineTo(x, y2);
+        ctx.stroke();
+
+        // Arrowhead
+        ctx.beginPath();
+        ctx.moveTo(x, y2);
+        const baseOffset = arrowSize * direction;
+        ctx.lineTo(x - arrowSize / 2, y2 - baseOffset);
+        ctx.lineTo(x + arrowSize / 2, y2 - baseOffset);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(0, 100, 255, 0.8)";
+        ctx.fill();
+      };
+
+      drawArrow(arrowX1, startY, currentY);
+      drawArrow(arrowX2, startY, currentY);
+    }
+
+    ctx.restore();
+  }
+
   clearOverlay() {
     this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
   }

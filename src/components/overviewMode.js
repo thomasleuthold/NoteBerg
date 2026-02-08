@@ -53,17 +53,22 @@ async function renderRootOverview(container) {
   const quickNotes = await getQuickNotes();
 
   // Get note counts for each notebook
-  const notebookCounts = await Promise.all(
+  const notebookData = await Promise.all(
     notebooks.map(async (notebook) => {
       const notes = await getNotesByNotebook(notebook.id);
-      return { notebook, count: notes.length };
+      const lastNoteModified = notes.length > 0 ? Math.max(...notes.map((n) => n.modified)) : 0;
+      const effectiveUpdatedAt = Math.max(notebook.modified || 0, lastNoteModified);
+      return { notebook, count: notes.length, effectiveUpdatedAt };
     }),
   );
 
+  // Sort by effectiveUpdatedAt descending
+  notebookData.sort((a, b) => b.effectiveUpdatedAt - a.effectiveUpdatedAt);
+
   // Build HTML
   const notebooksHtml =
-    notebookCounts.length > 0
-      ? notebookCounts.map(({ notebook, count }) => renderNotebookCard(notebook, count)).join("")
+    notebookData.length > 0
+      ? notebookData.map(({ notebook, count }) => renderNotebookCard(notebook, count)).join("")
       : '<p class="empty-state">No notebooks yet. Create your first notebook!</p>';
 
   const quickNotesHtml =
@@ -78,23 +83,23 @@ async function renderRootOverview(container) {
     <div class="overview-container">
       <div class="overview-header">
         <h2>Overview</h2>
-        <button class="btn-secondary" id="recycle-bin-btn" title="Recycle Bin" style="display: flex; align-items: center; gap: 8px;">
+        <button class="btn-secondary btn-with-icon" id="recycle-bin-btn" title="Recycle Bin">
           ${trashIcon}
           <span>Recycle Bin</span>
         </button>
       </div>
 
-      <div class="search-section" style="margin-bottom: 24px;">
-        <div style="display: flex; gap: 8px;">
-          <div style="position: relative; flex: 1;">
-            <input type="text" id="search-input" placeholder="Search notes..." style="width: 100%; padding: 8px 12px; padding-right: 32px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary);">
-            <button id="search-clear-btn" type="button" title="Clear search" style="display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: transparent; border: none; cursor: pointer; color: var(--text-secondary); padding: 4px; width: 24px; height: 24px; border-radius: 50%; align-items: center; justify-content: center; z-index: 10; line-height: 0;">
+      <div class="overview-search">
+        <div class="overview-search-row">
+          <div class="overview-search-field">
+            <input type="text" id="search-input" class="overview-search-input" placeholder="Search notes...">
+            <button id="search-clear-btn" class="overview-search-clear" type="button" title="Clear search">
               ${closeIcon}
             </button>
           </div>
           <button id="search-btn" class="btn-primary">Search</button>
         </div>
-        <div id="search-results" style="display: none; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); max-height: 300px; overflow-y: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"></div>
+        <div id="search-results" class="overview-search-results"></div>
       </div>
 
       <div class="notebooks-section">
@@ -295,8 +300,7 @@ function attachRootOverviewListeners(container) {
 
       updateClearBtn();
       searchResults.style.display = "block";
-      searchResults.innerHTML =
-        '<div style="padding: 12px; color: var(--text-secondary);">Searching...</div>';
+      searchResults.innerHTML = '<div class="search-status">Searching...</div>';
 
       try {
         const notebooks = await getAllNotebooks();
@@ -321,8 +325,7 @@ function attachRootOverviewListeners(container) {
         renderSearchResultsList(searchResults, results);
       } catch (error) {
         console.error("Search error:", error);
-        searchResults.innerHTML =
-          '<div style="padding: 12px; color: var(--error-color);">Error performing search</div>';
+        searchResults.innerHTML = '<div class="search-error">Error performing search</div>';
       }
     };
 
@@ -340,14 +343,6 @@ function attachRootOverviewListeners(container) {
         searchResults.style.display = "none";
         updateClearBtn();
         searchInput.focus();
-      });
-
-      // Add hover effect
-      searchClearBtn.addEventListener("mouseenter", () => {
-        searchClearBtn.style.backgroundColor = "var(--bg-secondary)";
-      });
-      searchClearBtn.addEventListener("mouseleave", () => {
-        searchClearBtn.style.backgroundColor = "transparent";
       });
     }
 
@@ -380,17 +375,16 @@ async function handleDeleteNote(e, noteId) {
 
 function renderSearchResultsList(container, results) {
   if (results.length === 0) {
-    container.innerHTML =
-      '<div style="padding: 12px; color: var(--text-secondary);">No notes found matching your search.</div>';
+    container.innerHTML = '<div class="search-status">No notes found matching your search.</div>';
     return;
   }
 
   container.innerHTML = results
     .map(
       (note) => `
-    <div class="search-result-item" data-note-id="${note.id}" style="padding: 10px 12px; border-bottom: 1px solid var(--border-color); cursor: pointer;">
-      <div style="font-weight: 600; margin-bottom: 2px;">${escapeHtml(note.title || "Untitled")}</div>
-      <div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between;">
+    <div class="search-result-item" data-note-id="${note.id}">
+      <div class="search-result-title">${escapeHtml(note.title || "Untitled")}</div>
+      <div class="search-result-meta">
         <span>${formatDate(note.modified)}</span>
         ${note.recognition?.fullText ? '<span title="Contains handwriting">✍️</span>' : ""}
       </div>
@@ -408,12 +402,6 @@ function renderSearchResultsList(container, results) {
         noteId: item.dataset.noteId,
         searchQuery: searchState.query,
       });
-    });
-    item.addEventListener("mouseenter", () => {
-      item.style.backgroundColor = "var(--bg-secondary)";
-    });
-    item.addEventListener("mouseleave", () => {
-      item.style.backgroundColor = "transparent";
     });
   });
 }
@@ -441,41 +429,41 @@ function renderPreviewNoteCard(note) {
     // Create layered structure exactly like the editor, then scale the whole thing
     // This ensures text and strokes maintain their exact relative positions
     const textLayer = hasText
-      ? `<div class="text-editor" contenteditable="false" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; padding: 20px; font-size: 16px; line-height: 1.6; overflow: hidden; pointer-events: none; z-index: 1;">${markdownToHtml(content)}</div>`
+      ? `<div class="text-editor" contenteditable="false">${markdownToHtml(content)}</div>`
       : "";
     // Render at full editor size (800x600) then scale down with CSS transform
     previewContent = `
-      <div class="preview-scaler" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; transform-origin: top left; pointer-events: none;">
-        <canvas class="note-preview-canvas" data-note-id="${note.id}" data-full-size="true" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; display: block; z-index: 0;"></canvas>
+      <div class="preview-scaler">
+        <canvas class="note-preview-canvas" data-note-id="${note.id}" data-full-size="true"></canvas>
         ${textLayer}
       </div>
     `;
   } else if (hasText) {
     // For text-only notes, render the HTML directly with text-editor class
     // Convert markdown to HTML exactly like the editor does
-    const textLayer = `<div class="text-editor" contenteditable="false" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; padding: 20px; font-size: 16px; line-height: 1.6; overflow: hidden; pointer-events: none;">${markdownToHtml(content)}</div>`;
+    const textLayer = `<div class="text-editor" contenteditable="false">${markdownToHtml(content)}</div>`;
     previewContent = `
-      <div class="preview-scaler" style="position: absolute; top: 0; left: 0; width: 800px; height: 600px; transform-origin: top left; pointer-events: none;">
+      <div class="preview-scaler">
         ${textLayer}
       </div>
     `;
   } else {
-    previewContent = `<div style="padding: 12px; font-style: italic;">No content</div>`;
+    previewContent = `<div class="preview-no-content">No content</div>`;
   }
 
   const deleteIcon = getIcon("trash", 16);
 
   return `
-    <div class="note-card preview-card" data-note-id="${note.id}" style="display: flex; flex-direction: column; aspect-ratio: 1; border: 2px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--bg-secondary); cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;">
-      <div class="note-card-header" style="padding: 12px; border-bottom: 1px solid var(--border-color); background: var(--bg-primary);">
-        <div class="note-card-title" style="font-weight: 600; margin-bottom: 4px;">${escapeHtml(note.title || "Untitled")}</div>
-        <div class="note-card-date" style="font-size: 0.75rem; color: var(--text-secondary);">${formatDate(note.modified)}</div>
+    <div class="note-card preview-card" data-note-id="${note.id}">
+      <div class="note-card-header">
+        <div class="note-card-title">${escapeHtml(note.title || "Untitled")}</div>
+        <div class="note-card-date">${formatDate(note.modified)}</div>
       </div>
-      <div class="note-card-preview" style="flex: 1; overflow: hidden; font-size: 0.875rem; color: var(--text-secondary); position: relative; background: var(--bg-primary);">
+      <div class="note-card-preview">
         ${previewContent}
       </div>
-      <div class="note-card-actions" style="padding: 8px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end;">
-         <button class="card-delete-btn btn-icon" data-note-id="${note.id}" title="Delete" style="padding: 4px;">
+      <div class="note-card-actions">
+         <button class="card-delete-btn btn-icon" data-note-id="${note.id}" title="Delete">
             ${deleteIcon}
          </button>
       </div>
@@ -557,8 +545,7 @@ async function renderNotePreviews(container, notes) {
         const containerRect = previewContainer.getBoundingClientRect();
         // Use a default if rect is zero (e.g. hidden) to avoid divide by zero
         const containerWidth = containerRect.width || 300;
-        const containerHeight = containerRect.height || 300;
-        const scale = Math.min(containerWidth / 800, containerHeight / 600);
+        const scale = containerWidth / 800;
         scaler.style.transform = `scale(${scale})`;
       }
     }

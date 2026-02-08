@@ -154,6 +154,17 @@
   box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.4);
 }
 
+.note-canvas-toolbar__button--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.note-canvas-toolbar__button--disabled:hover {
+  transform: none;
+  box-shadow: none;
+  background-color: transparent;
+}
+
 /* Button container for positioning dialog */
 .note-canvas-toolbar__button-container {
   position: relative;
@@ -712,6 +723,14 @@
   height: 2px;
   background: #3b82f6;
   transform-origin: 0 50%;
+}
+
+.corner-label {
+  font-size: 10px;
+  font-weight: bold;
+  color: white;
+  user-select: none;
+  pointer-events: none;
 }
 
 .crop-controls {

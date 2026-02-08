@@ -69,13 +69,14 @@ export function initNoteCanvasComponent() {
   });
 
   // Listen for navigation to clean up when leaving notebook mode
-  window.addEventListener("navigate", (e) => {
+  window.addEventListener("navigate", async (e) => {
     if (e.detail?.previousMode === "notebook" && noteCanvasInstance) {
       const noteId = noteCanvasInstance.noteId;
-      noteCanvasInstance.destroy();
+      const destroyPromise = noteCanvasInstance.destroy();
       noteCanvasInstance = null;
 
       if (noteId) {
+        await destroyPromise;
         syncOnNoteClose(noteId);
       }
     }

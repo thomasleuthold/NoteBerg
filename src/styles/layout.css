@@ -43,14 +43,15 @@
 
 .notebooks-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--spacing-md);
 }
 
-.quick-notes-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
+.quick-notes-list,
+.notes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--spacing-md);
 }
 
 /* Section headers */
@@ -192,91 +193,206 @@
 .note-card:hover {
   border-color: var(--border-secondary);
   background-color: var(--bg-tertiary);
-  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
 .note-card:hover .card-delete-btn {
   opacity: 1;
 }
 
-.note-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-sm);
+/* Overview Search */
+.overview-search {
+  margin-bottom: 24px;
 }
 
-.note-card-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
+.overview-search-row {
+  display: flex;
+  gap: 8px;
+}
+
+.overview-search-field {
+  position: relative;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.note-indicators {
-  display: flex;
-  gap: var(--spacing-xs);
-  flex-shrink: 0;
+.overview-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  padding-right: 32px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
-.note-indicator {
-  display: inline-flex;
+.overview-search-clear {
+  display: none;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-sm);
-  font-size: 0.625rem;
-  font-weight: 700;
-  color: white;
+  z-index: 10;
+  line-height: 0;
 }
 
-.note-indicator.text {
-  background-color: var(--color-primary);
+.overview-search-clear:hover {
+  background-color: var(--bg-secondary);
 }
 
-.note-indicator.handwriting {
-  background-color: var(--color-success);
+.overview-search-results {
+  display: none;
+  margin-top: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  max-height: 300px;
+  overflow-y: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.note-indicator.drawing {
-  background-color: var(--color-warning);
+/* Search Result Items */
+.search-result-item {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-primary);
+  cursor: pointer;
 }
 
-.note-card-preview {
+.search-result-item:hover {
+  background-color: var(--bg-secondary);
+}
+
+.search-result-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.search-result-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+}
+
+.search-status {
+  padding: 12px;
+  color: var(--text-secondary);
+}
+
+.search-error {
+  padding: 12px;
+  color: var(--color-danger);
+}
+
+/* Preview Note Cards */
+.preview-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 4 / 3;
+  border: 2px solid var(--border-primary);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s;
+}
+
+.preview-card .note-card-header {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+}
+
+.preview-card .note-card-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.preview-card .note-card-date {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.preview-card .note-card-preview {
+  flex: 1;
+  overflow: hidden;
   font-size: 0.875rem;
   color: var(--text-secondary);
-  margin: 0 0 var(--spacing-sm) 0;
-  line-height: 1.5;
+  position: relative;
+  background: var(--bg-primary);
 }
 
-.note-tags {
+.preview-card .note-card-actions {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  padding: 8px;
+  z-index: 2;
+}
+
+.preview-card .card-delete-btn {
+  position: static;
+  padding: 4px;
+}
+
+.preview-no-content {
+  padding: 12px;
+  font-style: italic;
+}
+
+/* Preview Scaler */
+.preview-scaler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 800px;
+  height: 600px;
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.preview-scaler canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 800px;
+  height: 600px;
+  display: block;
+  z-index: 0;
+}
+
+.preview-scaler .text-editor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 800px;
+  height: 600px;
+  padding: 20px;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Button with icon layout */
+.btn-with-icon {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-sm);
-}
-
-.note-tag {
-  display: inline-block;
-  padding: 2px var(--spacing-xs);
-  background-color: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  font-size: 0.75rem;
-  color: var(--text-tertiary);
-}
-
-.note-card-footer {
-  font-size: 0.75rem;
-  color: var(--text-tertiary);
-  padding-top: var(--spacing-xs);
-  border-top: 1px solid var(--border-primary);
+  align-items: center;
+  gap: 8px;
 }
 
 /* Empty states */
