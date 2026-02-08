@@ -72,6 +72,7 @@
   display: flex;
   align-items: flex-start;
   touch-action: none;
+  background-color: var(--bg-primary);
 }
 
 /* ==========================================================================
@@ -84,7 +85,8 @@
   left: 0;
   transform-origin: top left;
   will-change: transform;
-  background-color: var(--bg-primary);
+  background-color: transparent;
+  z-index: 2;
 }
 
 .sliding-buffer-canvas--centered {
@@ -271,6 +273,17 @@
 .note-canvas--draw-mode .note-canvas__text-layer,
 .note-canvas--eraser-mode .note-canvas__text-layer,
 .note-canvas--lasso-mode .note-canvas__text-layer {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Disable text editor interaction in non-text modes (text-mode rule is in TextEditorLayer.css) */
+.note-canvas--pan-mode .note-canvas__text-editor-layer,
+.note-canvas--draw-mode .note-canvas__text-editor-layer,
+.note-canvas--eraser-mode .note-canvas__text-editor-layer,
+.note-canvas--lasso-mode .note-canvas__text-editor-layer,
+.note-canvas--insert-space-mode .note-canvas__text-editor-layer {
+  pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
 }

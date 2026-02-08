@@ -161,6 +161,43 @@ async function processMessage(e) {
     }
   }
 
+  if (type === "SAVE_CONTENT") {
+    const { content } = e.data;
+    try {
+      const db = await getDB();
+
+      const noteCheck = await db.get("notes", noteId);
+      if (!noteCheck) return;
+
+      // Encrypt content if needed
+      let contentData = content;
+      if (noteCheck.encrypted) {
+        if (key) {
+          contentData = await encryptObject(content, key);
+        } else {
+          console.error("[StorageWorker] Cannot save encrypted content: Key missing");
+          return;
+        }
+      }
+
+      const tx = db.transaction("notes", "readwrite");
+      const store = tx.objectStore("notes");
+      const note = await store.get(noteId);
+
+      if (note) {
+        note.content = contentData;
+        note.modified = Date.now();
+        note.version = (note.version || 0) + 1;
+        note.synced = false;
+
+        await store.put(note);
+      }
+      await tx.done;
+    } catch (err) {
+      console.error("[StorageWorker] Content save failed:", err);
+    }
+  }
+
   if (type === "CLOSE") {
     self.close();
   }

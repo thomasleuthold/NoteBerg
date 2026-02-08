@@ -7,6 +7,7 @@
  */
 
 import { forceRecognition } from "../../modules/autoRecognition.js";
+import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
 import { importPdf } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
@@ -42,6 +43,7 @@ import { NoteToolbar } from "./NoteToolbar.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
+import { TextEditorLayer } from "./TextEditorLayer.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
 // Selection handle constants (exported for use by CanvasRenderer)
@@ -471,6 +473,19 @@ export class NoteCanvas {
       },
     });
     this.historyManager.setNoteCanvas(this);
+
+    // Initialize Text Editor Layer (WYSIWYG text editing)
+    this.textEditorLayer = new TextEditorLayer(
+      this.scroller.getViewportElement(),
+      scrollerContainer,
+      {
+        maxContentWidth: this.maxContentWidth,
+        onContentChange: (html) => this._onTextContentChange(html),
+        onHeightChange: (height) => this._onTextHeightChange(height),
+        historyManager: this.historyManager,
+      },
+    );
+    this.textEditorLayer.init(this.noteData.content || "");
 
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, this.contentHeight);
@@ -1029,6 +1044,7 @@ export class NoteCanvas {
         );
         this._updateMediaOverlay();
         this._updatePdfTextLayers();
+        this._updateTextEditorLayer();
         this._updatePdfControlsPosition();
       });
     }
@@ -1062,6 +1078,64 @@ export class NoteCanvas {
   }
 
   /**
+   * Update text editor layer position based on current scroll and zoom
+   * @private
+   */
+  _updateTextEditorLayer() {
+    if (!this.textEditorLayer) return;
+
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const { width: viewportWidth } = this.scroller.getViewportSize();
+
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const centeringOffset =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    this.textEditorLayer.update(this.zoomScale, scrollLeft, scrollTop, centeringOffset);
+  }
+
+  /**
+   * Handle text content change from the editor
+   * @private
+   * @param {string} html - HTML content
+   */
+  _onTextContentChange(html) {
+    this.noteData.content = html;
+
+    // Save via worker (reuse StrokeManager's worker for sequential message processing)
+    if (this.strokeManager?.worker) {
+      let key = null;
+      if (isAppUnlocked()) {
+        try {
+          key = getEncryptionKey();
+        } catch (_e) {
+          // Key not available
+        }
+      }
+
+      this.strokeManager.worker.postMessage({
+        type: "SAVE_CONTENT",
+        noteId: this.noteId,
+        content: html,
+        key,
+      });
+    }
+  }
+
+  /**
+   * Handle text content height change (for expanding scrollable area)
+   * @private
+   * @param {number} textHeight - New text content height in content pixels
+   */
+  _onTextHeightChange(textHeight) {
+    const neededHeight = textHeight + 200;
+    if (neededHeight > this.contentHeight) {
+      this._expandCanvas(neededHeight - this.contentHeight);
+    }
+  }
+
+  /**
    * Handle viewport resize events
    * @private
    */
@@ -1091,6 +1165,7 @@ export class NoteCanvas {
     this.renderer.render(scrollTop, height, scrollLeft, this.strokeManager?.currentStroke);
     this._updateMediaOverlay();
     this._updatePdfTextLayers();
+    this._updateTextEditorLayer();
     this._updatePdfControlsPosition();
   }
 
@@ -1144,6 +1219,11 @@ export class NoteCanvas {
       this.pdfTextLayerManager.setMode(newMode);
     }
 
+    // Update text editor layer interactivity (only enabled in text mode)
+    if (this.textEditorLayer) {
+      this.textEditorLayer.setMode(newMode);
+    }
+
     // Add mode class to container for CSS-based behavior
     this.containerElement.classList.remove(
       "note-canvas--pan-mode",
@@ -1151,6 +1231,7 @@ export class NoteCanvas {
       "note-canvas--eraser-mode",
       "note-canvas--lasso-mode",
       "note-canvas--insert-space-mode",
+      "note-canvas--text-mode",
     );
     this.containerElement.classList.add(`note-canvas--${newMode}-mode`);
   }
@@ -1160,6 +1241,8 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeStart(props) {
+    if (this.mode === "text") return false;
+
     if (this.mode === "insert-space") {
       this.insertSpaceState = { startY: props.y, currentY: props.y };
       this.renderer.drawInsertSpaceIndicator(this.insertSpaceState);
@@ -1169,8 +1252,8 @@ export class NoteCanvas {
     // Detect stylus usage
     if (props.pointerType === "pen") {
       this.stylusDetected = true;
-      // Auto-switch to draw mode if currently in pan mode
-      if (this.mode === "pan") {
+      // Auto-switch to draw mode if currently in pan or text mode
+      if (this.mode === "pan" || this.mode === "text") {
         this._setMode("draw");
         this.autoSwitchedToDrawMode = true;
       }
@@ -1426,7 +1509,8 @@ export class NoteCanvas {
       return;
     }
 
-    if (e.key === "Delete" || e.key === "Backspace") {
+    // Delete/Backspace: delete selected media (not in text mode — let editor handle it)
+    if (this.mode !== "text" && (e.key === "Delete" || e.key === "Backspace")) {
       if (this.selectedMediaId) {
         this.deleteSelectedMedia();
       }
@@ -2819,8 +2903,9 @@ export class NoteCanvas {
       });
     }
 
-    // Update PDF text layers after zoom
+    // Update PDF text layers and text editor after zoom
     this._updatePdfTextLayers();
+    this._updateTextEditorLayer();
     this._updatePdfControlsPosition();
   }
 
@@ -3042,6 +3127,11 @@ export class NoteCanvas {
     if (this.pdfTextLayerManager) {
       this.pdfTextLayerManager.destroy();
       this.pdfTextLayerManager = null;
+    }
+
+    if (this.textEditorLayer) {
+      this.textEditorLayer.destroy();
+      this.textEditorLayer = null;
     }
 
     if (this.inputHandler) {

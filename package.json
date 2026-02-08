@@ -52,7 +52,9 @@
     "@tauri-apps/plugin-shell": "^2.3.3",
     "@tauri-apps/plugin-stronghold": "^2.3.1",
     "idb": "^8.0.0",
+    "jquery": "^4.0.0",
     "pdfjs-dist": "^5.4.530",
-    "perspective-transform": "^1.1.3"
+    "perspective-transform": "^1.1.3",
+    "trumbowyg": "^2.31.0"
   }
 }

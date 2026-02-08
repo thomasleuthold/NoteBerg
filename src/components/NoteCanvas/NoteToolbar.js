@@ -76,6 +76,15 @@ function getRedoIcon(size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>`;
 }
 
+/**
+ * Generate text mode icon SVG (T with cursor)
+ * @param {number} size - Icon size
+ * @returns {string} SVG markup
+ */
+function getTextIcon(size = 24) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`;
+}
+
 export class NoteToolbar {
   /**
    * @param {HTMLElement} container - Container to append toolbar to
@@ -150,6 +159,9 @@ export class NoteToolbar {
 
     this.panBtn = createBtn("pan", handIcon, "Pan Mode");
     this.panBtn.onclick = () => this.onModeChange("pan");
+
+    this.textBtn = createBtn("text", getTextIcon(24), "Text Mode");
+    this.textBtn.onclick = () => this.onModeChange("text");
 
     // Draw button container (for positioning dialog)
     this.drawBtnContainer = document.createElement("div");
@@ -236,6 +248,7 @@ export class NoteToolbar {
     this.element.appendChild(style);
 
     this.element.appendChild(this.panBtn);
+    this.element.appendChild(this.textBtn);
     this.element.appendChild(this.drawBtnContainer);
     this.element.appendChild(this.eraserBtn);
     this.element.appendChild(this.lassoBtn);
@@ -980,6 +993,7 @@ export class NoteToolbar {
     };
 
     setActive(this.panBtn, mode === "pan");
+    setActive(this.textBtn, mode === "text");
     setActive(this.drawBtn, mode === "draw");
     setActive(this.eraserBtn, mode === "eraser");
     setActive(this.lassoBtn, mode === "lasso");
@@ -1022,6 +1036,7 @@ export class NoteToolbar {
     }
     this.element = null;
     this.panBtn = null;
+    this.textBtn = null;
     this.drawBtn = null;
     this.drawBtnContainer = null;
     this.eraserBtn = null;

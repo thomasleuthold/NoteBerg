@@ -1,0 +1,224 @@
+/* ==========================================================================
+   TextEditorLayer - WYSIWYG text editor overlay
+   ========================================================================== */
+
+/* Text editor layer container - sits below canvas so strokes render on top */
+.note-canvas__text-editor-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1; /* Below canvas (2), below PDF text (5), below overlay (10) */
+  pointer-events: none; /* Default: not interactive */
+  transform-origin: top left;
+}
+
+/* Enable interaction only in text mode */
+.note-canvas--text-mode .note-canvas__text-editor-layer {
+  pointer-events: auto;
+}
+
+/* Trumbowyg box overrides */
+.note-canvas__text-editor-layer .trumbowyg-box {
+  border: none;
+  background: transparent;
+  min-height: 100px;
+  margin: 0;
+  box-shadow: none;
+}
+
+/* Hide Trumbowyg's toolbar inside the editor (we move it to sidebar) */
+.note-canvas__text-editor-layer .trumbowyg-button-pane {
+  display: none;
+}
+
+/* The contenteditable editor area */
+.note-canvas__text-editor-layer .trumbowyg-editor {
+  background: transparent;
+  padding: 20px;
+  min-height: 100px;
+  font-family: var(--font-family);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  outline: none;
+  border: none;
+  overflow: visible;
+  box-shadow: none;
+}
+
+/* Slight dimming in non-text modes to indicate text isn't active */
+.note-canvas--draw-mode .note-canvas__text-editor-layer,
+.note-canvas--eraser-mode .note-canvas__text-editor-layer,
+.note-canvas--lasso-mode .note-canvas__text-editor-layer {
+  opacity: 0.6;
+}
+
+.note-canvas--text-mode .note-canvas__text-editor-layer {
+  opacity: 1;
+}
+
+/* ==========================================================================
+   Vertical Toolbar (Left Sidebar)
+   ========================================================================== */
+
+.note-canvas__trumbowyg-toolbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 42px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 15;
+  scrollbar-width: thin;
+}
+
+/* Override Trumbowyg's horizontal toolbar to vertical layout */
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: transparent;
+  border: none;
+  min-height: auto;
+  position: static;
+  padding: 4px 0;
+  width: 100%;
+  /* Reset horizontal layout */
+  flex-wrap: nowrap;
+}
+
+/* Remove Trumbowyg's ::after pseudo-element that adds a border */
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane::after {
+  display: none;
+}
+
+/* Vertical button group separators */
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-group::after {
+  content: "";
+  display: block;
+  height: 1px;
+  background: var(--border-primary);
+  margin: 2px 6px;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-group:last-child::after {
+  display: none;
+}
+
+/* Individual buttons in vertical layout */
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button {
+  width: 100%;
+  height: 32px;
+  min-width: unset;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button:hover {
+  background: var(--bg-hover);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button.trumbowyg-active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Dropdown menus open to the right of the vertical toolbar */
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown {
+  position: absolute;
+  left: 42px;
+  top: auto;
+  right: auto;
+  min-width: 140px;
+  z-index: 100;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button {
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  height: auto;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button:hover {
+  background: var(--bg-hover);
+}
+
+/* ==========================================================================
+   Trumbowyg Modal Overrides (color picker, etc.)
+   ========================================================================== */
+
+.trumbowyg-modal-box {
+  z-index: 10001;
+}
+
+/* ==========================================================================
+   Dark Mode
+   ========================================================================== */
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar {
+  background: var(--bg-secondary);
+  border-right-color: var(--border-primary);
+}
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .trumbowyg-editor {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .note-canvas__trumbowyg-toolbar {
+    width: 36px;
+  }
+
+  .note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button {
+    height: 28px;
+  }
+
+  .note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown {
+    left: 36px;
+  }
+}
