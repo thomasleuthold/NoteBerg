@@ -2,7 +2,10 @@
    TextEditorLayer - WYSIWYG text editor overlay
    ========================================================================== */
 
-/* Text editor layer container - sits below canvas so strokes render on top */
+/* Text editor layer container - sits above canvas so text is visible,
+   but below PDF text layer and overlay. Uses top/left positioning
+   (not CSS transform translate) so the browser's auto-scroll-to-caret
+   calculation uses the correct layout position. */
 .note-canvas__text-editor-layer {
   position: absolute;
   top: 0;
@@ -10,6 +13,7 @@
   z-index: 3; /* Above canvas (2), below PDF text (5), below overlay (10) */
   pointer-events: none; /* Default: not interactive */
   transform-origin: top left;
+  overflow: visible;
 }
 
 /* Enable interaction only in text mode */
@@ -24,6 +28,14 @@
   min-height: 100px;
   margin: 0;
   box-shadow: none;
+  overflow: visible;
+}
+
+/* Prevent the editor wrapper from showing its own scrollbars —
+   all scrolling is handled by VirtualScroller */
+.note-canvas__text-editor-layer .trumbowyg-editor-box {
+  overflow: visible;
+  border: none;
 }
 
 /* Hide Trumbowyg's toolbar inside the editor (we move it to sidebar) */

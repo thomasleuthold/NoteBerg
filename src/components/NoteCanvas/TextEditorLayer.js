@@ -74,7 +74,10 @@ export class TextEditorLayer {
    * @private
    */
   _createDOM() {
-    // Container div positioned absolutely in viewport (below canvas)
+    // Container div positioned absolutely in the viewport.
+    // Uses top/left for scroll positioning instead of CSS transform translate,
+    // so the browser's auto-scroll-to-caret calculation uses the correct
+    // layout position. Only transform: scale() is used for zoom.
     this.container = document.createElement("div");
     this.container.className = "note-canvas__text-editor-layer";
 
@@ -170,13 +173,16 @@ export class TextEditorLayer {
       this._debounceHistoryPush();
     });
 
-    // Track content height changes with ResizeObserver
+    // Track content height changes with ResizeObserver.
+    // When the text editor grows (e.g. user adds lines), we notify NoteCanvas
+    // so it can expand the shared contentHeight (phantom div + canvas).
     const trumbowygEditor = this.container.querySelector(".trumbowyg-editor");
     if (trumbowygEditor) {
       this._resizeObserver = new ResizeObserver((entries) => {
         const entry = entries[0];
         if (entry) {
-          const newHeight = entry.contentRect.height;
+          // borderBoxSize includes padding, giving us the full element height
+          const newHeight = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height + 40;
           if (Math.abs(newHeight - this._contentHeight) > 10) {
             this._contentHeight = newHeight;
             this.onHeightChange(newHeight);
@@ -185,6 +191,8 @@ export class TextEditorLayer {
       });
       this._resizeObserver.observe(trumbowygEditor);
     }
+
+    this._editorElement = trumbowygEditor;
 
     // Initial position update
     this._updatePosition();
@@ -240,21 +248,17 @@ export class TextEditorLayer {
         if (inToolbar) {
           $dropdown.css({ position: "fixed", top: desiredTop, left: desiredLeft }).show();
         } else {
-          // Dropdown is inside the CSS-transformed text editor container.
-          // position:fixed is relative to the transform, not the viewport.
-          // The container's origin in viewport coords is:
-          //   (viewportRect.left + tx, viewportRect.top + ty)
-          // where tx/ty are the translate values. A fixed child at (L,T)
-          // renders at viewport (origin.x + L*zoom, origin.y + T*zoom).
+          // Dropdown is inside the text editor container which has transform: scale(zoom).
+          // The transform creates a containing block for position:fixed children.
+          // The container's origin in viewport coords is its getBoundingClientRect().
+          // A fixed child at (L,T) renders at viewport (origin.x + L*zoom, origin.y + T*zoom).
           const zoom = textEditorLayer.zoom;
-          const viewportRect = textEditorLayer.viewportElement.getBoundingClientRect();
-          const tx = -textEditorLayer.scrollLeft + textEditorLayer.centeringOffset;
-          const ty = -textEditorLayer.scrollTop;
+          const layerRect = textEditorLayer.container.getBoundingClientRect();
           $dropdown
             .css({
               position: "fixed",
-              top: (desiredTop - viewportRect.top - ty) / zoom,
-              left: (desiredLeft - viewportRect.left - tx) / zoom,
+              top: (desiredTop - layerRect.top) / zoom,
+              left: (desiredLeft - layerRect.left) / zoom,
             })
             .show();
 
@@ -302,7 +306,9 @@ export class TextEditorLayer {
   }
 
   /**
-   * Update position based on scroll and zoom
+   * Update position based on scroll and zoom.
+   * Uses top/left CSS properties for scroll positioning (not transform translate)
+   * so the browser's auto-scroll-to-caret uses the correct layout position.
    * @param {number} zoom - Current zoom scale
    * @param {number} scrollLeft - Horizontal scroll offset in screen pixels
    * @param {number} scrollTop - Vertical scroll offset in screen pixels
@@ -317,18 +323,21 @@ export class TextEditorLayer {
   }
 
   /**
-   * Set the total content height (so the background covers the full scrollable area)
+   * Set the total content height (so the text layer covers the full scrollable area).
+   * This keeps the text editor container in sync with the drawing layer's height.
    * @param {number} height - Content height in content pixels
    */
   setContentHeight(height) {
     this._totalContentHeight = height;
     if (this.container) {
-      this.container.style.minHeight = `${height}px`;
+      this.container.style.height = `${height}px`;
     }
   }
 
   /**
-   * Apply CSS transform to position the text editor in viewport space
+   * Apply positioning to the text editor using top/left + scale.
+   * Using top/left instead of transform: translate() ensures the browser's
+   * auto-scroll-to-caret calculation uses the correct layout position.
    * @private
    */
   _updatePosition() {
@@ -337,7 +346,9 @@ export class TextEditorLayer {
     const screenX = -this.scrollLeft + this.centeringOffset;
     const screenY = -this.scrollTop;
 
-    this.container.style.transform = `translate(${screenX}px, ${screenY}px) scale(${this.zoom})`;
+    this.container.style.top = `${screenY}px`;
+    this.container.style.left = `${screenX}px`;
+    this.container.style.transform = `scale(${this.zoom})`;
     this.container.style.width = `${this.maxContentWidth}px`;
   }
 
@@ -457,6 +468,8 @@ export class TextEditorLayer {
       this._resizeObserver.disconnect();
       this._resizeObserver = null;
     }
+
+    this._editorElement = null;
 
     if (this.$editor) {
       this.$editor.off("tbwchange");
