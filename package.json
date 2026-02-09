@@ -1,6 +1,6 @@
 {
   "name": "onejournal",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
   "scripts": {
