@@ -16,7 +16,6 @@ import "trumbowyg/dist/ui/trumbowyg.css";
 // Import plugins
 import "trumbowyg/dist/plugins/colors/trumbowyg.colors.js";
 import "trumbowyg/dist/plugins/colors/ui/trumbowyg.colors.css";
-import "trumbowyg/dist/plugins/fontfamily/trumbowyg.fontfamily.js";
 import "trumbowyg/dist/plugins/fontsize/trumbowyg.fontsize.js";
 import "trumbowyg/dist/plugins/indent/trumbowyg.indent.js";
 import "trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js";
@@ -106,7 +105,6 @@ export class TextEditorLayer {
     this.$editor.trumbowyg({
       btns: [
         ["formatting"],
-        ["fontfamily"],
         ["fontsize"],
         ["bold", "italic", "underline", "strikethrough"],
         ["foreColor", "backColor"],

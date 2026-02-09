@@ -1,29 +1,29 @@
 /**
  * Unit tests for TextEditorLayer
  */
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { TextEditorLayer } from './TextEditorLayer';
-import jQuery from './jquerySetup';
-import { TextChangeCommand } from './commands/TextChangeCommand';
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { TextChangeCommand } from "./commands/TextChangeCommand";
+import jQuery from "./jquerySetup";
+import { TextEditorLayer } from "./TextEditorLayer";
 
 // Mock dependencies
-vi.mock('./jquerySetup');
-vi.mock('./commands/TextChangeCommand');
+vi.mock("./jquerySetup");
+vi.mock("./commands/TextChangeCommand");
 
 // Mock Trumbowyg and CSS imports
-vi.mock('trumbowyg', () => ({}));
-vi.mock('trumbowyg/dist/ui/trumbowyg.css', () => ({}));
-vi.mock('trumbowyg/dist/plugins/colors/trumbowyg.colors.js', () => ({}));
-vi.mock('trumbowyg/dist/plugins/colors/ui/trumbowyg.colors.css', () => ({}));
-vi.mock('trumbowyg/dist/plugins/fontfamily/trumbowyg.fontfamily.js', () => ({}));
-vi.mock('trumbowyg/dist/plugins/fontsize/trumbowyg.fontsize.js', () => ({}));
-vi.mock('trumbowyg/dist/plugins/indent/trumbowyg.indent.js', () => ({}));
-vi.mock('trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js', () => ({}));
-vi.mock('trumbowyg/dist/plugins/table/trumbowyg.table.js', () => ({}));
-vi.mock('trumbowyg/dist/plugins/table/ui/trumbowyg.table.css', () => ({}));
-vi.mock('./TextEditorLayer.css', () => ({}));
+vi.mock("trumbowyg", () => ({}));
+vi.mock("trumbowyg/dist/ui/trumbowyg.css", () => ({}));
+vi.mock("trumbowyg/dist/plugins/colors/trumbowyg.colors.js", () => ({}));
+vi.mock("trumbowyg/dist/plugins/colors/ui/trumbowyg.colors.css", () => ({}));
+vi.mock("trumbowyg/dist/plugins/fontfamily/trumbowyg.fontfamily.js", () => ({}));
+vi.mock("trumbowyg/dist/plugins/fontsize/trumbowyg.fontsize.js", () => ({}));
+vi.mock("trumbowyg/dist/plugins/indent/trumbowyg.indent.js", () => ({}));
+vi.mock("trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js", () => ({}));
+vi.mock("trumbowyg/dist/plugins/table/trumbowyg.table.js", () => ({}));
+vi.mock("trumbowyg/dist/plugins/table/ui/trumbowyg.table.css", () => ({}));
+vi.mock("./TextEditorLayer.css", () => ({}));
 
-describe('TextEditorLayer', () => {
+describe("TextEditorLayer", () => {
   let viewportElement;
   let scrollerContainer;
   let mockHistoryManager;
@@ -34,8 +34,8 @@ describe('TextEditorLayer', () => {
 
   beforeEach(() => {
     // Setup DOM elements
-    viewportElement = document.createElement('div');
-    scrollerContainer = document.createElement('div');
+    viewportElement = document.createElement("div");
+    scrollerContainer = document.createElement("div");
     document.body.appendChild(viewportElement);
     document.body.appendChild(scrollerContainer);
 
@@ -72,15 +72,15 @@ describe('TextEditorLayer', () => {
       hide: vi.fn(),
       trigger: vi.fn(),
       length: 1,
-      0: document.createElement('div'),
+      0: document.createElement("div"),
     };
     // Allow chaining
     mockJQueryInstance.find.mockReturnValue(mockJQueryInstance);
     mockJQueryInstance.css.mockReturnValue(mockJQueryInstance);
-    
+
     // Setup jQuery mock
     jQuery.mockReturnValue(mockJQueryInstance);
-    jQuery.trumbowyg = { svgPath: '' };
+    jQuery.trumbowyg = { svgPath: "" };
 
     vi.useFakeTimers();
   });
@@ -89,70 +89,72 @@ describe('TextEditorLayer', () => {
     if (layer) {
       layer.destroy();
     }
-    document.body.innerHTML = '';
+    document.body.innerHTML = "";
     vi.clearAllMocks();
     vi.useRealTimers();
   });
 
-  test('constructor creates DOM elements', () => {
+  test("constructor creates DOM elements", () => {
     layer = new TextEditorLayer(viewportElement, scrollerContainer);
-    
-    expect(viewportElement.querySelector('.note-canvas__text-editor-layer')).not.toBeNull();
-    expect(scrollerContainer.querySelector('.note-canvas__trumbowyg-toolbar')).not.toBeNull();
+
+    expect(viewportElement.querySelector(".note-canvas__text-editor-layer")).not.toBeNull();
+    expect(scrollerContainer.querySelector(".note-canvas__trumbowyg-toolbar")).not.toBeNull();
   });
 
-  test('init initializes Trumbowyg and sets content', () => {
+  test("init initializes Trumbowyg and sets content", () => {
     layer = new TextEditorLayer(viewportElement, scrollerContainer);
-    const initialHtml = '<p>Test</p>';
-    
+    const initialHtml = "<p>Test</p>";
+
     layer.init(initialHtml);
-    
+
     expect(jQuery).toHaveBeenCalled();
     expect(mockJQueryInstance.trumbowyg).toHaveBeenCalledWith(expect.any(Object));
-    expect(mockJQueryInstance.trumbowyg).toHaveBeenCalledWith('html', initialHtml);
+    expect(mockJQueryInstance.trumbowyg).toHaveBeenCalledWith("html", initialHtml);
   });
 
-  test('update applies transform to container', () => {
+  test("update applies transform to container", () => {
     layer = new TextEditorLayer(viewportElement, scrollerContainer);
     const zoom = 2;
     const scrollLeft = 100;
     const scrollTop = 50;
     const centeringOffset = 200;
-    
+
     layer.update(zoom, scrollLeft, scrollTop, centeringOffset);
-    
-    const container = viewportElement.querySelector('.note-canvas__text-editor-layer');
+
+    const container = viewportElement.querySelector(".note-canvas__text-editor-layer");
     // screenX = -100 + 200 = 100
     // screenY = -50
-    expect(container.style.transform).toBe('translate(100px, -50px) scale(2)');
-    expect(container.style.width).toBe('1200px'); // Default maxContentWidth
+    expect(container.style.transform).toBe("translate(100px, -50px) scale(2)");
+    expect(container.style.width).toBe("1200px"); // Default maxContentWidth
   });
 
-  test('setMode toggles toolbar visibility', () => {
+  test("setMode toggles toolbar visibility", () => {
     layer = new TextEditorLayer(viewportElement, scrollerContainer);
-    const toolbar = scrollerContainer.querySelector('.note-canvas__trumbowyg-toolbar');
-    
-    layer.setMode('text');
-    expect(toolbar.style.display).toBe('');
-    
-    layer.setMode('pan');
-    expect(toolbar.style.display).toBe('none');
+    const toolbar = scrollerContainer.querySelector(".note-canvas__trumbowyg-toolbar");
+
+    layer.setMode("text");
+    expect(toolbar.style.display).toBe("");
+
+    layer.setMode("pan");
+    expect(toolbar.style.display).toBe("none");
   });
 
-  test('content changes trigger save and history (debounced)', () => {
+  test("content changes trigger save and history (debounced)", () => {
     const onContentChange = vi.fn();
     layer = new TextEditorLayer(viewportElement, scrollerContainer, {
       onContentChange,
       historyManager: mockHistoryManager,
     });
-    layer.init('initial');
+    layer.init("initial");
 
     // Simulate content change
-    const changeCallback = mockJQueryInstance.on.mock.calls.find(call => call[0] === 'tbwchange')[1];
-    
+    const changeCallback = mockJQueryInstance.on.mock.calls.find(
+      (call) => call[0] === "tbwchange",
+    )[1];
+
     // Mock getContent to return new content
     mockJQueryInstance.trumbowyg.mockImplementation((arg) => {
-      if (arg === 'html') return 'new content';
+      if (arg === "html") return "new content";
     });
 
     changeCallback(); // Trigger change
@@ -164,87 +166,89 @@ describe('TextEditorLayer', () => {
     // Fast forward history timer (300ms)
     vi.advanceTimersByTime(300);
     expect(mockHistoryManager.push).toHaveBeenCalled();
-    expect(TextChangeCommand).toHaveBeenCalledWith('initial', 'new content');
+    expect(TextChangeCommand).toHaveBeenCalledWith("initial", "new content");
 
     // Fast forward save timer (total 500ms)
     vi.advanceTimersByTime(200);
-    expect(onContentChange).toHaveBeenCalledWith('new content');
+    expect(onContentChange).toHaveBeenCalledWith("new content");
   });
 
-  test('setContentSilently updates content without history', () => {
+  test("setContentSilently updates content without history", () => {
     layer = new TextEditorLayer(viewportElement, scrollerContainer, {
       historyManager: mockHistoryManager,
     });
-    layer.init('initial');
-    
+    layer.init("initial");
+
     // Mock getContent to return the updated content so _pushHistoryCommand sees no change
     mockJQueryInstance.trumbowyg.mockImplementation((arg, val) => {
-      if (arg === 'html' && val === undefined) return 'silent update';
+      if (arg === "html" && val === undefined) return "silent update";
     });
 
-    layer.setContentSilently('silent update');
-    
-    expect(mockJQueryInstance.trumbowyg).toHaveBeenCalledWith('html', 'silent update');
-    
+    layer.setContentSilently("silent update");
+
+    expect(mockJQueryInstance.trumbowyg).toHaveBeenCalledWith("html", "silent update");
+
     // Simulate change event that might occur
-    const changeCallback = mockJQueryInstance.on.mock.calls.find(call => call[0] === 'tbwchange')[1];
+    const changeCallback = mockJQueryInstance.on.mock.calls.find(
+      (call) => call[0] === "tbwchange",
+    )[1];
     changeCallback();
-    
+
     vi.runAllTimers();
     expect(mockHistoryManager.push).not.toHaveBeenCalled();
   });
 
-  test('forceSave pushes pending history and saves immediately', () => {
+  test("forceSave pushes pending history and saves immediately", () => {
     const onContentChange = vi.fn();
     layer = new TextEditorLayer(viewportElement, scrollerContainer, {
       onContentChange,
       historyManager: mockHistoryManager,
     });
-    layer.init('initial');
-    
+    layer.init("initial");
+
     // Simulate dirty state
-    mockJQueryInstance.trumbowyg.mockReturnValue('dirty content');
+    mockJQueryInstance.trumbowyg.mockReturnValue("dirty content");
     layer.isDirty = true;
-    
+
     layer.forceSave();
-    
+
     expect(mockHistoryManager.push).toHaveBeenCalled();
-    expect(onContentChange).toHaveBeenCalledWith('dirty content');
+    expect(onContentChange).toHaveBeenCalledWith("dirty content");
   });
 
-  test('destroy cleans up resources', () => {
+  test("destroy cleans up resources", () => {
     layer = new TextEditorLayer(viewportElement, scrollerContainer);
-    layer.init('');
-    
+    layer.init("");
+
     layer.destroy();
-    
-    expect(mockJQueryInstance.off).toHaveBeenCalledWith('tbwchange');
-    expect(mockJQueryInstance.trumbowyg).toHaveBeenCalledWith('destroy');
-    expect(viewportElement.querySelector('.note-canvas__text-editor-layer')).toBeNull();
-    expect(scrollerContainer.querySelector('.note-canvas__trumbowyg-toolbar')).toBeNull();
+
+    expect(mockJQueryInstance.off).toHaveBeenCalledWith("tbwchange");
+    expect(mockJQueryInstance.trumbowyg).toHaveBeenCalledWith("destroy");
+    expect(viewportElement.querySelector(".note-canvas__text-editor-layer")).toBeNull();
+    expect(scrollerContainer.querySelector(".note-canvas__trumbowyg-toolbar")).toBeNull();
   });
 
-  test('ResizeObserver tracks height changes', () => {
+  test("ResizeObserver tracks height changes", () => {
     const onHeightChange = vi.fn();
     layer = new TextEditorLayer(viewportElement, scrollerContainer, {
       onHeightChange,
     });
 
     // Manually add the element that ResizeObserver looks for, since mock trumbowyg won't create it
-    const editorDiv = viewportElement.querySelector('.note-canvas__text-editor');
-    const trumbowygEditor = document.createElement('div');
-    trumbowygEditor.className = 'trumbowyg-editor';
+    const editorDiv = viewportElement.querySelector(".note-canvas__text-editor");
+    const trumbowygEditor = document.createElement("div");
+    trumbowygEditor.className = "trumbowyg-editor";
     editorDiv.appendChild(trumbowygEditor);
 
-    layer.init('');
-    
+    layer.init("");
+
     expect(global.ResizeObserver).toHaveBeenCalled();
     expect(mockResizeObserver.observe).toHaveBeenCalledWith(trumbowygEditor);
 
     // Simulate resize
     const resizeCallback = global.ResizeObserver.mock.calls[0][0];
     resizeCallback([{ contentRect: { height: 500 } }]);
-    
+
     expect(onHeightChange).toHaveBeenCalledWith(500);
   });
 });
