@@ -211,9 +211,7 @@ export class TextEditorLayer {
     const hideAll = (eventNs) => {
       jQuery(`.${prefix}dropdown`, toolbarWrapper).hide();
       originalBox.find(`.${prefix}dropdown`).hide();
-      jQuery(`.${prefix}active`, trumbowygInstance.$btnPane).removeClass(
-        `${prefix}active`,
-      );
+      jQuery(`.${prefix}active`, trumbowygInstance.$btnPane).removeClass(`${prefix}active`);
       jQuery("body", trumbowygInstance.doc).off(`mousedown.${eventNs}`);
     };
 
@@ -221,10 +219,7 @@ export class TextEditorLayer {
       const $body = jQuery("body", this.doc);
       // Search toolbar wrapper first (standard dropdowns moved during init),
       // then $box (table plugin creates dropdowns dynamically there)
-      let $dropdown = jQuery(
-        `[data-${prefix}dropdown=${name}]`,
-        toolbarWrapper,
-      );
+      let $dropdown = jQuery(`[data-${prefix}dropdown=${name}]`, toolbarWrapper);
       const inToolbar = $dropdown.length > 0;
       if (!inToolbar) {
         $dropdown = originalBox.find(`[data-${prefix}dropdown=${name}]`);
@@ -245,9 +240,7 @@ export class TextEditorLayer {
         const desiredTop = btnRect.top;
 
         if (inToolbar) {
-          $dropdown
-            .css({ position: "fixed", top: desiredTop, left: desiredLeft })
-            .show();
+          $dropdown.css({ position: "fixed", top: desiredTop, left: desiredLeft }).show();
         } else {
           // Dropdown is inside the CSS-transformed text editor container.
           // position:fixed is relative to the transform, not the viewport.
@@ -256,10 +249,8 @@ export class TextEditorLayer {
           // where tx/ty are the translate values. A fixed child at (L,T)
           // renders at viewport (origin.x + L*zoom, origin.y + T*zoom).
           const zoom = textEditorLayer.zoom;
-          const viewportRect =
-            textEditorLayer.viewportElement.getBoundingClientRect();
-          const tx =
-            -textEditorLayer.scrollLeft + textEditorLayer.centeringOffset;
+          const viewportRect = textEditorLayer.viewportElement.getBoundingClientRect();
+          const tx = -textEditorLayer.scrollLeft + textEditorLayer.centeringOffset;
           const ty = -textEditorLayer.scrollTop;
           $dropdown
             .css({
@@ -271,13 +262,9 @@ export class TextEditorLayer {
 
           // Table plugin: close dropdown when a grid cell is clicked
           // (tableBuild inserts the table but doesn't close the dropdown)
-          $dropdown.off("mouseup.dropdownDismiss").on(
-            "mouseup.dropdownDismiss",
-            "td",
-            () => {
-              hideAll(this.eventNamespace);
-            },
-          );
+          $dropdown.off("mouseup.dropdownDismiss").on("mouseup.dropdownDismiss", "td", () => {
+            hideAll(this.eventNamespace);
+          });
         }
 
         jQuery(window).trigger("scroll");
@@ -299,9 +286,7 @@ export class TextEditorLayer {
    */
   _setupTableButtonProxy(trumbowygBox) {
     if (!trumbowygBox) return;
-    const realBtn = this.toolbarWrapper.querySelector(
-      ".trumbowyg-table-button",
-    );
+    const realBtn = this.toolbarWrapper.querySelector(".trumbowyg-table-button");
     if (!realBtn) return;
 
     const proxy = document.createElement("span");
