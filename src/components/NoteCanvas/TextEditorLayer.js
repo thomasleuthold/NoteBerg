@@ -6,12 +6,10 @@
  * Integrates with HistoryManager for unified undo/redo across text and strokes.
  */
 
-import jQuery from "jquery/slim";
+// jQuery must be on `window` before Trumbowyg is imported (separate module avoids hoisting issues)
+import jQuery from "./jquerySetup.js";
 
-// Set jQuery global (required by Trumbowyg)
-window.jQuery = window.$ = jQuery;
-
-// Import Trumbowyg core and CSS
+// Import Trumbowyg core and CSS (relies on window.jQuery set by jquerySetup)
 import "trumbowyg";
 import "trumbowyg/dist/ui/trumbowyg.css";
 
@@ -22,8 +20,6 @@ import "trumbowyg/dist/plugins/fontfamily/trumbowyg.fontfamily.js";
 import "trumbowyg/dist/plugins/fontsize/trumbowyg.fontsize.js";
 import "trumbowyg/dist/plugins/indent/trumbowyg.indent.js";
 import "trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js";
-import "trumbowyg/dist/plugins/table/trumbowyg.table.js";
-import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
 
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
@@ -63,6 +59,7 @@ export class TextEditorLayer {
     this._historyTimer = null;
     this._resizeObserver = null;
     this._contentHeight = 0;
+    this._totalContentHeight = 0;
 
     // Undo/redo state
     this._lastHtml = "";
@@ -114,11 +111,10 @@ export class TextEditorLayer {
         ["lineheight"],
         ["indent", "outdent"],
         ["unorderedList", "orderedList"],
-        ["table"],
         ["removeformat"],
       ],
-      autogrow: true,
-      autogrowOnEnter: true,
+      autogrow: false,
+      autogrowOnEnter: false,
       resetCss: false,
       semantic: true,
       tagsToRemove: ["script", "link"],
@@ -129,10 +125,27 @@ export class TextEditorLayer {
     this._lastHtml = htmlContent || "";
 
     // Move toolbar to fixed vertical sidebar
-    const btnPane = this.container.querySelector(".trumbowyg-button-pane");
+    const trumbowygBox = this.container.querySelector(".trumbowyg-box");
+    const btnPane = trumbowygBox?.querySelector(".trumbowyg-button-pane");
     if (btnPane) {
       this.toolbarWrapper.appendChild(btnPane);
     }
+
+    // Move dropdown menus to toolbar wrapper (Trumbowyg appends them to $box)
+    if (trumbowygBox) {
+      const dropdowns = trumbowygBox.querySelectorAll(".trumbowyg-dropdown");
+      for (const dd of dropdowns) {
+        this.toolbarWrapper.appendChild(dd);
+      }
+    }
+
+    // Prevent toolbar clicks from stealing focus from the editor.
+    this.toolbarWrapper.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+    });
+
+    // Patch Trumbowyg's dropdown positioning to work with our vertical toolbar
+    this._patchDropdownPositioning();
 
     // Listen for content changes
     this.$editor.on("tbwchange", () => {
@@ -164,6 +177,60 @@ export class TextEditorLayer {
   }
 
   /**
+   * Patch Trumbowyg's dropdown method so dropdowns position relative to our vertical toolbar.
+   * Dropdowns were moved to the toolbar wrapper during init. We override the instance's
+   * dropdown() to find them there and position with fixed coordinates.
+   * @private
+   */
+  _patchDropdownPositioning() {
+    const trumbowygInstance = this.$editor.data("trumbowyg");
+    if (!trumbowygInstance) return;
+
+    const toolbarWrapper = this.toolbarWrapper;
+    const prefix = trumbowygInstance.o.prefix; // "trumbowyg-"
+    const scrollerContainer = this.scrollerContainer;
+
+    trumbowygInstance.dropdown = function (name) {
+      const $body = jQuery("body", this.doc);
+      const $dropdown = jQuery(
+        `[data-${prefix}dropdown=${name}]`,
+        toolbarWrapper,
+      );
+      const $btn = jQuery(`.${prefix}${name}-button`, this.$btnPane);
+      const show = $dropdown.is(":hidden");
+
+      $body.trigger("mousedown");
+
+      if (show) {
+        $btn.addClass(`${prefix}active`);
+
+        const btnRect = $btn[0].getBoundingClientRect();
+        const containerRect = scrollerContainer.getBoundingClientRect();
+
+        $dropdown
+          .css({
+            position: "fixed",
+            top: btnRect.top,
+            left: containerRect.left + toolbarWrapper.offsetWidth,
+          })
+          .show();
+
+        jQuery(window).trigger("scroll");
+
+        $body.on(`mousedown.${this.eventNamespace}`, (e) => {
+          if (!$dropdown.is(e.target) && $dropdown.has(e.target).length === 0) {
+            jQuery(`.${prefix}dropdown`, toolbarWrapper).hide();
+            jQuery(`.${prefix}active`, this.$btnPane).removeClass(
+              `${prefix}active`,
+            );
+            $body.off(`mousedown.${this.eventNamespace}`);
+          }
+        });
+      }
+    };
+  }
+
+  /**
    * Update position based on scroll and zoom
    * @param {number} zoom - Current zoom scale
    * @param {number} scrollLeft - Horizontal scroll offset in screen pixels
@@ -176,6 +243,17 @@ export class TextEditorLayer {
     this.scrollTop = scrollTop;
     this.centeringOffset = centeringOffset;
     this._updatePosition();
+  }
+
+  /**
+   * Set the total content height (so the background covers the full scrollable area)
+   * @param {number} height - Content height in content pixels
+   */
+  setContentHeight(height) {
+    this._totalContentHeight = height;
+    if (this.container) {
+      this.container.style.minHeight = `${height}px`;
+    }
   }
 
   /**

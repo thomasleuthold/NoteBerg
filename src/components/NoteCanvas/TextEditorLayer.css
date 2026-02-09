@@ -7,7 +7,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 1; /* Below canvas (2), below PDF text (5), below overlay (10) */
+  z-index: 3; /* Above canvas (2), below PDF text (5), below overlay (10) */
   pointer-events: none; /* Default: not interactive */
   transform-origin: top left;
 }
@@ -34,7 +34,7 @@
 /* The contenteditable editor area */
 .note-canvas__text-editor-layer .trumbowyg-editor {
   background: transparent;
-  padding: 20px;
+  padding: 20px 20px 20px 60px;
   min-height: 100px;
   font-family: var(--font-family);
   font-size: 16px;
@@ -68,11 +68,10 @@
   bottom: 0;
   width: 42px;
   background: var(--bg-secondary);
+  color: var(--text-secondary);
   border-right: 1px solid var(--border-primary);
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible; /* Must be visible so dropdowns can extend beyond the toolbar */
   z-index: 15;
-  scrollbar-width: thin;
 }
 
 /* Override Trumbowyg's horizontal toolbar to vertical layout */
@@ -86,6 +85,10 @@
   position: static;
   padding: 4px 0;
   width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
   /* Reset horizontal layout */
   flex-wrap: nowrap;
 }
@@ -134,8 +137,12 @@
 }
 
 .note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button.trumbowyg-active {
-  background: var(--color-primary);
-  color: white;
+  background: var(--bg-hover);
+  color: var(--color-primary);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button.trumbowyg-active svg {
+  fill: var(--color-primary);
 }
 
 .note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button svg {
@@ -143,14 +150,13 @@
   height: 16px;
 }
 
-/* Dropdown menus open to the right of the vertical toolbar */
+/* Dropdown menus - positioned via JS with position:fixed */
 .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown {
-  position: absolute;
-  left: 42px;
-  top: auto;
   right: auto;
   min-width: 140px;
-  z-index: 100;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 10000;
   background: var(--bg-primary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
@@ -161,13 +167,20 @@
   width: 100%;
   text-align: left;
   padding: 6px 12px;
-  color: var(--text-primary);
+  color: var(--text-secondary);
+  background: var(--bg-primary);
   font-size: 13px;
   height: auto;
 }
 
 .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button:hover {
   background: var(--bg-hover);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
 /* ==========================================================================
@@ -187,6 +200,11 @@
   border-right-color: var(--border-primary);
 }
 
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar svg {
+  fill: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
 [data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown {
   background: var(--bg-secondary);
   border-color: var(--border-primary);
@@ -194,6 +212,10 @@
 
 [data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button {
   color: var(--text-primary);
+}
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg {
+  fill: var(--text-primary);
 }
 
 [data-theme="dark"] .trumbowyg-editor {
@@ -218,7 +240,4 @@
     height: 14px;
   }
 
-  .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown {
-    left: 36px;
-  }
 }

@@ -486,6 +486,7 @@ export class NoteCanvas {
       },
     );
     this.textEditorLayer.init(this.noteData.content || "");
+    this.textEditorLayer.setContentHeight(this.contentHeight);
 
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, this.contentHeight);
@@ -1186,6 +1187,9 @@ export class NoteCanvas {
     this.contentHeight += amount;
     this.scroller.setContentSize(this.maxContentWidth, this.contentHeight);
     this.renderer.setContentSize(this.maxContentWidth, this.contentHeight);
+    if (this.textEditorLayer) {
+      this.textEditorLayer.setContentHeight(this.contentHeight);
+    }
   }
 
   /**
@@ -2602,6 +2606,9 @@ export class NoteCanvas {
    * @private
    */
   _onPointerDownNav(e) {
+    // In text mode, let mouse events pass through to the text editor (no pan, no media hit)
+    if (this.mode === "text" && e.pointerType === "mouse") return;
+
     // Handle media hit testing for Pan mode
     const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
     const mediaResult = this._handleMediaInteraction(x, y, e.clientX, e.clientY);
