@@ -46,6 +46,23 @@
   box-shadow: none;
 }
 
+/* Tables in the editor */
+.note-canvas__text-editor-layer .trumbowyg-editor table {
+  width: 80%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.note-canvas__text-editor-layer .trumbowyg-editor table th,
+.note-canvas__text-editor-layer .trumbowyg-editor table td {
+  border: 1px solid var(--text-primary);
+  padding: 6px 10px;
+}
+
+.note-canvas__text-editor-layer .trumbowyg-editor table th {
+  font-weight: 600;
+}
+
 /* Slight dimming in non-text modes to indicate text isn't active */
 .note-canvas--draw-mode .note-canvas__text-editor-layer,
 .note-canvas--eraser-mode .note-canvas__text-editor-layer,
@@ -151,7 +168,8 @@
 }
 
 /* Dropdown menus - positioned via JS with position:fixed */
-.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown {
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown,
+.note-canvas__text-editor-layer .trumbowyg-dropdown {
   right: auto;
   min-width: 140px;
   max-height: 300px;
@@ -163,7 +181,8 @@
   box-shadow: var(--shadow-md);
 }
 
-.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button {
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button,
+.note-canvas__text-editor-layer .trumbowyg-dropdown button {
   width: 100%;
   text-align: left;
   padding: 6px 12px;
@@ -173,11 +192,13 @@
   height: auto;
 }
 
-.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button:hover {
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button:hover,
+.note-canvas__text-editor-layer .trumbowyg-dropdown button:hover {
   background: var(--bg-hover);
 }
 
-.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg {
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg,
+.note-canvas__text-editor-layer .trumbowyg-dropdown button svg {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
@@ -205,16 +226,19 @@
   color: var(--text-secondary);
 }
 
-[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown {
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown,
+[data-theme="dark"] .note-canvas__text-editor-layer .trumbowyg-dropdown {
   background: var(--bg-secondary);
   border-color: var(--border-primary);
 }
 
-[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button {
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button,
+[data-theme="dark"] .note-canvas__text-editor-layer .trumbowyg-dropdown button {
   color: var(--text-primary);
 }
 
-[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg {
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg,
+[data-theme="dark"] .note-canvas__text-editor-layer .trumbowyg-dropdown button svg {
   fill: var(--text-primary);
 }
 

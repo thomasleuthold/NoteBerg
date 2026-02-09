@@ -20,6 +20,8 @@ import "trumbowyg/dist/plugins/fontfamily/trumbowyg.fontfamily.js";
 import "trumbowyg/dist/plugins/fontsize/trumbowyg.fontsize.js";
 import "trumbowyg/dist/plugins/indent/trumbowyg.indent.js";
 import "trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js";
+import "trumbowyg/dist/plugins/table/trumbowyg.table.js";
+import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
 
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
@@ -111,6 +113,7 @@ export class TextEditorLayer {
         ["lineheight"],
         ["indent", "outdent"],
         ["unorderedList", "orderedList"],
+        ["table"],
         ["removeformat"],
       ],
       autogrow: false,
@@ -139,13 +142,26 @@ export class TextEditorLayer {
       }
     }
 
-    // Prevent toolbar clicks from stealing focus from the editor.
+    // Prevent toolbar/dropdown clicks from stealing focus from the editor.
+    // Without this, saveRange() gets a null range when clicking dropdown items.
     this.toolbarWrapper.addEventListener("mousedown", (e) => {
       e.preventDefault();
     });
+    if (trumbowygBox) {
+      trumbowygBox.addEventListener("mousedown", (e) => {
+        if (e.target.closest(".trumbowyg-dropdown")) {
+          e.preventDefault();
+        }
+      });
+    }
 
     // Patch Trumbowyg's dropdown positioning to work with our vertical toolbar
     this._patchDropdownPositioning();
+
+    // The table plugin checks t.$box.find('.trumbowyg-table-button').hasClass('active-button')
+    // to decide whether to show edit options vs. create grid. Since we moved buttons to
+    // toolbarWrapper, add a hidden proxy inside $box that mirrors the real button's classes.
+    this._setupTableButtonProxy(trumbowygBox);
 
     // Listen for content changes
     this.$editor.on("tbwchange", () => {
@@ -178,8 +194,8 @@ export class TextEditorLayer {
 
   /**
    * Patch Trumbowyg's dropdown method so dropdowns position relative to our vertical toolbar.
-   * Dropdowns were moved to the toolbar wrapper during init. We override the instance's
-   * dropdown() to find them there and position with fixed coordinates.
+   * Standard dropdowns live in the toolbar wrapper. The table plugin creates its dropdown
+   * dynamically inside $box (the transformed container) — we handle both cases.
    * @private
    */
   _patchDropdownPositioning() {
@@ -187,15 +203,34 @@ export class TextEditorLayer {
     if (!trumbowygInstance) return;
 
     const toolbarWrapper = this.toolbarWrapper;
+    const textEditorLayer = this;
     const prefix = trumbowygInstance.o.prefix; // "trumbowyg-"
     const scrollerContainer = this.scrollerContainer;
+    const originalBox = trumbowygInstance.$box;
+
+    const hideAll = (eventNs) => {
+      jQuery(`.${prefix}dropdown`, toolbarWrapper).hide();
+      originalBox.find(`.${prefix}dropdown`).hide();
+      jQuery(`.${prefix}active`, trumbowygInstance.$btnPane).removeClass(
+        `${prefix}active`,
+      );
+      jQuery("body", trumbowygInstance.doc).off(`mousedown.${eventNs}`);
+    };
 
     trumbowygInstance.dropdown = function (name) {
       const $body = jQuery("body", this.doc);
-      const $dropdown = jQuery(
+      // Search toolbar wrapper first (standard dropdowns moved during init),
+      // then $box (table plugin creates dropdowns dynamically there)
+      let $dropdown = jQuery(
         `[data-${prefix}dropdown=${name}]`,
         toolbarWrapper,
       );
+      const inToolbar = $dropdown.length > 0;
+      if (!inToolbar) {
+        $dropdown = originalBox.find(`[data-${prefix}dropdown=${name}]`);
+      }
+      if ($dropdown.length === 0) return;
+
       const $btn = jQuery(`.${prefix}${name}-button`, this.$btnPane);
       const show = $dropdown.is(":hidden");
 
@@ -206,28 +241,81 @@ export class TextEditorLayer {
 
         const btnRect = $btn[0].getBoundingClientRect();
         const containerRect = scrollerContainer.getBoundingClientRect();
+        const desiredLeft = containerRect.left + toolbarWrapper.offsetWidth;
+        const desiredTop = btnRect.top;
 
-        $dropdown
-          .css({
-            position: "fixed",
-            top: btnRect.top,
-            left: containerRect.left + toolbarWrapper.offsetWidth,
-          })
-          .show();
+        if (inToolbar) {
+          $dropdown
+            .css({ position: "fixed", top: desiredTop, left: desiredLeft })
+            .show();
+        } else {
+          // Dropdown is inside the CSS-transformed text editor container.
+          // position:fixed is relative to the transform, not the viewport.
+          // The container's origin in viewport coords is:
+          //   (viewportRect.left + tx, viewportRect.top + ty)
+          // where tx/ty are the translate values. A fixed child at (L,T)
+          // renders at viewport (origin.x + L*zoom, origin.y + T*zoom).
+          const zoom = textEditorLayer.zoom;
+          const viewportRect =
+            textEditorLayer.viewportElement.getBoundingClientRect();
+          const tx =
+            -textEditorLayer.scrollLeft + textEditorLayer.centeringOffset;
+          const ty = -textEditorLayer.scrollTop;
+          $dropdown
+            .css({
+              position: "fixed",
+              top: (desiredTop - viewportRect.top - ty) / zoom,
+              left: (desiredLeft - viewportRect.left - tx) / zoom,
+            })
+            .show();
+
+          // Table plugin: close dropdown when a grid cell is clicked
+          // (tableBuild inserts the table but doesn't close the dropdown)
+          $dropdown.off("mouseup.dropdownDismiss").on(
+            "mouseup.dropdownDismiss",
+            "td",
+            () => {
+              hideAll(this.eventNamespace);
+            },
+          );
+        }
 
         jQuery(window).trigger("scroll");
 
         $body.on(`mousedown.${this.eventNamespace}`, (e) => {
           if (!$dropdown.is(e.target) && $dropdown.has(e.target).length === 0) {
-            jQuery(`.${prefix}dropdown`, toolbarWrapper).hide();
-            jQuery(`.${prefix}active`, this.$btnPane).removeClass(
-              `${prefix}active`,
-            );
-            $body.off(`mousedown.${this.eventNamespace}`);
+            hideAll(this.eventNamespace);
           }
         });
       }
     };
+  }
+
+  /**
+   * Add a hidden proxy element inside $box that mirrors the table button's classes.
+   * The table plugin checks $box.find('.trumbowyg-table-button') to decide dropdown content.
+   * Since the real button is in the toolbar wrapper (outside $box), we sync classes via observer.
+   * @private
+   */
+  _setupTableButtonProxy(trumbowygBox) {
+    if (!trumbowygBox) return;
+    const realBtn = this.toolbarWrapper.querySelector(
+      ".trumbowyg-table-button",
+    );
+    if (!realBtn) return;
+
+    const proxy = document.createElement("span");
+    proxy.className = realBtn.className;
+    proxy.style.display = "none";
+    trumbowygBox.appendChild(proxy);
+
+    this._tableProxyObserver = new MutationObserver(() => {
+      proxy.className = realBtn.className;
+    });
+    this._tableProxyObserver.observe(realBtn, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
   }
 
   /**
@@ -376,6 +464,11 @@ export class TextEditorLayer {
    */
   destroy() {
     this.forceSave();
+
+    if (this._tableProxyObserver) {
+      this._tableProxyObserver.disconnect();
+      this._tableProxyObserver = null;
+    }
 
     if (this._resizeObserver) {
       this._resizeObserver.disconnect();
