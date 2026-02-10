@@ -366,11 +366,69 @@ export class TextEditorLayer {
   }
 
   /**
+   * Highlight search terms in the editor content using <mark> elements.
+   * @param {string} query - Search query (supports * and ? wildcards)
+   */
+  highlightSearchTerms(query) {
+    this.clearHighlights();
+    if (!query || !this._editorElement) return;
+
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+    const regex = new RegExp(`(${pattern})`, "gi");
+
+    // Walk all text nodes in the editor and wrap matches with <mark>
+    const walker = document.createTreeWalker(this._editorElement, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+    for (const node of textNodes) {
+      if (!regex.test(node.textContent)) continue;
+      regex.lastIndex = 0;
+
+      const frag = document.createDocumentFragment();
+      let lastIndex = 0;
+      for (const match of node.textContent.matchAll(regex)) {
+        // Text before match
+        if (match.index > lastIndex) {
+          frag.appendChild(document.createTextNode(node.textContent.slice(lastIndex, match.index)));
+        }
+        // Matched text in <mark>
+        const mark = document.createElement("mark");
+        mark.className = "search-highlight";
+        mark.textContent = match[0];
+        frag.appendChild(mark);
+        lastIndex = match.index + match[0].length;
+      }
+      // Remaining text
+      if (lastIndex < node.textContent.length) {
+        frag.appendChild(document.createTextNode(node.textContent.slice(lastIndex)));
+      }
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+
+  /**
+   * Remove all search highlight marks from the editor.
+   */
+  clearHighlights() {
+    if (!this._editorElement) return;
+    const marks = this._editorElement.querySelectorAll("mark.search-highlight");
+    for (const mark of marks) {
+      const parent = mark.parentNode;
+      parent.replaceChild(document.createTextNode(mark.textContent), mark);
+      parent.normalize(); // Merge adjacent text nodes
+    }
+  }
+
+  /**
    * Get current HTML content
    * @returns {string}
    */
   getContent() {
     if (!this.$editor) return "";
+    // Strip search highlights before returning content so marks aren't persisted
+    this.clearHighlights();
     return this.$editor.trumbowyg("html");
   }
 

@@ -58,6 +58,14 @@
   box-shadow: none;
 }
 
+/* Search highlights */
+.note-canvas__text-editor-layer mark.search-highlight {
+  background: rgba(255, 255, 0, 0.4);
+  outline: 2px solid rgba(255, 200, 0, 0.8);
+  border-radius: 2px;
+  color: inherit;
+}
+
 /* Tables in the editor */
 .note-canvas__text-editor-layer .trumbowyg-editor table {
   width: 80%;

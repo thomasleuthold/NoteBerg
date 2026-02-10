@@ -103,3 +103,24 @@ export async function loadPdfPage(fileId, pageIndex) {
   const pdfDoc = await getPdfDocument(fileId);
   return pdfDoc.getPage(pageIndex);
 }
+
+/**
+ * Extract all text from a stored PDF file.
+ * @param {string} fileId - The ID of the stored PDF file
+ * @returns {Promise<string>} - Combined text from all pages
+ */
+export async function extractPdfText(fileId) {
+  try {
+    const pdfDoc = await getPdfDocument(fileId);
+    const parts = [];
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      const page = await pdfDoc.getPage(i);
+      const content = await page.getTextContent({ normalizeWhitespace: true });
+      const pageText = content.items.map((item) => item.str).join(" ");
+      if (pageText.trim()) parts.push(pageText);
+    }
+    return parts.join("\n");
+  } catch (_err) {
+    return "";
+  }
+}

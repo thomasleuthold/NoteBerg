@@ -253,6 +253,14 @@
   transform: scaleX(var(--scale-x, 1));
 }
 
+/* Search highlights in PDF text layers */
+.note-canvas__text-layer mark.search-highlight {
+  background: rgba(255, 255, 0, 0.4);
+  outline: 2px solid rgba(255, 200, 0, 0.8);
+  border-radius: 2px;
+  color: transparent;
+}
+
 /* Highlight text selection */
 .note-canvas__text-layer ::selection {
   background: rgba(0, 0, 255, 0.25);

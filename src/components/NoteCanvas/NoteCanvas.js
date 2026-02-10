@@ -171,6 +171,7 @@ export class NoteCanvas {
     this.lastTouchDistance = null;
     this.initialPinchZoom = null;
     this._isZooming = false; // Flag to suppress scroll events during zoom
+    this._textModePanState = null; // Touch-pan state for text mode (threshold detection)
     this.lastTouchX = null;
     this.lastTouchY = null;
 
@@ -907,6 +908,7 @@ export class NoteCanvas {
    * @param {string} query
    */
   _highlightSearchTerms(query) {
+    // Highlight recognized handwriting strokes on the canvas
     let recognition = this.noteData?.recognition;
 
     // Handle case where recognition might be a JSON string (legacy data artifact)
@@ -915,42 +917,50 @@ export class NoteCanvas {
         recognition = JSON.parse(recognition);
         this.noteData.recognition = recognition;
       } catch (_e) {
-        return;
+        recognition = null;
       }
     }
 
-    if (!recognition?.words || !Array.isArray(recognition.words)) return;
+    if (recognition?.words && Array.isArray(recognition.words)) {
+      const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+      const regex = new RegExp(pattern, "gi");
 
-    // Create regex pattern from query with wildcard support
-    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
-    const regex = new RegExp(pattern, "gi");
+      const rects = [];
 
-    const rects = [];
+      recognition.words.forEach((word) => {
+        if (!word) return;
 
-    recognition.words.forEach((word) => {
-      if (!word) return;
+        regex.lastIndex = 0;
+        if (word.text && regex.test(word.text)) {
+          const box = word.boundingRect || word.boundingBox || word.rect || word;
 
-      regex.lastIndex = 0;
-      if (word.text && regex.test(word.text)) {
-        // Support multiple structures for bounding box
-        const box = word.boundingRect || word.boundingBox || word.rect || word;
+          if (box) {
+            const x = box.x !== undefined ? box.x : box.left;
+            const y = box.y !== undefined ? box.y : box.top;
+            const w = box.width !== undefined ? box.width : box.w;
+            const h = box.height !== undefined ? box.height : box.h;
 
-        if (box) {
-          const x = box.x !== undefined ? box.x : box.left;
-          const y = box.y !== undefined ? box.y : box.top;
-          const w = box.width !== undefined ? box.width : box.w;
-          const h = box.height !== undefined ? box.height : box.h;
-
-          if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
-            rects.push({ x, y, w, h });
+            if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
+              rects.push({ x, y, w, h });
+            }
           }
         }
-      }
-    });
+      });
 
-    if (this.renderer) {
-      this.renderer.setHighlights(rects);
+      if (this.renderer) {
+        this.renderer.setHighlights(rects);
+      }
+    }
+
+    // Highlight in text editor layer
+    if (this.textEditorLayer) {
+      this.textEditorLayer.highlightSearchTerms(query);
+    }
+
+    // Highlight in PDF text layers
+    if (this.pdfTextLayerManager) {
+      this.pdfTextLayerManager.highlightSearchTerms(query);
     }
   }
 
@@ -2631,12 +2641,27 @@ export class NoteCanvas {
       this.momentumReqId = null;
     }
 
+    const isTextModeTouch = this.mode === "text" && e.pointerType === "touch";
+
     this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    // Capture pointer to track dragging outside viewport
-    try {
-      e.target.setPointerCapture(e.pointerId);
-    } catch (_err) {
-      // Ignore capture errors
+
+    // In text mode, delay pointer capture until the user drags beyond a threshold.
+    // This lets taps reach the text editor for cursor placement.
+    if (isTextModeTouch) {
+      this._textModePanState = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        target: e.target,
+        captured: false,
+      };
+    } else {
+      // Capture pointer to track dragging outside viewport
+      try {
+        e.target.setPointerCapture(e.pointerId);
+      } catch (_err) {
+        // Ignore capture errors
+      }
     }
 
     if (this.activePointers.size === 2) {
@@ -2710,14 +2735,40 @@ export class NoteCanvas {
       }
     } else if (this.activePointers.size === 1) {
       // Pan
-      // If in manual draw/eraser mode, single touch should draw/erase, not pan.
-      // UNLESS stylus mode is active (stylusDetected), then touch always pans.
-      if (!this.stylusDetected && this.mode !== "pan" && !this.autoSwitchedToDrawMode) return;
-      // Mouse in draw/eraser/lasso mode is handled by InputHandler or ignored
-      if (this.mode !== "pan" && e.pointerType === "mouse") return;
+      // In text mode, allow touch panning (with threshold to distinguish from taps)
+      const isTextModeTouch = this.mode === "text" && e.pointerType === "touch";
+      if (!isTextModeTouch) {
+        // If in manual draw/eraser mode, single touch should draw/erase, not pan.
+        // UNLESS stylus mode is active (stylusDetected), then touch always pans.
+        if (!this.stylusDetected && this.mode !== "pan" && !this.autoSwitchedToDrawMode) return;
+        // Mouse in draw/eraser/lasso mode is handled by InputHandler or ignored
+        if (this.mode !== "pan" && e.pointerType === "mouse") return;
+      }
 
       const x = e.clientX;
       const y = e.clientY;
+
+      // In text mode, require a drag threshold before capturing for pan.
+      // Below threshold, the touch is a tap for cursor placement.
+      if (isTextModeTouch && this._textModePanState && !this._textModePanState.captured) {
+        const totalDx = x - this._textModePanState.startX;
+        const totalDy = y - this._textModePanState.startY;
+        if (totalDx * totalDx + totalDy * totalDy < 64) return; // 8px threshold
+        // Exceeded threshold — capture pointer and start panning
+        this._textModePanState.captured = true;
+        try {
+          this._textModePanState.target.setPointerCapture(e.pointerId);
+        } catch (_err) {
+          // Ignore capture errors
+        }
+        // Clear any text selection that may have started
+        window.getSelection()?.removeAllRanges();
+        // Reset pan origin to current position to avoid jump
+        this.lastTouchX = x;
+        this.lastTouchY = y;
+        this.lastMoveTime = Date.now();
+        return;
+      }
       const now = Date.now();
       const dt = now - this.lastMoveTime;
 
@@ -2790,6 +2841,13 @@ export class NoteCanvas {
       this._saveMediaChanges();
     }
 
+    // Clean up text-mode touch pan state
+    const wasTextModePan = this._textModePanState?.pointerId === e.pointerId;
+    const didCapture = wasTextModePan && this._textModePanState.captured;
+    if (wasTextModePan) {
+      this._textModePanState = null;
+    }
+
     if (this.activePointers.has(e.pointerId)) {
       this.activePointers.delete(e.pointerId);
       try {
@@ -2811,9 +2869,9 @@ export class NoteCanvas {
       }
 
       if (this.activePointers.size === 0) {
-        // Check for momentum if release was recent
+        // Check for momentum if release was recent (skip if tap in text mode)
         const now = Date.now();
-        if (now - this.lastMoveTime < 100) {
+        if (now - this.lastMoveTime < 100 && (!wasTextModePan || didCapture)) {
           this._startMomentumScroll();
         }
 

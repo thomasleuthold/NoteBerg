@@ -284,6 +284,21 @@
   justify-content: space-between;
 }
 
+.search-result-sources {
+  display: flex;
+  gap: 4px;
+}
+
+.search-result-sources > span {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 0.7rem;
+  line-height: 1.6;
+  font-weight: 600;
+}
+
 .search-status {
   padding: 12px;
   color: var(--text-secondary);

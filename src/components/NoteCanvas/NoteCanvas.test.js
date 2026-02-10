@@ -104,6 +104,8 @@ vi.mock("./PdfTextLayerManager.js", () => ({
     destroy: vi.fn(),
     refresh: vi.fn(),
     onPageRemoved: vi.fn(),
+    highlightSearchTerms: vi.fn(),
+    clearHighlights: vi.fn(),
   })),
 }));
 vi.mock("./TextEditorLayer.js", () => ({
@@ -115,6 +117,8 @@ vi.mock("./TextEditorLayer.js", () => ({
     getContent: vi.fn(() => ""),
     forceSave: vi.fn(),
     destroy: vi.fn(),
+    highlightSearchTerms: vi.fn(),
+    clearHighlights: vi.fn(),
   })),
 }));
 

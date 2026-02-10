@@ -248,10 +248,12 @@ describe("TextEditorLayer", () => {
 
     // Simulate resize with borderBoxSize (includes padding)
     const resizeCallback = global.ResizeObserver.mock.calls[0][0];
-    resizeCallback([{
-      borderBoxSize: [{ blockSize: 500 }],
-      contentRect: { height: 460 },
-    }]);
+    resizeCallback([
+      {
+        borderBoxSize: [{ blockSize: 500 }],
+        contentRect: { height: 460 },
+      },
+    ]);
 
     expect(onHeightChange).toHaveBeenCalledWith(500);
   });
