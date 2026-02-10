@@ -15,7 +15,6 @@ vi.mock("trumbowyg", () => ({}));
 vi.mock("trumbowyg/dist/ui/trumbowyg.css", () => ({}));
 vi.mock("trumbowyg/dist/plugins/colors/trumbowyg.colors.js", () => ({}));
 vi.mock("trumbowyg/dist/plugins/colors/ui/trumbowyg.colors.css", () => ({}));
-vi.mock("trumbowyg/dist/plugins/fontfamily/trumbowyg.fontfamily.js", () => ({}));
 vi.mock("trumbowyg/dist/plugins/fontsize/trumbowyg.fontsize.js", () => ({}));
 vi.mock("trumbowyg/dist/plugins/indent/trumbowyg.indent.js", () => ({}));
 vi.mock("trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js", () => ({}));
@@ -124,7 +123,9 @@ describe("TextEditorLayer", () => {
     const container = viewportElement.querySelector(".note-canvas__text-editor-layer");
     // screenX = -100 + 200 = 100
     // screenY = -50
-    expect(container.style.transform).toBe("translate(100px, -50px) scale(2)");
+    expect(container.style.top).toBe("-50px");
+    expect(container.style.left).toBe("100px");
+    expect(container.style.transform).toBe("scale(2)");
     expect(container.style.width).toBe("1200px"); // Default maxContentWidth
   });
 
@@ -245,9 +246,12 @@ describe("TextEditorLayer", () => {
     expect(global.ResizeObserver).toHaveBeenCalled();
     expect(mockResizeObserver.observe).toHaveBeenCalledWith(trumbowygEditor);
 
-    // Simulate resize
+    // Simulate resize with borderBoxSize (includes padding)
     const resizeCallback = global.ResizeObserver.mock.calls[0][0];
-    resizeCallback([{ contentRect: { height: 500 } }]);
+    resizeCallback([{
+      borderBoxSize: [{ blockSize: 500 }],
+      contentRect: { height: 460 },
+    }]);
 
     expect(onHeightChange).toHaveBeenCalledWith(500);
   });
