@@ -43,8 +43,9 @@ export class PdfTextLayerManager {
     this._createLayerDebounceTimers = new Map();
     this._createLayerDebounceMs = 100;
 
-    // Semaphore for text layer creation
-    this.isCreatingLayer = false;
+    // Queue for sequential layer creation (avoids semaphore drops)
+    this._creationQueue = [];
+    this._isProcessingQueue = false;
 
     this._createContainer();
   }
@@ -142,11 +143,11 @@ export class PdfTextLayerManager {
   }
 
   /**
-   * Schedule layer creation with debounce
+   * Schedule layer creation with debounce, then enqueue.
    * @private
    */
   _scheduleLayerCreation(pageId, item) {
-    // Clear any existing timer
+    // Clear any existing timer for this page
     if (this._createLayerDebounceTimers.has(pageId)) {
       clearTimeout(this._createLayerDebounceTimers.get(pageId));
     }
@@ -155,7 +156,7 @@ export class PdfTextLayerManager {
       this._createLayerDebounceTimers.delete(pageId);
       // Check again if still needed (may have scrolled away)
       if (!this.activeLayers.has(pageId)) {
-        this._createLayer(pageId, item);
+        this._enqueueLayerCreation(pageId, item);
       }
     }, this._createLayerDebounceMs);
 
@@ -163,13 +164,40 @@ export class PdfTextLayerManager {
   }
 
   /**
+   * Add a page to the creation queue and start processing.
+   * @private
+   */
+  _enqueueLayerCreation(pageId, item) {
+    // Avoid duplicate entries in queue
+    if (!this._creationQueue.some((entry) => entry.pageId === pageId)) {
+      this._creationQueue.push({ pageId, item });
+    }
+    this._processQueue();
+  }
+
+  /**
+   * Process the creation queue sequentially.
+   * @private
+   */
+  async _processQueue() {
+    if (this._isProcessingQueue) return;
+    this._isProcessingQueue = true;
+
+    while (this._creationQueue.length > 0) {
+      const { pageId, item } = this._creationQueue.shift();
+      // Skip if layer was already created or page scrolled out of view
+      if (this.activeLayers.has(pageId)) continue;
+      await this._createLayer(pageId, item);
+    }
+
+    this._isProcessingQueue = false;
+  }
+
+  /**
    * Create a text layer for a PDF page
    * @private
    */
   async _createLayer(pageId, item) {
-    if (this.isCreatingLayer) return; // Busy, try next update
-    this.isCreatingLayer = true;
-
     try {
       // Create container div
       const div = document.createElement("div");
@@ -223,8 +251,6 @@ export class PdfTextLayerManager {
       console.error(`[PdfTextLayerManager] Failed to create text layer for ${pageId}:`, error);
       // Remove failed layer
       this._removeLayer(pageId);
-    } finally {
-      this.isCreatingLayer = false;
     }
   }
 
@@ -282,11 +308,14 @@ export class PdfTextLayerManager {
    * @private
    */
   _removeLayer(pageId) {
-    // Clear any pending creation
+    // Clear any pending creation timer
     if (this._createLayerDebounceTimers.has(pageId)) {
       clearTimeout(this._createLayerDebounceTimers.get(pageId));
       this._createLayerDebounceTimers.delete(pageId);
     }
+
+    // Remove from creation queue
+    this._creationQueue = this._creationQueue.filter((entry) => entry.pageId !== pageId);
 
     const layer = this.activeLayers.get(pageId);
     if (layer) {
@@ -435,6 +464,9 @@ export class PdfTextLayerManager {
       clearTimeout(timer);
     }
     this._createLayerDebounceTimers.clear();
+
+    // Clear creation queue
+    this._creationQueue = [];
 
     // Remove all layers
     this._removeAllLayers();
