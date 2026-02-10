@@ -813,3 +813,70 @@
   background-color: #fee2e2;
   border-color: #fecaca;
 }
+
+/* ==========================================================================
+   NoteNavigator
+   ========================================================================== */
+
+.note-navigator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.note-navigator__btn,
+.note-navigator__toggle-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.note-navigator__btn:hover,
+.note-navigator__toggle-btn:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+}
+
+.note-navigator__subject-btn {
+  width: 32px;
+  padding: 4px 0;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  transition: background 0.15s;
+}
+
+.note-navigator__subject-btn:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+}
+
+.note-navigator__subject-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.note-navigator__position {
+  font-weight: 600;
+  font-size: 10px;
+  line-height: 1;
+}

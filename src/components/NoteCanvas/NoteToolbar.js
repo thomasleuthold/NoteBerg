@@ -29,10 +29,9 @@ function getPenIconWithColor(tipColor, size = 24) {
  */
 function getMarkerIconWithColor(tipColor, size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12 19l7-7 3 3-7 7-3-3z" />
-    <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-    <path d="M2 2l7.586 7.586" />
-    <circle cx="11" cy="11" r="3" fill="${tipColor}" stroke="${tipColor}" />
+    <path d="m9 11-6 6v3h9l3-3"/>
+    <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
+    <circle cx="9" cy="18" r="2" fill="${tipColor}" stroke="${tipColor}" />
   </svg>`;
 }
 

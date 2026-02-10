@@ -8,7 +8,7 @@
 
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
-import { importPdf } from "../../modules/pdfManager.js";
+import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
   deleteFile,
@@ -39,6 +39,7 @@ import {
   TransformStrokesCommand,
 } from "./commands/index.js";
 import { HistoryManager } from "./HistoryManager.js";
+import { NoteNavigator } from "./NoteNavigator.js";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
@@ -587,6 +588,7 @@ export class NoteCanvas {
 
     this.isInitialized = true;
     this._renderPdfControls();
+    this._initNavigator();
 
     // Expose for debugging
     window.__noteCanvas = this;
@@ -962,6 +964,242 @@ export class NoteCanvas {
     if (this.pdfTextLayerManager) {
       this.pdfTextLayerManager.highlightSearchTerms(query);
     }
+  }
+
+  /**
+   * Initialize the note navigator widget.
+   * @private
+   */
+  async _initNavigator() {
+    const scrollerContainer = this.containerElement.querySelector(
+      ".note-canvas__scroller-container",
+    );
+    if (!scrollerContainer) return;
+
+    this.navigator = new NoteNavigator(scrollerContainer, {
+      onNavigate: (contentY) => {
+        if (!this.scroller) return;
+        const vpHeight = this.scroller.viewportHeight / this.scroller.zoomScale;
+        const targetScrollY = Math.max(0, contentY - vpHeight / 2);
+        this.scroller.scrollTo(0, targetScrollY, false);
+      },
+    });
+
+    // Load PDF outline if a PDF is present
+    const pdfPages = this.mediaManager?.getItems().filter((i) => i.type === "pdf-page");
+    if (pdfPages && pdfPages.length > 0) {
+      const fileId = this.noteData.pdfSource || pdfPages[0].fileId;
+      if (fileId) {
+        try {
+          const outline = await getPdfOutline(fileId);
+          if (outline.length > 0) {
+            // Map outline entries to precise content Y positions
+            const mappedEntries = await Promise.all(
+              outline.map(async (entry) => {
+                const pageItem = pdfPages.find((p) => p.pageIndex === entry.pageIndex);
+                if (!pageItem) return null;
+
+                // If destY is available, compute precise position within the page
+                if (entry.destY != null) {
+                  try {
+                    const page = await loadPdfPage(pageItem.fileId, pageItem.pageIndex);
+                    const viewport = page.getViewport({ scale: 1.0 });
+                    const displayScale = pageItem.width / viewport.width;
+                    // destY is in PDF coords (from bottom), convert to top-down
+                    const pdfY = viewport.height - entry.destY;
+                    const contentY = pageItem.y + pdfY * displayScale;
+                    return { y: contentY, label: entry.title };
+                  } catch (_e) {
+                    return { y: pageItem.y, label: entry.title };
+                  }
+                }
+                return { y: pageItem.y, label: entry.title };
+              }),
+            );
+            this._pdfOutline = mappedEntries.filter(Boolean);
+          }
+        } catch (_e) {
+          // Outline not available
+        }
+      }
+    }
+
+    await this._updateNavigatorSubjects();
+  }
+
+  /**
+   * Build and set navigator subjects based on current note state.
+   * @private
+   */
+  async _updateNavigatorSubjects() {
+    if (!this.navigator) return;
+
+    const subjects = [];
+
+    // 1. Search term matches
+    if (this.activeSearchQuery) {
+      const searchItems = await this._getSearchMatchPositions(this.activeSearchQuery);
+      if (searchItems.length > 0) {
+        subjects.push({ key: "search", label: "Search", items: searchItems });
+      }
+    }
+
+    // 2. PDF pages
+    const pdfPages = this.mediaManager?.getItems().filter((i) => i.type === "pdf-page");
+    if (pdfPages && pdfPages.length > 0) {
+      const sorted = [...pdfPages].sort((a, b) => a.y - b.y);
+      subjects.push({
+        key: "pdf-page",
+        label: "Pages",
+        items: sorted.map((p) => ({ y: p.y, label: `Page ${p.pageIndex}` })),
+      });
+    }
+
+    // 3. PDF chapters
+    if (this._pdfOutline && this._pdfOutline.length > 0) {
+      subjects.push({
+        key: "pdf-chapter",
+        label: "Chapters",
+        items: this._pdfOutline,
+      });
+    }
+
+    // 4. Highlighter strokes (grouped within 50px)
+    const markerStrokes = this.noteData.strokes.filter((s) => s.type === "marker" && !s._deleted);
+    if (markerStrokes.length > 0) {
+      const rawItems = markerStrokes
+        .map((s) => ({ y: Math.min(...s.y) }))
+        .sort((a, b) => a.y - b.y);
+
+      // Group items within 50px vertically
+      const grouped = [];
+      let group = [rawItems[0]];
+      for (let i = 1; i < rawItems.length; i++) {
+        if (rawItems[i].y - group[group.length - 1].y <= 50) {
+          group.push(rawItems[i]);
+        } else {
+          const avgY = group.reduce((sum, it) => sum + it.y, 0) / group.length;
+          grouped.push({ y: avgY });
+          group = [rawItems[i]];
+        }
+      }
+      const avgY = group.reduce((sum, it) => sum + it.y, 0) / group.length;
+      grouped.push({ y: avgY });
+
+      subjects.push({ key: "highlighter", label: "Highlights", items: grouped });
+    }
+
+    // Auto-select: search if active, else pdf-page, else highlighter
+    let autoSelect;
+    if (this.activeSearchQuery && subjects.some((s) => s.key === "search")) {
+      autoSelect = "search";
+    } else if (subjects.some((s) => s.key === "pdf-page")) {
+      autoSelect = "pdf-page";
+    } else if (subjects.some((s) => s.key === "highlighter")) {
+      autoSelect = "highlighter";
+    }
+
+    this.navigator.setSubjects(subjects, autoSelect);
+
+    // Auto-expand if search query is active
+    if (this.activeSearchQuery && subjects.length > 0 && !this.navigator.expanded) {
+      this.navigator.expanded = true;
+      this.navigator._render();
+    }
+  }
+
+  /**
+   * Collect Y positions of all search term matches across content types.
+   * @private
+   * @param {string} query
+   * @returns {Promise<Array<{y: number}>>}
+   */
+  async _getSearchMatchPositions(query) {
+    const positions = [];
+
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+    const regex = new RegExp(pattern, "gi");
+
+    // 1. Handwriting recognition matches
+    let recognition = this.noteData?.recognition;
+    if (typeof recognition === "string") {
+      try {
+        recognition = JSON.parse(recognition);
+      } catch (_e) {
+        recognition = null;
+      }
+    }
+    if (recognition?.words && Array.isArray(recognition.words)) {
+      for (const word of recognition.words) {
+        if (!word?.text) continue;
+        regex.lastIndex = 0;
+        if (regex.test(word.text)) {
+          const box = word.boundingRect || word.boundingBox || word.rect || word;
+          const y = box.y !== undefined ? box.y : box.top;
+          if (y !== undefined) {
+            positions.push({ y });
+          }
+        }
+      }
+    }
+
+    // 2. PDF text matches — find precise Y position of each match within pages
+    const pdfPages = this.mediaManager?.getItems().filter((i) => i.type === "pdf-page");
+    if (pdfPages && pdfPages.length > 0) {
+      const pageChecks = pdfPages.map(async (pageItem) => {
+        try {
+          const page = await loadPdfPage(pageItem.fileId, pageItem.pageIndex);
+          const cached = this.pdfTextLayerManager?.textContentCache?.get(pageItem.id);
+          const content = cached || (await page.getTextContent({ normalizeWhitespace: true }));
+          const viewport = page.getViewport({ scale: 1.0 });
+          const displayScale = pageItem.width / viewport.width;
+
+          const matches = [];
+          for (const textItem of content.items) {
+            if (!textItem.str) continue;
+            const r = new RegExp(pattern, "gi");
+            if (r.test(textItem.str)) {
+              // transform[5] is Y in PDF coords (bottom-up), convert to top-down
+              const pdfY = viewport.height - textItem.transform[5];
+              const contentY = pageItem.y + pdfY * displayScale;
+              matches.push({ y: contentY });
+            }
+          }
+          return matches;
+        } catch (_e) {
+          return [];
+        }
+      });
+      const results = await Promise.all(pageChecks);
+      for (const pageMatches of results) {
+        for (const m of pageMatches) {
+          positions.push(m);
+        }
+      }
+    }
+
+    // 3. Text editor matches — check raw note content with regex
+    if (this.noteData?.content) {
+      // Strip HTML tags for matching
+      const textContent = this.noteData.content.replace(/<[^>]+>/g, "");
+      regex.lastIndex = 0;
+      if (regex.test(textContent)) {
+        // Content matches — add position at top (text editor starts at y=0)
+        positions.push({ y: 0 });
+      }
+    }
+
+    // Sort by Y and deduplicate nearby positions (within 20px)
+    positions.sort((a, b) => a.y - b.y);
+    const deduped = [];
+    for (const pos of positions) {
+      if (deduped.length === 0 || pos.y - deduped[deduped.length - 1].y > 20) {
+        deduped.push(pos);
+      }
+    }
+
+    return deduped;
   }
 
   /**
@@ -3207,6 +3445,11 @@ export class NoteCanvas {
     if (this.toolbar) {
       this.toolbar.destroy();
       this.toolbar = null;
+    }
+
+    if (this.navigator) {
+      this.navigator.destroy();
+      this.navigator = null;
     }
 
     // Wait for pending thumbnail save before destroying strokeManager
