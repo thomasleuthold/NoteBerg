@@ -1573,6 +1573,24 @@ export function attemptMerge(local, remote) {
   addMedia(localIsNewer ? remoteMedia : localMedia); // Add older first
   addMedia(localIsNewer ? localMedia : remoteMedia); // Add newer second (wins)
 
+  // Merge tasks by ID, newer modified timestamp wins for individual tasks
+  const localTasks = local.tasks || [];
+  const remoteTasks = remote.tasks || [];
+  const taskMap = new Map();
+
+  // Add older first, then newer overwrites by ID
+  const olderTasks = localIsNewer ? remoteTasks : localTasks;
+  const newerTasks = localIsNewer ? localTasks : remoteTasks;
+  for (const task of olderTasks) {
+    taskMap.set(task.id, task);
+  }
+  for (const task of newerTasks) {
+    const existing = taskMap.get(task.id);
+    if (!existing || (task.modified || 0) >= (existing.modified || 0)) {
+      taskMap.set(task.id, task);
+    }
+  }
+
   // Construct the merged note.
   return {
     id: local.id, // Keep original ID
@@ -1587,6 +1605,7 @@ export function attemptMerge(local, remote) {
     media: Array.from(mediaMap.values()),
     deletedMedia: Array.from(allDeletedMedia),
     tags: mergedTags,
+    tasks: Array.from(taskMap.values()),
     deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
 
     formatVersion: newerNote.formatVersion, // Use format from newer note

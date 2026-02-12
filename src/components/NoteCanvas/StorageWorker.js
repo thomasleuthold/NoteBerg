@@ -161,6 +161,28 @@ async function processMessage(e) {
     }
   }
 
+  if (type === "SAVE_TASKS") {
+    const { tasks } = e.data;
+    try {
+      const db = await getDB();
+      const tx = db.transaction("notes", "readwrite");
+      const store = tx.objectStore("notes");
+      const note = await store.get(noteId);
+
+      if (note) {
+        note.tasks = tasks;
+        note.modified = Date.now();
+        note.version = (note.version || 0) + 1;
+        note.synced = false;
+
+        await store.put(note);
+      }
+      await tx.done;
+    } catch (err) {
+      console.error("[StorageWorker] Tasks save failed:", err);
+    }
+  }
+
   if (type === "SAVE_CONTENT") {
     const { content } = e.data;
     try {

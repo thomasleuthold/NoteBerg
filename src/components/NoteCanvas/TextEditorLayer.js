@@ -22,6 +22,8 @@ import "trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js";
 import "trumbowyg/dist/plugins/table/trumbowyg.table.js";
 import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
 
+import { generateId } from "../../modules/storage.js";
+import { getIcon } from "../../utils/icons.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
 
@@ -42,12 +44,15 @@ export class TextEditorLayer {
     this.onContentChange = options.onContentChange || (() => {});
     this.onHeightChange = options.onHeightChange || (() => {});
     this.historyManager = options.historyManager || null;
+    this.onTaskCreate = options.onTaskCreate || null;
+    this.onTaskToggle = options.onTaskToggle || null;
 
     // DOM elements
     this.container = null;
     this.editorDiv = null;
     this.$editor = null;
     this.toolbarWrapper = null;
+    this._contextMenu = null;
 
     // State
     this.mode = "pan";
@@ -65,6 +70,9 @@ export class TextEditorLayer {
     // Undo/redo state
     this._lastHtml = "";
     this._suppressHistory = false;
+
+    this._onContextMenu = this._onContextMenu.bind(this);
+    this._dismissContextMenu = this._dismissContextMenu.bind(this);
 
     this._createDOM();
   }
@@ -193,6 +201,11 @@ export class TextEditorLayer {
     }
 
     this._editorElement = trumbowygEditor;
+
+    // Context menu for "Mark as Task"
+    if (trumbowygEditor) {
+      trumbowygEditor.addEventListener("contextmenu", this._onContextMenu);
+    }
 
     // Initial position update
     this._updatePosition();
@@ -512,6 +525,173 @@ export class TextEditorLayer {
   }
 
   /**
+   * Handle context menu on editor to offer "Mark as Task"
+   * @private
+   */
+  _onContextMenu(e) {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+
+    // Check if selection is inside the editor
+    const range = selection.getRangeAt(0);
+    if (!this._editorElement?.contains(range.commonAncestorContainer)) return;
+
+    // Don't show if selection is already a task
+    const parentTask = range.commonAncestorContainer.parentElement?.closest?.("[data-task-id]");
+    if (parentTask) return;
+
+    e.preventDefault();
+    this._showContextMenu(e.clientX, e.clientY);
+  }
+
+  /**
+   * Show custom context menu with "Mark as Task" option
+   * @private
+   */
+  _showContextMenu(x, y) {
+    this._dismissContextMenu();
+
+    this._contextMenu = document.createElement("div");
+    this._contextMenu.className = "text-editor-task-context-menu";
+    this._contextMenu.innerHTML = `
+      <button class="text-editor-task-context-menu__item">
+        ${getIcon("checkSquare", 16)} Mark as Task
+      </button>
+    `;
+    this._contextMenu.style.left = `${x}px`;
+    this._contextMenu.style.top = `${y}px`;
+
+    const btn = this._contextMenu.querySelector("button");
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._handleMarkTextAsTask();
+      this._dismissContextMenu();
+    });
+
+    document.body.appendChild(this._contextMenu);
+    document.addEventListener("pointerdown", this._dismissContextMenu);
+  }
+
+  /**
+   * Dismiss the custom context menu
+   * @private
+   */
+  _dismissContextMenu() {
+    if (this._contextMenu) {
+      this._contextMenu.remove();
+      this._contextMenu = null;
+      document.removeEventListener("pointerdown", this._dismissContextMenu);
+    }
+  }
+
+  /**
+   * Wrap current selection in a task span and create a task entry
+   * @private
+   */
+  _handleMarkTextAsTask() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+
+    const range = selection.getRangeAt(0);
+    if (!this._editorElement?.contains(range.commonAncestorContainer)) return;
+
+    const taskId = generateId();
+
+    // Wrap selected text in a task span
+    const span = document.createElement("span");
+    span.className = "task-text";
+    span.dataset.taskId = taskId;
+
+    try {
+      range.surroundContents(span);
+    } catch (_e) {
+      // surroundContents fails if selection crosses element boundaries
+      // Fall back to extractContents + insertNode
+      const contents = range.extractContents();
+      span.appendChild(contents);
+      range.insertNode(span);
+    }
+
+    selection.removeAllRanges();
+
+    // Notify NoteCanvas to create the task entry
+    if (this.onTaskCreate) {
+      this.onTaskCreate(taskId);
+    }
+
+    // Trigger content change
+    this.$editor?.trigger("tbwchange");
+  }
+
+  /**
+   * Render checkboxes for text tasks in the editor DOM
+   * @param {Array} tasks - All tasks (will filter to text type)
+   */
+  renderTaskCheckboxes(tasks) {
+    if (!this._editorElement) return;
+
+    const textTasks = tasks.filter((t) => t.type === "text");
+
+    // Remove existing injected checkboxes
+    const existing = this._editorElement.querySelectorAll(".task-text-checkbox");
+    for (const cb of existing) {
+      cb.remove();
+    }
+
+    // For each text task, find the span and inject a checkbox
+    for (const task of textTasks) {
+      const span = this._editorElement.querySelector(`[data-task-id="${task.id}"]`);
+      if (!span) continue;
+
+      // Add/remove done styling
+      if (task.checked) {
+        span.classList.add("task-text--done");
+      } else {
+        span.classList.remove("task-text--done");
+      }
+
+      // Create checkbox
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "task-text-checkbox";
+      checkbox.checked = task.checked;
+      checkbox.addEventListener("mousedown", (e) => e.preventDefault()); // Don't steal focus
+      checkbox.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (this.onTaskToggle) {
+          this.onTaskToggle(task.id, checkbox.checked);
+        }
+      });
+
+      span.insertBefore(checkbox, span.firstChild);
+    }
+  }
+
+  /**
+   * Remove tasks whose spans no longer exist in the editor DOM
+   * @param {Array} tasks - Current tasks array (will be modified in place)
+   * @returns {boolean} Whether any orphans were removed
+   */
+  cleanupOrphanedTextTasks(tasks) {
+    if (!this._editorElement || !tasks) return false;
+
+    const existingTaskIds = new Set(
+      Array.from(this._editorElement.querySelectorAll("[data-task-id]")).map(
+        (el) => el.dataset.taskId,
+      ),
+    );
+
+    const before = tasks.length;
+    for (let i = tasks.length - 1; i >= 0; i--) {
+      if (tasks[i].type === "text" && !existingTaskIds.has(tasks[i].id)) {
+        tasks.splice(i, 1);
+      }
+    }
+
+    return tasks.length !== before;
+  }
+
+  /**
    * Clean up all resources
    */
   destroy() {
@@ -527,6 +707,11 @@ export class TextEditorLayer {
       this._resizeObserver = null;
     }
 
+    this._dismissContextMenu();
+
+    if (this._editorElement) {
+      this._editorElement.removeEventListener("contextmenu", this._onContextMenu);
+    }
     this._editorElement = null;
 
     if (this.$editor) {

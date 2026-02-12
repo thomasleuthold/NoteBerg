@@ -14,6 +14,7 @@ const SUBJECT_ICONS = {
   "pdf-page": "fileText",
   "pdf-chapter": "bookmark",
   highlighter: "highlighter",
+  task: "checkSquare",
 };
 
 export class NoteNavigator {

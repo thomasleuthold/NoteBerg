@@ -216,6 +216,72 @@
 /* Reuse .note-canvas-toolbar__options-dialog styles for the menu */
 
 /* ==========================================================================
+   Selection Overlay (Options Menu for selected strokes)
+   ========================================================================== */
+
+.note-canvas__selection-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 20;
+  display: none;
+}
+
+.note-canvas__selection-overlay--visible {
+  display: block;
+}
+
+/* ==========================================================================
+   Task Checkbox Layer
+   ========================================================================== */
+
+.note-canvas__task-checkbox-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 15;
+}
+
+.note-canvas__task-checkbox {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  pointer-events: auto;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 2px solid var(--color-primary, #3b82f6);
+  border-radius: 4px;
+  background: var(--bg-primary, white);
+  margin: 0;
+  padding: 0;
+}
+
+.note-canvas__task-checkbox:checked {
+  background: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary, #3b82f6);
+}
+
+.note-canvas__task-checkbox:checked::after {
+  content: "";
+  display: block;
+  width: 6px;
+  height: 10px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  margin: 1px auto 0;
+}
+
+.note-canvas__task-checkbox:hover {
+  transform: scale(1.1);
+}
+
+/* ==========================================================================
    PDF Text Layers (for text selection)
    ========================================================================== */
 

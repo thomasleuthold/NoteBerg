@@ -9,6 +9,7 @@ import {
   deleteNote,
   deleteNotebook,
   getAllNotebooks,
+  getAllNotes,
   getFile,
   getNote,
   getNotebook,
@@ -66,6 +67,23 @@ async function renderRootOverview(container) {
   // Sort by effectiveUpdatedAt descending
   notebookData.sort((a, b) => b.effectiveUpdatedAt - a.effectiveUpdatedAt);
 
+  // Collect tasks from all notes
+  const allNotes = await getAllNotes();
+  const allTasks = [];
+  for (const note of allNotes) {
+    const tasks = note.tasks || [];
+    for (const task of tasks) {
+      allTasks.push({
+        ...task,
+        noteId: note.id,
+        noteTitle: note.title || "Untitled",
+        noteContent: note.content || "",
+      });
+    }
+  }
+  const openTasks = allTasks.filter((t) => !t.checked);
+  const doneTasks = allTasks.filter((t) => t.checked);
+
   // Build HTML
   const notebooksHtml =
     notebookData.length > 0
@@ -79,6 +97,33 @@ async function renderRootOverview(container) {
 
   const trashIcon = getIcon("trash", 20);
   const closeIcon = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+
+  // Tasks section HTML
+  const tasksHtml =
+    allTasks.length > 0
+      ? `
+      <div class="tasks-section">
+        <div class="section-header tasks-section__header">
+          <h3>${getIcon("checkSquare", 20)} Tasks</h3>
+          <span class="tasks-count">${openTasks.length} open</span>
+        </div>
+        <div class="tasks-list">
+          ${openTasks.map((t) => renderTaskItem(t)).join("")}
+        </div>
+        ${
+          doneTasks.length > 0
+            ? `
+          <button class="tasks-done-toggle" id="toggle-done-tasks">
+            Show ${doneTasks.length} completed task${doneTasks.length !== 1 ? "s" : ""}
+          </button>
+          <div class="tasks-done-list" id="done-tasks-list" style="display: none;">
+            ${doneTasks.map((t) => renderTaskItem(t)).join("")}
+          </div>
+        `
+            : ""
+        }
+      </div>`
+      : "";
 
   container.innerHTML = `
     <div class="overview-container">
@@ -102,6 +147,8 @@ async function renderRootOverview(container) {
         </div>
         <div id="search-results" class="overview-search-results"></div>
       </div>
+
+      ${tasksHtml}
 
       <div class="notebooks-section">
         <div class="section-header">
@@ -127,6 +174,9 @@ async function renderRootOverview(container) {
 
   // Attach event listeners
   attachRootOverviewListeners(container);
+
+  // Attach task event listeners
+  attachTaskListeners(container);
 
   // Render previews for quick notes
   requestAnimationFrame(() => {
@@ -502,6 +552,61 @@ function formatDate(timestamp) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+/**
+ * Render a single task item for the overview tasks section
+ */
+function renderTaskItem(task) {
+  const isDone = task.checked;
+  const checkIcon = isDone ? getIcon("checkSquare", 16) : getIcon("square", 16);
+
+  // Extract display text for text tasks from HTML content
+  let label = "";
+  if (task.type === "text" && task.noteContent) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(task.noteContent, "text/html");
+    const span = doc.querySelector(`[data-task-id="${task.id}"]`);
+    label = span?.textContent || "";
+  }
+  if (!label) {
+    label = task.type === "text" ? "Text task" : "Handwriting task";
+  }
+
+  return `
+    <div class="task-item ${isDone ? "task-item--done" : ""}" data-note-id="${task.noteId}">
+      <span class="task-item__checkbox">${checkIcon}</span>
+      <span class="task-item__label">${escapeHtml(label)}</span>
+      <span class="task-item__note">${escapeHtml(task.noteTitle)}</span>
+    </div>
+  `;
+}
+
+/**
+ * Attach event listeners for the tasks section
+ */
+function attachTaskListeners(container) {
+  // Task items: navigate to note on click
+  container.querySelectorAll(".task-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const noteId = item.dataset.noteId;
+      if (noteId) navigateTo("note", noteId);
+    });
+  });
+
+  // Toggle done tasks visibility
+  const toggleBtn = container.querySelector("#toggle-done-tasks");
+  const doneList = container.querySelector("#done-tasks-list");
+  if (toggleBtn && doneList) {
+    toggleBtn.addEventListener("click", () => {
+      const isHidden = doneList.style.display === "none";
+      doneList.style.display = isHidden ? "" : "none";
+      const count = doneList.querySelectorAll(".task-item").length;
+      toggleBtn.textContent = isHidden
+        ? `Hide ${count} completed task${count !== 1 ? "s" : ""}`
+        : `Show ${count} completed task${count !== 1 ? "s" : ""}`;
+    });
+  }
 }
 
 function escapeHtml(text) {

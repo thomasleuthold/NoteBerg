@@ -383,7 +383,11 @@ export async function getQuickNotes() {
  */
 export async function getNote(id) {
   const note = await db.get("notes", id);
-  return await decryptNoteIfNeeded(note);
+  const decrypted = await decryptNoteIfNeeded(note);
+  if (decrypted) {
+    decrypted.tasks = decrypted.tasks || [];
+  }
+  return decrypted;
 }
 
 /**

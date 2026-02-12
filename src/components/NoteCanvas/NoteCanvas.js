@@ -26,6 +26,8 @@ import { ImageCropper } from "./ImageCropper.js";
 import { InputHandler } from "./InputHandler.js";
 import { MediaManager } from "./MediaManager.js";
 import { MediaOverlay } from "./MediaOverlay.js";
+import { SelectionOverlay } from "./SelectionOverlay.js";
+import { TaskCheckboxLayer } from "./TaskCheckboxLayer.js";
 import "./NoteCanvas.css";
 import {
   CropImageCommand,
@@ -33,6 +35,7 @@ import {
   DrawStrokeCommand,
   EraseStrokesCommand,
   InsertMediaCommand,
+  MarkTaskCommand,
   ReorderMediaCommand,
   ShiftContentCommand,
   TransformMediaCommand,
@@ -150,6 +153,8 @@ export class NoteCanvas {
     this.mediaManager = null;
     this.strokeManager = null;
     this.mediaOverlay = null;
+    this.selectionOverlay = null;
+    this.taskCheckboxLayer = null;
     this.pdfTextLayerManager = null;
     this.toolbar = null;
     this.contentHeight = 0;
@@ -444,6 +449,18 @@ export class NoteCanvas {
       onToBack: (id) => this.moveSelectedMediaToBack(id),
     });
 
+    // Initialize SelectionOverlay (3-dot menu for lasso selection)
+    this.selectionOverlay = new SelectionOverlay(this.scroller.getViewportElement(), {
+      onMarkAsTask: () => this._markSelectedStrokesAsTask(),
+      onDelete: () => this._deleteSelectedStrokes(),
+    });
+
+    // Initialize tasks array and task checkbox layer
+    this.noteData.tasks = this.noteData.tasks || [];
+    this.taskCheckboxLayer = new TaskCheckboxLayer(this.scroller.getViewportElement(), {
+      onToggle: (taskId, checked) => this._toggleTask(taskId, checked),
+    });
+
     // Initialize PDF Text Layer Manager (for text selection in PDFs)
     this.pdfTextLayerManager = new PdfTextLayerManager(
       this.scroller.getViewportElement(),
@@ -485,10 +502,15 @@ export class NoteCanvas {
         onContentChange: (html) => this._onTextContentChange(html),
         onHeightChange: (height) => this._onTextHeightChange(height),
         historyManager: this.historyManager,
+        onTaskCreate: (taskId) => this._createTextTask(taskId),
+        onTaskToggle: (taskId, checked) => this._toggleTask(taskId, checked),
       },
     );
     this.textEditorLayer.init(this.noteData.content || "");
     this.textEditorLayer.setContentHeight(this.contentHeight);
+
+    // Render text task checkboxes if any exist
+    this.textEditorLayer.renderTaskCheckboxes(this.noteData.tasks);
 
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, this.contentHeight);
@@ -1091,7 +1113,47 @@ export class NoteCanvas {
       subjects.push({ key: "highlighter", label: "Highlights", items: grouped });
     }
 
-    // Auto-select: search if active, else pdf-page, else highlighter
+    // 5. Tasks
+    const tasks = (this.noteData.tasks || []).filter((t) => {
+      if (t.type === "stroke") {
+        return t.strokeIds.some((id) => {
+          const stroke = this.noteData.strokes.find((s) => s.id === id);
+          return stroke && !stroke._deleted && !stroke.isDeleted;
+        });
+      }
+      return true;
+    });
+    if (tasks.length > 0) {
+      const taskItems = tasks
+        .map((t) => {
+          if (t.type === "stroke") {
+            const stroke = this.noteData.strokes.find((s) => s.id === t.strokeIds[0]);
+            if (!stroke) return null;
+            return {
+              y: Math.min(...stroke.y),
+              label: t.checked ? "done" : "open",
+            };
+          }
+          // Text tasks: approximate position from DOM if available
+          const el = this.textEditorLayer?._editorElement?.querySelector(
+            `[data-task-id="${t.id}"]`,
+          );
+          if (!el) return null;
+          const scrollTop = this.scroller.getScrollTop();
+          const rect = el.getBoundingClientRect();
+          const containerRect = this.scroller.getViewportElement().getBoundingClientRect();
+          const y = (rect.top - containerRect.top + scrollTop) / this.zoomScale;
+          return { y, label: t.checked ? "done" : "open" };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.y - b.y);
+
+      if (taskItems.length > 0) {
+        subjects.push({ key: "task", label: "Tasks", items: taskItems });
+      }
+    }
+
+    // Auto-select: search if active, else pdf-page, else highlighter, else task
     let autoSelect;
     if (this.activeSearchQuery && subjects.some((s) => s.key === "search")) {
       autoSelect = "search";
@@ -1099,6 +1161,8 @@ export class NoteCanvas {
       autoSelect = "pdf-page";
     } else if (subjects.some((s) => s.key === "highlighter")) {
       autoSelect = "highlighter";
+    } else if (subjects.some((s) => s.key === "task")) {
+      autoSelect = "task";
     }
 
     this.navigator.setSubjects(subjects, autoSelect);
@@ -1294,6 +1358,8 @@ export class NoteCanvas {
           this.strokeManager?.currentStroke,
         );
         this._updateMediaOverlay();
+        this._updateSelectionOverlay();
+        this._updateTaskCheckboxes();
         this._updatePdfTextLayers();
         this._updateTextEditorLayer();
         this._updatePdfControlsPosition();
@@ -1371,6 +1437,12 @@ export class NoteCanvas {
         content: html,
         key,
       });
+    }
+
+    // Clean up orphaned text tasks (spans removed by editing)
+    if (this.textEditorLayer?.cleanupOrphanedTextTasks(this.noteData.tasks)) {
+      this._saveTasks();
+      this._updateNavigatorSubjects();
     }
   }
 
@@ -1462,6 +1534,7 @@ export class NoteCanvas {
     // Clear selection when switching modes (except to pan or lasso)
     if (this.renderer && newMode !== "pan" && newMode !== "lasso") {
       this.renderer.setSelectedStrokes(new Set(), null);
+      this.selectionOverlay?.hide();
     }
 
     if (this.renderer) {
@@ -1556,6 +1629,7 @@ export class NoteCanvas {
         const { x, y } = props;
         if (x < minX || x > maxX || y < minY || y > maxY) {
           this.renderer.setSelectedStrokes(new Set(), null);
+          this.selectionOverlay?.hide();
         }
       }
 
@@ -2035,6 +2109,184 @@ export class NoteCanvas {
   }
 
   /**
+   * Update selection overlay position
+   * @private
+   */
+  _updateSelectionOverlay() {
+    if (!this.selectionOverlay?.isVisible && !this.renderer?.selectionBounds) return;
+    if (!this.renderer?.selectionBounds || this.renderer.selectedStrokeIndices.size === 0) {
+      this.selectionOverlay?.hide();
+      return;
+    }
+
+    const bounds = this.renderer.selectionBounds;
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    if (this.selectionOverlay.isVisible) {
+      this.selectionOverlay.updatePosition(bounds, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
+    } else {
+      this.selectionOverlay.show(bounds, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
+    }
+  }
+
+  /**
+   * Update task checkbox positions (placeholder for Phase 3)
+   * @private
+   */
+  _updateTaskCheckboxes() {
+    if (!this.taskCheckboxLayer) return;
+    const strokeTasks = (this.noteData?.tasks || []).filter((t) => t.type === "stroke");
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    this.taskCheckboxLayer.update(
+      strokeTasks,
+      this.noteData.strokes,
+      this.zoomScale,
+      scrollLeft,
+      scrollTop,
+      offsetX,
+    );
+  }
+
+  /**
+   * Mark the currently selected strokes as a task
+   * @private
+   */
+  _markSelectedStrokesAsTask() {
+    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
+    if (selectedIndices.length === 0) return;
+
+    const strokeIds = selectedIndices.map((i) => this.noteData.strokes[i].id);
+
+    const task = {
+      id: generateId(),
+      type: "stroke",
+      strokeIds,
+      checked: false,
+      created: Date.now(),
+      modified: Date.now(),
+    };
+
+    this.noteData.tasks.push(task);
+    this._saveTasks();
+
+    // Push command for undo/redo
+    this.historyManager?.push(new MarkTaskCommand(task));
+
+    // Clear selection and overlay
+    this.renderer.setSelectedStrokes(new Set(), null);
+    this.selectionOverlay?.hide();
+
+    // Update UI
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
+  }
+
+  /**
+   * Delete the currently selected strokes
+   * @private
+   */
+  _deleteSelectedStrokes() {
+    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
+    if (selectedIndices.length === 0) return;
+
+    const cmd = EraseStrokesCommand.fromIndices(this, selectedIndices);
+    cmd.redo(this);
+    this.historyManager?.push(cmd);
+
+    this.renderer.setSelectedStrokes(new Set(), null);
+    this.selectionOverlay?.hide();
+
+    // Clean up orphaned tasks
+    this._cleanupOrphanedTasks();
+  }
+
+  /**
+   * Toggle task checked status
+   * @param {string} taskId
+   * @param {boolean} checked
+   * @private
+   */
+  _toggleTask(taskId, checked) {
+    const task = this.noteData.tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    task.checked = checked;
+    task.modified = Date.now();
+    this._saveTasks();
+
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
+  }
+
+  /**
+   * Save tasks to storage
+   * @private
+   */
+  _saveTasks() {
+    this.strokeManager?.saveTasks(this.noteData.tasks);
+  }
+
+  /**
+   * Create a text task (called from TextEditorLayer)
+   * @param {string} taskId
+   * @private
+   */
+  _createTextTask(taskId) {
+    const task = {
+      id: taskId,
+      type: "text",
+      strokeIds: [],
+      checked: false,
+      created: Date.now(),
+      modified: Date.now(),
+    };
+    this.noteData.tasks.push(task);
+    this._saveTasks();
+    this.historyManager?.push(new MarkTaskCommand(task));
+    this._updateNavigatorSubjects();
+
+    // Re-render text task checkboxes
+    this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
+  }
+
+  /**
+   * Remove tasks whose strokes are all deleted
+   * @private
+   */
+  _cleanupOrphanedTasks() {
+    if (!this.noteData?.tasks) return;
+
+    const activeStrokeIds = new Set(
+      this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted).map((s) => s.id),
+    );
+
+    const before = this.noteData.tasks.length;
+    this.noteData.tasks = this.noteData.tasks.filter((t) => {
+      if (t.type !== "stroke") return true;
+      return t.strokeIds.some((id) => activeStrokeIds.has(id));
+    });
+
+    if (this.noteData.tasks.length !== before) {
+      this._saveTasks();
+      this._updateTaskCheckboxes();
+      this._updateNavigatorSubjects();
+    }
+  }
+
+  /**
    * Delete the currently selected media item
    */
   async deleteSelectedMedia(id = null) {
@@ -2315,6 +2567,7 @@ export class NoteCanvas {
       this.strokeManager.markDirty();
       this.strokeManager.forceSave();
       this.renderer.forceRedraw();
+      this._cleanupOrphanedTasks();
     }
   }
 
@@ -2334,6 +2587,13 @@ export class NoteCanvas {
 
     this.renderer.setSelectedStrokes(selectedIndices, selectionBounds);
     this.lassoPoints = [];
+
+    // Show selection overlay if strokes are selected
+    if (selectionBounds && selectedIndices.size > 0) {
+      this._updateSelectionOverlay();
+    } else {
+      this.selectionOverlay?.hide();
+    }
   }
 
   /**
@@ -2529,6 +2789,7 @@ export class NoteCanvas {
     if (this._eraserBatch && this._eraserBatch.length > 0) {
       const cmd = new EraseStrokesCommand(this._eraserBatch);
       this.historyManager?.push(cmd);
+      this._cleanupOrphanedTasks();
     }
     this._eraserBatch = null;
   }
@@ -3422,6 +3683,16 @@ export class NoteCanvas {
     if (this.mediaOverlay) {
       this.mediaOverlay.destroy();
       this.mediaOverlay = null;
+    }
+
+    if (this.selectionOverlay) {
+      this.selectionOverlay.destroy();
+      this.selectionOverlay = null;
+    }
+
+    if (this.taskCheckboxLayer) {
+      this.taskCheckboxLayer.destroy();
+      this.taskCheckboxLayer = null;
     }
 
     if (this.historyManager) {
