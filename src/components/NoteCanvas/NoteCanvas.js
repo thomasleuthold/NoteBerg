@@ -977,10 +977,12 @@ export class NoteCanvas {
     if (!scrollerContainer) return;
 
     this.navigator = new NoteNavigator(scrollerContainer, {
-      onNavigate: (contentY) => {
+      onNavigate: (contentY, subjectKey) => {
         if (!this.scroller) return;
-        const vpHeight = this.scroller.viewportHeight / this.scroller.zoomScale;
-        const targetScrollY = Math.max(0, contentY - vpHeight / 2);
+        const scrollToTop = subjectKey === "pdf-page" || subjectKey === "pdf-chapter";
+        const targetScrollY = scrollToTop
+          ? Math.max(0, contentY)
+          : Math.max(0, contentY - this.scroller.viewportHeight / this.scroller.zoomScale / 2);
         this.scroller.scrollTo(0, targetScrollY, false);
       },
     });

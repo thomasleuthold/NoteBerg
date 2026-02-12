@@ -17,7 +17,7 @@ function getPenIconWithColor(tipColor, size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
     <path d="m15 5 4 4"/>
-    <circle cx="4" cy="20" r="2" fill="${tipColor}" stroke="${tipColor}"/>
+    <line x1="3" y1="24" x2="21" y2="24" stroke="${tipColor}" stroke-width="2" stroke-linecap="round"/>
   </svg>`;
 }
 
@@ -31,7 +31,7 @@ function getMarkerIconWithColor(tipColor, size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m9 11-6 6v3h9l3-3"/>
     <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
-    <circle cx="9" cy="18" r="2" fill="${tipColor}" stroke="${tipColor}" />
+    <line x1="5" y1="22" x2="22" y2="22" stroke="${tipColor}" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
   </svg>`;
 }
 
@@ -281,6 +281,12 @@ export class NoteToolbar {
    */
   _renderDialogContent() {
     this.penSettingsDialog.innerHTML = "";
+
+    // Toggle expanded class for shadow
+    this.penSettingsDialog.classList.toggle(
+      "note-canvas-toolbar__pen-dialog--expanded",
+      this.isExpanded,
+    );
 
     // 1. Presets Column
     const presetsCol = document.createElement("div");
@@ -790,10 +796,10 @@ export class NoteToolbar {
       // Already in draw mode - toggle dialog
       this._togglePenDialog();
     } else {
-      // Switch to draw mode
+      // Switch to draw mode and show presets (collapsed mode)
       this.onModeChange("draw");
-      // Ensure dialog starts hidden when switching to draw mode
-      this._closePenDialog();
+      this.isExpanded = false;
+      this._openPenDialog();
     }
   }
 

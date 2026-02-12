@@ -98,7 +98,7 @@ export class NoteNavigator {
   _navigateTo(index) {
     const subject = this._currentSubject();
     if (!subject || !subject.items[index]) return;
-    this.onNavigate(subject.items[index].y);
+    this.onNavigate(subject.items[index].y, subject.key);
   }
 
   _updateDisplay() {
@@ -134,7 +134,7 @@ export class NoteNavigator {
     const btn = document.createElement("button");
     btn.className = "note-navigator__toggle-btn";
     btn.title = "Navigator";
-    btn.innerHTML = getIcon("compass", 16);
+    btn.innerHTML = getIcon("compass", 22);
     btn.onclick = (e) => {
       e.stopPropagation();
       this._toggle();
@@ -149,7 +149,7 @@ export class NoteNavigator {
     const collapseBtn = document.createElement("button");
     collapseBtn.className = "note-navigator__btn";
     collapseBtn.title = "Collapse";
-    collapseBtn.innerHTML = getIcon("chevronsUp", 16);
+    collapseBtn.innerHTML = getIcon("chevronsUp", 22);
     collapseBtn.onclick = (e) => {
       e.stopPropagation();
       this._toggle();
@@ -160,7 +160,7 @@ export class NoteNavigator {
     const prevBtn = document.createElement("button");
     prevBtn.className = "note-navigator__btn";
     prevBtn.title = "Previous";
-    prevBtn.innerHTML = getIcon("arrowUp", 16);
+    prevBtn.innerHTML = getIcon("arrowUp", 22);
     prevBtn.onclick = (e) => {
       e.stopPropagation();
       this._prevItem();
@@ -175,7 +175,7 @@ export class NoteNavigator {
     const iconName = SUBJECT_ICONS[subject?.key] || "compass";
     const iconSpan = document.createElement("span");
     iconSpan.className = "note-navigator__subject-icon";
-    iconSpan.innerHTML = getIcon(iconName, 14);
+    iconSpan.innerHTML = getIcon(iconName, 18);
     subjectBtn.appendChild(iconSpan);
 
     const posSpan = document.createElement("span");
@@ -199,7 +199,7 @@ export class NoteNavigator {
     const nextBtn = document.createElement("button");
     nextBtn.className = "note-navigator__btn";
     nextBtn.title = "Next";
-    nextBtn.innerHTML = getIcon("arrowDown", 16);
+    nextBtn.innerHTML = getIcon("arrowDown", 22);
     nextBtn.onclick = (e) => {
       e.stopPropagation();
       this._nextItem();
