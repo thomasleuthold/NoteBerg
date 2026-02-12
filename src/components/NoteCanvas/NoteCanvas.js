@@ -7,7 +7,8 @@
  */
 
 import { forceRecognition } from "../../modules/autoRecognition.js";
-import { importPdf } from "../../modules/pdfManager.js";
+import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
+import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
   deleteFile,
@@ -38,10 +39,12 @@ import {
   TransformStrokesCommand,
 } from "./commands/index.js";
 import { HistoryManager } from "./HistoryManager.js";
+import { NoteNavigator } from "./NoteNavigator.js";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
+import { TextEditorLayer } from "./TextEditorLayer.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
 // Selection handle constants (exported for use by CanvasRenderer)
@@ -169,6 +172,7 @@ export class NoteCanvas {
     this.lastTouchDistance = null;
     this.initialPinchZoom = null;
     this._isZooming = false; // Flag to suppress scroll events during zoom
+    this._textModePanState = null; // Touch-pan state for text mode (threshold detection)
     this.lastTouchX = null;
     this.lastTouchY = null;
 
@@ -472,6 +476,20 @@ export class NoteCanvas {
     });
     this.historyManager.setNoteCanvas(this);
 
+    // Initialize Text Editor Layer (WYSIWYG text editing)
+    this.textEditorLayer = new TextEditorLayer(
+      this.scroller.getViewportElement(),
+      scrollerContainer,
+      {
+        maxContentWidth: this.maxContentWidth,
+        onContentChange: (html) => this._onTextContentChange(html),
+        onHeightChange: (height) => this._onTextHeightChange(height),
+        historyManager: this.historyManager,
+      },
+    );
+    this.textEditorLayer.init(this.noteData.content || "");
+    this.textEditorLayer.setContentHeight(this.contentHeight);
+
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, this.contentHeight);
 
@@ -570,6 +588,7 @@ export class NoteCanvas {
 
     this.isInitialized = true;
     this._renderPdfControls();
+    this._initNavigator();
 
     // Expose for debugging
     window.__noteCanvas = this;
@@ -891,6 +910,7 @@ export class NoteCanvas {
    * @param {string} query
    */
   _highlightSearchTerms(query) {
+    // Highlight recognized handwriting strokes on the canvas
     let recognition = this.noteData?.recognition;
 
     // Handle case where recognition might be a JSON string (legacy data artifact)
@@ -899,43 +919,289 @@ export class NoteCanvas {
         recognition = JSON.parse(recognition);
         this.noteData.recognition = recognition;
       } catch (_e) {
-        return;
+        recognition = null;
       }
     }
 
-    if (!recognition?.words || !Array.isArray(recognition.words)) return;
+    if (recognition?.words && Array.isArray(recognition.words)) {
+      const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+      const regex = new RegExp(pattern, "gi");
 
-    // Create regex pattern from query with wildcard support
+      const rects = [];
+
+      recognition.words.forEach((word) => {
+        if (!word) return;
+
+        regex.lastIndex = 0;
+        if (word.text && regex.test(word.text)) {
+          const box = word.boundingRect || word.boundingBox || word.rect || word;
+
+          if (box) {
+            const x = box.x !== undefined ? box.x : box.left;
+            const y = box.y !== undefined ? box.y : box.top;
+            const w = box.width !== undefined ? box.width : box.w;
+            const h = box.height !== undefined ? box.height : box.h;
+
+            if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
+              rects.push({ x, y, w, h });
+            }
+          }
+        }
+      });
+
+      if (this.renderer) {
+        this.renderer.setHighlights(rects);
+      }
+    }
+
+    // Highlight in text editor layer
+    if (this.textEditorLayer) {
+      this.textEditorLayer.highlightSearchTerms(query);
+    }
+
+    // Highlight in PDF text layers
+    if (this.pdfTextLayerManager) {
+      this.pdfTextLayerManager.highlightSearchTerms(query);
+    }
+  }
+
+  /**
+   * Initialize the note navigator widget.
+   * @private
+   */
+  async _initNavigator() {
+    const scrollerContainer = this.containerElement.querySelector(
+      ".note-canvas__scroller-container",
+    );
+    if (!scrollerContainer) return;
+
+    this.navigator = new NoteNavigator(scrollerContainer, {
+      onNavigate: (contentY, subjectKey) => {
+        if (!this.scroller) return;
+        const scrollToTop = subjectKey === "pdf-page" || subjectKey === "pdf-chapter";
+        const targetScrollY = scrollToTop
+          ? Math.max(0, contentY)
+          : Math.max(0, contentY - this.scroller.viewportHeight / this.scroller.zoomScale / 2);
+        this.scroller.scrollTo(0, targetScrollY, false);
+      },
+    });
+
+    // Load PDF outline if a PDF is present
+    const pdfPages = this.mediaManager?.getItems().filter((i) => i.type === "pdf-page");
+    if (pdfPages && pdfPages.length > 0) {
+      const fileId = this.noteData.pdfSource || pdfPages[0].fileId;
+      if (fileId) {
+        try {
+          const outline = await getPdfOutline(fileId);
+          if (outline.length > 0) {
+            // Map outline entries to precise content Y positions
+            const mappedEntries = await Promise.all(
+              outline.map(async (entry) => {
+                const pageItem = pdfPages.find((p) => p.pageIndex === entry.pageIndex);
+                if (!pageItem) return null;
+
+                // If destY is available, compute precise position within the page
+                if (entry.destY != null) {
+                  try {
+                    const page = await loadPdfPage(pageItem.fileId, pageItem.pageIndex);
+                    const viewport = page.getViewport({ scale: 1.0 });
+                    const displayScale = pageItem.width / viewport.width;
+                    // destY is in PDF coords (from bottom), convert to top-down
+                    const pdfY = viewport.height - entry.destY;
+                    const contentY = pageItem.y + pdfY * displayScale;
+                    return { y: contentY, label: entry.title };
+                  } catch (_e) {
+                    return { y: pageItem.y, label: entry.title };
+                  }
+                }
+                return { y: pageItem.y, label: entry.title };
+              }),
+            );
+            this._pdfOutline = mappedEntries.filter(Boolean);
+          }
+        } catch (_e) {
+          // Outline not available
+        }
+      }
+    }
+
+    await this._updateNavigatorSubjects();
+  }
+
+  /**
+   * Build and set navigator subjects based on current note state.
+   * @private
+   */
+  async _updateNavigatorSubjects() {
+    if (!this.navigator) return;
+
+    const subjects = [];
+
+    // 1. Search term matches
+    if (this.activeSearchQuery) {
+      const searchItems = await this._getSearchMatchPositions(this.activeSearchQuery);
+      if (searchItems.length > 0) {
+        subjects.push({ key: "search", label: "Search", items: searchItems });
+      }
+    }
+
+    // 2. PDF pages
+    const pdfPages = this.mediaManager?.getItems().filter((i) => i.type === "pdf-page");
+    if (pdfPages && pdfPages.length > 0) {
+      const sorted = [...pdfPages].sort((a, b) => a.y - b.y);
+      subjects.push({
+        key: "pdf-page",
+        label: "Pages",
+        items: sorted.map((p) => ({ y: p.y, label: `Page ${p.pageIndex}` })),
+      });
+    }
+
+    // 3. PDF chapters
+    if (this._pdfOutline && this._pdfOutline.length > 0) {
+      subjects.push({
+        key: "pdf-chapter",
+        label: "Chapters",
+        items: this._pdfOutline,
+      });
+    }
+
+    // 4. Highlighter strokes (grouped within 50px)
+    const markerStrokes = this.noteData.strokes.filter((s) => s.type === "marker" && !s._deleted);
+    if (markerStrokes.length > 0) {
+      const rawItems = markerStrokes
+        .map((s) => ({ y: Math.min(...s.y) }))
+        .sort((a, b) => a.y - b.y);
+
+      // Group items within 50px vertically
+      const grouped = [];
+      let group = [rawItems[0]];
+      for (let i = 1; i < rawItems.length; i++) {
+        if (rawItems[i].y - group[group.length - 1].y <= 50) {
+          group.push(rawItems[i]);
+        } else {
+          const avgY = group.reduce((sum, it) => sum + it.y, 0) / group.length;
+          grouped.push({ y: avgY });
+          group = [rawItems[i]];
+        }
+      }
+      const avgY = group.reduce((sum, it) => sum + it.y, 0) / group.length;
+      grouped.push({ y: avgY });
+
+      subjects.push({ key: "highlighter", label: "Highlights", items: grouped });
+    }
+
+    // Auto-select: search if active, else pdf-page, else highlighter
+    let autoSelect;
+    if (this.activeSearchQuery && subjects.some((s) => s.key === "search")) {
+      autoSelect = "search";
+    } else if (subjects.some((s) => s.key === "pdf-page")) {
+      autoSelect = "pdf-page";
+    } else if (subjects.some((s) => s.key === "highlighter")) {
+      autoSelect = "highlighter";
+    }
+
+    this.navigator.setSubjects(subjects, autoSelect);
+
+    // Auto-expand if search query is active
+    if (this.activeSearchQuery && subjects.length > 0 && !this.navigator.expanded) {
+      this.navigator.expanded = true;
+      this.navigator._render();
+    }
+  }
+
+  /**
+   * Collect Y positions of all search term matches across content types.
+   * @private
+   * @param {string} query
+   * @returns {Promise<Array<{y: number}>>}
+   */
+  async _getSearchMatchPositions(query) {
+    const positions = [];
+
     const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
     const regex = new RegExp(pattern, "gi");
 
-    const rects = [];
-
-    recognition.words.forEach((word) => {
-      if (!word) return;
-
-      regex.lastIndex = 0;
-      if (word.text && regex.test(word.text)) {
-        // Support multiple structures for bounding box
-        const box = word.boundingRect || word.boundingBox || word.rect || word;
-
-        if (box) {
-          const x = box.x !== undefined ? box.x : box.left;
+    // 1. Handwriting recognition matches
+    let recognition = this.noteData?.recognition;
+    if (typeof recognition === "string") {
+      try {
+        recognition = JSON.parse(recognition);
+      } catch (_e) {
+        recognition = null;
+      }
+    }
+    if (recognition?.words && Array.isArray(recognition.words)) {
+      for (const word of recognition.words) {
+        if (!word?.text) continue;
+        regex.lastIndex = 0;
+        if (regex.test(word.text)) {
+          const box = word.boundingRect || word.boundingBox || word.rect || word;
           const y = box.y !== undefined ? box.y : box.top;
-          const w = box.width !== undefined ? box.width : box.w;
-          const h = box.height !== undefined ? box.height : box.h;
-
-          if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
-            rects.push({ x, y, w, h });
+          if (y !== undefined) {
+            positions.push({ y });
           }
         }
       }
-    });
-
-    if (this.renderer) {
-      this.renderer.setHighlights(rects);
     }
+
+    // 2. PDF text matches — find precise Y position of each match within pages
+    const pdfPages = this.mediaManager?.getItems().filter((i) => i.type === "pdf-page");
+    if (pdfPages && pdfPages.length > 0) {
+      const pageChecks = pdfPages.map(async (pageItem) => {
+        try {
+          const page = await loadPdfPage(pageItem.fileId, pageItem.pageIndex);
+          const cached = this.pdfTextLayerManager?.textContentCache?.get(pageItem.id);
+          const content = cached || (await page.getTextContent({ normalizeWhitespace: true }));
+          const viewport = page.getViewport({ scale: 1.0 });
+          const displayScale = pageItem.width / viewport.width;
+
+          const matches = [];
+          for (const textItem of content.items) {
+            if (!textItem.str) continue;
+            const r = new RegExp(pattern, "gi");
+            if (r.test(textItem.str)) {
+              // transform[5] is Y in PDF coords (bottom-up), convert to top-down
+              const pdfY = viewport.height - textItem.transform[5];
+              const contentY = pageItem.y + pdfY * displayScale;
+              matches.push({ y: contentY });
+            }
+          }
+          return matches;
+        } catch (_e) {
+          return [];
+        }
+      });
+      const results = await Promise.all(pageChecks);
+      for (const pageMatches of results) {
+        for (const m of pageMatches) {
+          positions.push(m);
+        }
+      }
+    }
+
+    // 3. Text editor matches — check raw note content with regex
+    if (this.noteData?.content) {
+      // Strip HTML tags for matching
+      const textContent = this.noteData.content.replace(/<[^>]+>/g, "");
+      regex.lastIndex = 0;
+      if (regex.test(textContent)) {
+        // Content matches — add position at top (text editor starts at y=0)
+        positions.push({ y: 0 });
+      }
+    }
+
+    // Sort by Y and deduplicate nearby positions (within 20px)
+    positions.sort((a, b) => a.y - b.y);
+    const deduped = [];
+    for (const pos of positions) {
+      if (deduped.length === 0 || pos.y - deduped[deduped.length - 1].y > 20) {
+        deduped.push(pos);
+      }
+    }
+
+    return deduped;
   }
 
   /**
@@ -1029,6 +1295,7 @@ export class NoteCanvas {
         );
         this._updateMediaOverlay();
         this._updatePdfTextLayers();
+        this._updateTextEditorLayer();
         this._updatePdfControlsPosition();
       });
     }
@@ -1062,6 +1329,64 @@ export class NoteCanvas {
   }
 
   /**
+   * Update text editor layer position based on current scroll and zoom
+   * @private
+   */
+  _updateTextEditorLayer() {
+    if (!this.textEditorLayer) return;
+
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const { width: viewportWidth } = this.scroller.getViewportSize();
+
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const centeringOffset =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    this.textEditorLayer.update(this.zoomScale, scrollLeft, scrollTop, centeringOffset);
+  }
+
+  /**
+   * Handle text content change from the editor
+   * @private
+   * @param {string} html - HTML content
+   */
+  _onTextContentChange(html) {
+    this.noteData.content = html;
+
+    // Save via worker (reuse StrokeManager's worker for sequential message processing)
+    if (this.strokeManager?.worker) {
+      let key = null;
+      if (isAppUnlocked()) {
+        try {
+          key = getEncryptionKey();
+        } catch (_e) {
+          // Key not available
+        }
+      }
+
+      this.strokeManager.worker.postMessage({
+        type: "SAVE_CONTENT",
+        noteId: this.noteId,
+        content: html,
+        key,
+      });
+    }
+  }
+
+  /**
+   * Handle text content height change (for expanding scrollable area)
+   * @private
+   * @param {number} textHeight - New text content height in content pixels
+   */
+  _onTextHeightChange(textHeight) {
+    const neededHeight = textHeight + 200;
+    if (neededHeight > this.contentHeight) {
+      this._expandCanvas(neededHeight - this.contentHeight);
+    }
+  }
+
+  /**
    * Handle viewport resize events
    * @private
    */
@@ -1091,6 +1416,7 @@ export class NoteCanvas {
     this.renderer.render(scrollTop, height, scrollLeft, this.strokeManager?.currentStroke);
     this._updateMediaOverlay();
     this._updatePdfTextLayers();
+    this._updateTextEditorLayer();
     this._updatePdfControlsPosition();
   }
 
@@ -1111,6 +1437,9 @@ export class NoteCanvas {
     this.contentHeight += amount;
     this.scroller.setContentSize(this.maxContentWidth, this.contentHeight);
     this.renderer.setContentSize(this.maxContentWidth, this.contentHeight);
+    if (this.textEditorLayer) {
+      this.textEditorLayer.setContentHeight(this.contentHeight);
+    }
   }
 
   /**
@@ -1144,6 +1473,11 @@ export class NoteCanvas {
       this.pdfTextLayerManager.setMode(newMode);
     }
 
+    // Update text editor layer interactivity (only enabled in text mode)
+    if (this.textEditorLayer) {
+      this.textEditorLayer.setMode(newMode);
+    }
+
     // Add mode class to container for CSS-based behavior
     this.containerElement.classList.remove(
       "note-canvas--pan-mode",
@@ -1151,6 +1485,7 @@ export class NoteCanvas {
       "note-canvas--eraser-mode",
       "note-canvas--lasso-mode",
       "note-canvas--insert-space-mode",
+      "note-canvas--text-mode",
     );
     this.containerElement.classList.add(`note-canvas--${newMode}-mode`);
   }
@@ -1160,6 +1495,8 @@ export class NoteCanvas {
    * @private
    */
   _onStrokeStart(props) {
+    if (this.mode === "text") return false;
+
     if (this.mode === "insert-space") {
       this.insertSpaceState = { startY: props.y, currentY: props.y };
       this.renderer.drawInsertSpaceIndicator(this.insertSpaceState);
@@ -1169,8 +1506,8 @@ export class NoteCanvas {
     // Detect stylus usage
     if (props.pointerType === "pen") {
       this.stylusDetected = true;
-      // Auto-switch to draw mode if currently in pan mode
-      if (this.mode === "pan") {
+      // Auto-switch to draw mode if currently in pan or text mode
+      if (this.mode === "pan" || this.mode === "text") {
         this._setMode("draw");
         this.autoSwitchedToDrawMode = true;
       }
@@ -1426,7 +1763,8 @@ export class NoteCanvas {
       return;
     }
 
-    if (e.key === "Delete" || e.key === "Backspace") {
+    // Delete/Backspace: delete selected media (not in text mode — let editor handle it)
+    if (this.mode !== "text" && (e.key === "Delete" || e.key === "Backspace")) {
       if (this.selectedMediaId) {
         this.deleteSelectedMedia();
       }
@@ -2518,6 +2856,9 @@ export class NoteCanvas {
    * @private
    */
   _onPointerDownNav(e) {
+    // In text mode, let mouse events pass through to the text editor (no pan, no media hit)
+    if (this.mode === "text" && e.pointerType === "mouse") return;
+
     // Handle media hit testing for Pan mode
     const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
     const mediaResult = this._handleMediaInteraction(x, y, e.clientX, e.clientY);
@@ -2540,12 +2881,27 @@ export class NoteCanvas {
       this.momentumReqId = null;
     }
 
+    const isTextModeTouch = this.mode === "text" && e.pointerType === "touch";
+
     this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    // Capture pointer to track dragging outside viewport
-    try {
-      e.target.setPointerCapture(e.pointerId);
-    } catch (_err) {
-      // Ignore capture errors
+
+    // In text mode, delay pointer capture until the user drags beyond a threshold.
+    // This lets taps reach the text editor for cursor placement.
+    if (isTextModeTouch) {
+      this._textModePanState = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        target: e.target,
+        captured: false,
+      };
+    } else {
+      // Capture pointer to track dragging outside viewport
+      try {
+        e.target.setPointerCapture(e.pointerId);
+      } catch (_err) {
+        // Ignore capture errors
+      }
     }
 
     if (this.activePointers.size === 2) {
@@ -2619,14 +2975,40 @@ export class NoteCanvas {
       }
     } else if (this.activePointers.size === 1) {
       // Pan
-      // If in manual draw/eraser mode, single touch should draw/erase, not pan.
-      // UNLESS stylus mode is active (stylusDetected), then touch always pans.
-      if (!this.stylusDetected && this.mode !== "pan" && !this.autoSwitchedToDrawMode) return;
-      // Mouse in draw/eraser/lasso mode is handled by InputHandler or ignored
-      if (this.mode !== "pan" && e.pointerType === "mouse") return;
+      // In text mode, allow touch panning (with threshold to distinguish from taps)
+      const isTextModeTouch = this.mode === "text" && e.pointerType === "touch";
+      if (!isTextModeTouch) {
+        // If in manual draw/eraser mode, single touch should draw/erase, not pan.
+        // UNLESS stylus mode is active (stylusDetected), then touch always pans.
+        if (!this.stylusDetected && this.mode !== "pan" && !this.autoSwitchedToDrawMode) return;
+        // Mouse in draw/eraser/lasso mode is handled by InputHandler or ignored
+        if (this.mode !== "pan" && e.pointerType === "mouse") return;
+      }
 
       const x = e.clientX;
       const y = e.clientY;
+
+      // In text mode, require a drag threshold before capturing for pan.
+      // Below threshold, the touch is a tap for cursor placement.
+      if (isTextModeTouch && this._textModePanState && !this._textModePanState.captured) {
+        const totalDx = x - this._textModePanState.startX;
+        const totalDy = y - this._textModePanState.startY;
+        if (totalDx * totalDx + totalDy * totalDy < 64) return; // 8px threshold
+        // Exceeded threshold — capture pointer and start panning
+        this._textModePanState.captured = true;
+        try {
+          this._textModePanState.target.setPointerCapture(e.pointerId);
+        } catch (_err) {
+          // Ignore capture errors
+        }
+        // Clear any text selection that may have started
+        window.getSelection()?.removeAllRanges();
+        // Reset pan origin to current position to avoid jump
+        this.lastTouchX = x;
+        this.lastTouchY = y;
+        this.lastMoveTime = Date.now();
+        return;
+      }
       const now = Date.now();
       const dt = now - this.lastMoveTime;
 
@@ -2699,6 +3081,13 @@ export class NoteCanvas {
       this._saveMediaChanges();
     }
 
+    // Clean up text-mode touch pan state
+    const wasTextModePan = this._textModePanState?.pointerId === e.pointerId;
+    const didCapture = wasTextModePan && this._textModePanState.captured;
+    if (wasTextModePan) {
+      this._textModePanState = null;
+    }
+
     if (this.activePointers.has(e.pointerId)) {
       this.activePointers.delete(e.pointerId);
       try {
@@ -2720,9 +3109,9 @@ export class NoteCanvas {
       }
 
       if (this.activePointers.size === 0) {
-        // Check for momentum if release was recent
+        // Check for momentum if release was recent (skip if tap in text mode)
         const now = Date.now();
-        if (now - this.lastMoveTime < 100) {
+        if (now - this.lastMoveTime < 100 && (!wasTextModePan || didCapture)) {
           this._startMomentumScroll();
         }
 
@@ -2819,8 +3208,9 @@ export class NoteCanvas {
       });
     }
 
-    // Update PDF text layers after zoom
+    // Update PDF text layers and text editor after zoom
     this._updatePdfTextLayers();
+    this._updateTextEditorLayer();
     this._updatePdfControlsPosition();
   }
 
@@ -3044,6 +3434,11 @@ export class NoteCanvas {
       this.pdfTextLayerManager = null;
     }
 
+    if (this.textEditorLayer) {
+      this.textEditorLayer.destroy();
+      this.textEditorLayer = null;
+    }
+
     if (this.inputHandler) {
       this.inputHandler.destroy();
       this.inputHandler = null;
@@ -3052,6 +3447,11 @@ export class NoteCanvas {
     if (this.toolbar) {
       this.toolbar.destroy();
       this.toolbar = null;
+    }
+
+    if (this.navigator) {
+      this.navigator.destroy();
+      this.navigator = null;
     }
 
     // Wait for pending thumbnail save before destroying strokeManager

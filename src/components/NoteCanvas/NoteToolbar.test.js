@@ -61,20 +61,24 @@ describe("NoteToolbar", () => {
     expect(onModeChange).toHaveBeenCalledWith("pan");
   });
 
-  it("toggles pen settings dialog when clicking draw button while active", () => {
-    // 1. Click to activate draw mode
+  it("opens pen settings dialog on draw mode activation and toggles on second click", () => {
     const drawBtn = screen.getByTitle("Draw Mode");
+    const dialog = container.querySelector(".note-canvas-toolbar__pen-dialog");
+
+    // 1. Click to activate draw mode - dialog should open immediately
     fireEvent.click(drawBtn);
     expect(onModeChange).toHaveBeenCalledWith("draw");
+    expect(dialog.classList.contains("note-canvas-toolbar__pen-dialog--open")).toBe(true);
 
     // Manually update mode since we mocked the callback
     toolbar.updateMode("draw");
 
-    // 2. Click again to toggle dialog
+    // 2. Click again to toggle dialog closed
     fireEvent.click(drawBtn);
+    expect(dialog.classList.contains("note-canvas-toolbar__pen-dialog--open")).toBe(false);
 
-    // Check if dialog is visible (class check)
-    const dialog = container.querySelector(".note-canvas-toolbar__pen-dialog");
+    // 3. Click again to toggle dialog open
+    fireEvent.click(drawBtn);
     expect(dialog.classList.contains("note-canvas-toolbar__pen-dialog--open")).toBe(true);
   });
 

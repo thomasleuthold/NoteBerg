@@ -9,5 +9,6 @@ export { EraseStrokesCommand } from "./EraseStrokesCommand.js";
 export { InsertMediaCommand } from "./InsertMediaCommand.js";
 export { ReorderMediaCommand } from "./ReorderMediaCommand.js";
 export { ShiftContentCommand } from "./ShiftContentCommand.js";
+export { TextChangeCommand } from "./TextChangeCommand.js";
 export { TransformMediaCommand } from "./TransformMediaCommand.js";
 export { TransformStrokesCommand } from "./TransformStrokesCommand.js";

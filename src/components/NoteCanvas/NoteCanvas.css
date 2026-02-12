@@ -68,7 +68,7 @@
   position: sticky;
   top: 0;
   left: 0;
-  overflow: hidden;
+  overflow: clip;
   display: flex;
   align-items: flex-start;
   touch-action: none;
@@ -85,6 +85,7 @@
   transform-origin: top left;
   will-change: transform;
   background-color: var(--bg-primary);
+  z-index: 2;
 }
 
 .sliding-buffer-canvas--centered {
@@ -252,6 +253,14 @@
   transform: scaleX(var(--scale-x, 1));
 }
 
+/* Search highlights in PDF text layers */
+.note-canvas__text-layer mark.search-highlight {
+  background: rgba(255, 255, 0, 0.4);
+  outline: 2px solid rgba(255, 200, 0, 0.8);
+  border-radius: 2px;
+  color: transparent;
+}
+
 /* Highlight text selection */
 .note-canvas__text-layer ::selection {
   background: rgba(0, 0, 255, 0.25);
@@ -275,6 +284,17 @@
   -webkit-user-select: none;
 }
 
+/* Disable text editor interaction in non-text modes (text-mode rule is in TextEditorLayer.css) */
+.note-canvas--pan-mode .note-canvas__text-editor-layer,
+.note-canvas--draw-mode .note-canvas__text-editor-layer,
+.note-canvas--eraser-mode .note-canvas__text-editor-layer,
+.note-canvas--lasso-mode .note-canvas__text-editor-layer,
+.note-canvas--insert-space-mode .note-canvas__text-editor-layer {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* ==========================================================================
    Pen Settings Dialog
    ========================================================================== */
@@ -292,9 +312,12 @@
   border-radius: 0;
   border-left: none;
   border-top: none;
-  box-shadow: 2px 4px 8px rgba(0, 0, 0, 0.1);
   z-index: 100;
   overflow: hidden;
+}
+
+.note-canvas-toolbar__pen-dialog--expanded {
+  box-shadow: 2px 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .note-canvas-toolbar__pen-dialog--open {
@@ -304,12 +327,13 @@
 .note-canvas-toolbar__presets {
   display: flex;
   flex-direction: column;
-  padding: 8px;
-  gap: 8px;
+  padding: 4px 5px;
+  gap: 6px;
   background: var(--bg-secondary, #f5f5f5);
   border-right: 1px solid var(--border-primary, #e2e8f0);
   align-items: center;
-  min-width: auto;
+  width: 42px;
+  box-sizing: border-box;
 }
 
 .note-canvas-toolbar__preset-row {
@@ -792,4 +816,71 @@
 .btn-purge:hover {
   background-color: #fee2e2;
   border-color: #fecaca;
+}
+
+/* ==========================================================================
+   NoteNavigator
+   ========================================================================== */
+
+.note-navigator {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.note-navigator__btn,
+.note-navigator__toggle-btn {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.note-navigator__btn:hover,
+.note-navigator__toggle-btn:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+}
+
+.note-navigator__subject-btn {
+  width: 40px;
+  padding: 4px 0;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transition: background 0.15s;
+}
+
+.note-navigator__subject-btn:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+}
+
+.note-navigator__subject-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.note-navigator__position {
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
 }

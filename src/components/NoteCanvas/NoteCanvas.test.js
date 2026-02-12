@@ -47,6 +47,15 @@ globalThis.WheelEvent = class WheelEvent extends MouseEvent {
   }
 };
 
+// Polyfill ResizeObserver for jsdom
+if (!globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 // Mock dependencies
 vi.mock("../../modules/storage.js", () => ({
   getNote: vi.fn(),
@@ -95,6 +104,21 @@ vi.mock("./PdfTextLayerManager.js", () => ({
     destroy: vi.fn(),
     refresh: vi.fn(),
     onPageRemoved: vi.fn(),
+    highlightSearchTerms: vi.fn(),
+    clearHighlights: vi.fn(),
+  })),
+}));
+vi.mock("./TextEditorLayer.js", () => ({
+  TextEditorLayer: vi.fn().mockImplementation(() => ({
+    init: vi.fn(),
+    update: vi.fn(),
+    setMode: vi.fn(),
+    setContentHeight: vi.fn(),
+    getContent: vi.fn(() => ""),
+    forceSave: vi.fn(),
+    destroy: vi.fn(),
+    highlightSearchTerms: vi.fn(),
+    clearHighlights: vi.fn(),
   })),
 }));
 

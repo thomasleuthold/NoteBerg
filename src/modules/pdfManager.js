@@ -103,3 +103,70 @@ export async function loadPdfPage(fileId, pageIndex) {
   const pdfDoc = await getPdfDocument(fileId);
   return pdfDoc.getPage(pageIndex);
 }
+
+/**
+ * Extract all text from a stored PDF file.
+ * @param {string} fileId - The ID of the stored PDF file
+ * @returns {Promise<string>} - Combined text from all pages
+ */
+/**
+ * Get the outline (table of contents) of a stored PDF.
+ * @param {string} fileId - The ID of the stored PDF file
+ * @returns {Promise<Array<{title: string, pageIndex: number, destY: number|null}>>} Flattened outline entries with 1-based page indices and optional Y position in PDF coords (top-down from page top)
+ */
+export async function getPdfOutline(fileId) {
+  try {
+    const pdfDoc = await getPdfDocument(fileId);
+    const outline = await pdfDoc.getOutline();
+    if (!outline || outline.length === 0) return [];
+
+    const results = [];
+
+    async function flatten(items) {
+      for (const item of items) {
+        if (item.dest) {
+          let dest = item.dest;
+          // dest can be a string (named destination) or an array
+          if (typeof dest === "string") {
+            dest = await pdfDoc.getDestination(dest);
+          }
+          if (dest && Array.isArray(dest)) {
+            const pageIndex = await pdfDoc.getPageIndex(dest[0]);
+            // dest format: [pageRef, {name}, left, top, zoom]
+            // top is Y in PDF coords (from bottom), null means page top
+            const destTop = dest.length > 3 ? dest[3] : null;
+            results.push({
+              title: item.title,
+              pageIndex: pageIndex + 1,
+              destY: destTop,
+            });
+          }
+        }
+        if (item.items && item.items.length > 0) {
+          await flatten(item.items);
+        }
+      }
+    }
+
+    await flatten(outline);
+    return results;
+  } catch (_err) {
+    return [];
+  }
+}
+
+export async function extractPdfText(fileId) {
+  try {
+    const pdfDoc = await getPdfDocument(fileId);
+    const parts = [];
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      const page = await pdfDoc.getPage(i);
+      const content = await page.getTextContent({ normalizeWhitespace: true });
+      const pageText = content.items.map((item) => item.str).join(" ");
+      if (pageText.trim()) parts.push(pageText);
+    }
+    return parts.join("\n");
+  } catch (_err) {
+    return "";
+  }
+}

@@ -3,6 +3,7 @@
  * Displays notebooks and quick notes in grid/list layout
  */
 
+import { extractPdfText } from "../modules/pdfManager.js";
 import { navigateTo } from "../modules/router.js";
 import {
   deleteNote,
@@ -315,11 +316,31 @@ function attachRootOverviewListeners(container) {
         const pattern = escapeRegex(rawQuery).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
         const searchRegex = new RegExp(pattern, "i");
 
-        const results = allNotes.filter((note) => {
+        // Extract PDF text for notes that have PDF pages
+        const pdfTextByNote = new Map();
+        const notesWithPdfs = allNotes.filter((note) => {
+          return note.media?.some((m) => m.type === "pdf-page");
+        });
+        await Promise.all(
+          notesWithPdfs.map(async (note) => {
+            // Get unique fileIds from PDF pages
+            const fileIds = [
+              ...new Set(note.media.filter((m) => m.type === "pdf-page").map((m) => m.fileId)),
+            ];
+            const texts = await Promise.all(fileIds.map((fid) => extractPdfText(fid)));
+            pdfTextByNote.set(note.id, texts.join("\n"));
+          }),
+        );
+
+        const results = [];
+        for (const note of allNotes) {
           const contentMatch = searchRegex.test(note.content || "");
           const recognitionMatch = searchRegex.test(note.recognition?.fullText || "");
-          return contentMatch || recognitionMatch;
-        });
+          const pdfMatch = searchRegex.test(pdfTextByNote.get(note.id) || "");
+          if (contentMatch || recognitionMatch || pdfMatch) {
+            results.push({ note, contentMatch, recognitionMatch, pdfMatch });
+          }
+        }
 
         searchState.results = results;
         renderSearchResultsList(searchResults, results);
@@ -381,12 +402,16 @@ function renderSearchResultsList(container, results) {
 
   container.innerHTML = results
     .map(
-      (note) => `
+      ({ note, contentMatch, recognitionMatch, pdfMatch }) => `
     <div class="search-result-item" data-note-id="${note.id}">
       <div class="search-result-title">${escapeHtml(note.title || "Untitled")}</div>
       <div class="search-result-meta">
         <span>${formatDate(note.modified)}</span>
-        ${note.recognition?.fullText ? '<span title="Contains handwriting">✍️</span>' : ""}
+        <span class="search-result-sources">
+          ${contentMatch ? '<span title="Found in text">T</span>' : ""}
+          ${recognitionMatch ? '<span title="Found in handwriting">✍</span>' : ""}
+          ${pdfMatch ? '<span title="Found in PDF">PDF</span>' : ""}
+        </span>
       </div>
     </div>
   `,

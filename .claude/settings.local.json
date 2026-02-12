@@ -21,7 +21,8 @@
       "Bash(npx eslint:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(npm test:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(dir:*)"
     ]
   }
 }

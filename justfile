@@ -24,6 +24,10 @@ build-a:
     New-Item -ItemType Directory -Force -Path builds | Out-Null
     Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\oneJournal_{{version}}_android_universal.apk" -Force
 
+build-all:
+    just build-w
+    just build-a
+
 preview:
     npm run preview
 

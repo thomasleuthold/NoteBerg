@@ -36,12 +36,16 @@ export class PdfTextLayerManager {
     this.centeringOffset = 0;
     this.viewportHeight = 0;
 
+    // Active search query for highlighting new layers as they're created
+    this._searchQuery = null;
+
     // Debounce layer creation to avoid thrashing
     this._createLayerDebounceTimers = new Map();
     this._createLayerDebounceMs = 100;
 
-    // Semaphore for text layer creation
-    this.isCreatingLayer = false;
+    // Queue for sequential layer creation (avoids semaphore drops)
+    this._creationQueue = [];
+    this._isProcessingQueue = false;
 
     this._createContainer();
   }
@@ -139,11 +143,11 @@ export class PdfTextLayerManager {
   }
 
   /**
-   * Schedule layer creation with debounce
+   * Schedule layer creation with debounce, then enqueue.
    * @private
    */
   _scheduleLayerCreation(pageId, item) {
-    // Clear any existing timer
+    // Clear any existing timer for this page
     if (this._createLayerDebounceTimers.has(pageId)) {
       clearTimeout(this._createLayerDebounceTimers.get(pageId));
     }
@@ -152,7 +156,7 @@ export class PdfTextLayerManager {
       this._createLayerDebounceTimers.delete(pageId);
       // Check again if still needed (may have scrolled away)
       if (!this.activeLayers.has(pageId)) {
-        this._createLayer(pageId, item);
+        this._enqueueLayerCreation(pageId, item);
       }
     }, this._createLayerDebounceMs);
 
@@ -160,13 +164,40 @@ export class PdfTextLayerManager {
   }
 
   /**
+   * Add a page to the creation queue and start processing.
+   * @private
+   */
+  _enqueueLayerCreation(pageId, item) {
+    // Avoid duplicate entries in queue
+    if (!this._creationQueue.some((entry) => entry.pageId === pageId)) {
+      this._creationQueue.push({ pageId, item });
+    }
+    this._processQueue();
+  }
+
+  /**
+   * Process the creation queue sequentially.
+   * @private
+   */
+  async _processQueue() {
+    if (this._isProcessingQueue) return;
+    this._isProcessingQueue = true;
+
+    while (this._creationQueue.length > 0) {
+      const { pageId, item } = this._creationQueue.shift();
+      // Skip if layer was already created or page scrolled out of view
+      if (this.activeLayers.has(pageId)) continue;
+      await this._createLayer(pageId, item);
+    }
+
+    this._isProcessingQueue = false;
+  }
+
+  /**
    * Create a text layer for a PDF page
    * @private
    */
   async _createLayer(pageId, item) {
-    if (this.isCreatingLayer) return; // Busy, try next update
-    this.isCreatingLayer = true;
-
     try {
       // Create container div
       const div = document.createElement("div");
@@ -211,13 +242,15 @@ export class PdfTextLayerManager {
         layer.viewport = viewport;
         layer.displayScale = displayScale;
         this._updateLayerPosition(pageId);
+        // Apply search highlights if a query is active
+        if (this._searchQuery) {
+          this._highlightLayer(pageId);
+        }
       }
     } catch (error) {
       console.error(`[PdfTextLayerManager] Failed to create text layer for ${pageId}:`, error);
       // Remove failed layer
       this._removeLayer(pageId);
-    } finally {
-      this.isCreatingLayer = false;
     }
   }
 
@@ -275,11 +308,14 @@ export class PdfTextLayerManager {
    * @private
    */
   _removeLayer(pageId) {
-    // Clear any pending creation
+    // Clear any pending creation timer
     if (this._createLayerDebounceTimers.has(pageId)) {
       clearTimeout(this._createLayerDebounceTimers.get(pageId));
       this._createLayerDebounceTimers.delete(pageId);
     }
+
+    // Remove from creation queue
+    this._creationQueue = this._creationQueue.filter((entry) => entry.pageId !== pageId);
 
     const layer = this.activeLayers.get(pageId);
     if (layer) {
@@ -334,6 +370,83 @@ export class PdfTextLayerManager {
   }
 
   /**
+   * Highlight search terms in all active PDF text layers.
+   * Also stores the query so newly created layers get highlighted.
+   * @param {string} query - Search query (supports * and ? wildcards)
+   */
+  highlightSearchTerms(query) {
+    this._searchQuery = query || null;
+    for (const [pageId] of this.activeLayers) {
+      this._highlightLayer(pageId);
+    }
+  }
+
+  /**
+   * Clear all search highlights from PDF text layers.
+   */
+  clearHighlights() {
+    this._searchQuery = null;
+    for (const [, layer] of this.activeLayers) {
+      if (!layer.element) continue;
+      const marks = layer.element.querySelectorAll("mark.search-highlight");
+      for (const mark of marks) {
+        const parent = mark.parentNode;
+        parent.replaceChild(document.createTextNode(mark.textContent), mark);
+        parent.normalize();
+      }
+    }
+  }
+
+  /**
+   * Apply search highlighting to a single layer's text spans.
+   * @private
+   * @param {string} pageId
+   */
+  _highlightLayer(pageId) {
+    const layer = this.activeLayers.get(pageId);
+    if (!layer?.element || !this._searchQuery) return;
+
+    // Clear existing highlights in this layer first
+    const existingMarks = layer.element.querySelectorAll("mark.search-highlight");
+    for (const mark of existingMarks) {
+      const parent = mark.parentNode;
+      parent.replaceChild(document.createTextNode(mark.textContent), mark);
+      parent.normalize();
+    }
+
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = escapeRegex(this._searchQuery).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
+    const regex = new RegExp(`(${pattern})`, "gi");
+
+    // Walk text nodes inside the layer's spans
+    const walker = document.createTreeWalker(layer.element, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+    for (const node of textNodes) {
+      if (!regex.test(node.textContent)) continue;
+      regex.lastIndex = 0;
+
+      const frag = document.createDocumentFragment();
+      let lastIndex = 0;
+      for (const match of node.textContent.matchAll(regex)) {
+        if (match.index > lastIndex) {
+          frag.appendChild(document.createTextNode(node.textContent.slice(lastIndex, match.index)));
+        }
+        const mark = document.createElement("mark");
+        mark.className = "search-highlight";
+        mark.textContent = match[0];
+        frag.appendChild(mark);
+        lastIndex = match.index + match[0].length;
+      }
+      if (lastIndex < node.textContent.length) {
+        frag.appendChild(document.createTextNode(node.textContent.slice(lastIndex)));
+      }
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+
+  /**
    * Force refresh all text layers (e.g., after zoom change)
    */
   refresh() {
@@ -351,6 +464,9 @@ export class PdfTextLayerManager {
       clearTimeout(timer);
     }
     this._createLayerDebounceTimers.clear();
+
+    // Clear creation queue
+    this._creationQueue = [];
 
     // Remove all layers
     this._removeAllLayers();

@@ -17,7 +17,7 @@ function getPenIconWithColor(tipColor, size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
     <path d="m15 5 4 4"/>
-    <circle cx="4" cy="20" r="2" fill="${tipColor}" stroke="${tipColor}"/>
+    <line x1="3" y1="24" x2="21" y2="24" stroke="${tipColor}" stroke-width="2" stroke-linecap="round"/>
   </svg>`;
 }
 
@@ -29,10 +29,9 @@ function getPenIconWithColor(tipColor, size = 24) {
  */
 function getMarkerIconWithColor(tipColor, size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12 19l7-7 3 3-7 7-3-3z" />
-    <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-    <path d="M2 2l7.586 7.586" />
-    <circle cx="11" cy="11" r="3" fill="${tipColor}" stroke="${tipColor}" />
+    <path d="m9 11-6 6v3h9l3-3"/>
+    <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
+    <line x1="5" y1="22" x2="22" y2="22" stroke="${tipColor}" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
   </svg>`;
 }
 
@@ -74,6 +73,15 @@ function getUndoIcon(size = 24) {
  */
 function getRedoIcon(size = 24) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>`;
+}
+
+/**
+ * Generate text mode icon SVG (T with cursor)
+ * @param {number} size - Icon size
+ * @returns {string} SVG markup
+ */
+function getTextIcon(size = 24) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`;
 }
 
 export class NoteToolbar {
@@ -150,6 +158,9 @@ export class NoteToolbar {
 
     this.panBtn = createBtn("pan", handIcon, "Pan Mode");
     this.panBtn.onclick = () => this.onModeChange("pan");
+
+    this.textBtn = createBtn("text", getTextIcon(24), "Text Mode");
+    this.textBtn.onclick = () => this.onModeChange("text");
 
     // Draw button container (for positioning dialog)
     this.drawBtnContainer = document.createElement("div");
@@ -236,6 +247,7 @@ export class NoteToolbar {
     this.element.appendChild(style);
 
     this.element.appendChild(this.panBtn);
+    this.element.appendChild(this.textBtn);
     this.element.appendChild(this.drawBtnContainer);
     this.element.appendChild(this.eraserBtn);
     this.element.appendChild(this.lassoBtn);
@@ -269,6 +281,12 @@ export class NoteToolbar {
    */
   _renderDialogContent() {
     this.penSettingsDialog.innerHTML = "";
+
+    // Toggle expanded class for shadow
+    this.penSettingsDialog.classList.toggle(
+      "note-canvas-toolbar__pen-dialog--expanded",
+      this.isExpanded,
+    );
 
     // 1. Presets Column
     const presetsCol = document.createElement("div");
@@ -778,10 +796,10 @@ export class NoteToolbar {
       // Already in draw mode - toggle dialog
       this._togglePenDialog();
     } else {
-      // Switch to draw mode
+      // Switch to draw mode and show presets (collapsed mode)
       this.onModeChange("draw");
-      // Ensure dialog starts hidden when switching to draw mode
-      this._closePenDialog();
+      this.isExpanded = false;
+      this._openPenDialog();
     }
   }
 
@@ -980,6 +998,7 @@ export class NoteToolbar {
     };
 
     setActive(this.panBtn, mode === "pan");
+    setActive(this.textBtn, mode === "text");
     setActive(this.drawBtn, mode === "draw");
     setActive(this.eraserBtn, mode === "eraser");
     setActive(this.lassoBtn, mode === "lasso");
@@ -1022,6 +1041,7 @@ export class NoteToolbar {
     }
     this.element = null;
     this.panBtn = null;
+    this.textBtn = null;
     this.drawBtn = null;
     this.drawBtnContainer = null;
     this.eraserBtn = null;
