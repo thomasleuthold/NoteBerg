@@ -894,16 +894,18 @@ async function encryptNoteIfEnabled(note) {
   try {
     const encryptionKey = getEncryptionKey();
 
-    // Encrypt sensitive fields (content, strokes, and media)
+    // Encrypt sensitive fields (content, strokes, media, and tasks)
     const encryptedContent = await encryptObject(note.content || "", encryptionKey);
     const encryptedStrokes = await encryptObject(note.strokes || [], encryptionKey);
     const encryptedMedia = await encryptObject(note.media || [], encryptionKey);
+    const encryptedTasks = await encryptObject(note.tasks || [], encryptionKey);
 
     return {
       ...note,
       content: encryptedContent,
       strokes: encryptedStrokes,
       media: encryptedMedia,
+      tasks: encryptedTasks,
       encrypted: true, // Mark as encrypted
     };
   } catch (error) {
@@ -961,11 +963,21 @@ async function decryptNoteIfNeeded(note) {
       decryptedMedia = await decryptObject(note.media, encryptionKey);
     }
 
+    // Decrypt tasks
+    let decryptedTasks = [];
+    if (note.tasks && typeof note.tasks === "object" && note.tasks.data && note.tasks.iv) {
+      decryptedTasks = await decryptObject(note.tasks, encryptionKey);
+    } else if (note.tasks) {
+      // Fallback for tasks that were not encrypted due to the old bug
+      decryptedTasks = note.tasks;
+    }
+
     return {
       ...note,
       content: decryptedContent,
       strokes: decryptedStrokes,
       media: decryptedMedia,
+      tasks: decryptedTasks,
       encrypted: undefined, // Remove encrypted flag from decrypted version
     };
   } catch (error) {

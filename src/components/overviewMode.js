@@ -590,7 +590,7 @@ function attachTaskListeners(container) {
   container.querySelectorAll(".task-item").forEach((item) => {
     item.addEventListener("click", () => {
       const noteId = item.dataset.noteId;
-      if (noteId) navigateTo("note", noteId);
+      if (noteId) navigateTo("notebook", { noteId });
     });
   });
 

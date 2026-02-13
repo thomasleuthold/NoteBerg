@@ -509,8 +509,10 @@ export class NoteCanvas {
     this.textEditorLayer.init(this.noteData.content || "");
     this.textEditorLayer.setContentHeight(this.contentHeight);
 
-    // Render text task checkboxes if any exist
-    this.textEditorLayer.renderTaskCheckboxes(this.noteData.tasks);
+    // Render text task checkboxes if any exist. Deferred to allow editor to initialize.
+    setTimeout(() => {
+      this.textEditorLayer.renderTaskCheckboxes(this.noteData.tasks);
+    }, 0);
 
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, this.contentHeight);
@@ -2229,6 +2231,9 @@ export class NoteCanvas {
 
     this._updateTaskCheckboxes();
     this._updateNavigatorSubjects();
+
+    // Re-render text task checkboxes to reflect the new state
+    this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
   }
 
   /**
@@ -2236,7 +2241,22 @@ export class NoteCanvas {
    * @private
    */
   _saveTasks() {
-    this.strokeManager?.saveTasks(this.noteData.tasks);
+    if (this.strokeManager?.worker) {
+      let key = null;
+      if (isAppUnlocked()) {
+        try {
+          key = getEncryptionKey();
+        } catch (_e) {
+          // Key not available
+        }
+      }
+      this.strokeManager.worker.postMessage({
+        type: "SAVE_TASKS",
+        noteId: this.noteId,
+        tasks: this.noteData.tasks,
+        key,
+      });
+    }
   }
 
   /**
@@ -2258,8 +2278,10 @@ export class NoteCanvas {
     this.historyManager?.push(new MarkTaskCommand(task));
     this._updateNavigatorSubjects();
 
-    // Re-render text task checkboxes
-    this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
+    // Re-render text task checkboxes, with a timeout to ensure the editor has updated
+    setTimeout(() => {
+      this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
+    }, 0);
   }
 
   /**

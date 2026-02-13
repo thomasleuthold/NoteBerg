@@ -128,7 +128,7 @@ export class TextEditorLayer {
       autogrow: false,
       autogrowOnEnter: false,
       resetCss: false,
-      semantic: true,
+      semantic: false,
       tagsToRemove: ["script", "link"],
     });
 
@@ -439,10 +439,37 @@ export class TextEditorLayer {
    * @returns {string}
    */
   getContent() {
-    if (!this.$editor) return "";
-    // Strip search highlights before returning content so marks aren't persisted
-    this.clearHighlights();
-    return this.$editor.trumbowyg("html");
+    if (!this._editorElement) return "";
+
+    // Get raw HTML directly from DOM to avoid Trumbowyg's filtering
+    const rawHtml = this._editorElement.innerHTML;
+
+    // Clean up UI elements using a temporary DOM element
+    // This avoids modifying the live editor DOM (preventing cursor jumps/flickering)
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = rawHtml;
+
+    // 1. Remove injected checkboxes (UI only, not persisted)
+    const checkboxes = tempDiv.querySelectorAll(".task-text-checkbox");
+    for (const cb of checkboxes) {
+      cb.remove();
+    }
+
+    // 2. Unwrap search highlights
+    const marks = tempDiv.querySelectorAll("mark.search-highlight");
+    for (const mark of marks) {
+      const parent = mark.parentNode;
+      // Replace mark with its text content (unwrap)
+      while (mark.firstChild) {
+        parent.insertBefore(mark.firstChild, mark);
+      }
+      parent.removeChild(mark);
+    }
+
+    // Normalize to merge text nodes
+    tempDiv.normalize();
+
+    return tempDiv.innerHTML;
   }
 
   /**
@@ -541,6 +568,9 @@ export class TextEditorLayer {
     if (parentTask) return;
 
     e.preventDefault();
+
+    // Save range so we can restore it when the menu button is clicked
+    this._pendingTaskRange = range.cloneRange();
     this._showContextMenu(e.clientX, e.clientY);
   }
 
@@ -560,6 +590,11 @@ export class TextEditorLayer {
     `;
     this._contextMenu.style.left = `${x}px`;
     this._contextMenu.style.top = `${y}px`;
+
+    // Prevent clicks on the menu from triggering the document-level dismiss listener
+    this._contextMenu.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+    });
 
     const btn = this._contextMenu.querySelector("button");
     btn.addEventListener("click", (e) => {
@@ -589,38 +624,45 @@ export class TextEditorLayer {
    * @private
    */
   _handleMarkTextAsTask() {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || !selection.rangeCount) return;
-
-    const range = selection.getRangeAt(0);
-    if (!this._editorElement?.contains(range.commonAncestorContainer)) return;
+    const range = this._pendingTaskRange;
+    if (!range) return;
 
     const taskId = generateId();
 
-    // Wrap selected text in a task span
-    const span = document.createElement("span");
-    span.className = "task-text";
-    span.dataset.taskId = taskId;
+    // Use cloneContents so we don't modify DOM yet; insertHTML will replace selection
+    const content = range.cloneContents();
+    const tempSpan = document.createElement("span");
+    tempSpan.appendChild(content);
+    const innerHtml = tempSpan.innerHTML;
 
-    try {
-      range.surroundContents(span);
-    } catch (_e) {
-      // surroundContents fails if selection crosses element boundaries
-      // Fall back to extractContents + insertNode
-      const contents = range.extractContents();
-      span.appendChild(contents);
-      range.insertNode(span);
+    // Create HTML for checkbox and text span
+    // Use a span for the checkbox to be safe in contenteditable; stripped on save
+    const checkboxHtml = `<span class="task-text-checkbox" data-task-id="${taskId}" contenteditable="false" style="display:inline-block; width:16px; height:16px; vertical-align:middle; margin-right:6px; user-select:none; cursor:pointer; border:1px solid currentColor; border-radius:3px;"></span>`;
+    const textHtml = `<span class="task-text" data-task-id="${taskId}">${innerHtml}</span>`;
+    const htmlToInsert = `${checkboxHtml}${textHtml}&nbsp;`;
+
+    // Ensure editor has focus before restoring selection
+    if (this._editorElement) {
+      this._editorElement.focus();
     }
 
+    // Restore selection
+    const selection = window.getSelection();
     selection.removeAllRanges();
+    selection.addRange(range);
+
+    // Insert directly using execCommand to avoid focus/selection race conditions in Trumbowyg wrapper
+    document.execCommand('insertHTML', false, htmlToInsert);
+
+    this._pendingTaskRange = null;
+
+    // Trigger change event for Trumbowyg to detect change and trigger save
+    this.$editor.trigger("tbwchange");
 
     // Notify NoteCanvas to create the task entry
     if (this.onTaskCreate) {
       this.onTaskCreate(taskId);
     }
-
-    // Trigger content change
-    this.$editor?.trigger("tbwchange");
   }
 
   /**
@@ -631,39 +673,61 @@ export class TextEditorLayer {
     if (!this._editorElement) return;
 
     const textTasks = tasks.filter((t) => t.type === "text");
+    const activeTaskIds = new Set(textTasks.map((t) => t.id));
 
-    // Remove existing injected checkboxes
-    const existing = this._editorElement.querySelectorAll(".task-text-checkbox");
-    for (const cb of existing) {
-      cb.remove();
-    }
-
-    // For each text task, find the span and inject a checkbox
+    // 1. Sync state and attach listeners for active tasks
     for (const task of textTasks) {
-      const span = this._editorElement.querySelector(`[data-task-id="${task.id}"]`);
-      if (!span) continue;
+      let checkbox = this._editorElement.querySelector(`.task-text-checkbox[data-task-id="${task.id}"]`);
+      const span = this._editorElement.querySelector(`.task-text[data-task-id="${task.id}"]`);
 
-      // Add/remove done styling
-      if (task.checked) {
-        span.classList.add("task-text--done");
-      } else {
-        span.classList.remove("task-text--done");
+      // If checkbox is missing but span exists, restore it
+      if (!checkbox && span) {
+        checkbox = document.createElement("span");
+        checkbox.className = "task-text-checkbox";
+        checkbox.dataset.taskId = task.id;
+        checkbox.contentEditable = "false";
+        checkbox.style.cssText = "display:inline-block; width:16px; height:16px; vertical-align:middle; margin-right:6px; user-select:none; cursor:pointer; border:1px solid currentColor; border-radius:3px;";
+        span.parentNode.insertBefore(checkbox, span);
       }
 
-      // Create checkbox
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.className = "task-text-checkbox";
-      checkbox.checked = task.checked;
-      checkbox.addEventListener("mousedown", (e) => e.preventDefault()); // Don't steal focus
-      checkbox.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (this.onTaskToggle) {
-          this.onTaskToggle(task.id, checkbox.checked);
+      if (checkbox) {
+        // Render checked state
+        if (task.checked) {
+          checkbox.style.backgroundColor = "#3b82f6";
+          checkbox.style.borderColor = "#3b82f6";
+          checkbox.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin:1px auto;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+        } else {
+          checkbox.style.backgroundColor = "transparent";
+          checkbox.style.borderColor = "currentColor";
+          checkbox.innerHTML = "";
         }
-      });
 
-      span.insertBefore(checkbox, span.firstChild);
+        // Update styling on text span
+        if (span) {
+          if (task.checked) span.classList.add("task-text--done");
+          else span.classList.remove("task-text--done");
+        }
+
+        // Re-attach listeners by cloning (removes old listeners)
+        const newCheckbox = checkbox.cloneNode(true);
+        newCheckbox.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (this.onTaskToggle) {
+            this.onTaskToggle(task.id, !task.checked);
+          }
+        });
+        newCheckbox.addEventListener("mousedown", (e) => e.stopPropagation());
+
+        checkbox.parentNode.replaceChild(newCheckbox, checkbox);
+      }
+    }
+
+    // 2. Cleanup orphaned checkboxes
+    const allCheckboxes = this._editorElement.querySelectorAll(".task-text-checkbox");
+    for (const cb of allCheckboxes) {
+      if (!activeTaskIds.has(cb.dataset.taskId)) {
+        cb.remove();
+      }
     }
   }
 

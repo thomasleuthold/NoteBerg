@@ -162,15 +162,29 @@ async function processMessage(e) {
   }
 
   if (type === "SAVE_TASKS") {
-    const { tasks } = e.data;
+    const { tasks, key } = e.data;
     try {
       const db = await getDB();
+
+      const noteCheck = await db.get("notes", noteId);
+      if (!noteCheck) return;
+
+      let tasksData = tasks;
+      if (noteCheck.encrypted) {
+        if (key) {
+          tasksData = await encryptObject(tasks, key);
+        } else {
+          console.error("[StorageWorker] Cannot save encrypted tasks: Key missing");
+          return;
+        }
+      }
+
       const tx = db.transaction("notes", "readwrite");
       const store = tx.objectStore("notes");
       const note = await store.get(noteId);
 
       if (note) {
-        note.tasks = tasks;
+        note.tasks = tasksData;
         note.modified = Date.now();
         note.version = (note.version || 0) + 1;
         note.synced = false;
