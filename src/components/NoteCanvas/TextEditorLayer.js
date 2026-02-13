@@ -27,6 +27,11 @@ import { getIcon } from "../../utils/icons.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
 
+// Constants for text task rendering
+const CHECKBOX_STYLE =
+  "display:inline-block; width:16px; height:16px; vertical-align:middle; margin-right:6px; user-select:none; cursor:pointer; border:1px solid currentColor; border-radius:3px;";
+const CHECKMARK_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin:1px auto;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
 export class TextEditorLayer {
   /**
    * @param {HTMLElement} viewportElement - The VirtualScroller's viewport element
@@ -637,7 +642,7 @@ export class TextEditorLayer {
 
     // Create HTML for checkbox and text span
     // Use a span for the checkbox to be safe in contenteditable; stripped on save
-    const checkboxHtml = `<span class="task-text-checkbox" data-task-id="${taskId}" contenteditable="false" style="display:inline-block; width:16px; height:16px; vertical-align:middle; margin-right:6px; user-select:none; cursor:pointer; border:1px solid currentColor; border-radius:3px;"></span>`;
+    const checkboxHtml = `<span class="task-text-checkbox" data-task-id="${taskId}" contenteditable="false" style="${CHECKBOX_STYLE}"></span>`;
     const textHtml = `<span class="task-text" data-task-id="${taskId}">${innerHtml}</span>`;
     const htmlToInsert = `${checkboxHtml}${textHtml}&nbsp;`;
 
@@ -652,7 +657,7 @@ export class TextEditorLayer {
     selection.addRange(range);
 
     // Insert directly using execCommand to avoid focus/selection race conditions in Trumbowyg wrapper
-    document.execCommand('insertHTML', false, htmlToInsert);
+    document.execCommand("insertHTML", false, htmlToInsert);
 
     this._pendingTaskRange = null;
 
@@ -677,7 +682,9 @@ export class TextEditorLayer {
 
     // 1. Sync state and attach listeners for active tasks
     for (const task of textTasks) {
-      let checkbox = this._editorElement.querySelector(`.task-text-checkbox[data-task-id="${task.id}"]`);
+      let checkbox = this._editorElement.querySelector(
+        `.task-text-checkbox[data-task-id="${task.id}"]`,
+      );
       const span = this._editorElement.querySelector(`.task-text[data-task-id="${task.id}"]`);
 
       // If checkbox is missing but span exists, restore it
@@ -686,7 +693,7 @@ export class TextEditorLayer {
         checkbox.className = "task-text-checkbox";
         checkbox.dataset.taskId = task.id;
         checkbox.contentEditable = "false";
-        checkbox.style.cssText = "display:inline-block; width:16px; height:16px; vertical-align:middle; margin-right:6px; user-select:none; cursor:pointer; border:1px solid currentColor; border-radius:3px;";
+        checkbox.style.cssText = CHECKBOX_STYLE;
         span.parentNode.insertBefore(checkbox, span);
       }
 
@@ -695,7 +702,7 @@ export class TextEditorLayer {
         if (task.checked) {
           checkbox.style.backgroundColor = "#3b82f6";
           checkbox.style.borderColor = "#3b82f6";
-          checkbox.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin:1px auto;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+          checkbox.innerHTML = CHECKMARK_SVG;
         } else {
           checkbox.style.backgroundColor = "transparent";
           checkbox.style.borderColor = "currentColor";
@@ -740,7 +747,7 @@ export class TextEditorLayer {
     if (!this._editorElement || !tasks) return false;
 
     const existingTaskIds = new Set(
-      Array.from(this._editorElement.querySelectorAll("[data-task-id]")).map(
+      Array.from(this._editorElement.querySelectorAll(".task-text[data-task-id]")).map(
         (el) => el.dataset.taskId,
       ),
     );

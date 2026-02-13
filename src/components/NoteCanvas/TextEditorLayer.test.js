@@ -146,6 +146,13 @@ describe("TextEditorLayer", () => {
       onContentChange,
       historyManager: mockHistoryManager,
     });
+
+    // Manually setup the editor element for the test
+    const editorDiv = viewportElement.querySelector(".note-canvas__text-editor");
+    const trumbowygEditor = document.createElement("div");
+    trumbowygEditor.className = "trumbowyg-editor";
+    editorDiv.appendChild(trumbowygEditor);
+
     layer.init("initial");
 
     // Simulate content change
@@ -153,10 +160,8 @@ describe("TextEditorLayer", () => {
       (call) => call[0] === "tbwchange",
     )[1];
 
-    // Mock getContent to return new content
-    mockJQueryInstance.trumbowyg.mockImplementation((arg) => {
-      if (arg === "html") return "new content";
-    });
+    // Update DOM directly as getContent reads from it
+    layer._editorElement.innerHTML = "new content";
 
     changeCallback(); // Trigger change
 
@@ -178,12 +183,17 @@ describe("TextEditorLayer", () => {
     layer = new TextEditorLayer(viewportElement, scrollerContainer, {
       historyManager: mockHistoryManager,
     });
+
+    // Manually setup the editor element
+    const editorDiv = viewportElement.querySelector(".note-canvas__text-editor");
+    const trumbowygEditor = document.createElement("div");
+    trumbowygEditor.className = "trumbowyg-editor";
+    editorDiv.appendChild(trumbowygEditor);
+
     layer.init("initial");
 
-    // Mock getContent to return the updated content so _pushHistoryCommand sees no change
-    mockJQueryInstance.trumbowyg.mockImplementation((arg, val) => {
-      if (arg === "html" && val === undefined) return "silent update";
-    });
+    // Update DOM to match what we are setting silently
+    layer._editorElement.innerHTML = "silent update";
 
     layer.setContentSilently("silent update");
 
@@ -205,10 +215,17 @@ describe("TextEditorLayer", () => {
       onContentChange,
       historyManager: mockHistoryManager,
     });
+
+    // Manually setup the editor element
+    const editorDiv = viewportElement.querySelector(".note-canvas__text-editor");
+    const trumbowygEditor = document.createElement("div");
+    trumbowygEditor.className = "trumbowyg-editor";
+    editorDiv.appendChild(trumbowygEditor);
+
     layer.init("initial");
 
     // Simulate dirty state
-    mockJQueryInstance.trumbowyg.mockReturnValue("dirty content");
+    layer._editorElement.innerHTML = "dirty content";
     layer.isDirty = true;
 
     layer.forceSave();

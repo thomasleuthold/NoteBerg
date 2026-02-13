@@ -510,7 +510,7 @@ export class NoteCanvas {
     this.textEditorLayer.setContentHeight(this.contentHeight);
 
     // Render text task checkboxes if any exist. Deferred to allow editor to initialize.
-    setTimeout(() => {
+    this._renderTasksTimeout = setTimeout(() => {
       this.textEditorLayer.renderTaskCheckboxes(this.noteData.tasks);
     }, 0);
 
@@ -2132,7 +2132,14 @@ export class NoteCanvas {
       scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
     if (this.selectionOverlay.isVisible) {
-      this.selectionOverlay.updatePosition(bounds, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
+      this.selectionOverlay.updatePosition(
+        bounds,
+        this.zoomScale,
+        scrollLeft,
+        scrollTop,
+        viewport,
+        offsetX,
+      );
     } else {
       this.selectionOverlay.show(bounds, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
     }
@@ -3655,6 +3662,11 @@ export class NoteCanvas {
       this.noteId
     ) {
       this._saveThumbnail();
+    }
+
+    // Cancel pending task render
+    if (this._renderTasksTimeout) {
+      clearTimeout(this._renderTasksTimeout);
     }
 
     // Cancel pending scroll RAF

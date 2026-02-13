@@ -21,12 +21,16 @@ import { markdownToHtml } from "../utils/markdown.js";
 import { renderNotePreview } from "../utils/noteRenderer.js";
 import { showConfirmDialog } from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
+import "./overviewMode.css";
 
 // Search state persistence
 const searchState = {
   query: "",
   results: [],
 };
+
+// Module state for active tab
+let currentActiveTab = "notes";
 
 /**
  * Render overview UI
@@ -35,21 +39,47 @@ const searchState = {
  */
 export async function renderOverview(container, notebookId = null) {
   try {
-    // If notebookId is provided, render notebook contents view
-    if (notebookId) {
-      await renderNotebookContents(container, notebookId);
-      return;
-    }
+    // Render Shell
+    const trashIcon = getIcon("trash", 18);
+    const notebookIcon = getIcon("notebook", 18);
+    const searchIcon = getIcon("search", 18);
+    const markersIcon = getIcon("checkSquare", 18);
 
-    // Otherwise render standard overview (notebooks list)
-    await renderRootOverview(container);
+    container.innerHTML = `
+      <div class="overview-container">
+        <div class="overview-tabs">
+          <button class="tab-btn ${currentActiveTab === "notes" ? "active" : ""}" data-tab="notes">
+            ${notebookIcon} Notes
+          </button>
+          <button class="tab-btn ${currentActiveTab === "search" ? "active" : ""}" data-tab="search">
+            ${searchIcon} Search
+          </button>
+          <button class="tab-btn ${currentActiveTab === "markers" ? "active" : ""}" data-tab="markers">
+            ${markersIcon} Markers
+          </button>
+          
+          <button class="tab-btn recycle-bin-tab" id="recycle-bin-btn">
+            ${trashIcon}
+            Recycle Bin
+          </button>
+        </div>
+
+        <div id="overview-tab-content" class="overview-tab-content"></div>
+      </div>
+    `;
+
+    // Attach Shell Listeners
+    attachShellListeners(container, notebookId);
+
+    // Render Initial Tab
+    await renderActiveTab(container.querySelector("#overview-tab-content"), notebookId);
   } catch (error) {
     console.error("Error rendering overview:", error);
     renderError(container, error);
   }
 }
 
-async function renderRootOverview(container) {
+async function renderNotesList(container) {
   // Fetch data
   const notebooks = await getAllNotebooks();
   const quickNotes = await getQuickNotes();
@@ -67,23 +97,6 @@ async function renderRootOverview(container) {
   // Sort by effectiveUpdatedAt descending
   notebookData.sort((a, b) => b.effectiveUpdatedAt - a.effectiveUpdatedAt);
 
-  // Collect tasks from all notes
-  const allNotes = await getAllNotes();
-  const allTasks = [];
-  for (const note of allNotes) {
-    const tasks = note.tasks || [];
-    for (const task of tasks) {
-      allTasks.push({
-        ...task,
-        noteId: note.id,
-        noteTitle: note.title || "Untitled",
-        noteContent: note.content || "",
-      });
-    }
-  }
-  const openTasks = allTasks.filter((t) => !t.checked);
-  const doneTasks = allTasks.filter((t) => t.checked);
-
   // Build HTML
   const notebooksHtml =
     notebookData.length > 0
@@ -95,61 +108,7 @@ async function renderRootOverview(container) {
       ? quickNotes.map((note) => renderPreviewNoteCard(note)).join("")
       : '<p class="empty-state">No quick notes yet. Create a note outside of any notebook.</p>';
 
-  const trashIcon = getIcon("trash", 20);
-  const closeIcon = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-
-  // Tasks section HTML
-  const tasksHtml =
-    allTasks.length > 0
-      ? `
-      <div class="tasks-section">
-        <div class="section-header tasks-section__header">
-          <h3>${getIcon("checkSquare", 20)} Tasks</h3>
-          <span class="tasks-count">${openTasks.length} open</span>
-        </div>
-        <div class="tasks-list">
-          ${openTasks.map((t) => renderTaskItem(t)).join("")}
-        </div>
-        ${
-          doneTasks.length > 0
-            ? `
-          <button class="tasks-done-toggle" id="toggle-done-tasks">
-            Show ${doneTasks.length} completed task${doneTasks.length !== 1 ? "s" : ""}
-          </button>
-          <div class="tasks-done-list" id="done-tasks-list" style="display: none;">
-            ${doneTasks.map((t) => renderTaskItem(t)).join("")}
-          </div>
-        `
-            : ""
-        }
-      </div>`
-      : "";
-
   container.innerHTML = `
-    <div class="overview-container">
-      <div class="overview-header">
-        <h2>Overview</h2>
-        <button class="btn-secondary btn-with-icon" id="recycle-bin-btn" title="Recycle Bin">
-          ${trashIcon}
-          <span>Recycle Bin</span>
-        </button>
-      </div>
-
-      <div class="overview-search">
-        <div class="overview-search-row">
-          <div class="overview-search-field">
-            <input type="text" id="search-input" class="overview-search-input" placeholder="Search notes...">
-            <button id="search-clear-btn" class="overview-search-clear" type="button" title="Clear search">
-              ${closeIcon}
-            </button>
-          </div>
-          <button id="search-btn" class="btn-primary">Search</button>
-        </div>
-        <div id="search-results" class="overview-search-results"></div>
-      </div>
-
-      ${tasksHtml}
-
       <div class="notebooks-section">
         <div class="section-header">
           <h3>Notebooks</h3>
@@ -169,14 +128,10 @@ async function renderRootOverview(container) {
           ${quickNotesHtml}
         </div>
       </div>
-    </div>
   `;
 
   // Attach event listeners
-  attachRootOverviewListeners(container);
-
-  // Attach task event listeners
-  attachTaskListeners(container);
+  attachNotesListListeners(container);
 
   // Render previews for quick notes
   requestAnimationFrame(() => {
@@ -196,15 +151,12 @@ async function renderNotebookContents(container, notebookId) {
       : '<p class="empty-state">No notes in this notebook yet.</p>';
 
   container.innerHTML = `
-    <div class="overview-container">
-      <div class="overview-header">
-        <h2>${escapeHtml(notebook.title)}</h2>
-        <button class="btn-primary" id="new-note-btn">+ New Note</button>
-      </div>
-
-      <div class="notes-grid">
-        ${notesHtml}
-      </div>
+    <div class="section-header">
+      <h3>Notes</h3>
+      <button class="btn-primary" id="new-note-btn">+ New Note</button>
+    </div>
+    <div class="notes-grid">
+      ${notesHtml}
     </div>
   `;
 
@@ -237,15 +189,131 @@ async function renderNotebookContents(container, notebookId) {
   });
 }
 
+async function renderSearchTab(container) {
+  const closeIcon = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+
+  container.innerHTML = `
+    <div class="overview-search">
+      <div class="overview-search-row">
+        <div class="overview-search-field">
+          <input type="text" id="search-input" class="overview-search-input" placeholder="Search notes...">
+          <button id="search-clear-btn" class="overview-search-clear" type="button" title="Clear search">
+            ${closeIcon}
+          </button>
+        </div>
+        <button id="search-btn" class="btn-primary">Search</button>
+      </div>
+      <div id="search-results" class="overview-search-results"></div>
+    </div>
+  `;
+
+  attachSearchListeners(container);
+}
+
+async function renderMarkersTab(container) {
+  // Collect tasks from all notes
+  const allNotes = await getAllNotes();
+  const allTasks = [];
+  for (const note of allNotes) {
+    const tasks = note.tasks || [];
+
+    let recognition = note.recognition;
+    if (typeof recognition === "string") {
+      try {
+        recognition = JSON.parse(recognition);
+      } catch (_e) {
+        recognition = null;
+      }
+    }
+
+    for (const task of tasks) {
+      allTasks.push({
+        ...task,
+        noteId: note.id,
+        noteTitle: note.title || "Untitled",
+        noteContent: note.content || "",
+        recognition,
+      });
+    }
+  }
+  const openTasks = allTasks.filter((t) => !t.checked);
+  const doneTasks = allTasks.filter((t) => t.checked);
+
+  const tasksHtml =
+    allTasks.length > 0
+      ? `
+      <div class="tasks-section">
+        <div class="section-header tasks-section__header">
+          <h3>${getIcon("checkSquare", 20)} Tasks</h3>
+          <span class="tasks-count">${openTasks.length} open</span>
+        </div>
+        <div class="tasks-list">
+          ${openTasks.map((t) => renderTaskItem(t)).join("")}
+        </div>
+        ${
+          doneTasks.length > 0
+            ? `
+          <button class="tasks-done-toggle" id="toggle-done-tasks">
+            Show ${doneTasks.length} completed task${doneTasks.length !== 1 ? "s" : ""}
+          </button>
+          <div class="tasks-done-list" id="done-tasks-list" style="display: none;">
+            ${doneTasks.map((t) => renderTaskItem(t)).join("")}
+          </div>
+        `
+            : ""
+        }
+      </div>`
+      : '<p class="empty-state">No tasks found.</p>';
+
+  container.innerHTML = tasksHtml;
+  attachTaskListeners(container);
+}
+
+async function renderActiveTab(container, notebookId) {
+  container.innerHTML = '<div class="loading-state">Loading...</div>';
+
+  try {
+    if (currentActiveTab === "notes") {
+      if (notebookId) {
+        await renderNotebookContents(container, notebookId);
+      } else {
+        await renderNotesList(container);
+      }
+    } else if (currentActiveTab === "search") {
+      await renderSearchTab(container);
+    } else if (currentActiveTab === "markers") {
+      await renderMarkersTab(container);
+    }
+  } catch (error) {
+    console.error("Error rendering tab:", error);
+    container.innerHTML = `<div class="error-state"><p>Error loading tab: ${error.message}</p></div>`;
+  }
+}
+
 function renderError(container, error) {
   container.innerHTML = `<div class="error-state"><p>Error: ${error.message}</p></div>`;
 }
 
-/**
- * Attach event listeners to overview elements
- * @param {HTMLElement} container - Container element
- */
-function attachRootOverviewListeners(container) {
+function attachShellListeners(container, notebookId) {
+  const tabs = container.querySelectorAll(".tab-btn");
+  tabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tabs.forEach((t) => {
+        t.classList.remove("active");
+      });
+      btn.classList.add("active");
+      currentActiveTab = btn.dataset.tab;
+      renderActiveTab(container.querySelector("#overview-tab-content"), notebookId);
+    });
+  });
+
+  const recycleBinBtn = container.querySelector("#recycle-bin-btn");
+  if (recycleBinBtn) {
+    recycleBinBtn.addEventListener("click", () => navigateTo("recyclebin"));
+  }
+}
+
+function attachNotesListListeners(container) {
   // Notebook card clicks
   const notebookCards = container.querySelectorAll(".notebook-card");
   notebookCards.forEach((card) => {
@@ -318,14 +386,9 @@ function attachRootOverviewListeners(container) {
       window.dispatchEvent(new CustomEvent("createquicknote"));
     });
   }
+}
 
-  // Recycle bin button
-  const recycleBinBtn = container.querySelector("#recycle-bin-btn");
-  if (recycleBinBtn) {
-    recycleBinBtn.addEventListener("click", () => navigateTo("recyclebin"));
-  }
-
-  // Search functionality
+function attachSearchListeners(container) {
   const searchInput = container.querySelector("#search-input");
   const searchBtn = container.querySelector("#search-btn");
   const searchClearBtn = container.querySelector("#search-clear-btn");
@@ -568,6 +631,14 @@ function renderTaskItem(task) {
     const doc = parser.parseFromString(task.noteContent, "text/html");
     const span = doc.querySelector(`[data-task-id="${task.id}"]`);
     label = span?.textContent || "";
+  } else if (task.type === "stroke" && task.recognition?.words && task.strokeIds?.length > 0) {
+    const taskStrokeIds = new Set(task.strokeIds);
+    const matchedWords = task.recognition.words.filter((word) =>
+      word.strokeIds?.some((id) => taskStrokeIds.has(id)),
+    );
+    if (matchedWords.length > 0) {
+      label = matchedWords.map((w) => w.text).join(" ");
+    }
   }
   if (!label) {
     label = task.type === "text" ? "Text task" : "Handwriting task";

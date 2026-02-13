@@ -119,6 +119,8 @@ vi.mock("./TextEditorLayer.js", () => ({
     destroy: vi.fn(),
     highlightSearchTerms: vi.fn(),
     clearHighlights: vi.fn(),
+    renderTaskCheckboxes: vi.fn(),
+    cleanupOrphanedTextTasks: vi.fn(),
   })),
 }));
 
