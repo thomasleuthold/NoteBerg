@@ -32,6 +32,32 @@ const CHECKBOX_STYLE =
   "display:inline-block; width:16px; height:16px; vertical-align:middle; margin-right:6px; user-select:none; cursor:pointer; border:1px solid currentColor; border-radius:3px;";
 const CHECKMARK_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin:1px auto;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
+// Define Mark as Task plugin for Trumbowyg
+jQuery.extend(true, jQuery.trumbowyg, {
+  plugins: {
+    markAsTask: {
+      init: function (trumbowyg) {
+        trumbowyg.addBtnDef("markAsTask", {
+          fn: function () {
+            trumbowyg.saveRange();
+
+            // Access layer instance attached to trumbowyg object
+            if (trumbowyg.textEditorLayer) {
+              trumbowyg.textEditorLayer._handleMarkTextAsTask(trumbowyg);
+            } else {
+              // Fallback
+              trumbowyg.$ta.trigger("tbwmarkastask");
+            }
+          },
+          title: "Mark as Task",
+          hasIcon: false,
+          text: "Task",
+        });
+      },
+    },
+  },
+});
+
 export class TextEditorLayer {
   /**
    * @param {HTMLElement} viewportElement - The VirtualScroller's viewport element
@@ -57,7 +83,6 @@ export class TextEditorLayer {
     this.editorDiv = null;
     this.$editor = null;
     this.toolbarWrapper = null;
-    this._contextMenu = null;
 
     // State
     this.mode = "pan";
@@ -75,9 +100,6 @@ export class TextEditorLayer {
     // Undo/redo state
     this._lastHtml = "";
     this._suppressHistory = false;
-
-    this._onContextMenu = this._onContextMenu.bind(this);
-    this._dismissContextMenu = this._dismissContextMenu.bind(this);
 
     this._createDOM();
   }
@@ -97,6 +119,7 @@ export class TextEditorLayer {
     // Editor div (Trumbowyg will wrap this in .trumbowyg-box)
     this.editorDiv = document.createElement("div");
     this.editorDiv.className = "note-canvas__text-editor";
+    this.editorDiv.textEditorLayer = this; // Link instance for direct access from plugins
 
     this.container.appendChild(this.editorDiv);
     this.viewportElement.appendChild(this.container);
@@ -126,7 +149,7 @@ export class TextEditorLayer {
         ["foreColor", "backColor"],
         ["lineheight"],
         ["indent", "outdent"],
-        ["unorderedList", "orderedList"],
+        ["unorderedList", "orderedList", "markAsTask"],
         ["table"],
         ["removeformat"],
       ],
@@ -136,6 +159,12 @@ export class TextEditorLayer {
       semantic: false,
       tagsToRemove: ["script", "link"],
     });
+
+    // Attach instance to Trumbowyg object for plugin access
+    const trumbowyg = this.$editor.data("trumbowyg");
+    if (trumbowyg) {
+      trumbowyg.textEditorLayer = this;
+    }
 
     // Set initial content
     this.$editor.trumbowyg("html", htmlContent || "");
@@ -154,6 +183,12 @@ export class TextEditorLayer {
       for (const dd of dropdowns) {
         this.toolbarWrapper.appendChild(dd);
       }
+    }
+
+    // Inject icon for Mark as Task button
+    const taskBtn = this.toolbarWrapper.querySelector(".trumbowyg-markAsTask-button");
+    if (taskBtn) {
+      taskBtn.innerHTML = getIcon("checkSquare", 20);
     }
 
     // Prevent toolbar/dropdown clicks from stealing focus from the editor.
@@ -186,6 +221,16 @@ export class TextEditorLayer {
       this._debounceHistoryPush();
     });
 
+    // Listen for Mark as Task event from plugin
+    this.$editor.on("tbwmarkastask", () => {
+      this._handleMarkTextAsTask();
+    });
+
+    // Native event listener fallback
+    this.editorDiv.addEventListener("tbwmarkastask", () => {
+      this._handleMarkTextAsTask();
+    });
+
     // Track content height changes with ResizeObserver.
     // When the text editor grows (e.g. user adds lines), we notify NoteCanvas
     // so it can expand the shared contentHeight (phantom div + canvas).
@@ -206,11 +251,6 @@ export class TextEditorLayer {
     }
 
     this._editorElement = trumbowygEditor;
-
-    // Context menu for "Mark as Task"
-    if (trumbowygEditor) {
-      trumbowygEditor.addEventListener("contextmenu", this._onContextMenu);
-    }
 
     // Initial position update
     this._updatePosition();
@@ -557,117 +597,196 @@ export class TextEditorLayer {
   }
 
   /**
-   * Handle context menu on editor to offer "Mark as Task"
-   * @private
-   */
-  _onContextMenu(e) {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || !selection.rangeCount) return;
-
-    // Check if selection is inside the editor
-    const range = selection.getRangeAt(0);
-    if (!this._editorElement?.contains(range.commonAncestorContainer)) return;
-
-    // Don't show if selection is already a task
-    const parentTask = range.commonAncestorContainer.parentElement?.closest?.("[data-task-id]");
-    if (parentTask) return;
-
-    e.preventDefault();
-
-    // Save range so we can restore it when the menu button is clicked
-    this._pendingTaskRange = range.cloneRange();
-    this._showContextMenu(e.clientX, e.clientY);
-  }
-
-  /**
-   * Show custom context menu with "Mark as Task" option
-   * @private
-   */
-  _showContextMenu(x, y) {
-    this._dismissContextMenu();
-
-    this._contextMenu = document.createElement("div");
-    this._contextMenu.className = "text-editor-task-context-menu";
-    this._contextMenu.innerHTML = `
-      <button class="text-editor-task-context-menu__item">
-        ${getIcon("checkSquare", 16)} Mark as Task
-      </button>
-    `;
-    this._contextMenu.style.left = `${x}px`;
-    this._contextMenu.style.top = `${y}px`;
-
-    // Prevent clicks on the menu from triggering the document-level dismiss listener
-    this._contextMenu.addEventListener("pointerdown", (e) => {
-      e.stopPropagation();
-    });
-
-    const btn = this._contextMenu.querySelector("button");
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this._handleMarkTextAsTask();
-      this._dismissContextMenu();
-    });
-
-    document.body.appendChild(this._contextMenu);
-    document.addEventListener("pointerdown", this._dismissContextMenu);
-  }
-
-  /**
-   * Dismiss the custom context menu
-   * @private
-   */
-  _dismissContextMenu() {
-    if (this._contextMenu) {
-      this._contextMenu.remove();
-      this._contextMenu = null;
-      document.removeEventListener("pointerdown", this._dismissContextMenu);
-    }
-  }
-
-  /**
    * Wrap current selection in a task span and create a task entry
    * @private
    */
-  _handleMarkTextAsTask() {
-    const range = this._pendingTaskRange;
-    if (!range) return;
-
-    const taskId = generateId();
-
-    // Use cloneContents so we don't modify DOM yet; insertHTML will replace selection
-    const content = range.cloneContents();
-    const tempSpan = document.createElement("span");
-    tempSpan.appendChild(content);
-    const innerHtml = tempSpan.innerHTML;
-
-    // Create HTML for checkbox and text span
-    // Use a span for the checkbox to be safe in contenteditable; stripped on save
-    const checkboxHtml = `<span class="task-text-checkbox" data-task-id="${taskId}" contenteditable="false" style="${CHECKBOX_STYLE}"></span>`;
-    const textHtml = `<span class="task-text" data-task-id="${taskId}">${innerHtml}</span>`;
-    const htmlToInsert = `${checkboxHtml}${textHtml}&nbsp;`;
-
-    // Ensure editor has focus before restoring selection
+  _handleMarkTextAsTask(trumbowygInstance) {
+    // Ensure editor has focus before executing command (execCommand requires focus)
     if (this._editorElement) {
       this._editorElement.focus();
     }
 
-    // Restore selection
+    // Restore range if saved by Trumbowyg (do this AFTER focus to ensure selection sticks)
+    const trumbowyg = trumbowygInstance || this.$editor.data("trumbowyg");
+    if (trumbowyg) {
+      trumbowyg.restoreRange();
+    }
+
     const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
+    if (!selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
 
-    // Insert directly using execCommand to avoid focus/selection race conditions in Trumbowyg wrapper
-    document.execCommand("insertHTML", false, htmlToInsert);
+    if (!this._editorElement?.contains(range.commonAncestorContainer)) return;
 
-    this._pendingTaskRange = null;
+    // 1. Helper to check if a node is a supported block element
+    // We want to apply the task style to every block touched by the selection.
+    // This avoids "insertHTML" merging blocks incorrectly.
+
+    // Helper to check if a node is a block element
+    const isBlock = (node) => {
+      return (
+        node &&
+        node.nodeType === 1 &&
+        /^(p|div|li|blockquote|h[1-6])$/i.test(node.tagName)
+      );
+    };
+
+    // Helper to find the block for a given container/offset
+    const getBlock = (node, offset) => {
+      if (node === this._editorElement) {
+        // If container is editor, look at the child node at offset
+        if (offset < node.childNodes.length) {
+          node = node.childNodes[offset];
+        } else {
+          return null;
+        }
+      }
+
+      // Walk up
+      while (node && node !== this._editorElement) {
+        if (isBlock(node)) return node;
+        node = node.parentNode;
+      }
+      return null;
+    };
+
+    let startBlock = getBlock(range.startContainer, range.startOffset);
+    let endBlock = getBlock(range.endContainer, range.endOffset);
+
+    // 2. Collect Blocks to Convert
+    const blocksToConvert = [];
+
+    if (startBlock && endBlock) {
+      if (startBlock === endBlock) {
+        blocksToConvert.push(startBlock);
+      } else {
+        // Collect siblings from start to end
+        // Note: This assumes blocks are siblings (common in Trumbowyg).
+        // If structure is nested complexly, this might miss some, but covers 99% of cases.
+        let curr = startBlock;
+        while (curr) {
+          let shouldConvert = true;
+
+          // Check for significant selection overlap to avoid marking blocks that are only barely touched
+          // (e.g. selecting from end of P1 to start of P2)
+          if (curr === startBlock) {
+            // For start block, check if selection contains non-whitespace text
+            try {
+              const blockRange = document.createRange();
+              blockRange.selectNodeContents(curr);
+              const intersection = range.cloneRange();
+              intersection.setEnd(blockRange.endContainer, blockRange.endOffset);
+              if (!intersection.toString().trim()) {
+                shouldConvert = false;
+              }
+            } catch (_e) {
+              // Ignore range errors, default to converting
+            }
+          } else if (curr === endBlock) {
+            // For end block, check if selection contains non-whitespace text
+            try {
+              const blockRange = document.createRange();
+              blockRange.selectNodeContents(curr);
+              const intersection = range.cloneRange();
+              intersection.setStart(blockRange.startContainer, blockRange.startOffset);
+              if (!intersection.toString().trim()) {
+                shouldConvert = false;
+              }
+            } catch (_e) {
+              // Ignore range errors
+            }
+          }
+
+          if (shouldConvert) {
+            // Safety: Only add if it's actually a supported block type
+            if (isBlock(curr)) {
+              blocksToConvert.push(curr);
+            }
+          }
+
+          if (curr === endBlock) break;
+          curr = curr.nextElementSibling;
+          // Safety break if we run out of siblings or go too far
+          if (!curr || !this._editorElement.contains(curr)) break;
+        }
+      }
+    } else if (startBlock) {
+      blocksToConvert.push(startBlock);
+    } else {
+      // No blocks found (e.g. text at root).
+      // Fallback: Wrap the selection in a div and convert that.
+      const wrapper = document.createElement("div");
+      try {
+        range.surroundContents(wrapper);
+      } catch (_e) {
+        const content = range.extractContents();
+        wrapper.appendChild(content);
+        range.insertNode(wrapper);
+      }
+      blocksToConvert.push(wrapper);
+    }
+
+    // 3. Convert Each Block
+    let lastTaskId = null;
+
+    // Determine mode: If the first block already has a task, we toggle OFF (remove).
+    // Otherwise we toggle ON (add).
+    const firstBlock = blocksToConvert[0];
+    const isRemoveMode = firstBlock && !!firstBlock.querySelector(".task-text[data-task-id]");
+
+    for (const block of blocksToConvert) {
+      if (isRemoveMode) {
+        // Remove task(s) from this block
+        const checkboxes = block.querySelectorAll(".task-text-checkbox");
+        checkboxes.forEach((cb) => cb.remove());
+
+        const textSpans = block.querySelectorAll(".task-text");
+        textSpans.forEach((span) => {
+          // Unwrap content
+          while (span.firstChild) {
+            span.parentNode.insertBefore(span.firstChild, span);
+          }
+          span.remove();
+        });
+      } else {
+        // Add task
+        // Skip if already a task
+        if (block.querySelector("[data-task-id]")) continue;
+
+        const taskId = generateId();
+        lastTaskId = taskId;
+
+        // Move content to fragment
+        const contentFrag = document.createDocumentFragment();
+        while (block.firstChild) {
+          contentFrag.appendChild(block.firstChild);
+        }
+
+        // Create Task Structure
+        const textSpan = document.createElement("span");
+        textSpan.className = "task-text";
+        textSpan.dataset.taskId = taskId;
+        textSpan.appendChild(contentFrag);
+
+        const checkbox = document.createElement("span");
+        checkbox.className = "task-text-checkbox";
+        checkbox.dataset.taskId = taskId;
+        checkbox.contentEditable = "false";
+        checkbox.style.cssText = CHECKBOX_STYLE;
+
+        block.appendChild(checkbox);
+        block.appendChild(textSpan);
+        block.appendChild(document.createTextNode("\u00A0"));
+
+        // Notify NoteCanvas
+        if (this.onTaskCreate) {
+          this.onTaskCreate(taskId);
+        }
+      }
+    }
 
     // Trigger change event for Trumbowyg to detect change and trigger save
     this.$editor.trigger("tbwchange");
-
-    // Notify NoteCanvas to create the task entry
-    if (this.onTaskCreate) {
-      this.onTaskCreate(taskId);
-    }
   }
 
   /**
@@ -778,14 +897,17 @@ export class TextEditorLayer {
       this._resizeObserver = null;
     }
 
-    this._dismissContextMenu();
-
-    if (this._editorElement) {
-      this._editorElement.removeEventListener("contextmenu", this._onContextMenu);
+    if (this.editorDiv) {
+      this.editorDiv.textEditorLayer = null;
     }
+
     this._editorElement = null;
 
     if (this.$editor) {
+      const trumbowyg = this.$editor.data("trumbowyg");
+      if (trumbowyg) {
+        trumbowyg.textEditorLayer = null;
+      }
       this.$editor.off("tbwchange");
       this.$editor.trumbowyg("destroy");
       this.$editor = null;
