@@ -98,16 +98,16 @@ describe("NoteNavigator", () => {
     // Next
     nextBtn.click();
     expect(positionEl.textContent).toBe("1/3");
-    expect(onNavigate).toHaveBeenCalledWith(100, "search");
+    expect(onNavigate).toHaveBeenCalledWith(100, "search", { y: 100 });
 
     nextBtn.click();
     expect(positionEl.textContent).toBe("2/3");
-    expect(onNavigate).toHaveBeenCalledWith(250, "search");
+    expect(onNavigate).toHaveBeenCalledWith(250, "search", { y: 250 });
 
     // Previous
     prevBtn.click();
     expect(positionEl.textContent).toBe("1/3");
-    expect(onNavigate).toHaveBeenCalledWith(100, "search");
+    expect(onNavigate).toHaveBeenCalledWith(100, "search", { y: 100 });
   });
 
   it("should wrap around when navigating past the end or beginning", () => {
@@ -123,17 +123,17 @@ describe("NoteNavigator", () => {
     nextBtn.click(); // 2/3
     nextBtn.click(); // 3/3
     expect(positionEl.textContent).toBe("3/3");
-    expect(onNavigate).toHaveBeenCalledWith(400, "search");
+    expect(onNavigate).toHaveBeenCalledWith(400, "search", { y: 400 });
 
     // Wrap to first
     nextBtn.click();
     expect(positionEl.textContent).toBe("1/3");
-    expect(onNavigate).toHaveBeenCalledWith(100, "search");
+    expect(onNavigate).toHaveBeenCalledWith(100, "search", { y: 100 });
 
     // Wrap to last from first
     prevBtn.click();
     expect(positionEl.textContent).toBe("3/3");
-    expect(onNavigate).toHaveBeenCalledWith(400, "search");
+    expect(onNavigate).toHaveBeenCalledWith(400, "search", { y: 400 });
   });
 
   it("should auto-select a subject if autoSelectKey is provided", () => {
@@ -178,7 +178,7 @@ describe("NoteNavigator", () => {
 
     positionEl = parentElement.querySelector(".note-navigator__position");
     expect(positionEl.textContent).toBe("1/2");
-    expect(onNavigate).toHaveBeenCalledWith(0, "pdf-page");
+    expect(onNavigate).toHaveBeenCalledWith(0, "pdf-page", { y: 0 });
   });
 
   it("should handle being destroyed", () => {

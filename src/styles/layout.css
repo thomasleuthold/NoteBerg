@@ -95,8 +95,9 @@
 
 .task-item {
   display: flex;
+  background-color: var(--bg-primary);
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-sx);
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
@@ -105,7 +106,7 @@
 }
 
 .task-item:hover {
-  background-color: var(--bg-secondary);
+  background-color: var(--bg-tertiary);
 }
 
 .task-item--done {
@@ -127,6 +128,7 @@
   flex: 1;
   font-size: 0.9rem;
   color: var(--text-primary);
+  padding-left: var(--spacing-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

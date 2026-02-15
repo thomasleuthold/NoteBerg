@@ -1028,7 +1028,7 @@ export class NoteCanvas {
 
         this.scroller.scrollTo(0, targetScrollY, false);
 
-        if (item && item.bounds) {
+        if (item?.bounds) {
           this._highlightTaskRegion(item.bounds);
         }
       },
@@ -1223,17 +1223,14 @@ export class NoteCanvas {
             `[data-task-id="${t.id}"]`,
           );
           if (!el) {
-            // Only log if we are actively looking for this task to avoid spam
-            // console.debug(`[NoteCanvas] Task element ${t.id} not found in DOM`);
             return null;
           }
           const scrollTop = this.scroller.getScrollTop();
           const scrollLeft = this.scroller.getScrollLeft();
           const rect = el.getBoundingClientRect();
-          
+
           // Skip if not rendered yet
           if (rect.width === 0 && rect.height === 0) {
-            // console.debug(`[NoteCanvas] Task element ${t.id} has 0 dimensions`);
             return null;
           }
 
@@ -1243,7 +1240,8 @@ export class NoteCanvas {
           // Calculate bounds for highlight
           const viewportWidth = this.scroller.getViewportSize().width;
           const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-          const offsetX = scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+          const offsetX =
+            scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
           const x = (rect.left - containerRect.left + scrollLeft - offsetX) / this.zoomScale;
           const w = rect.width / this.zoomScale;
           const h = rect.height / this.zoomScale;
@@ -1632,7 +1630,7 @@ export class NoteCanvas {
     if (this.textEditorLayer) {
       this.textEditorLayer.setContentHeight(this.contentHeight);
     }
-    
+
     // Force reflow to ensure the browser acknowledges the new scroll height
     this.scroller.container.offsetHeight;
   }
