@@ -10,6 +10,7 @@ export class TaskCheckboxLayer {
    * @param {HTMLElement} viewportElement - The scroller viewport element
    * @param {Object} callbacks
    * @param {function(string, boolean)} callbacks.onToggle - Called with (taskId, checked) when toggled
+   * @param {function(string)} callbacks.onTaskClick - Called with (taskId) when bounding box is clicked
    */
   constructor(viewportElement, callbacks) {
     this.viewportElement = viewportElement;
@@ -17,7 +18,27 @@ export class TaskCheckboxLayer {
     this.container = document.createElement("div");
     this.container.className = "note-canvas__task-checkbox-layer";
     viewportElement.appendChild(this.container);
-    this.checkboxElements = new Map(); // taskId -> { wrapper, checkbox }
+    this.taskElements = new Map(); // taskId -> { checkbox, boundingBox }
+
+    // Inject styles for bounding box
+    const style = document.createElement("style");
+    style.textContent = `
+      .note-canvas__task-bounding-box {
+        position: absolute;
+        border: 1px dashed var(--text-secondary);
+        border-radius: 4px;
+        pointer-events: auto;
+        cursor: pointer;
+        background-color: transparent;
+        opacity: 0.2;
+        transition: opacity 0.2s;
+      }
+      .note-canvas__task-bounding-box:hover {
+        opacity: 0.6;
+        background-color: var(--bg-hover);
+      }
+    `;
+    this.container.appendChild(style);
   }
 
   /**
@@ -56,24 +77,36 @@ export class TaskCheckboxLayer {
       // Scale the checkbox with zoom
       const scaledSize = checkboxSize * Math.min(zoom, 2); // Cap scaling at 2x
 
-      // Create or update checkbox element
-      let entry = this.checkboxElements.get(task.id);
+      // Calculate bounding box screen coordinates
+      const boxX = bounds.minX * zoom - scrollLeft + offsetX;
+      const boxY = bounds.minY * zoom - scrollTop;
+      const boxW = (bounds.maxX - bounds.minX) * zoom;
+      const boxH = (bounds.maxY - bounds.minY) * zoom;
+
+      // Create or update elements
+      let entry = this.taskElements.get(task.id);
       if (!entry) {
-        entry = this._createCheckbox(task.id);
+        entry = this._createTaskElements(task.id);
       }
 
       entry.checkbox.checked = task.checked;
-      entry.wrapper.style.left = `${screenX}px`;
-      entry.wrapper.style.top = `${screenY}px`;
-      entry.wrapper.style.width = `${scaledSize}px`;
-      entry.wrapper.style.height = `${scaledSize}px`;
-      entry.wrapper.style.display = "block";
+      entry.checkbox.style.left = `${screenX}px`;
+      entry.checkbox.style.top = `${screenY}px`;
+      entry.checkbox.style.width = `${scaledSize}px`;
+      entry.checkbox.style.height = `${scaledSize}px`;
+      entry.checkbox.style.display = "block";
+
+      entry.boundingBox.style.left = `${boxX}px`;
+      entry.boundingBox.style.top = `${boxY}px`;
+      entry.boundingBox.style.width = `${boxW}px`;
+      entry.boundingBox.style.height = `${boxH}px`;
+      entry.boundingBox.style.display = "block";
     }
 
     // Remove checkboxes for tasks that no longer exist
-    for (const [taskId] of this.checkboxElements) {
+    for (const [taskId] of this.taskElements) {
       if (!activeTasks.has(taskId)) {
-        this._removeCheckbox(taskId);
+        this._removeTaskElements(taskId);
       }
     }
   }
@@ -106,10 +139,10 @@ export class TaskCheckboxLayer {
   }
 
   /**
-   * Create a checkbox DOM element for a task
+   * Create DOM elements for a task (checkbox + bounding box)
    * @private
    */
-  _createCheckbox(taskId) {
+  _createTaskElements(taskId) {
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.className = "note-canvas__task-checkbox";
@@ -120,26 +153,40 @@ export class TaskCheckboxLayer {
       this.callbacks.onToggle(taskId, checkbox.checked);
     });
 
+    const boundingBox = document.createElement("div");
+    boundingBox.className = "note-canvas__task-bounding-box";
+    boundingBox.dataset.taskId = taskId;
+    boundingBox.title = "Click to select task strokes";
+    boundingBox.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (this.callbacks.onTaskClick) {
+        this.callbacks.onTaskClick(taskId);
+      }
+    });
+
+    this.container.appendChild(boundingBox);
     this.container.appendChild(checkbox);
-    const entry = { wrapper: checkbox, checkbox };
-    this.checkboxElements.set(taskId, entry);
+
+    const entry = { checkbox, boundingBox };
+    this.taskElements.set(taskId, entry);
     return entry;
   }
 
   /**
-   * Remove a checkbox element
+   * Remove task elements
    * @private
    */
-  _removeCheckbox(taskId) {
-    const entry = this.checkboxElements.get(taskId);
+  _removeTaskElements(taskId) {
+    const entry = this.taskElements.get(taskId);
     if (entry) {
-      entry.wrapper.remove();
-      this.checkboxElements.delete(taskId);
+      entry.checkbox.remove();
+      entry.boundingBox.remove();
+      this.taskElements.delete(taskId);
     }
   }
 
   destroy() {
     this.container.remove();
-    this.checkboxElements.clear();
+    this.taskElements.clear();
   }
 }

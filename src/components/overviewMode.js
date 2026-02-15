@@ -645,7 +645,7 @@ function renderTaskItem(task) {
   }
 
   return `
-    <div class="task-item ${isDone ? "task-item--done" : ""}" data-note-id="${task.noteId}">
+    <div class="task-item ${isDone ? "task-item--done" : ""}" data-note-id="${task.noteId}" data-task-id="${task.id}">
       <span class="task-item__checkbox">${checkIcon}</span>
       <span class="task-item__label">${escapeHtml(label)}</span>
       <span class="task-item__note">${escapeHtml(task.noteTitle)}</span>
@@ -661,7 +661,8 @@ function attachTaskListeners(container) {
   container.querySelectorAll(".task-item").forEach((item) => {
     item.addEventListener("click", () => {
       const noteId = item.dataset.noteId;
-      if (noteId) navigateTo("notebook", { noteId });
+      const taskId = item.dataset.taskId;
+      if (noteId) navigateTo("notebook", { noteId, taskId });
     });
   });
 

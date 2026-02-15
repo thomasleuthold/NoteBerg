@@ -10,7 +10,7 @@ import { getIcon } from "../../utils/icons.js";
 export class SelectionOverlay {
   constructor(container, callbacks) {
     this.container = container;
-    this.callbacks = callbacks; // { onMarkAsTask, onDelete }
+    this.callbacks = callbacks; // { onMarkAsTask, onDelete, onRemoveTask }
     this.element = null;
     this.menu = null;
     this.optionBtn = null;
@@ -18,6 +18,7 @@ export class SelectionOverlay {
 
     this._onOptionClick = this._onOptionClick.bind(this);
     this._onMarkAsTaskClick = this._onMarkAsTaskClick.bind(this);
+    this._onRemoveTaskClick = this._onRemoveTaskClick.bind(this);
     this._onDeleteClick = this._onDeleteClick.bind(this);
     this._handleDocumentClick = this._handleDocumentClick.bind(this);
 
@@ -48,6 +49,9 @@ export class SelectionOverlay {
           <button class="note-canvas-toolbar__option-btn" id="selection-task-btn">
             ${getIcon("checkSquare", 16)} Mark as Task
           </button>
+          <button class="note-canvas-toolbar__option-btn" id="selection-remove-task-btn" style="display:none">
+            ${getIcon("square", 16)} Remove Task
+          </button>
         </div>
         <div class="note-canvas-toolbar__separator"></div>
         <div class="note-canvas-toolbar__options-section">
@@ -62,11 +66,26 @@ export class SelectionOverlay {
     this.menu
       .querySelector("#selection-task-btn")
       .addEventListener("click", this._onMarkAsTaskClick);
+    this.menu
+      .querySelector("#selection-remove-task-btn")
+      .addEventListener("click", this._onRemoveTaskClick);
     this.menu.querySelector("#selection-delete-btn").addEventListener("click", this._onDeleteClick);
     this.element.appendChild(this.menu);
 
     this.container.appendChild(this.element);
     document.addEventListener("pointerdown", this._handleDocumentClick);
+  }
+
+  setTaskMode(isTask) {
+    const taskBtn = this.menu.querySelector("#selection-task-btn");
+    const removeTaskBtn = this.menu.querySelector("#selection-remove-task-btn");
+    if (isTask) {
+      taskBtn.style.display = "none";
+      removeTaskBtn.style.display = "flex";
+    } else {
+      taskBtn.style.display = "flex";
+      removeTaskBtn.style.display = "none";
+    }
   }
 
   show(bounds, zoom, scrollLeft, scrollTop, viewportRect, offsetX = 0) {
@@ -131,6 +150,14 @@ export class SelectionOverlay {
     e.stopPropagation();
     if (this.callbacks.onMarkAsTask) {
       this.callbacks.onMarkAsTask();
+    }
+    this.hide();
+  }
+
+  _onRemoveTaskClick(e) {
+    e.stopPropagation();
+    if (this.callbacks.onRemoveTask) {
+      this.callbacks.onRemoveTask();
     }
     this.hide();
   }

@@ -78,6 +78,7 @@ export class InputHandler {
       pointerId: e.pointerId,
       clientX: e.clientX,
       clientY: e.clientY,
+      target: e.target,
     });
 
     if (shouldDraw) {
