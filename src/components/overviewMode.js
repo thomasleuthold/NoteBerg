@@ -18,10 +18,21 @@ import {
 } from "../modules/storage.js";
 import { getIcon } from "../utils/icons.js";
 import { markdownToHtml } from "../utils/markdown.js";
-import { renderNotePreview } from "../utils/noteRenderer.js";
+import {
+  drawStroke,
+  getStrokeBounds,
+  getThemePalette,
+  renderNotePreview,
+} from "../utils/noteRenderer.js";
 import { showConfirmDialog } from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
 import "./overviewMode.css";
+
+/** Debug toggle: force stroke rendering even when recognition text is available */
+let forceStrokeRender = false;
+
+/** Lookup map for task strokes, keyed by task ID. Populated during renderMarkersTab. */
+let taskStrokesMap = new Map();
 
 // Search state persistence
 const searchState = {
@@ -227,17 +238,24 @@ async function renderMarkersTab(container) {
     }
 
     for (const task of tasks) {
+      const taskStrokeIds = new Set(task.strokeIds || []);
+      const taskStrokes = (note.strokes || []).filter(
+        (s) => taskStrokeIds.has(s.id) && !s._deleted && !s.isDeleted,
+      );
       allTasks.push({
         ...task,
         noteId: note.id,
         noteTitle: note.title || "Untitled",
         noteContent: note.content || "",
         recognition,
+        strokes: taskStrokes,
       });
     }
   }
   const openTasks = allTasks.filter((t) => !t.checked);
   const doneTasks = allTasks.filter((t) => t.checked);
+
+  taskStrokesMap = new Map();
 
   const tasksHtml =
     allTasks.length > 0
@@ -245,6 +263,9 @@ async function renderMarkersTab(container) {
       <div class="tasks-section">
         <div class="section-header tasks-section__header">
           <h3>${getIcon("checkSquare", 20)} Tasks</h3>
+          <button class="tasks-display-toggle btn-icon" id="toggle-task-display" title="${forceStrokeRender ? "Show as text" : "Show as strokes"}">
+            ${forceStrokeRender ? getIcon("fileText", 16) : getIcon("pen", 16)}
+          </button>
           <span class="tasks-count">${openTasks.length} open</span>
         </div>
         <div class="tasks-list">
@@ -266,7 +287,17 @@ async function renderMarkersTab(container) {
       : '<p class="empty-state">No tasks found.</p>';
 
   container.innerHTML = tasksHtml;
+  drawTaskStrokeCanvases(container);
   attachTaskListeners(container);
+
+  // Toggle between stroke/text display
+  const toggleBtn = container.querySelector("#toggle-task-display");
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", () => {
+      forceStrokeRender = !forceStrokeRender;
+      renderMarkersTab(container);
+    });
+  }
 }
 
 async function renderActiveTab(container, notebookId) {
@@ -618,6 +649,58 @@ function formatDate(timestamp) {
 }
 
 /**
+ * Draw strokes on all task canvas elements after DOM insertion.
+ * Uses the taskStrokesMap populated during renderTaskItem().
+ */
+function drawTaskStrokeCanvases(container) {
+  const canvases = container.querySelectorAll(".task-item__strokes");
+  if (canvases.length === 0) return;
+
+  const palette = getThemePalette();
+  const padding = 2;
+
+  for (const canvas of canvases) {
+    const taskId = canvas.dataset.taskId;
+    const strokes = taskStrokesMap.get(taskId);
+    if (!strokes || strokes.length === 0) continue;
+
+    const bounds = getStrokeBounds(strokes);
+    if (!bounds) continue;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const canvasWidth = rect.width || 200;
+    const canvasHeight = rect.height || 28;
+
+    canvas.width = canvasWidth * dpr;
+    canvas.height = canvasHeight * dpr;
+
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+
+    const availableWidth = canvasWidth - padding * 2;
+    const availableHeight = canvasHeight - padding * 2;
+    const scaleX = availableWidth / Math.max(1, bounds.width);
+    const scaleY = availableHeight / Math.max(1, bounds.height);
+    const scale = Math.min(scaleX, scaleY);
+
+    const scaledHeight = bounds.height * scale;
+    const offsetX = padding - bounds.minX * scale;
+    const offsetY = padding + (availableHeight - scaledHeight) / 2 - bounds.minY * scale;
+
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(scale, scale);
+
+    for (const stroke of strokes) {
+      drawStroke(ctx, stroke, palette);
+    }
+
+    ctx.restore();
+  }
+}
+
+/**
  * Render a single task item for the overview tasks section
  */
 function renderTaskItem(task) {
@@ -641,13 +724,25 @@ function renderTaskItem(task) {
     }
   }
   if (!label) {
-    label = task.type === "text" ? "Text task" : "Handwriting task";
+    label = task.type === "text" ? "Text task" : "";
+  }
+
+  // Render strokes as mini canvas when no recognition text or debug toggle is on
+  const useStrokeCanvas =
+    task.type === "stroke" && task.strokes?.length > 0 && (!label || forceStrokeRender);
+
+  let labelHtml;
+  if (useStrokeCanvas) {
+    taskStrokesMap.set(task.id, task.strokes);
+    labelHtml = `<canvas class="task-item__strokes" data-task-id="${task.id}"></canvas>`;
+  } else {
+    labelHtml = `<span class="task-item__label">${escapeHtml(label || "Handwriting task")}</span>`;
   }
 
   return `
     <div class="task-item ${isDone ? "task-item--done" : ""}" data-note-id="${task.noteId}" data-task-id="${task.id}">
       <span class="task-item__checkbox">${checkIcon}</span>
-      <span class="task-item__label">${escapeHtml(label)}</span>
+      ${labelHtml}
       <span class="task-item__note">${escapeHtml(task.noteTitle)}</span>
     </div>
   `;

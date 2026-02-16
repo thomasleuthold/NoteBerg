@@ -44,6 +44,34 @@ const licenses = [
     license: "MIT License",
     licenseUrl: "https://github.com/feathericons/feather/blob/master/LICENSE",
   },
+  {
+    name: "jQuery",
+    description: "A fast, small, and feature-rich JavaScript library",
+    url: "https://jquery.com/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/jquery/jquery/blob/main/LICENSE.txt",
+  },
+  {
+    name: "PDF.js",
+    description: "PDF Reader in JavaScript",
+    url: "https://mozilla.github.io/pdf.js/",
+    license: "Apache License 2.0",
+    licenseUrl: "https://github.com/mozilla/pdf.js/blob/master/LICENSE",
+  },
+  {
+    name: "Trumbowyg",
+    description: "A lightweight WYSIWYG editor",
+    url: "https://alex-d.github.io/Trumbowyg/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/Alex-D/Trumbowyg/blob/main/LICENSE",
+  },
+  {
+    name: "perspective-transform",
+    description: "Create a perspective transform from 4 points",
+    url: "https://github.com/fhguilherme/perspective-transform",
+    license: "MIT License",
+    licenseUrl: "https://github.com/fhguilherme/perspective-transform/blob/master/LICENSE",
+  },
 ];
 
 /**
