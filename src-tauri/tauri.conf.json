@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "oneJournal",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "identifier": "com.onejournal.app",
   "build": {
     "beforeDevCommand": "npm run dev",
