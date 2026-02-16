@@ -32,8 +32,24 @@ export async function renderSettings(container) {
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? true; // Default: enabled
   const encryptNextcloudData = (await getSetting("encrypt_nextcloud_data")) ?? false; // Default: disabled
-  const recognitionUrl = (await getSetting("recognition_url")) || "http://localhost:5000";
+  // Migrate old recognition_url setting to recognition_fallback_url
+  const legacyRecognitionUrl = await getSetting("recognition_url");
+  if (legacyRecognitionUrl) {
+    await setSetting("recognition_fallback_url", legacyRecognitionUrl);
+    await setSetting("recognition_url", null);
+  }
+  const recognitionFallbackUrl = (await getSetting("recognition_fallback_url")) || "";
   const recognitionLanguage = (await getSetting("recognition_language")) || "en-US";
+
+  // Check if local sidecar recognition is available
+  let localRecognitionUrl = "";
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    localRecognitionUrl = await invoke("get_recognition_url");
+  } catch (_e) {
+    // Not in Tauri environment or command not available
+  }
+  const hasLocalRecognition = !!localRecognitionUrl;
 
   container.innerHTML = `
     <div class="settings-panel">
@@ -218,23 +234,32 @@ export async function renderSettings(container) {
         <h3>Handwriting Recognition</h3>
 
         <div class="setting-item">
-          <label for="recognition-url" class="setting-label">
-            <span class="setting-name">Backend URL</span>
-            <span class="setting-description">URL of the recognition service</span>
+          <div class="setting-label">
+            <span class="setting-name">Status</span>
+            <span class="setting-description" id="recognition-mode-info">
+              ${hasLocalRecognition ? "Local recognition active" : recognitionFallbackUrl ? "Using external service" : "No recognition service configured"}
+            </span>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <label for="recognition-fallback-url" class="setting-label">
+            <span class="setting-name">Fallback Handwriting Recognition URL</span>
+            <span class="setting-description">Used when local recognition is not available (non-Windows platforms)</span>
           </label>
           <input
             type="url"
-            id="recognition-url"
+            id="recognition-fallback-url"
             class="setting-control"
-            value="${recognitionUrl}"
-            placeholder="http://localhost:5000"
+            value="${recognitionFallbackUrl}"
+            placeholder="http://example.com:5000"
           />
         </div>
 
         <div class="setting-item">
           <label for="recognition-language" class="setting-label">
             <span class="setting-name">Language</span>
-            <span class="setting-description">Target language (requires installed Windows language pack)</span>
+            <span class="setting-description">Target language for handwriting recognition</span>
           </label>
           <select id="recognition-language" class="setting-control">
             <option value="en-US" ${recognitionLanguage === "en-US" ? "selected" : ""}>English (US)</option>
@@ -460,15 +485,18 @@ export async function renderSettings(container) {
   // Biometric authentication removed for performance - event listeners removed
 
   // Recognition settings listeners
-  const recognitionUrlInput = container.querySelector("#recognition-url");
+  const recognitionFallbackUrlInput = container.querySelector("#recognition-fallback-url");
   const recognitionLanguageSelect = container.querySelector("#recognition-language");
   const testRecognitionBtn = container.querySelector("#test-recognition-btn");
   const recognitionStatus = container.querySelector("#recognition-status");
 
-  recognitionUrlInput?.addEventListener("change", async () => {
-    let url = recognitionUrlInput.value.trim();
+  recognitionFallbackUrlInput?.addEventListener("change", async () => {
+    let url = recognitionFallbackUrlInput.value.trim();
     if (url.endsWith("/")) url = url.slice(0, -1);
-    await setSetting("recognition_url", url);
+    await setSetting("recognition_fallback_url", url);
+    // Invalidate cached URL so next recognition uses the new value
+    const { invalidateRecognitionUrl } = await import("../modules/autoRecognition.js");
+    invalidateRecognitionUrl();
     if (recognitionStatus) recognitionStatus.textContent = "";
   });
 
@@ -477,8 +505,15 @@ export async function renderSettings(container) {
   });
 
   testRecognitionBtn?.addEventListener("click", async () => {
-    const url = recognitionUrlInput.value.trim().replace(/\/$/, "");
-    const apiUrl = `${url}/recognize`;
+    // Test whichever backend is active: sidecar first, then fallback URL
+    const testUrl =
+      localRecognitionUrl || recognitionFallbackUrlInput.value.trim().replace(/\/$/, "");
+    if (!testUrl) {
+      recognitionStatus.textContent = "✗ No recognition service configured";
+      recognitionStatus.style.color = "var(--color-error)";
+      return;
+    }
+    const apiUrl = `${testUrl}/recognize`;
 
     testRecognitionBtn.disabled = true;
     testRecognitionBtn.textContent = "Testing...";
@@ -494,7 +529,8 @@ export async function renderSettings(container) {
       });
 
       if (response.ok) {
-        recognitionStatus.textContent = "✓ Connection successful!";
+        const source = localRecognitionUrl ? "local sidecar" : "external service";
+        recognitionStatus.textContent = `✓ Connection successful (${source})!`;
         recognitionStatus.style.color = "var(--color-success)";
       } else {
         recognitionStatus.textContent = `✗ Server returned ${response.status}`;

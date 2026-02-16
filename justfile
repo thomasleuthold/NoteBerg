@@ -15,6 +15,7 @@ build:
     npm run build
 
 build-w:
+    just package-sidecar
     npm run tauri build
     New-Item -ItemType Directory -Force -Path dist | Out-Null
     Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
@@ -60,7 +61,14 @@ build-backend:
 fix-build:
     Remove-Item "src-tauri/capabilities/recognition.json" -ErrorAction SilentlyContinue
 
-# Package the recognition backend and installer script
+# Build recognition sidecar for Tauri bundling
+package-sidecar:
+    dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained true -o src-tauri/binaries/temp
+    Copy-Item "src-tauri/binaries/temp/OneJournal.Recognition.exe" -Destination "src-tauri/binaries/OneJournal.Recognition-x86_64-pc-windows-gnu.exe" -Force
+    Copy-Item "src-tauri/binaries/temp/appsettings.json" -Destination "src-tauri/binaries/appsettings.json" -Force
+    Remove-Item -Recurse -Force "src-tauri/binaries/temp"
+
+# Package the recognition backend and installer script (legacy standalone service)
 package-backend:
     dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
     Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"

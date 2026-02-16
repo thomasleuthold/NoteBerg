@@ -30,8 +30,16 @@ builder.Services.AddWindowsService(options =>
     options.ServiceName = "OneJournalRecognition";
 });
 
-// 2. Configure Kestrel to listen on port from config
+// 2. Configure Kestrel to listen on port from CLI arg or config
 var port = builder.Configuration.GetValue<int>("ServerSettings:Port");
+
+// CLI argument --port overrides config
+var portArgIndex = Array.IndexOf(args, "--port");
+if (portArgIndex >= 0 && portArgIndex + 1 < args.Length && int.TryParse(args[portArgIndex + 1], out var cliPort))
+{
+    port = cliPort;
+}
+
 if (port > 0)
 {
     builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(port));
@@ -186,7 +194,8 @@ const string SERVICE_VERSION = "1.3.0";
 
 try
 {
-    Log.Information("Starting Handwriting Recognition Service v{Version} on port {Port}", SERVICE_VERSION, port);
+    var portSource = portArgIndex >= 0 ? "CLI" : "config";
+    Log.Information("Starting Handwriting Recognition Service v{Version} on port {Port} (from {PortSource})", SERVICE_VERSION, port, portSource);
     Log.Information("Running as user: {UserIdentity}", System.Security.Principal.WindowsIdentity.GetCurrent().Name);
     app.Run();
 }

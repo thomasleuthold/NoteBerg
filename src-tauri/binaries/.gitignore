@@ -1,0 +1,4 @@
+# Sidecar binaries are built from src-recognition-backend/ and should not be committed.
+# Use `just package-sidecar` to build and place them here.
+*.exe
+appsettings.json
