@@ -60,7 +60,7 @@ export class TaskCheckboxLayer {
       const bounds = this._getTaskBounds(task, strokes);
       if (!bounds) {
         // All strokes deleted, hide checkbox
-        this._removeCheckbox(task.id);
+        this._removeTaskElements(task.id);
         continue;
       }
 
