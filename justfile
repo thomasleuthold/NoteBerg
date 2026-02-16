@@ -18,11 +18,13 @@ build-w:
     npm run tauri build
     New-Item -ItemType Directory -Force -Path dist | Out-Null
     Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
+    Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "C:\Users\ThL\Nextcloud\DEV\oneJournal\Dist\" -Force
 
 build-a:
     npm run tauri android build --release
     New-Item -ItemType Directory -Force -Path builds | Out-Null
     Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\oneJournal_{{version}}_android_universal.apk" -Force
+    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\oneJournal\Dist\oneJournal_{{version}}_android_universal.apk" -Force
 
 build-all:
     just build-w

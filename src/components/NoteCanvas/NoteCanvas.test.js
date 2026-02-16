@@ -97,6 +97,7 @@ vi.mock("./MediaManager.js");
 vi.mock("./MediaOverlay.js");
 vi.mock("./NoteToolbar.js");
 vi.mock("./StrokeManager.js");
+vi.mock("./HistoryManager.js");
 vi.mock("./PdfTextLayerManager.js", () => ({
   PdfTextLayerManager: vi.fn().mockImplementation(() => ({
     update: vi.fn(),
@@ -119,6 +120,8 @@ vi.mock("./TextEditorLayer.js", () => ({
     destroy: vi.fn(),
     highlightSearchTerms: vi.fn(),
     clearHighlights: vi.fn(),
+    renderTaskCheckboxes: vi.fn(),
+    cleanupOrphanedTextTasks: vi.fn(),
   })),
 }));
 
@@ -188,6 +191,12 @@ describe("NoteCanvas Class", () => {
     const { VirtualScroller } = await import("./VirtualScroller.js");
     VirtualScroller.mockImplementation(() => {
       const viewportElement = document.createElement("div");
+      viewportElement.getBoundingClientRect = vi.fn(() => ({
+        left: 0,
+        top: 0,
+        width: 800,
+        height: 600,
+      }));
       return {
         getViewportSize: () => ({ width: 800, height: 600 }),
         getViewportElement: () => viewportElement,
@@ -198,6 +207,7 @@ describe("NoteCanvas Class", () => {
         setZoom: vi.fn(),
         scrollBy: vi.fn(),
         destroy: vi.fn(),
+        container: document.createElement("div"), // Mock container for reflow access
       };
     });
 
@@ -299,6 +309,16 @@ describe("NoteCanvas Class", () => {
       destroy: vi.fn(),
     }));
 
+    const { HistoryManager } = await import("./HistoryManager.js");
+    HistoryManager.mockImplementation(() => ({
+      push: vi.fn(),
+      undo: vi.fn(),
+      redo: vi.fn(),
+      setNoteCanvas: vi.fn(),
+      destroy: vi.fn(),
+      clear: vi.fn(),
+    }));
+
     noteCanvas = new NoteCanvas(container);
   });
 
@@ -378,6 +398,267 @@ describe("NoteCanvas Class", () => {
       expect(historyPushSpy).toHaveBeenCalledWith(
         expect.any((await import("./commands/index.js")).EraseStrokesCommand),
       );
+    });
+  });
+
+  describe("Initialization & Loading", () => {
+    it("should load note data and initialize components", async () => {
+      await noteCanvas.load("note-1");
+
+      expect(noteCanvas.noteData).toEqual(mockNoteData);
+      expect(noteCanvas.renderer.setData).toHaveBeenCalled();
+      expect(noteCanvas.spatialIndex.build).toHaveBeenCalled();
+      expect(noteCanvas.textEditorLayer.init).toHaveBeenCalled();
+    });
+  });
+
+  describe("Interaction Modes", () => {
+    it("should switch modes correctly", () => {
+      noteCanvas._setMode("draw");
+      expect(noteCanvas.mode).toBe("draw");
+      expect(noteCanvas.containerElement.classList.contains("note-canvas--draw-mode")).toBe(true);
+
+      noteCanvas._setMode("eraser");
+      expect(noteCanvas.mode).toBe("eraser");
+      expect(noteCanvas.containerElement.classList.contains("note-canvas--eraser-mode")).toBe(true);
+    });
+  });
+
+  describe("Drawing", () => {
+    it("should handle drawing strokes", async () => {
+      await noteCanvas.load("note-1");
+      noteCanvas._setMode("draw");
+
+      const startProps = { x: 10, y: 10, pressure: 0.5, pointerType: "pen", pointerId: 1 };
+      noteCanvas._onStrokeStart(startProps);
+      expect(noteCanvas.strokeManager.startStroke).toHaveBeenCalled();
+
+      const movePoints = [{ x: 20, y: 20, pressure: 0.6, time: 100 }];
+      noteCanvas._onStrokeMove(movePoints);
+      expect(noteCanvas.strokeManager.addPoints).toHaveBeenCalled();
+
+      noteCanvas._onStrokeEnd();
+      expect(noteCanvas.strokeManager.endStroke).toHaveBeenCalled();
+      expect(noteCanvas.historyManager.push).toHaveBeenCalled();
+    });
+  });
+
+  describe("Eraser", () => {
+    it("should erase strokes", async () => {
+      await noteCanvas.load("note-1");
+      const stroke = { id: "s1", x: [10], y: [10], _deleted: false };
+      mockNoteData.strokes = [stroke];
+      noteCanvas.spatialIndex.query.mockReturnValue([0]); // Return index 0
+
+      noteCanvas._setMode("eraser");
+
+      // Mock intersection check to return true
+      noteCanvas._strokeIntersectsCircle = vi.fn(() => true);
+
+      noteCanvas._onStrokeStart({ x: 10, y: 10, clientX: 10, clientY: 10, pointerType: "pen" });
+      noteCanvas._onStrokeMove([{ x: 10, y: 10, clientX: 10, clientY: 10 }]);
+      noteCanvas._onStrokeEnd();
+
+      expect(stroke._deleted).toBe(true);
+      expect(noteCanvas.historyManager.push).toHaveBeenCalled();
+    });
+  });
+
+  describe("Lasso Selection", () => {
+    it("should select strokes with lasso", async () => {
+      await noteCanvas.load("note-1");
+      const stroke = { id: "s1", x: [10], y: [10], _deleted: false };
+      mockNoteData.strokes = [stroke];
+
+      // Mock spatial index to return stroke
+      noteCanvas.spatialIndex.query.mockReturnValue([0]);
+      noteCanvas.spatialIndex.strokeBounds.set(0, { minX: 0, maxX: 20, minY: 0, maxY: 20 });
+
+      noteCanvas._setMode("lasso");
+
+      // Simulate lasso drawing
+      noteCanvas._onStrokeStart({ x: 0, y: 0, clientX: 0, clientY: 0, pointerType: "pen" });
+      noteCanvas._onStrokeMove([{ x: 100, y: 0, clientX: 100, clientY: 0 }]);
+      noteCanvas._onStrokeMove([{ x: 100, y: 100, clientX: 100, clientY: 100 }]);
+      noteCanvas._onStrokeMove([{ x: 0, y: 100, clientX: 0, clientY: 100 }]);
+
+      // Mock internal helpers
+      noteCanvas._isStrokeFullyInPolygon = vi.fn(() => true);
+
+      noteCanvas._onStrokeEnd();
+
+      expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenCalled();
+    });
+  });
+
+  describe("Zooming", () => {
+    it("should handle zoom via setZoom", async () => {
+      await noteCanvas.load("note-1");
+      noteCanvas.setZoom(2.0);
+      expect(noteCanvas.zoomScale).toBe(2.0);
+      expect(noteCanvas.scroller.setZoom).toHaveBeenCalledWith(2.0, undefined);
+      expect(noteCanvas.renderer.setZoom).toHaveBeenCalled();
+    });
+
+    it("should handle wheel zoom", async () => {
+      await noteCanvas.load("note-1");
+      const event = new WheelEvent("wheel", {
+        deltaY: -100,
+        ctrlKey: true,
+        clientX: 100,
+        clientY: 100,
+      });
+
+      noteCanvas._onWheel(event);
+
+      expect(noteCanvas.zoomScale).toBeGreaterThan(1.0);
+    });
+  });
+
+  describe("Tasks", () => {
+    it("should create text task", async () => {
+      await noteCanvas.load("note-1");
+      noteCanvas._createTextTask("task-1");
+
+      expect(noteCanvas.noteData.tasks).toHaveLength(1);
+      expect(noteCanvas.noteData.tasks[0].id).toBe("task-1");
+      expect(noteCanvas.historyManager.push).toHaveBeenCalled();
+    });
+
+    it("should toggle task", async () => {
+      await noteCanvas.load("note-1");
+      const task = { id: "task-1", checked: false, type: "text" };
+      noteCanvas.noteData.tasks = [task];
+
+      noteCanvas._toggleTask("task-1", true);
+
+      expect(task.checked).toBe(true);
+      expect(noteCanvas.textEditorLayer.renderTaskCheckboxes).toHaveBeenCalled();
+    });
+  });
+
+  describe("Image Insertion", () => {
+    it("should insert images", async () => {
+      await noteCanvas.load("note-1");
+      const { pickImages, processImageFile } = await import("../../utils/imageUtils.js");
+
+      pickImages.mockResolvedValue([new File([""], "test.png")]);
+      processImageFile.mockResolvedValue({
+        dataUrl: "data:image/png;base64,test",
+        width: 100,
+        height: 100,
+      });
+
+      // Mock fetch for data URL conversion
+      global.fetch = vi.fn(() =>
+        Promise.resolve({
+          blob: () => Promise.resolve(new Blob(["test"], { type: "image/png" })),
+        }),
+      );
+
+      await noteCanvas.insertImage("picker");
+
+      expect(noteCanvas.mediaManager.addItem).toHaveBeenCalled();
+      expect(noteCanvas.historyManager.push).toHaveBeenCalled();
+    });
+  });
+
+  describe("Scrolling", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("should handle scroll events and trigger render", async () => {
+      await noteCanvas.load("note-1");
+
+      // Initial render happens on load
+      noteCanvas.renderer.render.mockClear();
+
+      noteCanvas._onScroll(100, 0, 600);
+
+      // Wait for RAF
+      vi.runAllTimers();
+
+      expect(noteCanvas.renderer.render).toHaveBeenCalledWith(100, 600, 0, null);
+    });
+
+    it("should expand canvas when scrolling near bottom", async () => {
+      await noteCanvas.load("note-1");
+      noteCanvas.contentHeight = 1200;
+
+      // Scroll near bottom
+      noteCanvas._onScroll(800, 0, 600);
+
+      vi.runAllTimers();
+
+      expect(noteCanvas.scroller.setContentSize).toHaveBeenCalled();
+      expect(noteCanvas.contentHeight).toBeGreaterThan(1200);
+    });
+  });
+
+  describe("Transformations", () => {
+    it("should handle moving selected strokes", async () => {
+      await noteCanvas.load("note-1");
+      const stroke = { id: "s1", x: [10, 20], y: [10, 20], _deleted: false };
+      mockNoteData.strokes = [stroke];
+
+      // Setup selection
+      noteCanvas.renderer.selectedStrokeIndices = new Set([0]);
+      noteCanvas.renderer.selectionBounds = { minX: 10, minY: 10, maxX: 20, maxY: 20 };
+
+      // Start transform
+      noteCanvas._startTransform("move", 15, 15);
+
+      // Move
+      noteCanvas._handleTransformMove(25, 25); // dx=10, dy=10
+
+      // Verify renderer update
+      expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenCalled();
+      const lastCall = noteCanvas.renderer.setSelectedStrokes.mock.calls.at(-1);
+      const newBounds = lastCall[1];
+      expect(newBounds.minX).toBe(20); // 10 + 10
+
+      // End transform
+      noteCanvas._endTransform();
+
+      expect(stroke.x[0]).toBe(20); // 10 + 10
+      expect(noteCanvas.historyManager.push).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).TransformStrokesCommand),
+      );
+    });
+  });
+
+  describe("Text Editor Integration", () => {
+    it("should handle text content changes", async () => {
+      await noteCanvas.load("note-1");
+
+      // Mock worker on strokeManager
+      noteCanvas.strokeManager.worker = { postMessage: vi.fn() };
+
+      noteCanvas._onTextContentChange("<p>New Content</p>");
+
+      expect(noteCanvas.noteData.content).toBe("<p>New Content</p>");
+      expect(noteCanvas.strokeManager.worker.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "SAVE_CONTENT",
+          content: "<p>New Content</p>",
+        }),
+      );
+    });
+  });
+
+  describe("Viewport Resize", () => {
+    it("should handle viewport resize", async () => {
+      await noteCanvas.load("note-1");
+
+      noteCanvas._onViewportResize(1000, 800);
+
+      expect(noteCanvas.renderer.resize).toHaveBeenCalledWith(1000, 800);
+      expect(noteCanvas.renderer.render).toHaveBeenCalled();
     });
   });
 });

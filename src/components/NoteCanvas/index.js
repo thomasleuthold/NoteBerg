@@ -18,7 +18,7 @@ let noteCanvasInstance = null;
 export function initNoteCanvasComponent() {
   // Listen for render notebook event from router
   window.addEventListener("rendernotebook", async (e) => {
-    const { noteId } = e.detail || {};
+    const { noteId, taskId } = e.detail || {};
     let { searchQuery } = e.detail || {};
 
     if (!noteId) {
@@ -54,7 +54,7 @@ export function initNoteCanvasComponent() {
     // Create and load new instance
     try {
       noteCanvasInstance = new NoteCanvas(container);
-      await noteCanvasInstance.load(noteId, searchQuery);
+      await noteCanvasInstance.load(noteId, { searchQuery, taskId });
     } catch (error) {
       console.error("[NoteCanvas] Failed to initialize:", error);
 

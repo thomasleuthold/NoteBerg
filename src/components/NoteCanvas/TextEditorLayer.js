@@ -22,8 +22,36 @@ import "trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js";
 import "trumbowyg/dist/plugins/table/trumbowyg.table.js";
 import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
 
+import { getIcon } from "../../utils/icons.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
+import { TextTaskManager } from "./TextTaskManager.js";
+
+// Define Mark as Task plugin for Trumbowyg
+jQuery.extend(true, jQuery.trumbowyg, {
+  plugins: {
+    markAsTask: {
+      init: (trumbowyg) => {
+        trumbowyg.addBtnDef("markAsTask", {
+          fn: () => {
+            trumbowyg.saveRange();
+
+            // Access layer instance attached to trumbowyg object
+            if (trumbowyg.textEditorLayer?.textTaskManager) {
+              trumbowyg.textEditorLayer.textTaskManager.toggleTaskOnSelection(trumbowyg);
+            } else {
+              // Fallback
+              trumbowyg.$ta.trigger("tbwmarkastask");
+            }
+          },
+          title: "Mark as Task",
+          hasIcon: false,
+          text: "Task",
+        });
+      },
+    },
+  },
+});
 
 export class TextEditorLayer {
   /**
@@ -42,12 +70,15 @@ export class TextEditorLayer {
     this.onContentChange = options.onContentChange || (() => {});
     this.onHeightChange = options.onHeightChange || (() => {});
     this.historyManager = options.historyManager || null;
+    this.onTaskCreate = options.onTaskCreate || null;
+    this.onTaskToggle = options.onTaskToggle || null;
 
     // DOM elements
     this.container = null;
     this.editorDiv = null;
     this.$editor = null;
     this.toolbarWrapper = null;
+    this.textTaskManager = null;
 
     // State
     this.mode = "pan";
@@ -84,6 +115,7 @@ export class TextEditorLayer {
     // Editor div (Trumbowyg will wrap this in .trumbowyg-box)
     this.editorDiv = document.createElement("div");
     this.editorDiv.className = "note-canvas__text-editor";
+    this.editorDiv.textEditorLayer = this; // Link instance for direct access from plugins
 
     this.container.appendChild(this.editorDiv);
     this.viewportElement.appendChild(this.container);
@@ -113,16 +145,22 @@ export class TextEditorLayer {
         ["foreColor", "backColor"],
         ["lineheight"],
         ["indent", "outdent"],
-        ["unorderedList", "orderedList"],
+        ["unorderedList", "orderedList", "markAsTask"],
         ["table"],
         ["removeformat"],
       ],
       autogrow: false,
       autogrowOnEnter: false,
       resetCss: false,
-      semantic: true,
+      semantic: false,
       tagsToRemove: ["script", "link"],
     });
+
+    // Attach instance to Trumbowyg object for plugin access
+    const trumbowyg = this.$editor.data("trumbowyg");
+    if (trumbowyg) {
+      trumbowyg.textEditorLayer = this;
+    }
 
     // Set initial content
     this.$editor.trumbowyg("html", htmlContent || "");
@@ -141,6 +179,12 @@ export class TextEditorLayer {
       for (const dd of dropdowns) {
         this.toolbarWrapper.appendChild(dd);
       }
+    }
+
+    // Inject icon for Mark as Task button
+    const taskBtn = this.toolbarWrapper.querySelector(".trumbowyg-markAsTask-button");
+    if (taskBtn) {
+      taskBtn.innerHTML = getIcon("checkSquare", 20);
     }
 
     // Prevent toolbar/dropdown clicks from stealing focus from the editor.
@@ -173,6 +217,16 @@ export class TextEditorLayer {
       this._debounceHistoryPush();
     });
 
+    // Listen for Mark as Task event from plugin
+    this.$editor.on("tbwmarkastask", () => {
+      this.textTaskManager?.toggleTaskOnSelection(this.$editor.data("trumbowyg"));
+    });
+
+    // Native event listener fallback
+    this.editorDiv.addEventListener("tbwmarkastask", () => {
+      this.textTaskManager?.toggleTaskOnSelection(this.$editor.data("trumbowyg"));
+    });
+
     // Track content height changes with ResizeObserver.
     // When the text editor grows (e.g. user adds lines), we notify NoteCanvas
     // so it can expand the shared contentHeight (phantom div + canvas).
@@ -193,6 +247,13 @@ export class TextEditorLayer {
     }
 
     this._editorElement = trumbowygEditor;
+
+    // Initialize TextTaskManager
+    this.textTaskManager = new TextTaskManager(this._editorElement, {
+      onTaskCreate: this.onTaskCreate,
+      onTaskToggle: this.onTaskToggle,
+      triggerChange: () => this.$editor.trigger("tbwchange"),
+    });
 
     // Initial position update
     this._updatePosition();
@@ -426,10 +487,37 @@ export class TextEditorLayer {
    * @returns {string}
    */
   getContent() {
-    if (!this.$editor) return "";
-    // Strip search highlights before returning content so marks aren't persisted
-    this.clearHighlights();
-    return this.$editor.trumbowyg("html");
+    if (!this._editorElement) return "";
+
+    // Get raw HTML directly from DOM to avoid Trumbowyg's filtering
+    const rawHtml = this._editorElement.innerHTML;
+
+    // Clean up UI elements using a temporary DOM element
+    // This avoids modifying the live editor DOM (preventing cursor jumps/flickering)
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = rawHtml;
+
+    // 1. Remove injected checkboxes (UI only, not persisted)
+    const checkboxes = tempDiv.querySelectorAll(".task-text-checkbox");
+    for (const cb of checkboxes) {
+      cb.remove();
+    }
+
+    // 2. Unwrap search highlights
+    const marks = tempDiv.querySelectorAll("mark.search-highlight");
+    for (const mark of marks) {
+      const parent = mark.parentNode;
+      // Replace mark with its text content (unwrap)
+      while (mark.firstChild) {
+        parent.insertBefore(mark.firstChild, mark);
+      }
+      parent.removeChild(mark);
+    }
+
+    // Normalize to merge text nodes
+    tempDiv.normalize();
+
+    return tempDiv.innerHTML;
   }
 
   /**
@@ -512,6 +600,23 @@ export class TextEditorLayer {
   }
 
   /**
+   * Render checkboxes for text tasks in the editor DOM
+   * @param {Array} tasks - All tasks (will filter to text type)
+   */
+  renderTaskCheckboxes(tasks) {
+    this.textTaskManager?.renderCheckboxes(tasks);
+  }
+
+  /**
+   * Remove tasks whose spans no longer exist in the editor DOM
+   * @param {Array} tasks - Current tasks array (will be modified in place)
+   * @returns {boolean} Whether any orphans were removed
+   */
+  cleanupOrphanedTextTasks(tasks) {
+    return this.textTaskManager?.cleanupOrphans(tasks) ?? false;
+  }
+
+  /**
    * Clean up all resources
    */
   destroy() {
@@ -527,9 +632,17 @@ export class TextEditorLayer {
       this._resizeObserver = null;
     }
 
+    if (this.editorDiv) {
+      this.editorDiv.textEditorLayer = null;
+    }
+
     this._editorElement = null;
 
     if (this.$editor) {
+      const trumbowyg = this.$editor.data("trumbowyg");
+      if (trumbowyg) {
+        trumbowyg.textEditorLayer = null;
+      }
       this.$editor.off("tbwchange");
       this.$editor.trumbowyg("destroy");
       this.$editor = null;

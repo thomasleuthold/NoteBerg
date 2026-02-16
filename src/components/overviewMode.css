@@ -1,0 +1,48 @@
+.overview-tabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: 20px;
+  padding: 10px 20px 0 20px;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 10px 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tab-btn.active {
+  color: var(--color-primary);
+}
+
+.tab-btn.active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background-color: var(--color-primary);
+}
+
+.overview-tab-content {
+  padding: 0 20px 20px;
+}
+
+.recycle-bin-tab {
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+
+.recycle-bin-tab:hover {
+  color: var(--text-primary);
+}

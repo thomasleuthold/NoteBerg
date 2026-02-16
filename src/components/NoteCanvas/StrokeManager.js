@@ -162,6 +162,19 @@ export class StrokeManager {
     });
   }
 
+  /**
+   * Save tasks via the worker
+   */
+  saveTasks(tasks) {
+    if (!this.worker) return;
+
+    this.worker.postMessage({
+      type: "SAVE_TASKS",
+      noteId: this.noteId,
+      tasks,
+    });
+  }
+
   forceSave() {
     this._save();
   }

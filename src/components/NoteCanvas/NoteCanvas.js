@@ -26,6 +26,8 @@ import { ImageCropper } from "./ImageCropper.js";
 import { InputHandler } from "./InputHandler.js";
 import { MediaManager } from "./MediaManager.js";
 import { MediaOverlay } from "./MediaOverlay.js";
+import { SelectionOverlay } from "./SelectionOverlay.js";
+import { TaskCheckboxLayer } from "./TaskCheckboxLayer.js";
 import "./NoteCanvas.css";
 import {
   CropImageCommand,
@@ -33,6 +35,7 @@ import {
   DrawStrokeCommand,
   EraseStrokesCommand,
   InsertMediaCommand,
+  MarkTaskCommand,
   ReorderMediaCommand,
   ShiftContentCommand,
   TransformMediaCommand,
@@ -150,6 +153,8 @@ export class NoteCanvas {
     this.mediaManager = null;
     this.strokeManager = null;
     this.mediaOverlay = null;
+    this.selectionOverlay = null;
+    this.taskCheckboxLayer = null;
     this.pdfTextLayerManager = null;
     this.toolbar = null;
     this.contentHeight = 0;
@@ -200,6 +205,8 @@ export class NoteCanvas {
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
     this.selectedMediaId = null; // Track selected media item
     this.penPresets = null; // Pen presets configuration
+    this.selectedTaskId = null; // Track selected task ID for removal
+    this.taskSelectionBounds = null; // Track bounds for task selection in non-lasso mode
 
     // Long press state
     this.longPressTimer = null;
@@ -332,9 +339,13 @@ export class NoteCanvas {
   /**
    * Load and render a note
    * @param {string} noteId - ID of the note to load
-   * @param {string|null} searchQuery - Optional search query to highlight
+   * @param {Object|string|null} options - Options object or search query string (legacy)
+   * @param {string} options.searchQuery - Optional search query to highlight
+   * @param {string} options.taskId - Optional task ID to scroll to
    */
-  async load(noteId, searchQuery = null) {
+  async load(noteId, options = {}) {
+    const { searchQuery = null, taskId = null } =
+      typeof options === "string" ? { searchQuery: options } : options || {};
     this.noteId = noteId;
     this.activeSearchQuery = searchQuery;
 
@@ -444,6 +455,20 @@ export class NoteCanvas {
       onToBack: (id) => this.moveSelectedMediaToBack(id),
     });
 
+    // Initialize SelectionOverlay (3-dot menu for lasso selection)
+    this.selectionOverlay = new SelectionOverlay(this.scroller.getViewportElement(), {
+      onMarkAsTask: () => this._markSelectedStrokesAsTask(),
+      onRemoveTask: () => this._removeTaskFromSelectedStrokes(),
+      onDelete: () => this._deleteSelectedStrokes(),
+    });
+
+    // Initialize tasks array and task checkbox layer
+    this.noteData.tasks = this.noteData.tasks || [];
+    this.taskCheckboxLayer = new TaskCheckboxLayer(this.scroller.getViewportElement(), {
+      onToggle: (taskId, checked) => this._toggleTask(taskId, checked),
+      onTaskClick: (taskId) => this._selectTaskStrokes(taskId),
+    });
+
     // Initialize PDF Text Layer Manager (for text selection in PDFs)
     this.pdfTextLayerManager = new PdfTextLayerManager(
       this.scroller.getViewportElement(),
@@ -485,16 +510,24 @@ export class NoteCanvas {
         onContentChange: (html) => this._onTextContentChange(html),
         onHeightChange: (height) => this._onTextHeightChange(height),
         historyManager: this.historyManager,
+        onTaskCreate: (taskId) => this._createTextTask(taskId),
+        onTaskToggle: (taskId, checked) => this._toggleTask(taskId, checked),
       },
     );
     this.textEditorLayer.init(this.noteData.content || "");
     this.textEditorLayer.setContentHeight(this.contentHeight);
+
+    // Render text task checkboxes if any exist. Deferred to allow editor to initialize.
+    this._renderTasksTimeout = setTimeout(() => {
+      this.textEditorLayer.renderTaskCheckboxes(this.noteData.tasks);
+    }, 0);
 
     // Set content size in scroller
     this.scroller.setContentSize(contentWidth, this.contentHeight);
 
     // Initial render
     this.renderer.render(0, height);
+    this._updateTaskCheckboxes();
 
     // Set up event listeners
     this._setupEventListeners();
@@ -588,7 +621,7 @@ export class NoteCanvas {
 
     this.isInitialized = true;
     this._renderPdfControls();
-    this._initNavigator();
+    await this._initNavigator(taskId);
 
     // Expose for debugging
     window.__noteCanvas = this;
@@ -969,21 +1002,35 @@ export class NoteCanvas {
   /**
    * Initialize the note navigator widget.
    * @private
+   * @param {string|null} autoNavigateTaskId - Task ID to scroll to on load
    */
-  async _initNavigator() {
+  async _initNavigator(autoNavigateTaskId = null) {
     const scrollerContainer = this.containerElement.querySelector(
       ".note-canvas__scroller-container",
     );
     if (!scrollerContainer) return;
 
     this.navigator = new NoteNavigator(scrollerContainer, {
-      onNavigate: (contentY, subjectKey) => {
+      onNavigate: (contentY, subjectKey, item) => {
         if (!this.scroller) return;
         const scrollToTop = subjectKey === "pdf-page" || subjectKey === "pdf-chapter";
+        const viewportHeight = this.scroller.getViewportSize().height / this.scroller.zoomScale;
         const targetScrollY = scrollToTop
           ? Math.max(0, contentY)
-          : Math.max(0, contentY - this.scroller.viewportHeight / this.scroller.zoomScale / 2);
+          : Math.max(0, contentY - viewportHeight / 2);
+
+        // Ensure canvas is large enough to scroll to this position
+        if (targetScrollY + viewportHeight > this.contentHeight) {
+          this._expandCanvas(targetScrollY + viewportHeight - this.contentHeight + 500);
+          // Force reflow
+          this.scroller.container.offsetHeight;
+        }
+
         this.scroller.scrollTo(0, targetScrollY, false);
+
+        if (item?.bounds) {
+          this._highlightTaskRegion(item.bounds);
+        }
       },
     });
 
@@ -1027,6 +1074,45 @@ export class NoteCanvas {
     }
 
     await this._updateNavigatorSubjects();
+
+    // Handle auto-navigation to task
+    if (autoNavigateTaskId) {
+      let taskSubject = this.navigator.subjects.find((s) => s.key === "task");
+      let itemIndex = taskSubject
+        ? taskSubject.items.findIndex((i) => i.id === autoNavigateTaskId)
+        : -1;
+
+      // Retry loop: wait for text editor to render if task not found yet
+      let retries = 0;
+      while (itemIndex === -1 && retries < 20) {
+        await new Promise((r) => setTimeout(r, 100));
+        await this._updateNavigatorSubjects();
+        taskSubject = this.navigator.subjects.find((s) => s.key === "task");
+        itemIndex = taskSubject
+          ? taskSubject.items.findIndex((i) => i.id === autoNavigateTaskId)
+          : -1;
+        retries++;
+      }
+
+      if (taskSubject && itemIndex !== -1) {
+        // Select subject and navigate
+        this.navigator.currentSubjectIndex = this.navigator.subjects.indexOf(taskSubject);
+        this.navigator.currentItemIndex = itemIndex;
+        this.navigator._render();
+        this.navigator._navigateTo(itemIndex);
+      } else {
+        console.warn(`[NoteCanvas] Failed to find task ${autoNavigateTaskId} after retries`);
+      }
+    } else if (this.activeSearchQuery) {
+      // Handle auto-navigation to first search result
+      const searchSubject = this.navigator.subjects.find((s) => s.key === "search");
+      if (searchSubject && searchSubject.items.length > 0) {
+        this.navigator.currentSubjectIndex = this.navigator.subjects.indexOf(searchSubject);
+        this.navigator.currentItemIndex = 0;
+        this.navigator._render();
+        this.navigator._navigateTo(0);
+      }
+    }
   }
 
   /**
@@ -1091,7 +1177,86 @@ export class NoteCanvas {
       subjects.push({ key: "highlighter", label: "Highlights", items: grouped });
     }
 
-    // Auto-select: search if active, else pdf-page, else highlighter
+    // 5. Tasks
+    const tasks = (this.noteData.tasks || []).filter((t) => {
+      if (t.type === "stroke") {
+        return t.strokeIds.some((id) => {
+          const stroke = this.noteData.strokes.find((s) => s.id === id);
+          return stroke && !stroke._deleted && !stroke.isDeleted;
+        });
+      }
+      return true;
+    });
+    if (tasks.length > 0) {
+      const taskItems = tasks
+        .map((t) => {
+          // Stroke Task
+          if (t.type === "stroke") {
+            let minY = Infinity;
+            let maxY = -Infinity;
+            let minX = Infinity;
+            let maxX = -Infinity;
+            let hasStrokes = false;
+
+            t.strokeIds.forEach((id) => {
+              const stroke = this.noteData.strokes.find((s) => s.id === id);
+              if (stroke && !stroke._deleted && !stroke.isDeleted) {
+                hasStrokes = true;
+                for (let i = 0; i < stroke.y.length; i++) {
+                  minY = Math.min(minY, stroke.y[i]);
+                  maxY = Math.max(maxY, stroke.y[i]);
+                  minX = Math.min(minX, stroke.x[i]);
+                  maxX = Math.max(maxX, stroke.x[i]);
+                }
+              }
+            });
+            if (!hasStrokes) return null;
+            return {
+              y: (minY + maxY) / 2,
+              label: t.checked ? "done" : "open",
+              id: t.id,
+              bounds: { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
+            };
+          }
+          // Text tasks: approximate position from DOM if available
+          const el = this.textEditorLayer?._editorElement?.querySelector(
+            `[data-task-id="${t.id}"]`,
+          );
+          if (!el) {
+            return null;
+          }
+          const scrollTop = this.scroller.getScrollTop();
+          const scrollLeft = this.scroller.getScrollLeft();
+          const rect = el.getBoundingClientRect();
+
+          // Skip if not rendered yet
+          if (rect.width === 0 && rect.height === 0) {
+            return null;
+          }
+
+          const containerRect = this.scroller.getViewportElement().getBoundingClientRect();
+          const y = (rect.top - containerRect.top + scrollTop) / this.zoomScale;
+
+          // Calculate bounds for highlight
+          const viewportWidth = this.scroller.getViewportSize().width;
+          const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+          const offsetX =
+            scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+          const x = (rect.left - containerRect.left + scrollLeft - offsetX) / this.zoomScale;
+          const w = rect.width / this.zoomScale;
+          const h = rect.height / this.zoomScale;
+
+          return { y, label: t.checked ? "done" : "open", id: t.id, bounds: { x, y, w, h } };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.y - b.y);
+
+      if (taskItems.length > 0) {
+        subjects.push({ key: "task", label: "Tasks", items: taskItems });
+      }
+    }
+
+    // Auto-select: search if active, else pdf-page, else highlighter, else task
     let autoSelect;
     if (this.activeSearchQuery && subjects.some((s) => s.key === "search")) {
       autoSelect = "search";
@@ -1099,6 +1264,8 @@ export class NoteCanvas {
       autoSelect = "pdf-page";
     } else if (subjects.some((s) => s.key === "highlighter")) {
       autoSelect = "highlighter";
+    } else if (subjects.some((s) => s.key === "task")) {
+      autoSelect = "task";
     }
 
     this.navigator.setSubjects(subjects, autoSelect);
@@ -1107,6 +1274,20 @@ export class NoteCanvas {
     if (this.activeSearchQuery && subjects.length > 0 && !this.navigator.expanded) {
       this.navigator.expanded = true;
       this.navigator._render();
+    }
+  }
+
+  /**
+   * Flash a highlight on a specific task region
+   * @private
+   */
+  _highlightTaskRegion(bounds) {
+    if (this.renderer) {
+      this.renderer.setHighlights([bounds]);
+      // Clear highlight after animation
+      setTimeout(() => {
+        this.renderer.setHighlights([]);
+      }, 1500);
     }
   }
 
@@ -1294,6 +1475,8 @@ export class NoteCanvas {
           this.strokeManager?.currentStroke,
         );
         this._updateMediaOverlay();
+        this._updateSelectionOverlay();
+        this._updateTaskCheckboxes();
         this._updatePdfTextLayers();
         this._updateTextEditorLayer();
         this._updatePdfControlsPosition();
@@ -1372,6 +1555,12 @@ export class NoteCanvas {
         key,
       });
     }
+
+    // Clean up orphaned text tasks (spans removed by editing)
+    if (this.textEditorLayer?.cleanupOrphanedTextTasks(this.noteData.tasks)) {
+      this._saveTasks();
+      this._updateNavigatorSubjects();
+    }
   }
 
   /**
@@ -1418,6 +1607,7 @@ export class NoteCanvas {
     this._updatePdfTextLayers();
     this._updateTextEditorLayer();
     this._updatePdfControlsPosition();
+    this._updateTaskCheckboxes();
   }
 
   /**
@@ -1440,6 +1630,9 @@ export class NoteCanvas {
     if (this.textEditorLayer) {
       this.textEditorLayer.setContentHeight(this.contentHeight);
     }
+
+    // Force reflow to ensure the browser acknowledges the new scroll height
+    this.scroller.container.offsetHeight;
   }
 
   /**
@@ -1462,6 +1655,9 @@ export class NoteCanvas {
     // Clear selection when switching modes (except to pan or lasso)
     if (this.renderer && newMode !== "pan" && newMode !== "lasso") {
       this.renderer.setSelectedStrokes(new Set(), null);
+      this.selectedTaskId = null;
+      this.taskSelectionBounds = null;
+      this.selectionOverlay?.hide();
     }
 
     if (this.renderer) {
@@ -1496,6 +1692,20 @@ export class NoteCanvas {
    */
   _onStrokeStart(props) {
     if (this.mode === "text") return false;
+
+    // Check for task interaction (bounding box)
+    if (props.target) {
+      const taskBox = props.target.closest(".note-canvas__task-bounding-box");
+      if (taskBox) {
+        const taskId = taskBox.dataset.taskId;
+        const isSelected = this.selectedTaskId === taskId;
+        // If not selected, or if selected but NOT in lasso mode (so no transform possible),
+        // return false to allow click event (selection/menu toggle).
+        if (!isSelected || this.mode !== "lasso") {
+          return false;
+        }
+      }
+    }
 
     if (this.mode === "insert-space") {
       this.insertSpaceState = { startY: props.y, currentY: props.y };
@@ -1556,6 +1766,9 @@ export class NoteCanvas {
         const { x, y } = props;
         if (x < minX || x > maxX || y < minY || y > maxY) {
           this.renderer.setSelectedStrokes(new Set(), null);
+          this.selectedTaskId = null;
+          this.taskSelectionBounds = null;
+          this.selectionOverlay?.hide();
         }
       }
 
@@ -1606,6 +1819,8 @@ export class NoteCanvas {
     if (this.transformState) {
       const lastPoint = points[points.length - 1];
       this._handleTransformMove(lastPoint.x, lastPoint.y);
+      this._updateSelectionOverlay();
+      this._updateTaskCheckboxes();
       return;
     }
 
@@ -2035,6 +2250,294 @@ export class NoteCanvas {
   }
 
   /**
+   * Update selection overlay position
+   * @private
+   */
+  _updateSelectionOverlay() {
+    // Determine which bounds to use: renderer selection (lasso) or task selection (non-lasso)
+    let bounds = this.renderer?.selectionBounds;
+    if (!bounds && this.selectedTaskId && this.taskSelectionBounds) {
+      bounds = this.taskSelectionBounds;
+    }
+
+    if (!this.selectionOverlay?.isVisible && !bounds) return;
+    if (!bounds) {
+      this.selectionOverlay?.hide();
+      return;
+    }
+
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    if (this.selectionOverlay.isVisible) {
+      this.selectionOverlay.updatePosition(
+        bounds,
+        this.zoomScale,
+        scrollLeft,
+        scrollTop,
+        viewport,
+        offsetX,
+      );
+    } else {
+      this.selectionOverlay.show(bounds, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
+    }
+  }
+
+  /**
+   * Update task checkbox positions (placeholder for Phase 3)
+   * @private
+   */
+  _updateTaskCheckboxes() {
+    if (!this.taskCheckboxLayer) return;
+    const strokeTasks = (this.noteData?.tasks || []).filter((t) => t.type === "stroke");
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    this.taskCheckboxLayer.update(
+      strokeTasks,
+      this.noteData.strokes,
+      this.zoomScale,
+      scrollLeft,
+      scrollTop,
+      offsetX,
+    );
+  }
+
+  /**
+   * Mark the currently selected strokes as a task
+   * @private
+   */
+  _markSelectedStrokesAsTask() {
+    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
+    if (selectedIndices.length === 0) return;
+
+    const strokeIds = selectedIndices.map((i) => this.noteData.strokes[i].id);
+
+    const task = {
+      id: generateId(),
+      type: "stroke",
+      strokeIds,
+      checked: false,
+      created: Date.now(),
+      modified: Date.now(),
+    };
+
+    this.noteData.tasks.push(task);
+    this._saveTasks();
+
+    // Push command for undo/redo
+    this.historyManager?.push(new MarkTaskCommand(task));
+
+    // Clear selection and overlay
+    this.renderer.setSelectedStrokes(new Set(), null);
+    this.selectedTaskId = null;
+    this.taskSelectionBounds = null;
+    this.selectionOverlay?.hide();
+
+    // Update UI
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
+  }
+
+  /**
+   * Delete the currently selected strokes
+   * @private
+   */
+  _deleteSelectedStrokes() {
+    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
+    if (selectedIndices.length === 0) return;
+
+    const cmd = EraseStrokesCommand.fromIndices(this, selectedIndices);
+    cmd.redo(this);
+    this.historyManager?.push(cmd);
+
+    this.renderer.setSelectedStrokes(new Set(), null);
+    this.selectedTaskId = null;
+    this.taskSelectionBounds = null;
+    this.selectionOverlay?.hide();
+
+    // Clean up orphaned tasks
+    this._cleanupOrphanedTasks();
+  }
+
+  /**
+   * Select strokes associated with a task
+   * @private
+   */
+  _selectTaskStrokes(taskId) {
+    const task = this.noteData.tasks.find((t) => t.id === taskId);
+    if (!task || task.type !== "stroke") return;
+
+    const selectedIndices = new Set();
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    let hasStrokes = false;
+
+    task.strokeIds.forEach((id) => {
+      const index = this.noteData.strokes.findIndex((s) => s.id === id);
+      if (index !== -1) {
+        const stroke = this.noteData.strokes[index];
+        if (!stroke._deleted && !stroke.isDeleted) {
+          selectedIndices.add(index);
+
+          // Calculate bounds
+          for (let i = 0; i < stroke.x.length; i++) {
+            minX = Math.min(minX, stroke.x[i]);
+            maxX = Math.max(maxX, stroke.x[i]);
+            minY = Math.min(minY, stroke.y[i]);
+            maxY = Math.max(maxY, stroke.y[i]);
+          }
+          hasStrokes = true;
+        }
+      }
+    });
+
+    if (!hasStrokes) return;
+
+    const bounds = {
+      minX: minX - SELECTION_BOUNDS_PADDING,
+      minY: minY - SELECTION_BOUNDS_PADDING,
+      maxX: maxX + SELECTION_BOUNDS_PADDING,
+      maxY: maxY + SELECTION_BOUNDS_PADDING,
+    };
+
+    this.selectedTaskId = taskId;
+
+    if (this.mode === "lasso") {
+      // In lasso mode: Select strokes in renderer (allows manipulation)
+      this.renderer.setSelectedStrokes(selectedIndices, bounds);
+      this.taskSelectionBounds = null;
+    } else {
+      // In non-lasso mode: Just show overlay, no renderer selection (prevents manipulation)
+      this.renderer.setSelectedStrokes(new Set(), null);
+      this.taskSelectionBounds = bounds;
+    }
+    this.selectionOverlay.setTaskMode(true);
+    this._updateSelectionOverlay();
+  }
+
+  _removeTaskFromSelectedStrokes() {
+    if (!this.selectedTaskId) return;
+    // Remove task (just delete it, strokes remain)
+    this.noteData.tasks = this.noteData.tasks.filter((t) => t.id !== this.selectedTaskId);
+    this._saveTasks();
+
+    // Clear selection
+    this.renderer.setSelectedStrokes(new Set(), null);
+    this.selectedTaskId = null;
+    this.taskSelectionBounds = null;
+    this.selectionOverlay.hide();
+
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
+  }
+
+  /**
+   * Toggle task checked status
+   * @param {string} taskId
+   * @param {boolean} checked
+   * @private
+   */
+  _toggleTask(taskId, checked) {
+    const task = this.noteData.tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    task.checked = checked;
+    task.modified = Date.now();
+    this._saveTasks();
+
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
+
+    // Re-render text task checkboxes to reflect the new state
+    this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
+  }
+
+  /**
+   * Save tasks to storage
+   * @private
+   */
+  _saveTasks() {
+    if (this.strokeManager?.worker) {
+      let key = null;
+      if (isAppUnlocked()) {
+        try {
+          key = getEncryptionKey();
+        } catch (_e) {
+          // Key not available
+        }
+      }
+      this.strokeManager.worker.postMessage({
+        type: "SAVE_TASKS",
+        noteId: this.noteId,
+        tasks: this.noteData.tasks,
+        key,
+      });
+    }
+  }
+
+  /**
+   * Create a text task (called from TextEditorLayer)
+   * @param {string} taskId
+   * @private
+   */
+  _createTextTask(taskId) {
+    const task = {
+      id: taskId,
+      type: "text",
+      strokeIds: [],
+      checked: false,
+      created: Date.now(),
+      modified: Date.now(),
+    };
+    this.noteData.tasks.push(task);
+    this._saveTasks();
+    this.historyManager?.push(new MarkTaskCommand(task));
+    this._updateNavigatorSubjects();
+
+    // Re-render text task checkboxes, with a timeout to ensure the editor has updated
+    setTimeout(() => {
+      this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
+    }, 0);
+  }
+
+  /**
+   * Remove tasks whose strokes are all deleted
+   * @private
+   */
+  _cleanupOrphanedTasks() {
+    if (!this.noteData?.tasks) return;
+
+    const activeStrokeIds = new Set(
+      this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted).map((s) => s.id),
+    );
+
+    const before = this.noteData.tasks.length;
+    this.noteData.tasks = this.noteData.tasks.filter((t) => {
+      if (t.type !== "stroke") return true;
+      return t.strokeIds.some((id) => activeStrokeIds.has(id));
+    });
+
+    if (this.noteData.tasks.length !== before) {
+      this._saveTasks();
+      this._updateTaskCheckboxes();
+      this._updateNavigatorSubjects();
+    }
+  }
+
+  /**
    * Delete the currently selected media item
    */
   async deleteSelectedMedia(id = null) {
@@ -2315,6 +2818,7 @@ export class NoteCanvas {
       this.strokeManager.markDirty();
       this.strokeManager.forceSave();
       this.renderer.forceRedraw();
+      this._cleanupOrphanedTasks();
     }
   }
 
@@ -2334,6 +2838,17 @@ export class NoteCanvas {
 
     this.renderer.setSelectedStrokes(selectedIndices, selectionBounds);
     this.lassoPoints = [];
+
+    this.selectedTaskId = null;
+    this.taskSelectionBounds = null;
+    this.selectionOverlay.setTaskMode(false);
+
+    // Show selection overlay if strokes are selected
+    if (selectionBounds && selectedIndices.size > 0) {
+      this._updateSelectionOverlay();
+    } else {
+      this.selectionOverlay?.hide();
+    }
   }
 
   /**
@@ -2529,6 +3044,7 @@ export class NoteCanvas {
     if (this._eraserBatch && this._eraserBatch.length > 0) {
       const cmd = new EraseStrokesCommand(this._eraserBatch);
       this.historyManager?.push(cmd);
+      this._cleanupOrphanedTasks();
     }
     this._eraserBatch = null;
   }
@@ -2823,6 +3339,8 @@ export class NoteCanvas {
 
     // Force full redraw to ensure high quality
     this.renderer.forceRedraw();
+    this._updateSelectionOverlay();
+    this._updateTaskCheckboxes();
   }
 
   /**
@@ -2858,6 +3376,19 @@ export class NoteCanvas {
   _onPointerDownNav(e) {
     // In text mode, let mouse events pass through to the text editor (no pan, no media hit)
     if (this.mode === "text" && e.pointerType === "mouse") return;
+
+    // Deselect task if clicking outside
+    const isTaskInteraction =
+      e.target.closest &&
+      (e.target.closest(".note-canvas__task-bounding-box") ||
+        e.target.closest(".note-canvas__task-checkbox"));
+
+    if (this.selectedTaskId && !isTaskInteraction) {
+      this.renderer.setSelectedStrokes(new Set(), null);
+      this.selectedTaskId = null;
+      this.taskSelectionBounds = null;
+      this.selectionOverlay?.hide();
+    }
 
     // Handle media hit testing for Pan mode
     const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
@@ -3212,6 +3743,7 @@ export class NoteCanvas {
     this._updatePdfTextLayers();
     this._updateTextEditorLayer();
     this._updatePdfControlsPosition();
+    this._updateTaskCheckboxes();
   }
 
   /**
@@ -3374,6 +3906,11 @@ export class NoteCanvas {
       this._saveThumbnail();
     }
 
+    // Cancel pending task render
+    if (this._renderTasksTimeout) {
+      clearTimeout(this._renderTasksTimeout);
+    }
+
     // Cancel pending scroll RAF
     if (this._scrollRafId) {
       cancelAnimationFrame(this._scrollRafId);
@@ -3422,6 +3959,16 @@ export class NoteCanvas {
     if (this.mediaOverlay) {
       this.mediaOverlay.destroy();
       this.mediaOverlay = null;
+    }
+
+    if (this.selectionOverlay) {
+      this.selectionOverlay.destroy();
+      this.selectionOverlay = null;
+    }
+
+    if (this.taskCheckboxLayer) {
+      this.taskCheckboxLayer.destroy();
+      this.taskCheckboxLayer = null;
     }
 
     if (this.historyManager) {

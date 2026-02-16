@@ -131,6 +131,7 @@ function renderOverview(container, params = {}) {
 function renderNotebook(container, params) {
   const noteId = params.noteId || currentNoteId;
   const notebookId = params.notebookId || currentNotebookId;
+  const { taskId, searchQuery } = params;
 
   container.innerHTML = `
     <div class="notebook-container">
@@ -141,7 +142,7 @@ function renderNotebook(container, params) {
   // Dispatch event to initialize editor
   window.dispatchEvent(
     new CustomEvent("rendernotebook", {
-      detail: { noteId, notebookId },
+      detail: { noteId, notebookId, taskId, searchQuery },
     }),
   );
 }

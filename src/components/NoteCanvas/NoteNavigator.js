@@ -14,13 +14,14 @@ const SUBJECT_ICONS = {
   "pdf-page": "fileText",
   "pdf-chapter": "bookmark",
   highlighter: "highlighter",
+  task: "checkSquare",
 };
 
 export class NoteNavigator {
   /**
    * @param {HTMLElement} parentElement - The scroller-container element (position: relative)
    * @param {Object} options
-   * @param {function(number)} options.onNavigate - Callback with content Y to scroll to
+   * @param {function(number, string, Object)} options.onNavigate - Callback with (y, subjectKey, item)
    */
   constructor(parentElement, options = {}) {
     this.parentElement = parentElement;
@@ -98,7 +99,7 @@ export class NoteNavigator {
   _navigateTo(index) {
     const subject = this._currentSubject();
     if (!subject || !subject.items[index]) return;
-    this.onNavigate(subject.items[index].y, subject.key);
+    this.onNavigate(subject.items[index].y, subject.key, subject.items[index]);
   }
 
   _updateDisplay() {
