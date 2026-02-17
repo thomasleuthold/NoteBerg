@@ -48,6 +48,17 @@ jQuery.extend(true, jQuery.trumbowyg, {
           hasIcon: false,
           text: "Task",
         });
+
+        // Map our pseudo-tag to the button name so active state works
+        trumbowyg.tagToButton.markastask = "markAsTask";
+      },
+      // tagHandler: called by getTagsRecursive for each ancestor element.
+      // Return ["markastask"] when cursor is inside a task span.
+      tagHandler: (element) => {
+        if (element.classList?.contains("task-text") && element.dataset?.taskId) {
+          return ["markastask"];
+        }
+        return [];
       },
     },
   },

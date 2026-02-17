@@ -9,12 +9,15 @@ default:
 
 # Development
 dev:
+    Get-Process -Name "OneJournal.Recognition" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*src-tauri*" } | Stop-Process -Force -ErrorAction SilentlyContinue; $true
+    just package-sidecar
     npm run tauri dev
 
 build:
     npm run build
 
 build-w:
+    Get-Process -Name "OneJournal.Recognition" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*src-tauri*" } | Stop-Process -Force -ErrorAction SilentlyContinue; $true
     just package-sidecar
     npm run tauri build
     New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -65,6 +68,7 @@ fix-build:
 package-sidecar:
     dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained true -o src-tauri/binaries/temp
     Copy-Item "src-tauri/binaries/temp/OneJournal.Recognition.exe" -Destination "src-tauri/binaries/OneJournal.Recognition-x86_64-pc-windows-gnu.exe" -Force
+    Copy-Item "src-tauri/binaries/temp/OneJournal.Recognition.exe" -Destination "src-tauri/binaries/OneJournal.Recognition-x86_64-pc-windows-msvc.exe" -Force
     Copy-Item "src-tauri/binaries/temp/appsettings.json" -Destination "src-tauri/binaries/appsettings.json" -Force
     Remove-Item -Recurse -Force "src-tauri/binaries/temp"
 

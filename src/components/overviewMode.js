@@ -659,6 +659,8 @@ function drawTaskStrokeCanvases(container) {
   const palette = getThemePalette();
   const padding = 2;
 
+  const dpr = window.devicePixelRatio || 1;
+
   for (const canvas of canvases) {
     const taskId = canvas.dataset.taskId;
     const strokes = taskStrokesMap.get(taskId);
@@ -667,10 +669,9 @@ function drawTaskStrokeCanvases(container) {
     const bounds = getStrokeBounds(strokes);
     if (!bounds) continue;
 
-    const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
     const canvasWidth = rect.width || 200;
-    const canvasHeight = rect.height || 28;
+    const canvasHeight = rect.height || 48;
 
     canvas.width = canvasWidth * dpr;
     canvas.height = canvasHeight * dpr;
@@ -678,15 +679,12 @@ function drawTaskStrokeCanvases(container) {
     const ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
 
-    const availableWidth = canvasWidth - padding * 2;
+    // Scale to fit canvas height; left-aligned, vertically centered
     const availableHeight = canvasHeight - padding * 2;
-    const scaleX = availableWidth / Math.max(1, bounds.width);
-    const scaleY = availableHeight / Math.max(1, bounds.height);
-    const scale = Math.min(scaleX, scaleY);
+    const scale = availableHeight / Math.max(1, bounds.height);
 
-    const scaledHeight = bounds.height * scale;
     const offsetX = padding - bounds.minX * scale;
-    const offsetY = padding + (availableHeight - scaledHeight) / 2 - bounds.minY * scale;
+    const offsetY = padding - bounds.minY * scale;
 
     ctx.save();
     ctx.translate(offsetX, offsetY);
@@ -798,19 +796,11 @@ export function initOverview() {
     }
   });
 
-  // Listen for data changes to refresh overview
+  // Listen for data changes to refresh overview (skip search tab to avoid clearing input)
   window.addEventListener("datachange", async () => {
+    if (currentActiveTab === "search") return;
     const container = document.getElementById("overview-content");
-    // We need to know if we are currently viewing a notebook to refresh correctly.
-    // Since we don't store state here, we might default to root or try to infer.
-    // For simplicity in this refactor, we'll just re-render root or rely on router re-triggering.
-    // A better approach would be to store currentNotebookId in a module variable.
     if (container && container.offsetParent !== null) {
-      // For now, just re-render root overview to be safe, or check URL if we had access.
-      // Since we don't have router state access here easily without modifying router,
-      // we will assume root overview for auto-refresh.
-      // To fix this properly, we'd need to track state.
-      // Let's try to grab the ID from the breadcrumb if possible or just render root.
       await renderOverview(container, currentNotebookId);
     }
   });

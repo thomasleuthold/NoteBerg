@@ -2142,86 +2142,62 @@ export class NoteCanvas {
       const deltaAngle = (currentAngle - startAngle) * (180 / Math.PI);
       item.rotation = (state.initialRotation + deltaAngle) % 360;
     } else if (state.mode === "resize") {
-      // Rotate point back to unrotated coordinate space for simpler resizing logic
-      // This is an approximation; full rotated resizing is complex.
-      // For simplicity, we calculate distance from center or opposite corner.
-
-      // Simple approach: Calculate distance change from center
-      // This works well for corner resizing while maintaining aspect ratio
       const dx = x - state.startX;
       const dy = y - state.startY;
 
-      // Determine resize direction based on handle
       const isLeft = state.handle.includes("w");
       const isTop = state.handle.includes("n");
+      const isRight = state.handle.includes("e");
+      const isBottom = state.handle.includes("s");
 
       // Rotate the delta vector by -rotation to align with item axes
-      const rad = (-(item.rotation || 0) * Math.PI) / 180;
+      const rad = (-state.initialRotation * Math.PI) / 180;
       const rdx = dx * Math.cos(rad) - dy * Math.sin(rad);
       const rdy = dx * Math.sin(rad) + dy * Math.cos(rad);
 
       let newWidth = state.initialWidth;
       let newHeight = state.initialHeight;
-      let newX = state.initialX;
-      let newY = state.initialY;
 
-      // Apply resize logic
       if (state.handle.length === 2) {
-        // Corner (aspect ratio locked)
-        // Use the larger delta to drive the scale
+        // Corner handle: aspect-ratio locked, opposite corner stays pinned
         const ratio = state.initialWidth / state.initialHeight;
-        let change = 0;
 
-        if (state.handle === "se") change = Math.max(rdx, rdy);
-        else if (state.handle === "nw") change = Math.max(-rdx, -rdy);
-        else if (state.handle === "ne") change = Math.max(rdx, -rdy);
-        else if (state.handle === "sw") change = Math.max(-rdx, rdy);
+        // Compute width change based on the dragged corner direction
+        let wChange = 0;
+        if (isRight) wChange = rdx;
+        else if (isLeft) wChange = -rdx;
 
+        let hChange = 0;
+        if (isBottom) hChange = rdy;
+        else if (isTop) hChange = -rdy;
+
+        // Use whichever axis moved more to drive aspect-ratio resize
+        const change = Math.abs(wChange) > Math.abs(hChange) ? wChange : hChange * ratio;
         newWidth = Math.max(50, state.initialWidth + change);
         newHeight = newWidth / ratio;
-
-        // Adjust position to keep opposite corner fixed (roughly)
-        // For perfect rotated resizing, we'd need to rotate the pivot point.
-        // Simplified: Center-based scaling if we don't want to do full matrix math here
-        // Let's do center-based scaling for now as it's robust for rotated items
-        const widthDiff = newWidth - state.initialWidth;
-        const heightDiff = newHeight - state.initialHeight;
-
-        // Adjust center based on handle
-        // This is a simplification. For full corner pinning, we need more math.
-        // But center-expansion is often acceptable for rotated items.
-        // Let's try to pin the center for now to avoid jumping.
-        newX = state.initialX - widthDiff / 2;
-        newY = state.initialY - heightDiff / 2;
       } else {
-        // Side (one dimension)
-        if (state.handle === "e") newWidth += rdx;
-        else if (state.handle === "w") {
-          newWidth -= rdx;
-          newX -= rdx;
-        } // This X adjustment is only valid if rotation is 0
-        else if (state.handle === "s") newHeight += rdy;
-        else if (state.handle === "n") {
-          newHeight -= rdy;
-          newY -= rdy;
-        }
+        // Side handle: adjust one dimension
+        if (isRight) newWidth += rdx;
+        else if (isLeft) newWidth -= rdx;
+        else if (isBottom) newHeight += rdy;
+        else if (isTop) newHeight -= rdy;
 
-        // For rotated side resizing, center-based is safer without full matrix logic
-        if (item.rotation) {
-          newX = state.initialX - (newWidth - state.initialWidth) / 2;
-          newY = state.initialY - (newHeight - state.initialHeight) / 2;
-        }
+        newWidth = Math.max(50, newWidth);
+        newHeight = Math.max(50, newHeight);
       }
 
-      item.width = Math.max(50, newWidth);
-      item.height = Math.max(50, newHeight);
-      if (item.rotation) {
-        item.x = newX;
-        item.y = newY;
+      item.width = newWidth;
+      item.height = newHeight;
+
+      const isRotated = Math.abs(item.rotation || 0) % 360 > 0.1;
+      if (isRotated) {
+        // For rotated items, center-based scaling avoids complex pivot math
+        item.x = state.initialX - (newWidth - state.initialWidth) / 2;
+        item.y = state.initialY - (newHeight - state.initialHeight) / 2;
       } else {
-        // Non-rotated logic (standard)
-        if (isLeft) item.x = state.initialX + (state.initialWidth - item.width);
-        if (isTop) item.y = state.initialY + (state.initialHeight - item.height);
+        // Pin the opposite corner/edge: only move origin when dragging left or top edges
+        item.x = isLeft ? state.initialX + (state.initialWidth - item.width) : state.initialX;
+        item.y = isTop ? state.initialY + (state.initialHeight - item.height) : state.initialY;
       }
     }
   }
