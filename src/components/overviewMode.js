@@ -340,7 +340,10 @@ function attachShellListeners(container, notebookId) {
 
   const recycleBinBtn = container.querySelector("#recycle-bin-btn");
   if (recycleBinBtn) {
-    recycleBinBtn.addEventListener("click", () => navigateTo("recyclebin"));
+    recycleBinBtn.addEventListener("click", () => {
+      currentActiveTab = "notes";
+      navigateTo("recyclebin");
+    });
   }
 }
 
@@ -766,6 +769,9 @@ function attachTaskListeners(container) {
     toggleBtn.addEventListener("click", () => {
       const isHidden = doneList.style.display === "none";
       doneList.style.display = isHidden ? "" : "none";
+      if (isHidden) {
+        drawTaskStrokeCanvases(doneList);
+      }
       const count = doneList.querySelectorAll(".task-item").length;
       toggleBtn.textContent = isHidden
         ? `Hide ${count} completed task${count !== 1 ? "s" : ""}`

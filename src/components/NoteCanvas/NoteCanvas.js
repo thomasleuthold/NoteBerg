@@ -20,8 +20,14 @@ import {
 } from "../../modules/storage.js";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
+import {
+  drawStroke as sharedDrawStroke,
+  getThemePalette as sharedGetThemePalette,
+} from "../../utils/noteRenderer.js";
 import { showAlertDialog, showConfirmDialog } from "../modals.js";
+import { AppClipboard } from "./AppClipboard.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
+import { ContextFloatingMenu } from "./ContextFloatingMenu.js";
 import { ImageCropper } from "./ImageCropper.js";
 import { InputHandler } from "./InputHandler.js";
 import { MediaManager } from "./MediaManager.js";
@@ -36,6 +42,7 @@ import {
   EraseStrokesCommand,
   InsertMediaCommand,
   MarkTaskCommand,
+  PasteStrokesCommand,
   ReorderMediaCommand,
   ShiftContentCommand,
   TransformMediaCommand,
@@ -457,6 +464,7 @@ export class NoteCanvas {
 
     // Initialize SelectionOverlay (3-dot menu for lasso selection)
     this.selectionOverlay = new SelectionOverlay(this.scroller.getViewportElement(), {
+      onCopy: () => this._copySelectedStrokes(),
       onMarkAsTask: () => this._markSelectedStrokesAsTask(),
       onRemoveTask: () => this._removeTaskFromSelectedStrokes(),
       onDelete: () => this._deleteSelectedStrokes(),
@@ -1404,6 +1412,16 @@ export class NoteCanvas {
     viewport.addEventListener("pointerup", this._onPointerUpNav);
     viewport.addEventListener("pointercancel", this._onPointerUpNav);
     viewport.addEventListener("pointerleave", this._onPointerUpNav);
+
+    // Right-click paste menu (stopPropagation prevents the global window prevention in main.js)
+    viewport.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (AppClipboard.canPasteInMode(this.mode)) {
+        this._showPasteMenu(e.clientX, e.clientY);
+      }
+    });
+
     window.addEventListener("keydown", this._onKeyDown);
   }
 
@@ -1978,6 +1996,16 @@ export class NoteCanvas {
       return;
     }
 
+    // Paste: Ctrl+V — only on canvas modes (text mode lets the browser/editor handle it)
+    if ((e.ctrlKey || e.metaKey) && e.key === "v" && this.mode !== "text") {
+      if (AppClipboard.canPasteInMode(this.mode)) {
+        e.preventDefault();
+        const center = this._getViewportCenter();
+        this._pasteAtContentPoint(center.x, center.y);
+      }
+      return;
+    }
+
     // Delete/Backspace: delete selected media (not in text mode — let editor handle it)
     if (this.mode !== "text" && (e.key === "Delete" || e.key === "Backspace")) {
       if (this.selectedMediaId) {
@@ -2008,6 +2036,7 @@ export class NoteCanvas {
       this.longPressTimer = null;
     }
     this.longPressStart = null;
+    this._clearCanvasLongPress();
   }
 
   /**
@@ -2022,6 +2051,41 @@ export class NoteCanvas {
     if (dist > 10) {
       // 10px threshold
       this._clearLongPress();
+    }
+    this._checkCanvasLongPressMove(clientX, clientY);
+  }
+
+  /**
+   * Start a canvas-level long press for the paste menu (separate from media long-press).
+   * @private
+   */
+  _startCanvasLongPress(clientX, clientY) {
+    this._clearCanvasLongPress();
+    this._canvasLongPressStart = { x: clientX, y: clientY };
+    this._canvasLongPressTimer = setTimeout(() => {
+      this._canvasLongPressTimer = null;
+      this._canvasLongPressStart = null;
+      this._showPasteMenu(clientX, clientY);
+    }, 500);
+  }
+
+  /** @private */
+  _clearCanvasLongPress() {
+    if (this._canvasLongPressTimer) {
+      clearTimeout(this._canvasLongPressTimer);
+      this._canvasLongPressTimer = null;
+    }
+    this._canvasLongPressStart = null;
+  }
+
+  /** @private */
+  _checkCanvasLongPressMove(clientX, clientY) {
+    if (!this._canvasLongPressStart) return;
+    const dist = Math.sqrt(
+      (clientX - this._canvasLongPressStart.x) ** 2 + (clientY - this._canvasLongPressStart.y) ** 2,
+    );
+    if (dist > 10) {
+      this._clearCanvasLongPress();
     }
   }
 
@@ -2344,6 +2408,182 @@ export class NoteCanvas {
 
     // Clean up orphaned tasks
     this._cleanupOrphanedTasks();
+  }
+
+  /**
+   * Copy currently selected strokes to the in-app clipboard and system clipboard (as PNG).
+   * @private
+   */
+  _copySelectedStrokes() {
+    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
+    if (selectedIndices.length === 0) return;
+
+    const bounds = this.renderer.selectionBounds;
+    const strokes = selectedIndices.map((i) => this.noteData.strokes[i]);
+
+    // Deep-clone strokes so later edits don't affect clipboard contents
+    const cloned = strokes.map((s) => ({
+      ...s,
+      x: [...s.x],
+      y: [...s.y],
+      pressure: s.pressure ? [...s.pressure] : [],
+      time: s.time ? [...s.time] : [],
+    }));
+
+    AppClipboard.copy("strokes", cloned, { ...bounds });
+
+    // Also write PNG to system clipboard for cross-app paste
+    this._renderSelectionToPng(strokes, bounds).catch(() => {
+      // System clipboard write failed — in-app clipboard still works
+    });
+  }
+
+  /**
+   * Render a set of strokes to an offscreen canvas and write the PNG to the system clipboard.
+   * @param {Object[]} strokes
+   * @param {{minX:number,minY:number,maxX:number,maxY:number}} bounds - Content coordinates
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _renderSelectionToPng(strokes, bounds) {
+    const MAX_SIZE = 2000;
+    const PADDING = 20; // content-coord padding around strokes
+
+    const rawW = bounds.maxX - bounds.minX + PADDING * 2;
+    const rawH = bounds.maxY - bounds.minY + PADDING * 2;
+    const scale = Math.min(1, MAX_SIZE / Math.max(rawW, rawH));
+    const canvasW = Math.round(rawW * scale);
+    const canvasH = Math.round(rawH * scale);
+
+    const offscreen = document.createElement("canvas");
+    offscreen.width = canvasW;
+    offscreen.height = canvasH;
+    const ctx = offscreen.getContext("2d");
+
+    // White background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    // Translate so bounds.minX/minY maps to PADDING
+    ctx.scale(scale, scale);
+    ctx.translate(-bounds.minX + PADDING, -bounds.minY + PADDING);
+
+    const palette = sharedGetThemePalette();
+    const markers = strokes.filter((s) => s.type === "marker");
+    const pens = strokes.filter((s) => s.type !== "marker");
+    for (const s of [...markers, ...pens]) {
+      sharedDrawStroke(ctx, s, palette, false, false);
+    }
+
+    const blob = await new Promise((resolve) => offscreen.toBlob(resolve, "image/png"));
+    if (!blob) return;
+
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  }
+
+  /**
+   * Returns the center of the current viewport in content coordinates.
+   * @returns {{x: number, y: number}}
+   * @private
+   */
+  _getViewportCenter() {
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const { width, height } = this.scroller.getViewportSize();
+    const x = (scrollLeft + width / 2) / this.zoomScale;
+    const y = (scrollTop + height / 2) / this.zoomScale;
+    return { x, y };
+  }
+
+  /**
+   * Show the paste floating menu at a screen position, if the clipboard has
+   * content that can be pasted in the current mode.
+   * @param {number} clientX
+   * @param {number} clientY
+   * @private
+   */
+  _showPasteMenu(clientX, clientY) {
+    if (!AppClipboard.canPasteInMode(this.mode)) return;
+
+    const { x: contentX, y: contentY } = this.inputHandler.getContentCoordinates(clientX, clientY);
+
+    const viewport = this.scroller.getViewportElement();
+    new ContextFloatingMenu(
+      viewport,
+      [
+        {
+          label: "Paste",
+          icon: getIcon("clipboard", 16),
+          action: () => this._pasteAtContentPoint(contentX, contentY),
+        },
+      ],
+      { x: clientX, y: clientY },
+    );
+  }
+
+  /**
+   * Paste clipboard content at the given content-coordinate position.
+   * Strokes are centered on the point and auto-selected.
+   * @param {number} contentX
+   * @param {number} contentY
+   * @private
+   */
+  _pasteAtContentPoint(contentX, contentY) {
+    const item = AppClipboard.paste();
+    if (!item) return;
+
+    if (item.type === "strokes") {
+      const { data: clonedStrokes, bounds } = item;
+      if (!clonedStrokes?.length) return;
+
+      // Compute offset to center pasted strokes on the target point
+      const centerX = (bounds.minX + bounds.maxX) / 2;
+      const centerY = (bounds.minY + bounds.maxY) / 2;
+      const dx = contentX - centerX;
+      const dy = contentY - centerY;
+
+      const newIndices = [];
+      const newBounds = {
+        minX: bounds.minX + dx,
+        minY: bounds.minY + dy,
+        maxX: bounds.maxX + dx,
+        maxY: bounds.maxY + dy,
+      };
+
+      for (const src of clonedStrokes) {
+        const stroke = {
+          ...src,
+          id: generateId(),
+          x: src.x.map((v) => v + dx),
+          y: src.y.map((v) => v + dy),
+          pressure: src.pressure ? [...src.pressure] : [],
+          time: src.time ? [...src.time] : [],
+          _deleted: false,
+        };
+
+        const newIndex = this.noteData.strokes.length;
+        this.noteData.strokes.push(stroke);
+        this.spatialIndex.insert(stroke, newIndex);
+        newIndices.push(newIndex);
+      }
+
+      this.strokesChanged = true;
+      this.strokeManager.markDirty();
+      this.strokeManager.forceSave();
+
+      // Auto-select pasted strokes so the user can immediately move them
+      this.renderer.setSelectedStrokes(new Set(newIndices), newBounds);
+      this._updateSelectionOverlay();
+
+      this.historyManager?.push(
+        new PasteStrokesCommand(
+          newIndices.map((i) => this.noteData.strokes[i]),
+          newIndices,
+        ),
+      );
+
+      this.renderer.forceRedraw();
+    }
   }
 
   /**
@@ -3416,6 +3656,7 @@ export class NoteCanvas {
       this._isZooming = true;
       this.lastTouchDistance = this._getPointersDistance();
       this.initialPinchZoom = this.zoomScale;
+      this._clearCanvasLongPress();
     } else if (this.activePointers.size === 1) {
       // Start Pan
       this.lastTouchX = e.clientX;
@@ -3423,6 +3664,11 @@ export class NoteCanvas {
       this.lastMoveTime = Date.now();
       this.velocityX = 0;
       this.velocityY = 0;
+
+      // Start canvas long-press to show paste menu (touch only — right-click handled via contextmenu)
+      if (e.pointerType === "touch" && AppClipboard.canPasteInMode(this.mode)) {
+        this._startCanvasLongPress(e.clientX, e.clientY);
+      }
     }
   }
 

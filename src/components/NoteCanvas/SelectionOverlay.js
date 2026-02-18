@@ -10,7 +10,7 @@ import { getIcon } from "../../utils/icons.js";
 export class SelectionOverlay {
   constructor(container, callbacks) {
     this.container = container;
-    this.callbacks = callbacks; // { onMarkAsTask, onDelete, onRemoveTask }
+    this.callbacks = callbacks; // { onMarkAsTask, onDelete, onRemoveTask, onCopy }
     this.element = null;
     this.menu = null;
     this.optionBtn = null;
@@ -20,6 +20,7 @@ export class SelectionOverlay {
     this._onMarkAsTaskClick = this._onMarkAsTaskClick.bind(this);
     this._onRemoveTaskClick = this._onRemoveTaskClick.bind(this);
     this._onDeleteClick = this._onDeleteClick.bind(this);
+    this._onCopyClick = this._onCopyClick.bind(this);
     this._handleDocumentClick = this._handleDocumentClick.bind(this);
 
     this._createDOM();
@@ -46,6 +47,9 @@ export class SelectionOverlay {
     this.menu.innerHTML = `
       <div class="note-canvas-toolbar__options-content">
         <div class="note-canvas-toolbar__options-section">
+          <button class="note-canvas-toolbar__option-btn" id="selection-copy-btn">
+            ${getIcon("clipboard", 16)} Copy
+          </button>
           <button class="note-canvas-toolbar__option-btn" id="selection-task-btn">
             ${getIcon("checkSquare", 16)} Mark as Task
           </button>
@@ -63,6 +67,7 @@ export class SelectionOverlay {
     `;
     this.menu.addEventListener("pointerdown", (e) => e.stopPropagation());
 
+    this.menu.querySelector("#selection-copy-btn").addEventListener("click", this._onCopyClick);
     this.menu
       .querySelector("#selection-task-btn")
       .addEventListener("click", this._onMarkAsTaskClick);
@@ -144,6 +149,14 @@ export class SelectionOverlay {
 
     this.menu.style.left = `${menuLeft}px`;
     this.menu.style.top = `${btnRect.top - containerRect.top}px`;
+  }
+
+  _onCopyClick(e) {
+    e.stopPropagation();
+    if (this.callbacks.onCopy) {
+      this.callbacks.onCopy();
+    }
+    this.hide();
   }
 
   _onMarkAsTaskClick(e) {

@@ -93,6 +93,25 @@ export class TextTaskManager {
   }
 
   /**
+   * Resolve a range boundary (container + offset) to the actual node inside it.
+   * When the container is the editor element, offset is a child index.
+   * @param {Node} container
+   * @param {number} offset
+   * @returns {Node|null}
+   * @private
+   */
+  _resolveRangeNode(container, offset) {
+    if (container === this.editorElement) {
+      // Offset is a child index; clamp to valid range
+      const children = container.childNodes;
+      if (children.length === 0) return null;
+      const idx = Math.min(offset, children.length - 1);
+      return children[idx];
+    }
+    return container;
+  }
+
+  /**
    * Get all block elements that intersect the given range.
    * For a collapsed cursor, returns the single block containing the cursor.
    * @param {Range} range
@@ -100,25 +119,35 @@ export class TextTaskManager {
    * @private
    */
   _getBlocksInRange(range) {
-    const startBlock = this._getBlock(range.startContainer);
+    const startNode = this._resolveRangeNode(range.startContainer, range.startOffset);
+    let startBlock = this._getBlock(startNode);
 
     // Collapsed cursor — just use the start block
     if (range.collapsed) {
       return startBlock ? [startBlock] : [];
     }
 
-    // When the range end is at offset 0 of a block (common with triple-click),
-    // the selection doesn't actually include that block — use the previous one.
-    const endNode = range.endContainer;
-    if (range.endOffset === 0) {
-      const endBlock = this._getBlock(endNode);
-      if (endBlock && endBlock !== startBlock) {
-        // The selection ends right at the start of the next block — exclude it
-        return startBlock ? [startBlock] : [];
+    // Triple-click often places the start at the very end of the previous
+    // paragraph's text node (offset === textContent.length). That block isn't
+    // meaningfully selected — advance to the next sibling block.
+    if (
+      startBlock &&
+      range.startContainer.nodeType === Node.TEXT_NODE &&
+      range.startOffset >= range.startContainer.textContent.length
+    ) {
+      const nextBlock = startBlock.nextElementSibling;
+      if (nextBlock && this.editorElement.contains(nextBlock)) {
+        startBlock = this._getBlock(nextBlock) || startBlock;
       }
     }
 
+    const endNode = this._resolveRangeNode(range.endContainer, range.endOffset);
     const endBlock = this._getBlock(endNode);
+
+    // Triple-click: range ends at offset 0 of the next block — exclude it
+    if (range.endOffset === 0 && endBlock && endBlock !== startBlock) {
+      return startBlock ? [startBlock] : [];
+    }
 
     // Same block
     if (startBlock && startBlock === endBlock) {
