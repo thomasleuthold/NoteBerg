@@ -1040,3 +1040,81 @@
 .selection-floating-bar__btn:active {
   background: var(--bg-hover, var(--bg-tertiary, #f0f0f0));
 }
+
+/* ===== Toolbar layout (replaces inline styles) ===== */
+.note-canvas-toolbar {
+  position: relative;
+  z-index: 100;
+  overflow: visible;
+}
+
+.note-canvas-toolbar__options-container {
+  margin-left: auto;
+  display: flex;
+  gap: 16px;
+}
+
+/* ===== Insert dialog SVG icon spacing ===== */
+.note-canvas-toolbar__option-icon {
+  margin-right: 8px;
+}
+
+/* ===== Dark theme pen dialog (replaces injected style tag) ===== */
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn {
+  background-color: #333;
+  border: 1px solid #555;
+}
+
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn:hover {
+  background-color: #444;
+}
+
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn--active {
+  background-color: #555;
+  border-color: #999;
+}
+
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn {
+  background-color: #333;
+  border: 1px solid #555;
+  color: #fff;
+}
+
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn:hover {
+  background-color: #444;
+}
+
+/* ===== Task bounding box (replaces injected style tag in TaskCheckboxLayer) ===== */
+.note-canvas__task-bounding-box {
+  position: absolute;
+  border: 1px dashed var(--text-secondary);
+  border-radius: 4px;
+  pointer-events: auto;
+  cursor: pointer;
+  background-color: transparent;
+  opacity: 0.2;
+  transition: opacity 0.2s;
+}
+
+.note-canvas__task-bounding-box:hover {
+  opacity: 0.6;
+  background-color: var(--bg-hover);
+}
+
+/* ===== Text task checkbox (replaces CHECKBOX_STYLE constant) ===== */
+.task-text-checkbox {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+  margin-right: 6px;
+  user-select: none;
+  cursor: pointer;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
+
+.task-text-checkbox--checked {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}

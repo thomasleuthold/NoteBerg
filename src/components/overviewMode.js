@@ -3,6 +3,7 @@
  * Displays notebooks and quick notes in grid/list layout
  */
 
+import { t } from "../i18n/index.js";
 import { extractPdfText } from "../modules/pdfManager.js";
 import { navigateTo } from "../modules/router.js";
 import {
@@ -60,18 +61,18 @@ export async function renderOverview(container, notebookId = null) {
       <div class="overview-container">
         <div class="overview-tabs">
           <button class="tab-btn ${currentActiveTab === "notes" ? "active" : ""}" data-tab="notes">
-            ${notebookIcon} Notes
+            ${notebookIcon} ${t("overview.tabs.notes")}
           </button>
           <button class="tab-btn ${currentActiveTab === "search" ? "active" : ""}" data-tab="search">
-            ${searchIcon} Search
+            ${searchIcon} ${t("overview.tabs.search")}
           </button>
           <button class="tab-btn ${currentActiveTab === "markers" ? "active" : ""}" data-tab="markers">
-            ${markersIcon} Markers
+            ${markersIcon} ${t("overview.tabs.markers")}
           </button>
-          
+
           <button class="tab-btn recycle-bin-tab" id="recycle-bin-btn">
             ${trashIcon}
-            Recycle Bin
+            ${t("overview.tabs.recycleBin")}
           </button>
         </div>
 
@@ -112,18 +113,18 @@ async function renderNotesList(container) {
   const notebooksHtml =
     notebookData.length > 0
       ? notebookData.map(({ notebook, count }) => renderNotebookCard(notebook, count)).join("")
-      : '<p class="empty-state">No notebooks yet. Create your first notebook!</p>';
+      : `<p class="empty-state">${t("overview.empty.noNotebooks")}</p>`;
 
   const quickNotesHtml =
     quickNotes.length > 0
       ? quickNotes.map((note) => renderPreviewNoteCard(note)).join("")
-      : '<p class="empty-state">No quick notes yet. Create a note outside of any notebook.</p>';
+      : `<p class="empty-state">${t("overview.empty.noQuickNotes")}</p>`;
 
   container.innerHTML = `
       <div class="notebooks-section">
         <div class="section-header">
-          <h3>Notebooks</h3>
-          <button class="btn-secondary" id="new-notebook-btn">+ New Notebook</button>
+          <h3>${t("overview.sections.notebooks")}</h3>
+          <button class="btn-secondary" id="new-notebook-btn">${t("overview.actions.newNotebook")}</button>
         </div>
         <div class="notebooks-grid">
           ${notebooksHtml}
@@ -132,8 +133,8 @@ async function renderNotesList(container) {
 
       <div class="quick-notes-section">
         <div class="section-header">
-          <h3>Quick Notes</h3>
-          <button class="btn-secondary" id="new-quick-note-btn">+ New Quick Note</button>
+          <h3>${t("overview.sections.quickNotes")}</h3>
+          <button class="btn-secondary" id="new-quick-note-btn">${t("overview.actions.newQuickNote")}</button>
         </div>
         <div class="quick-notes-list">
           ${quickNotesHtml}
@@ -159,12 +160,12 @@ async function renderNotebookContents(container, notebookId) {
   const notesHtml =
     notes.length > 0
       ? notes.map((note) => renderPreviewNoteCard(note)).join("")
-      : '<p class="empty-state">No notes in this notebook yet.</p>';
+      : `<p class="empty-state">${t("overview.empty.noNotesInNotebook")}</p>`;
 
   container.innerHTML = `
     <div class="section-header">
-      <h3>Notes</h3>
-      <button class="btn-primary" id="new-note-btn">+ New Note</button>
+      <h3>${t("overview.sections.notes")}</h3>
+      <button class="btn-primary" id="new-note-btn">${t("overview.actions.newNote")}</button>
     </div>
     <div class="notes-grid">
       ${notesHtml}
@@ -207,12 +208,12 @@ async function renderSearchTab(container) {
     <div class="overview-search">
       <div class="overview-search-row">
         <div class="overview-search-field">
-          <input type="text" id="search-input" class="overview-search-input" placeholder="Search notes...">
-          <button id="search-clear-btn" class="overview-search-clear" type="button" title="Clear search">
+          <input type="text" id="search-input" class="overview-search-input" placeholder="${t("overview.search.placeholder")}">
+          <button id="search-clear-btn" class="overview-search-clear" type="button" title="${t("overview.search.clearTitle")}">
             ${closeIcon}
           </button>
         </div>
-        <button id="search-btn" class="btn-primary">Search</button>
+        <button id="search-btn" class="btn-primary">${t("overview.search.button")}</button>
       </div>
       <div id="search-results" class="overview-search-results"></div>
     </div>
@@ -245,7 +246,7 @@ async function renderMarkersTab(container) {
       allTasks.push({
         ...task,
         noteId: note.id,
-        noteTitle: note.title || "Untitled",
+        noteTitle: note.title || t("common.untitled"),
         noteContent: note.content || "",
         recognition,
         strokes: taskStrokes,
@@ -262,11 +263,11 @@ async function renderMarkersTab(container) {
       ? `
       <div class="tasks-section">
         <div class="section-header tasks-section__header">
-          <h3>${getIcon("checkSquare", 20)} Tasks</h3>
-          <button class="tasks-display-toggle btn-icon" id="toggle-task-display" title="${forceStrokeRender ? "Show as text" : "Show as strokes"}">
+          <h3>${getIcon("checkSquare", 20)} ${t("overview.sections.tasks")}</h3>
+          <button class="tasks-display-toggle btn-icon" id="toggle-task-display" title="${forceStrokeRender ? t("overview.tasks.showAsText") : t("overview.tasks.showAsStrokes")}">
             ${forceStrokeRender ? getIcon("fileText", 16) : getIcon("pen", 16)}
           </button>
-          <span class="tasks-count">${openTasks.length} open</span>
+          <span class="tasks-count">${t("overview.tasks.openCount_other", { count: openTasks.length })}</span>
         </div>
         <div class="tasks-list">
           ${openTasks.map((t) => renderTaskItem(t)).join("")}
@@ -275,7 +276,7 @@ async function renderMarkersTab(container) {
           doneTasks.length > 0
             ? `
           <button class="tasks-done-toggle" id="toggle-done-tasks">
-            Show ${doneTasks.length} completed task${doneTasks.length !== 1 ? "s" : ""}
+            ${t("overview.tasks.showCompleted_other", { count: doneTasks.length })}
           </button>
           <div class="tasks-done-list" id="done-tasks-list" style="display: none;">
             ${doneTasks.map((t) => renderTaskItem(t)).join("")}
@@ -284,7 +285,7 @@ async function renderMarkersTab(container) {
             : ""
         }
       </div>`
-      : '<p class="empty-state">No tasks found.</p>';
+      : `<p class="empty-state">${t("overview.empty.noTasks")}</p>`;
 
   container.innerHTML = tasksHtml;
   drawTaskStrokeCanvases(container);
@@ -301,7 +302,7 @@ async function renderMarkersTab(container) {
 }
 
 async function renderActiveTab(container, notebookId) {
-  container.innerHTML = '<div class="loading-state">Loading...</div>';
+  container.innerHTML = `<div class="loading-state">${t("overview.loading")}</div>`;
 
   try {
     if (currentActiveTab === "notes") {
@@ -317,12 +318,12 @@ async function renderActiveTab(container, notebookId) {
     }
   } catch (error) {
     console.error("Error rendering tab:", error);
-    container.innerHTML = `<div class="error-state"><p>Error loading tab: ${error.message}</p></div>`;
+    container.innerHTML = `<div class="error-state"><p>${t("overview.errorTab", { message: error.message })}</p></div>`;
   }
 }
 
 function renderError(container, error) {
-  container.innerHTML = `<div class="error-state"><p>Error: ${error.message}</p></div>`;
+  container.innerHTML = `<div class="error-state"><p>${t("overview.errorRender", { message: error.message })}</p></div>`;
 }
 
 function attachShellListeners(container, notebookId) {
@@ -376,9 +377,9 @@ function attachNotesListListeners(container) {
       const notebook = await getNotebook(notebookId);
 
       const confirmed = await showConfirmDialog(
-        "Delete Notebook",
-        `Are you sure you want to delete "${notebook.title}"? This will also delete all notes in this notebook.`,
-        "Delete",
+        t("overview.delete.notebookTitle"),
+        t("overview.delete.notebookMessage", { title: notebook.title }),
+        t("common.delete"),
         "btn-danger",
       );
 
@@ -448,7 +449,7 @@ function attachSearchListeners(container) {
 
       updateClearBtn();
       searchResults.style.display = "block";
-      searchResults.innerHTML = '<div class="search-status">Searching...</div>';
+      searchResults.innerHTML = `<div class="search-status">${t("overview.search.searching")}</div>`;
 
       try {
         const notebooks = await getAllNotebooks();
@@ -530,9 +531,9 @@ async function handleDeleteNote(e, noteId) {
   e.stopPropagation();
   const note = await getNote(noteId);
   const confirmed = await showConfirmDialog(
-    "Delete Note",
-    `Are you sure you want to delete "${note.title}"?`,
-    "Delete",
+    t("overview.delete.noteTitle"),
+    t("overview.delete.noteMessage", { title: note.title }),
+    t("common.delete"),
     "btn-danger",
   );
   if (confirmed) {
@@ -543,7 +544,7 @@ async function handleDeleteNote(e, noteId) {
 
 function renderSearchResultsList(container, results) {
   if (results.length === 0) {
-    container.innerHTML = '<div class="search-status">No notes found matching your search.</div>';
+    container.innerHTML = `<div class="search-status">${t("overview.search.noResults")}</div>`;
     return;
   }
 
@@ -551,13 +552,13 @@ function renderSearchResultsList(container, results) {
     .map(
       ({ note, contentMatch, recognitionMatch, pdfMatch }) => `
     <div class="search-result-item" data-note-id="${note.id}">
-      <div class="search-result-title">${escapeHtml(note.title || "Untitled")}</div>
+      <div class="search-result-title">${escapeHtml(note.title || t("common.untitled"))}</div>
       <div class="search-result-meta">
         <span>${formatDate(note.modified)}</span>
         <span class="search-result-sources">
-          ${contentMatch ? '<span title="Found in text">T</span>' : ""}
-          ${recognitionMatch ? '<span title="Found in handwriting">✍</span>' : ""}
-          ${pdfMatch ? '<span title="Found in PDF">PDF</span>' : ""}
+          ${contentMatch ? `<span title="${t("overview.search.foundInText")}">T</span>` : ""}
+          ${recognitionMatch ? `<span title="${t("overview.search.foundInHandwriting")}">✍</span>` : ""}
+          ${pdfMatch ? `<span title="${t("overview.search.foundInPdf")}">PDF</span>` : ""}
         </span>
       </div>
     </div>
@@ -620,7 +621,7 @@ function renderPreviewNoteCard(note) {
       </div>
     `;
   } else {
-    previewContent = `<div class="preview-no-content">No content</div>`;
+    previewContent = `<div class="preview-no-content">${t("overview.search.noContent")}</div>`;
   }
 
   const deleteIcon = getIcon("trash", 16);
@@ -628,14 +629,14 @@ function renderPreviewNoteCard(note) {
   return `
     <div class="note-card preview-card" data-note-id="${note.id}">
       <div class="note-card-header">
-        <div class="note-card-title">${escapeHtml(note.title || "Untitled")}</div>
+        <div class="note-card-title">${escapeHtml(note.title || t("common.untitled"))}</div>
         <div class="note-card-date">${formatDate(note.modified)}</div>
       </div>
       <div class="note-card-preview">
         ${previewContent}
       </div>
       <div class="note-card-actions">
-         <button class="card-delete-btn btn-icon" data-note-id="${note.id}" title="Delete">
+         <button class="card-delete-btn btn-icon" data-note-id="${note.id}" title="${t("common.delete")}">
             ${deleteIcon}
          </button>
       </div>
@@ -725,7 +726,7 @@ function renderTaskItem(task) {
     }
   }
   if (!label) {
-    label = task.type === "text" ? "Text task" : "";
+    label = task.type === "text" ? t("overview.tasks.textTask") : "";
   }
 
   // Render strokes as mini canvas when no recognition text or debug toggle is on
@@ -737,7 +738,7 @@ function renderTaskItem(task) {
     taskStrokesMap.set(task.id, task.strokes);
     labelHtml = `<canvas class="task-item__strokes" data-task-id="${task.id}"></canvas>`;
   } else {
-    labelHtml = `<span class="task-item__label">${escapeHtml(label || "Handwriting task")}</span>`;
+    labelHtml = `<span class="task-item__label">${escapeHtml(label || t("overview.tasks.strokeTask"))}</span>`;
   }
 
   return `
@@ -774,8 +775,8 @@ function attachTaskListeners(container) {
       }
       const count = doneList.querySelectorAll(".task-item").length;
       toggleBtn.textContent = isHidden
-        ? `Hide ${count} completed task${count !== 1 ? "s" : ""}`
-        : `Show ${count} completed task${count !== 1 ? "s" : ""}`;
+        ? t("overview.tasks.hideCompleted_other", { count })
+        : t("overview.tasks.showCompleted_other", { count });
     });
   }
 }

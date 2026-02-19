@@ -5,6 +5,8 @@
  * stroke bounding box. The layer itself has pointer-events: none, but individual
  * checkboxes have pointer-events: auto for click handling.
  */
+import { t } from "../../i18n/index.js";
+
 export class TaskCheckboxLayer {
   /**
    * @param {HTMLElement} viewportElement - The scroller viewport element
@@ -19,26 +21,6 @@ export class TaskCheckboxLayer {
     this.container.className = "note-canvas__task-checkbox-layer";
     viewportElement.appendChild(this.container);
     this.taskElements = new Map(); // taskId -> { checkbox, boundingBox }
-
-    // Inject styles for bounding box
-    const style = document.createElement("style");
-    style.textContent = `
-      .note-canvas__task-bounding-box {
-        position: absolute;
-        border: 1px dashed var(--text-secondary);
-        border-radius: 4px;
-        pointer-events: auto;
-        cursor: pointer;
-        background-color: transparent;
-        opacity: 0.2;
-        transition: opacity 0.2s;
-      }
-      .note-canvas__task-bounding-box:hover {
-        opacity: 0.6;
-        background-color: var(--bg-hover);
-      }
-    `;
-    this.container.appendChild(style);
   }
 
   /**
@@ -156,7 +138,7 @@ export class TaskCheckboxLayer {
     const boundingBox = document.createElement("div");
     boundingBox.className = "note-canvas__task-bounding-box";
     boundingBox.dataset.taskId = taskId;
-    boundingBox.title = "Click to select task strokes";
+    boundingBox.title = t("toolbar.tasks.selectStrokes");
     boundingBox.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.callbacks.onTaskClick) {

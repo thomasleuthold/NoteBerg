@@ -15,6 +15,7 @@ import { initNoteCanvasComponent } from "./components/NoteCanvas/index.js";
 import { initOverview } from "./components/overviewMode.js";
 import { initRecycleBin } from "./components/recycleBinMode.js";
 import { initSettings } from "./components/settingsMode.js";
+import { initI18n } from "./i18n/index.js";
 import { initializeApp, setupAppLockListener } from "./modules/appInit.js";
 import { initAutoSync } from "./modules/autoSync.js";
 import { initBreadcrumb } from "./modules/breadcrumb.js";
@@ -50,6 +51,11 @@ async function init() {
   const loggerStart = performance.now();
   await initLogger();
   console.log(`Logger initialized in ${Math.round(performance.now() - loggerStart)}ms`);
+
+  // Initialize i18n (loads saved language preference from storage)
+  const i18nStart = performance.now();
+  await initI18n();
+  console.log(`i18n initialized in ${Math.round(performance.now() - i18nStart)}ms`);
 
   // Initialize theme system (before master password modal for proper styling)
   const themeStart = performance.now();

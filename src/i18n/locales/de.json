@@ -1,0 +1,371 @@
+{
+  "common": {
+    "cancel": "Abbrechen",
+    "confirm": "Bestätigen",
+    "close": "Schließen",
+    "delete": "Löschen",
+    "restore": "Wiederherstellen",
+    "save": "Speichern",
+    "ok": "OK",
+    "loading": "Laden...",
+    "error": "Fehler",
+    "untitled": "Ohne Titel",
+    "home": "Startseite",
+    "rename": "Umbenennen",
+    "create": "Erstellen",
+    "none": "Keine"
+  },
+  "overview": {
+    "tabs": {
+      "notes": "Notizen",
+      "search": "Suche",
+      "markers": "Markierungen",
+      "recycleBin": "Papierkorb"
+    },
+    "sections": {
+      "notebooks": "Notizbücher",
+      "quickNotes": "Schnellnotizen",
+      "notes": "Notizen",
+      "tasks": "Aufgaben"
+    },
+    "actions": {
+      "newNotebook": "+ Neues Notizbuch",
+      "newQuickNote": "+ Neue Schnellnotiz",
+      "newNote": "+ Neue Notiz"
+    },
+    "empty": {
+      "noNotebooks": "Noch keine Notizbücher. Erstelle dein erstes Notizbuch!",
+      "noQuickNotes": "Noch keine Schnellnotizen. Erstelle eine Notiz außerhalb eines Notizbuchs.",
+      "noNotesInNotebook": "Noch keine Notizen in diesem Notizbuch.",
+      "noTasks": "Keine Aufgaben gefunden."
+    },
+    "search": {
+      "placeholder": "Notizen durchsuchen...",
+      "button": "Suchen",
+      "searching": "Suche läuft...",
+      "noResults": "Keine Notizen gefunden, die deiner Suche entsprechen.",
+      "clearTitle": "Suche löschen",
+      "foundInText": "Im Text gefunden",
+      "foundInHandwriting": "In Handschrift gefunden",
+      "foundInPdf": "In PDF gefunden",
+      "noContent": "Kein Inhalt"
+    },
+    "tasks": {
+      "openCount_one": "{{count}} offen",
+      "openCount_other": "{{count}} offen",
+      "showCompleted_one": "{{count}} erledigte Aufgabe anzeigen",
+      "showCompleted_other": "{{count}} erledigte Aufgaben anzeigen",
+      "hideCompleted_one": "{{count}} erledigte Aufgabe ausblenden",
+      "hideCompleted_other": "{{count}} erledigte Aufgaben ausblenden",
+      "textTask": "Textaufgabe",
+      "strokeTask": "Handschriftaufgabe",
+      "selectStrokes": "Klicken, um Aufgabe auszuwählen"
+    },
+    "delete": {
+      "notebookTitle": "Notizbuch löschen",
+      "notebookMessage": "Möchtest du \"{{title}}\" wirklich löschen? Dabei werden auch alle Notizen in diesem Notizbuch gelöscht.",
+      "noteTitle": "Notiz löschen",
+      "noteMessage": "Möchtest du \"{{title}}\" wirklich löschen?"
+    },
+    "loading": "Laden...",
+    "errorTab": "Fehler beim Laden des Tabs: {{message}}",
+    "errorRender": "Fehler: {{message}}"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "sections": {
+      "appearance": "Darstellung",
+      "language": "Sprache",
+      "security": "Sicherheit",
+      "nextcloud": "Nextcloud-Sync",
+      "recognition": "Handschrifterkennung",
+      "logging": "Protokollierung",
+      "dangerZone": "Gefahrenzone",
+      "about": "Über"
+    },
+    "appearance": {
+      "theme": "Design",
+      "themeDesc": "Wähle dein bevorzugtes Farbschema",
+      "light": "Hell",
+      "dark": "Dunkel"
+    },
+    "language": {
+      "label": "Sprache",
+      "desc": "Wähle die Sprache der App",
+      "en": "English",
+      "de": "Deutsch"
+    },
+    "security": {
+      "encryptLocal": "Lokale Daten verschlüsseln",
+      "encryptLocalDesc": "Notizen, die lokal auf diesem Gerät gespeichert sind, verschlüsseln",
+      "encryptNextcloud": "Daten auf Nextcloud verschlüsseln",
+      "encryptNextcloudDesc_connected": "Notizen vor dem Hochladen auf Nextcloud verschlüsseln (Ende-zu-Ende-Verschlüsselung)",
+      "encryptNextcloudDesc_disconnected": "Nextcloud-Sync nicht konfiguriert"
+    },
+    "nextcloud": {
+      "connectLabel": "Mit Nextcloud verbinden",
+      "connectDesc": "Nextcloud Login Flow verwenden, um dein Konto sicher zu verbinden",
+      "urlLabel": "Nextcloud-Server-URL",
+      "urlDesc": "Gib deine Nextcloud-Serveradresse ein",
+      "urlPlaceholder": "https://cloud.example.com",
+      "testBtn": "Verbindung testen",
+      "connectBtn": "Mit Nextcloud verbinden",
+      "loginUrlLabel": "Login-URL",
+      "loginUrlDesc": "Kopiere diese URL und öffne sie im Browser, um die Anmeldung abzuschließen",
+      "copyUrlBtn": "URL kopieren",
+      "connected": "Verbunden",
+      "connectedAs": "Angemeldet als {{user}}",
+      "server": "Server: {{url}}",
+      "syncNow": "Jetzt synchronisieren",
+      "disconnect": "Trennen",
+      "testing": "Testen...",
+      "connecting": "Verbinden..."
+    },
+    "recognition": {
+      "statusLabel": "Status",
+      "localActive": "Lokale Erkennung aktiv",
+      "externalService": "Externer Dienst wird verwendet",
+      "notConfigured": "Kein Erkennungsdienst konfiguriert",
+      "fallbackUrlLabel": "Ausweich-URL für Handschrifterkennung",
+      "fallbackUrlDesc": "Wird verwendet, wenn die lokale Erkennung nicht verfügbar ist (Nicht-Windows-Plattformen)",
+      "fallbackUrlPlaceholder": "http://example.com:5000",
+      "languageLabel": "Sprache",
+      "languageDesc": "Zielsprache für die Handschrifterkennung",
+      "testBtn": "Verbindung testen",
+      "testing": "Testen...",
+      "connecting": "Verbinden...",
+      "success": "✓ Verbindung erfolgreich ({{source}})!",
+      "errorStatus": "✗ Server gab {{status}} zurück",
+      "errorFailed": "✗ Verbindung fehlgeschlagen: {{message}}",
+      "notConfiguredError": "✗ Kein Erkennungsdienst konfiguriert",
+      "localSidecar": "lokaler Dienst",
+      "externalServiceLabel": "externer Dienst",
+      "languages": {
+        "en-US": "Englisch (US)",
+        "de-DE": "Deutsch",
+        "fr-FR": "Französisch",
+        "es-ES": "Spanisch",
+        "it-IT": "Italienisch",
+        "ja-JP": "Japanisch",
+        "zh-CN": "Chinesisch (Vereinfacht)"
+      }
+    },
+    "logging": {
+      "logLevel": "Protokollstufe",
+      "logLevelDesc": "Minimale Stufe für die Protokollierung festlegen",
+      "debug": "Debug (Ausführlich)",
+      "info": "Info",
+      "warning": "Warnung (Standard)",
+      "error": "Fehler (Minimal)",
+      "sessionLogs": "Sitzungsprotokolle",
+      "sessionLogsDesc": "Im Arbeitsspeicher gespeicherte Protokolle dieser Sitzung anzeigen",
+      "viewLogs": "Protokolle anzeigen",
+      "logsTitle": "Protokolle ({{count}} Einträge)",
+      "logsIntro": "Protokolle dieses App-Starts:",
+      "copyLogs": "In Zwischenablage kopieren",
+      "clearLogs": "Protokolle löschen",
+      "copied": "✓ Kopiert!",
+      "clearConfirm": "Möchtest du wirklich alle Protokolle löschen?",
+      "noLogs": "Keine Protokolle in dieser Sitzung verfügbar."
+    },
+    "dangerZone": {
+      "resetPassword": "Master-Passwort zurücksetzen",
+      "resetPasswordDesc": "Master-Passwort und Verschlüsselungsschlüssel löschen. Du musst ein neues Passwort festlegen.",
+      "resetPasswordBtn": "Master-Passwort zurücksetzen",
+      "purgeLocal": "Lokale Daten löschen",
+      "purgeLocalDesc": "Löscht ALLE lokalen Notizbücher und Notizen von diesem Gerät.",
+      "purgeLocalBtn": "Lokale Daten löschen",
+      "warningConnected": "⚠️ Diese Aktion löscht alle lokalen Daten einschließlich Notizbücher, Notizen und Synchronisationsverlauf. Wenn du mit Nextcloud verbunden bist, kannst du deine Daten durch erneutes Synchronisieren wiederherstellen. Nicht synchronisierte Änderungen gehen dauerhaft verloren.",
+      "warningDisconnected": "⚠️ Diese Aktion löscht alle lokalen Daten einschließlich Notizbücher, Notizen und Synchronisationsverlauf. Diese Aktion ist dauerhaft und kann nicht rückgängig gemacht werden."
+    },
+    "about": {
+      "description": "Eine Notiz-App für handschriftliche Notizen, Text und Zeichnungen.",
+      "version": "Version: {{version}}",
+      "licenses": "Lizenzinformationen"
+    },
+    "encryption": {
+      "enabledLocalTitle": "Verschlüsselung aktiviert",
+      "enabledLocalMsg": "✓ Master-Passwort erstellt und lokale Datenverschlüsselung aktiviert. Neue Notizen werden verschlüsselt.",
+      "disabledLocalMsg": "Lokale Datenverschlüsselung deaktiviert. Bereits verschlüsselte Notizen bleiben verschlüsselt.",
+      "enabledNextcloudTitle": "Verschlüsselung aktiviert",
+      "enabledNextcloudMsg": "✓ Master-Passwort erstellt und Nextcloud-Verschlüsselung aktiviert. Notizen werden vor dem Hochladen verschlüsselt.<br><br><strong>Wichtig:</strong> Verschlüsselte Notizen können nicht in Nextclouds Web-Oberfläche oder anderen Clients gelesen werden.",
+      "disabledNextcloudMsg": "Nextcloud-Verschlüsselung deaktiviert. Notizen werden unverschlüsselt synchronisiert.",
+      "updatedTitle": "Verschlüsselungseinstellung aktualisiert"
+    }
+  },
+  "modals": {
+    "close": "Schließen",
+    "createNotebook": {
+      "title": "Notizbuch erstellen",
+      "titleLabel": "Titel *",
+      "titlePlaceholder": "Notizbuchtitel eingeben",
+      "descLabel": "Beschreibung",
+      "descPlaceholder": "Optionale Beschreibung",
+      "colorLabel": "Farbe",
+      "colors": {
+        "Blue": "Blau",
+        "Green": "Grün",
+        "Purple": "Lila",
+        "Red": "Rot",
+        "Orange": "Orange",
+        "Pink": "Rosa"
+      }
+    },
+    "createNote": {
+      "title": "Notiz erstellen",
+      "titleLabel": "Titel *",
+      "titlePlaceholder": "Notiztitel eingeben",
+      "hintQuick": "Diese wird als Schnellnotiz erstellt (nicht in einem Notizbuch).",
+      "hintNotebook": "Diese Notiz wird in <strong>{{notebook}}</strong> erstellt."
+    },
+    "noteProperties": {
+      "title": "Notizeigenschaften",
+      "noteId": "Notiz-ID",
+      "notebookId": "Notizbuch-ID",
+      "version": "Notizversion",
+      "modified": "Notiz geändert",
+      "created": "Notiz erstellt",
+      "synced": "Synchronisationsstatus",
+      "syncedYes": "Synchronisiert",
+      "syncedNo": "Nur lokal",
+      "lastEtag": "Letztes Sync-ETag",
+      "deleted": "Löschstatus",
+      "deletedYes": "Im Papierkorb",
+      "deletedNo": "Aktiv",
+      "noValue": "Keine",
+      "closeBtn": "Schließen"
+    },
+    "conflict": {
+      "title": "Synchronisationskonflikt: {{title}}",
+      "message": "Diese Notiz wurde sowohl auf diesem Gerät als auch auf dem Server geändert. Bitte wähle, welche Version behalten werden soll.",
+      "local": "Lokale Version",
+      "remote": "Server-Version",
+      "modified": "Geändert: {{date}}",
+      "strokes": "Striche: {{count}}",
+      "keepLocal": "Lokal behalten",
+      "keepRemote": "Server behalten",
+      "noContent": "<i>Kein Textinhalt</i>"
+    },
+    "errors": {
+      "titleRequired": "Titel ist erforderlich"
+    }
+  },
+  "auth": {
+    "setup": {
+      "titleMigration": "🔒 Daten sichern",
+      "titleNew": "🔒 Master-Passwort erstellen",
+      "migrationHeading": "Wir verbessern deine Sicherheit!",
+      "migrationDesc": "Um deine Daten mit Verschlüsselung zu schützen, erstelle bitte ein Master-Passwort. Deine vorhandenen Daten werden automatisch verschlüsselt.",
+      "description": "Dein Master-Passwort verschlüsselt alle deine Daten. Wähle ein starkes Passwort, das du dir merken kannst.",
+      "passwordLabel": "Master-Passwort",
+      "passwordPlaceholder": "Master-Passwort eingeben",
+      "confirmLabel": "Passwort bestätigen",
+      "confirmPlaceholder": "Passwort erneut eingeben",
+      "hintLabel": "Passworthinweis (optional)",
+      "hintPlaceholder": "z.B. Erstes Haustier + Geburtsjahr",
+      "hintDesc": "Ein Hinweis, der dir hilft, dein Passwort zu erinnern. Mach ihn nicht zu offensichtlich!",
+      "warning": "<strong>⚠️ Wichtig:</strong> Dein Master-Passwort kann nicht wiederhergestellt werden, wenn es vergessen wurde. Stelle sicher, dass du es dir merkst oder sicher aufbewahrst.",
+      "cancelBtn": "Abbrechen",
+      "confirmBtnMigration": "Verschlüsseln & Weiter",
+      "confirmBtnNew": "Master-Passwort erstellen",
+      "settingUp": "Wird eingerichtet..."
+    },
+    "unlock": {
+      "title": "🔒 oneJournal entsperren",
+      "description": "Gib dein Master-Passwort ein, um die App zu entsperren",
+      "passwordLabel": "Master-Passwort",
+      "passwordPlaceholder": "Passwort eingeben",
+      "hint": "Hinweis: {{hint}}",
+      "unlockBtn": "Entsperren",
+      "biometricBtn": "Mit {{method}} entsperren",
+      "unlocking": "Wird entsperrt..."
+    },
+    "strength": {
+      "enterPassword": "Passwort eingeben",
+      "veryWeak": "Sehr schwach",
+      "weak": "Schwach",
+      "fair": "Ausreichend",
+      "good": "Gut",
+      "strong": "Stark",
+      "veryStrong": "Sehr stark"
+    },
+    "errors": {
+      "enterPassword": "Bitte gib ein Master-Passwort ein",
+      "tooShort": "Das Passwort muss mindestens 8 Zeichen lang sein",
+      "mismatch": "Die Passwörter stimmen nicht überein",
+      "tooWeak": "Das Passwort ist zu schwach. Bitte wähle ein stärkeres Passwort.",
+      "wrongPassword": "Falsches Passwort. Bitte versuche es erneut.",
+      "biometricFailed": "Biometrische Authentifizierung fehlgeschlagen. Bitte verwende dein Passwort.",
+      "biometricUnavailable": "Biometrische Entsperrung nicht verfügbar. Bitte verwende dein Passwort.",
+      "setupFailed": "Master-Passwort konnte nicht eingerichtet werden"
+    }
+  },
+  "footer": {
+    "syncing": "Synchronisierung...",
+    "notSynced": "Nicht synchronisiert",
+    "syncClickHint": "Klicken, um jetzt zu synchronisieren",
+    "syncFailed": "Synchronisierung fehlgeschlagen",
+    "notConnected": "Nicht verbunden",
+    "lastSynced": "Zuletzt synchronisiert {{time}}: ",
+    "recognitionRunning": "Handschrifterkennung läuft..."
+  },
+  "breadcrumb": {
+    "home": "Startseite",
+    "rename": "Umbenennen",
+    "save": "Speichern"
+  },
+  "toolbar": {
+    "modes": {
+      "pan": "Verschieben",
+      "draw": "Zeichnen",
+      "eraser": "Radierer",
+      "lasso": "Lasso-Auswahl",
+      "text": "Textmodus"
+    },
+    "actions": {
+      "undo": "Rückgängig (Strg+Z)",
+      "redo": "Wiederholen (Strg+Y)",
+      "insert": "Einfügen",
+      "options": "Notizoptionen"
+    },
+    "insert": {
+      "image": "Bild einfügen",
+      "camera": "Foto aufnehmen",
+      "pdf": "PDF einfügen",
+      "space": "Vertikalen Abstand einfügen"
+    },
+    "background": {
+      "label": "Hintergrund",
+      "none": "Keiner",
+      "ruledNarrow": "Liniert – Schmal",
+      "ruledMedium": "Liniert – Mittel",
+      "ruledWide": "Liniert – Breit",
+      "gridSmall": "Karo – Klein",
+      "gridMedium": "Karo – Mittel",
+      "gridLarge": "Karo – Groß"
+    },
+    "deleteNote": "Notiz löschen",
+    "penDialog": {
+      "lineWidth": "Linienstärke: ",
+      "color": "Farbe",
+      "colorTitle": "Farbe {{num}}",
+      "expand": "Einstellungen erweitern",
+      "collapse": "Einklappen",
+      "savePreset": "Aktuelle Einstellungen in diesem Preset speichern"
+    },
+    "tasks": {
+      "selectStrokes": "Klicken, um Aufgabenstriche auszuwählen"
+    }
+  },
+  "recycleBin": {
+    "notebook": "Notizbuch",
+    "note": "Notiz",
+    "deletedOn": "Gelöscht am {{date}}",
+    "restoreTitle": "Wiederherstellen",
+    "purgeTitle": "Endgültig löschen",
+    "restore": "Wiederherstellen",
+    "purge": "Endgültig löschen",
+    "emptyNotebooks": "Keine gelöschten Notizbücher",
+    "emptyNotes": "Keine gelöschten Notizen"
+  }
+}

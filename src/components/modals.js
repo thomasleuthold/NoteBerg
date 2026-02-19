@@ -3,6 +3,7 @@
  * Reusable modal dialogs for creating notebooks and notes
  */
 
+import { t } from "../i18n/index.js";
 import { createNote, createNotebook } from "../modules/storage.js";
 
 /**
@@ -22,14 +23,14 @@ function showModal(title, content, onConfirm) {
       <div class="modal-dialog">
         <div class="modal-header">
           <h3 class="modal-title">${title}</h3>
-          <button class="modal-close" aria-label="Close">&times;</button>
+          <button class="modal-close" aria-label="${t("modals.close")}">&times;</button>
         </div>
         <div class="modal-body">
           ${content}
         </div>
         <div class="modal-footer">
-          <button class="btn-secondary modal-cancel">Cancel</button>
-          <button class="btn-primary modal-confirm">Create</button>
+          <button class="btn-secondary modal-cancel">${t("common.cancel")}</button>
+          <button class="btn-primary modal-confirm">${t("common.create")}</button>
         </div>
       </div>
     </div>
@@ -101,16 +102,12 @@ function showError(modal, message) {
  * Show confirmation dialog
  * @param {string} title - Dialog title
  * @param {string} message - Confirmation message
- * @param {string} confirmText - Text for confirm button (default: "Confirm")
+ * @param {string} confirmText - Text for confirm button
  * @param {string} confirmClass - CSS class for confirm button (default: "btn-danger")
  * @returns {Promise<boolean>} True if confirmed, false if cancelled
  */
-export function showConfirmDialog(
-  title,
-  message,
-  confirmText = "Confirm",
-  confirmClass = "btn-danger",
-) {
+export function showConfirmDialog(title, message, confirmText, confirmClass = "btn-danger") {
+  const resolvedConfirmText = confirmText ?? t("common.confirm");
   return new Promise((resolve) => {
     const existingModal = document.getElementById("modal-overlay");
     if (existingModal) {
@@ -122,14 +119,14 @@ export function showConfirmDialog(
         <div class="modal-dialog">
           <div class="modal-header">
             <h3 class="modal-title">${title}</h3>
-            <button class="modal-close" aria-label="Close">&times;</button>
+            <button class="modal-close" aria-label="${t("modals.close")}">&times;</button>
           </div>
           <div class="modal-body">
             <div class="confirm-message">${message}</div>
           </div>
           <div class="modal-footer">
-            <button class="btn-secondary modal-cancel">Cancel</button>
-            <button class="${confirmClass} modal-confirm">${confirmText}</button>
+            <button class="btn-secondary modal-cancel">${t("common.cancel")}</button>
+            <button class="${confirmClass} modal-confirm">${resolvedConfirmText}</button>
           </div>
         </div>
       </div>
@@ -176,10 +173,11 @@ export function showConfirmDialog(
  * Show alert dialog (styled modal with only an OK button)
  * @param {string} title - Dialog title
  * @param {string} message - Alert message
- * @param {string} buttonText - Text for the button (default: "OK")
+ * @param {string} [buttonText] - Text for the button
  * @returns {Promise<void>} Resolves when button is clicked
  */
-export function showAlertDialog(title, message, buttonText = "OK") {
+export function showAlertDialog(title, message, buttonText) {
+  const resolvedButtonText = buttonText ?? t("common.ok");
   return new Promise((resolve) => {
     const existingModal = document.getElementById("modal-overlay");
     if (existingModal) {
@@ -191,13 +189,13 @@ export function showAlertDialog(title, message, buttonText = "OK") {
         <div class="modal-dialog">
           <div class="modal-header">
             <h3 class="modal-title">${title}</h3>
-            <button class="modal-close" aria-label="Close">&times;</button>
+            <button class="modal-close" aria-label="${t("modals.close")}">&times;</button>
           </div>
           <div class="modal-body">
             <div class="confirm-message">${message}</div>
           </div>
           <div class="modal-footer">
-            <button class="btn-primary modal-confirm">${buttonText}</button>
+            <button class="btn-primary modal-confirm">${resolvedButtonText}</button>
           </div>
         </div>
       </div>
@@ -252,7 +250,7 @@ export function showCreateNotebookModal() {
     <label class="color-option">
       <input type="radio" name="color" value="${color.value}" ${index === 0 ? "checked" : ""} />
       <span class="color-swatch" style="background-color: ${color.value}"></span>
-      <span class="color-name">${color.name}</span>
+      <span class="color-name">${t(`modals.createNotebook.colors.${color.name}`)}</span>
     </label>
   `,
     )
@@ -260,40 +258,40 @@ export function showCreateNotebookModal() {
 
   const content = `
     <div class="form-field">
-      <label for="notebook-title" class="form-label">Title *</label>
+      <label for="notebook-title" class="form-label">${t("modals.createNotebook.titleLabel")}</label>
       <input
         type="text"
         id="notebook-title"
         class="form-input"
-        placeholder="Enter notebook title"
+        placeholder="${t("modals.createNotebook.titlePlaceholder")}"
         required
       />
     </div>
     <div class="form-field">
-      <label for="notebook-description" class="form-label">Description</label>
+      <label for="notebook-description" class="form-label">${t("modals.createNotebook.descLabel")}</label>
       <textarea
         id="notebook-description"
         class="form-input"
-        placeholder="Optional description"
+        placeholder="${t("modals.createNotebook.descPlaceholder")}"
         rows="3"
       ></textarea>
     </div>
     <div class="form-field">
-      <label class="form-label">Color</label>
+      <label class="form-label">${t("modals.createNotebook.colorLabel")}</label>
       <div class="color-options">
         ${colorOptions}
       </div>
     </div>
   `;
 
-  showModal("Create Notebook", content, async () => {
+  showModal(t("modals.createNotebook.title"), content, async () => {
     const titleInput = document.getElementById("notebook-title");
     const descriptionInput = document.getElementById("notebook-description");
     const colorInput = document.querySelector('input[name="color"]:checked');
 
     const title = titleInput.value.trim();
     if (!title) {
-      throw new Error("Title is required");
+      throw new Error(t("modals.errors.titleRequired"));
     }
 
     const notebook = await createNotebook({
@@ -327,28 +325,28 @@ export async function showCreateNoteModal(notebookId = null) {
 
   const content = `
     <div class="form-field">
-      <label for="note-title" class="form-label">Title *</label>
+      <label for="note-title" class="form-label">${t("modals.createNote.titleLabel")}</label>
       <input
         type="text"
         id="note-title"
         class="form-input"
-        placeholder="Enter note title"
+        placeholder="${t("modals.createNote.titlePlaceholder")}"
         required
       />
     </div>
     ${
       notebookId === null
-        ? '<p class="form-hint">This will be created as a quick note (not in any notebook).</p>'
-        : `<p class="form-hint">This note will be created in <strong>${notebookName || "notebook"}</strong>.</p>`
+        ? `<p class="form-hint">${t("modals.createNote.hintQuick")}</p>`
+        : `<p class="form-hint">${t("modals.createNote.hintNotebook", { notebook: notebookName || "notebook" })}</p>`
     }
   `;
 
-  showModal("Create Note", content, async () => {
+  showModal(t("modals.createNote.title"), content, async () => {
     const titleInput = document.getElementById("note-title");
 
     const title = titleInput.value.trim();
     if (!title) {
-      throw new Error("Title is required");
+      throw new Error(t("modals.errors.titleRequired"));
     }
 
     const note = await createNote({
@@ -383,23 +381,23 @@ export function showNoteInfoModal(note) {
     <div id="modal-overlay" class="modal-overlay">
       <div class="modal-dialog">
         <div class="modal-header">
-          <h3 class="modal-title">Note Properties</h3>
-          <button class="modal-close" aria-label="Close">&times;</button>
+          <h3 class="modal-title">${t("modals.noteProperties.title")}</h3>
+          <button class="modal-close" aria-label="${t("modals.close")}">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="note-info-list" style="line-height: 1.6;">
-            <p><strong>Note ID:</strong> ${note.id}</p>
-            <p><strong>Notebook ID:</strong> ${note.notebookId || "None"}</p>
-            <p><strong>Note Version:</strong> ${note.version || "1"}</p>
-            <p><strong>Note Modified:</strong> ${formatDate(note.modified)}</p>
-            <p><strong>Note Created:</strong> ${formatDate(note.created)}</p>
-            <p><strong>Synced State:</strong> ${note.synced ? "Synced" : "Local Only"}</p>
-            <p><strong>Last Sync ETag:</strong> <code style="font-size: 0.9em;">${note.lastSyncedEtag || "None"}</code></p>
-            <p><strong>Deleted State:</strong> ${note.deleted ? "In Recycle Bin" : "Active"}</p>
+          <div class="note-info-list">
+            <p><strong>${t("modals.noteProperties.noteId")}:</strong> ${note.id}</p>
+            <p><strong>${t("modals.noteProperties.notebookId")}:</strong> ${note.notebookId || t("modals.noteProperties.noValue")}</p>
+            <p><strong>${t("modals.noteProperties.version")}:</strong> ${note.version || "1"}</p>
+            <p><strong>${t("modals.noteProperties.modified")}:</strong> ${formatDate(note.modified)}</p>
+            <p><strong>${t("modals.noteProperties.created")}:</strong> ${formatDate(note.created)}</p>
+            <p><strong>${t("modals.noteProperties.synced")}:</strong> ${note.synced ? t("modals.noteProperties.syncedYes") : t("modals.noteProperties.syncedNo")}</p>
+            <p><strong>${t("modals.noteProperties.lastEtag")}:</strong> <code>${note.lastSyncedEtag || t("modals.noteProperties.noValue")}</code></p>
+            <p><strong>${t("modals.noteProperties.deleted")}:</strong> ${note.deleted ? t("modals.noteProperties.deletedYes") : t("modals.noteProperties.deletedNo")}</p>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn-primary modal-close-btn">Close</button>
+          <button class="btn-primary modal-close-btn">${t("modals.noteProperties.closeBtn")}</button>
         </div>
       </div>
     </div>
@@ -448,23 +446,23 @@ export function showPasswordPrompt(title, message) {
         <div class="modal-dialog">
           <div class="modal-header">
             <h3 class="modal-title">${title}</h3>
-            <button class="modal-close" aria-label="Close">&times;</button>
+            <button class="modal-close" aria-label="${t("modals.close")}">&times;</button>
           </div>
           <div class="modal-body">
             <p>${message}</p>
-            <div class="form-field" style="margin-top: 15px;">
+            <div class="form-field modal-password-field">
               <input
                 type="password"
                 id="password-input"
                 class="form-input"
-                placeholder="Enter password"
+                placeholder="${t("auth.unlock.passwordPlaceholder")}"
                 autocomplete="current-password"
               />
             </div>
           </div>
           <div class="modal-footer">
-            <button class="btn-secondary modal-cancel">Cancel</button>
-            <button class="btn-primary modal-confirm">OK</button>
+            <button class="btn-secondary modal-cancel">${t("common.cancel")}</button>
+            <button class="btn-primary modal-confirm">${t("common.ok")}</button>
           </div>
         </div>
       </div>
@@ -542,26 +540,26 @@ export function showConflictResolutionDialog(local, remote) {
 
     const modalHtml = `
       <div id="modal-overlay" class="modal-overlay">
-        <div class="modal-dialog modal-lg" style="max-width: 800px;">
+        <div class="modal-dialog modal--wide">
           <div class="modal-header">
-            <h3 class="modal-title">Sync Conflict: ${local.title}</h3>
+            <h3 class="modal-title">${t("modals.conflict.title", { title: local.title })}</h3>
           </div>
           <div class="modal-body">
-            <p>This note has been modified on both this device and the server. Please choose which version to keep.</p>
-            <div class="conflict-comparison" style="display: flex; gap: 20px; margin-top: 20px;">
-              <div class="conflict-option" style="flex: 1; padding: 15px; border: 1px solid var(--border-color); border-radius: 8px;">
-                <h4>Local Version</h4>
-                <p><small>Modified: ${formatDate(local.modified)}</small></p>
-                <div class="content-preview" style="margin-top: 10px; font-size: 0.9em; max-height: 150px; overflow: auto; background: var(--bg-secondary); padding: 10px; border-radius: 4px; white-space: pre-wrap;">${local.content || "<i>No text content</i>"}</div>
-                <p style="margin-top: 10px;">Strokes: ${local.strokes?.length || 0}</p>
-                <button class="btn-primary use-local" style="width: 100%; margin-top: 15px;">Keep Local</button>
+            <p>${t("modals.conflict.message")}</p>
+            <div class="conflict-comparison">
+              <div class="conflict-option">
+                <h4>${t("modals.conflict.local")}</h4>
+                <p><small>${t("modals.conflict.modified", { date: formatDate(local.modified) })}</small></p>
+                <div class="conflict-option__preview">${local.content || t("modals.conflict.noContent")}</div>
+                <p>${t("modals.conflict.strokes", { count: local.strokes?.length || 0 })}</p>
+                <button class="btn-primary use-local conflict-option__keep-btn">${t("modals.conflict.keepLocal")}</button>
               </div>
-              <div class="conflict-option" style="flex: 1; padding: 15px; border: 1px solid var(--border-color); border-radius: 8px;">
-                <h4>Remote Version</h4>
-                <p><small>Modified: ${formatDate(remote.modified)}</small></p>
-                <div class="content-preview" style="margin-top: 10px; font-size: 0.9em; max-height: 150px; overflow: auto; background: var(--bg-secondary); padding: 10px; border-radius: 4px; white-space: pre-wrap;">${remote.content || "<i>No text content</i>"}</div>
-                <p style="margin-top: 10px;">Strokes: ${remote.strokes?.length || 0}</p>
-                <button class="btn-primary use-remote" style="width: 100%; margin-top: 15px;">Keep Remote</button>
+              <div class="conflict-option">
+                <h4>${t("modals.conflict.remote")}</h4>
+                <p><small>${t("modals.conflict.modified", { date: formatDate(remote.modified) })}</small></p>
+                <div class="conflict-option__preview">${remote.content || t("modals.conflict.noContent")}</div>
+                <p>${t("modals.conflict.strokes", { count: remote.strokes?.length || 0 })}</p>
+                <button class="btn-primary use-remote conflict-option__keep-btn">${t("modals.conflict.keepRemote")}</button>
               </div>
             </div>
           </div>

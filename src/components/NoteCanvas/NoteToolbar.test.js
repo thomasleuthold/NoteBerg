@@ -3,6 +3,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NoteToolbar } from "./NoteToolbar.js";
 
 // Mock dependencies
+vi.mock("../../i18n/index.js", () => ({
+  t: (key) => {
+    const map = {
+      "toolbar.modes.pan": "Pan Mode",
+      "toolbar.modes.draw": "Draw Mode",
+      "toolbar.modes.eraser": "Eraser Mode",
+      "toolbar.modes.lasso": "Lasso Select",
+      "toolbar.modes.text": "Text Mode",
+      "toolbar.actions.undo": "Undo (Ctrl+Z)",
+      "toolbar.actions.redo": "Redo (Ctrl+Y)",
+      "toolbar.actions.insert": "Insert",
+      "toolbar.actions.options": "Note Options",
+      "toolbar.penDialog.collapse": "Collapse",
+      "toolbar.penDialog.expand": "Expand Settings",
+      "toolbar.penDialog.savePreset": "Save current settings to this preset",
+      "toolbar.penDialog.lineWidth": "Line Width: ",
+      "toolbar.penDialog.color": "Color",
+      "toolbar.penDialog.colorTitle": "Color",
+      "toolbar.insert.image": "Insert Image",
+      "toolbar.insert.camera": "Take Photo",
+      "toolbar.insert.pdf": "Insert PDF",
+      "toolbar.insert.space": "Insert Vertical Space",
+      "toolbar.background.label": "Background",
+      "toolbar.background.none": "None",
+      "toolbar.background.ruledNarrow": "Ruled - Narrow",
+      "toolbar.background.ruledMedium": "Ruled - Medium",
+      "toolbar.background.ruledWide": "Ruled - Wide",
+      "toolbar.background.gridSmall": "Grid - Small",
+      "toolbar.background.gridMedium": "Grid - Medium",
+      "toolbar.background.gridLarge": "Grid - Large",
+      "toolbar.deleteNote": "Delete Note",
+    };
+    return map[key] ?? key;
+  },
+}));
+
 vi.mock("../../utils/icons.js", () => ({
   getIcon: (name) => `<svg data-testid="icon-${name}"></svg>`,
 }));

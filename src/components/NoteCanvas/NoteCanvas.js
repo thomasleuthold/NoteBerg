@@ -3752,6 +3752,9 @@ export class NoteCanvas {
     // Check long press movement
     if (this.longPressTimer) {
       this._checkLongPressMove(e.clientX, e.clientY);
+    } else if (this._canvasLongPressTimer) {
+      // Canvas paste long-press: check movement independently (no media item involved)
+      this._checkCanvasLongPressMove(e.clientX, e.clientY);
     }
 
     if (this.mode === "insert-space" && !this.insertSpaceState) {

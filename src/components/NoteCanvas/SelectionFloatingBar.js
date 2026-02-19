@@ -26,6 +26,7 @@ export class SelectionFloatingBar {
     this._onEditorLongPressUp = this._onEditorLongPressUp.bind(this);
     this._longPressTimer = null;
     this._longPressStart = null;
+    this._longPressPointerType = null;
 
     editorElement.addEventListener("contextmenu", this._onContextMenu);
     editorElement.addEventListener("pointerdown", this._onEditorLongPressDown);
@@ -58,24 +59,29 @@ export class SelectionFloatingBar {
     });
   }
 
-  // ─── Long-press on editor (for paste when nothing is selected) ─────────────
+  // ─── Long-press on editor (touch: paste menu or copy/cut menu after selection) ─
 
   _onEditorLongPressDown(e) {
     if (e.pointerType !== "touch") return;
     this._longPressStart = { x: e.clientX, y: e.clientY };
+    this._longPressPointerType = e.pointerType;
     this._longPressTimer = setTimeout(() => {
       this._longPressTimer = null;
+      // Long press fired — show paste menu now; selection bar will show on pointerup if text gets selected
+      const startPos = this._longPressStart;
+      this._longPressStart = null;
       const sel = window.getSelection();
-      // Only show paste-only menu if there is no selection
-      if (sel && !sel.isCollapsed) return;
-      if (AppClipboard.canPasteInMode("text")) {
+      if (sel && !sel.isCollapsed) {
+        // Text was selected by the long press — show copy/cut bar
+        const range = sel.getRangeAt(0);
+        this._showSelectionBar(range);
+      } else if (AppClipboard.canPasteInMode("text")) {
         this._showBar([{ label: "Paste", action: () => this._paste() }], {
-          x: this._longPressStart?.x ?? e.clientX,
-          y: this._longPressStart?.y ?? e.clientY,
+          x: startPos?.x ?? e.clientX,
+          y: startPos?.y ?? e.clientY,
           preferAbove: false,
         });
       }
-      this._longPressStart = null;
     }, 500);
   }
 
@@ -85,8 +91,24 @@ export class SelectionFloatingBar {
     if (dist > 10) this._cancelLongPress();
   }
 
-  _onEditorLongPressUp() {
+  _onEditorLongPressUp(e) {
+    const wasLongPress = !this._longPressTimer; // timer already fired = long press happened
     this._cancelLongPress();
+
+    // On touch pointerup (not cancel) after a long-press that created a selection, show the bar.
+    // This handles drag-extending the selection after long-press word selection.
+    if (e?.type === "pointerup" && e.pointerType === "touch" && wasLongPress) {
+      const sel = window.getSelection();
+      const hasSelection =
+        sel &&
+        !sel.isCollapsed &&
+        sel.rangeCount > 0 &&
+        this._editor.contains(sel.getRangeAt(0).commonAncestorContainer);
+      if (hasSelection && !this._bar) {
+        const range = sel.getRangeAt(0);
+        this._showSelectionBar(range);
+      }
+    }
   }
 
   _cancelLongPress() {
@@ -95,6 +117,7 @@ export class SelectionFloatingBar {
       this._longPressTimer = null;
     }
     this._longPressStart = null;
+    this._longPressPointerType = null;
   }
 
   // ─── Right-click on editor ─────────────────────────────────────────────────
@@ -102,6 +125,11 @@ export class SelectionFloatingBar {
   _onContextMenu(e) {
     e.preventDefault();
     e.stopPropagation(); // Prevent main.js global preventDefault from firing
+
+    // Touch contextmenu events are handled by the long-press handler above.
+    // On touch, the browser fires contextmenu as part of the long-press text selection flow,
+    // but we manage the bar ourselves via _onEditorLongPressDown to control timing.
+    if (e.pointerType === "touch") return;
 
     const sel = window.getSelection();
     const hasSelection =
@@ -111,7 +139,6 @@ export class SelectionFloatingBar {
       this._editor.contains(sel.getRangeAt(0).commonAncestorContainer);
 
     if (hasSelection) {
-      // Let selectionchange handler show/maintain the bar; just reposition at cursor
       const range = sel.getRangeAt(0);
       this._showSelectionBar(range);
     } else if (AppClipboard.canPasteInMode("text")) {

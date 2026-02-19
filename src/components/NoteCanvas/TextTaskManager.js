@@ -1,7 +1,5 @@
 import { generateId } from "../../modules/storage.js";
 
-const CHECKBOX_STYLE =
-  "display:inline-block; width:16px; height:16px; vertical-align:middle; margin-right:6px; user-select:none; cursor:pointer; border:1px solid currentColor; border-radius:3px;";
 const CHECKMARK_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin:1px auto;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
 export class TextTaskManager {
@@ -222,7 +220,6 @@ export class TextTaskManager {
     checkbox.className = "task-text-checkbox";
     checkbox.dataset.taskId = taskId;
     checkbox.contentEditable = "false";
-    checkbox.style.cssText = CHECKBOX_STYLE;
 
     block.appendChild(checkbox);
     block.appendChild(textSpan);
@@ -256,19 +253,16 @@ export class TextTaskManager {
         checkbox.className = "task-text-checkbox";
         checkbox.dataset.taskId = task.id;
         checkbox.contentEditable = "false";
-        checkbox.style.cssText = CHECKBOX_STYLE;
         span.parentNode.insertBefore(checkbox, span);
       }
 
       if (checkbox) {
         // Render checked state
         if (task.checked) {
-          checkbox.style.backgroundColor = "#3b82f6";
-          checkbox.style.borderColor = "#3b82f6";
+          checkbox.classList.add("task-text-checkbox--checked");
           checkbox.innerHTML = CHECKMARK_SVG;
         } else {
-          checkbox.style.backgroundColor = "transparent";
-          checkbox.style.borderColor = "currentColor";
+          checkbox.classList.remove("task-text-checkbox--checked");
           checkbox.innerHTML = "";
         }
 

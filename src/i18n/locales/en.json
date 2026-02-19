@@ -1,0 +1,371 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "close": "Close",
+    "delete": "Delete",
+    "restore": "Restore",
+    "save": "Save",
+    "ok": "OK",
+    "loading": "Loading...",
+    "error": "Error",
+    "untitled": "Untitled",
+    "home": "Home",
+    "rename": "Rename",
+    "create": "Create",
+    "none": "None"
+  },
+  "overview": {
+    "tabs": {
+      "notes": "Notes",
+      "search": "Search",
+      "markers": "Markers",
+      "recycleBin": "Recycle Bin"
+    },
+    "sections": {
+      "notebooks": "Notebooks",
+      "quickNotes": "Quick Notes",
+      "notes": "Notes",
+      "tasks": "Tasks"
+    },
+    "actions": {
+      "newNotebook": "+ New Notebook",
+      "newQuickNote": "+ New Quick Note",
+      "newNote": "+ New Note"
+    },
+    "empty": {
+      "noNotebooks": "No notebooks yet. Create your first notebook!",
+      "noQuickNotes": "No quick notes yet. Create a note outside of any notebook.",
+      "noNotesInNotebook": "No notes in this notebook yet.",
+      "noTasks": "No tasks found."
+    },
+    "search": {
+      "placeholder": "Search notes...",
+      "button": "Search",
+      "searching": "Searching...",
+      "noResults": "No notes found matching your search.",
+      "clearTitle": "Clear search",
+      "foundInText": "Found in text",
+      "foundInHandwriting": "Found in handwriting",
+      "foundInPdf": "Found in PDF",
+      "noContent": "No content"
+    },
+    "tasks": {
+      "openCount_one": "{{count}} open",
+      "openCount_other": "{{count}} open",
+      "showCompleted_one": "Show {{count}} completed task",
+      "showCompleted_other": "Show {{count}} completed tasks",
+      "hideCompleted_one": "Hide {{count}} completed task",
+      "hideCompleted_other": "Hide {{count}} completed tasks",
+      "textTask": "Text task",
+      "strokeTask": "Handwriting task",
+      "selectStrokes": "Click to select task strokes"
+    },
+    "delete": {
+      "notebookTitle": "Delete Notebook",
+      "notebookMessage": "Are you sure you want to delete \"{{title}}\"? This will also delete all notes in this notebook.",
+      "noteTitle": "Delete Note",
+      "noteMessage": "Are you sure you want to delete \"{{title}}\"?"
+    },
+    "loading": "Loading...",
+    "errorTab": "Error loading tab: {{message}}",
+    "errorRender": "Error: {{message}}"
+  },
+  "settings": {
+    "title": "Settings",
+    "sections": {
+      "appearance": "Appearance",
+      "language": "Language",
+      "security": "Security",
+      "nextcloud": "Nextcloud Sync",
+      "recognition": "Handwriting Recognition",
+      "logging": "Logging",
+      "dangerZone": "Danger Zone",
+      "about": "About"
+    },
+    "appearance": {
+      "theme": "Theme",
+      "themeDesc": "Choose your preferred color scheme",
+      "light": "Light",
+      "dark": "Dark"
+    },
+    "language": {
+      "label": "Interface Language",
+      "desc": "Select the language for the app interface",
+      "en": "English",
+      "de": "Deutsch"
+    },
+    "security": {
+      "encryptLocal": "Encrypt Local Data",
+      "encryptLocalDesc": "Encrypt notes stored locally on this device",
+      "encryptNextcloud": "Encrypt Data on Nextcloud",
+      "encryptNextcloudDesc_connected": "Encrypt notes before uploading to Nextcloud (end-to-end encryption)",
+      "encryptNextcloudDesc_disconnected": "Nextcloud sync not configured"
+    },
+    "nextcloud": {
+      "connectLabel": "Connect to Nextcloud",
+      "connectDesc": "Use Nextcloud Login Flow to securely connect your account",
+      "urlLabel": "Nextcloud Server URL",
+      "urlDesc": "Enter your Nextcloud server address",
+      "urlPlaceholder": "https://cloud.example.com",
+      "testBtn": "Test Connection",
+      "connectBtn": "Connect to Nextcloud",
+      "loginUrlLabel": "Login URL",
+      "loginUrlDesc": "Copy and open this URL in your browser to complete login",
+      "copyUrlBtn": "Copy URL",
+      "connected": "Connected",
+      "connectedAs": "Logged in as {{user}}",
+      "server": "Server: {{url}}",
+      "syncNow": "Sync Now",
+      "disconnect": "Disconnect",
+      "testing": "Testing...",
+      "connecting": "Connecting..."
+    },
+    "recognition": {
+      "statusLabel": "Status",
+      "localActive": "Local recognition active",
+      "externalService": "Using external service",
+      "notConfigured": "No recognition service configured",
+      "fallbackUrlLabel": "Fallback Handwriting Recognition URL",
+      "fallbackUrlDesc": "Used when local recognition is not available (non-Windows platforms)",
+      "fallbackUrlPlaceholder": "http://example.com:5000",
+      "languageLabel": "Language",
+      "languageDesc": "Target language for handwriting recognition",
+      "testBtn": "Test Connection",
+      "testing": "Testing...",
+      "connecting": "Connecting...",
+      "success": "✓ Connection successful ({{source}})!",
+      "errorStatus": "✗ Server returned {{status}}",
+      "errorFailed": "✗ Connection failed: {{message}}",
+      "notConfiguredError": "✗ No recognition service configured",
+      "localSidecar": "local sidecar",
+      "externalServiceLabel": "external service",
+      "languages": {
+        "en-US": "English (US)",
+        "de-DE": "German",
+        "fr-FR": "French",
+        "es-ES": "Spanish",
+        "it-IT": "Italian",
+        "ja-JP": "Japanese",
+        "zh-CN": "Chinese (Simplified)"
+      }
+    },
+    "logging": {
+      "logLevel": "Log Level",
+      "logLevelDesc": "Set minimum severity level for logging",
+      "debug": "Debug (Verbose)",
+      "info": "Info",
+      "warning": "Warning (Default)",
+      "error": "Error (Minimal)",
+      "sessionLogs": "Session Logs",
+      "sessionLogsDesc": "View in-memory logs for this session",
+      "viewLogs": "View Logs",
+      "logsTitle": "Debug Logs ({{count}} entries)",
+      "logsIntro": "Session logs from this app run:",
+      "copyLogs": "Copy to Clipboard",
+      "clearLogs": "Clear Logs",
+      "copied": "✓ Copied!",
+      "clearConfirm": "Are you sure you want to clear all debug logs?",
+      "noLogs": "No logs available in this session."
+    },
+    "dangerZone": {
+      "resetPassword": "Reset Master Password",
+      "resetPasswordDesc": "Clear master password and encryption keys. You'll need to set a new password.",
+      "resetPasswordBtn": "Reset Master Password",
+      "purgeLocal": "Purge Local Data",
+      "purgeLocalDesc": "Clears ALL local notebooks and notes from this device.",
+      "purgeLocalBtn": "Purge Local Data",
+      "warningConnected": "⚠️ This action will delete all local data including notebooks, notes, and sync history. If you are connected to Nextcloud, you can restore your data by syncing again. Unsynced changes will be permanently lost.",
+      "warningDisconnected": "⚠️ This action will delete all local data including notebooks, notes, and sync history. This action is permanent and cannot be undone."
+    },
+    "about": {
+      "description": "A note-taking app supporting handwritten notes, text, and drawings.",
+      "version": "Version: {{version}}",
+      "licenses": "License Information"
+    },
+    "encryption": {
+      "enabledLocalTitle": "Encryption Enabled",
+      "enabledLocalMsg": "✓ Master password created and local data encryption enabled. New notes will be encrypted.",
+      "disabledLocalMsg": "Local data encryption disabled. Existing encrypted notes remain encrypted.",
+      "enabledNextcloudTitle": "Encryption Enabled",
+      "enabledNextcloudMsg": "✓ Master password created and Nextcloud encryption enabled. Notes will be encrypted before uploading.<br><br><strong>Important:</strong> Encrypted notes cannot be read in Nextcloud's web interface or other clients.",
+      "disabledNextcloudMsg": "Nextcloud encryption disabled. Notes will be synced as plain text.",
+      "updatedTitle": "Encryption Setting Updated"
+    }
+  },
+  "modals": {
+    "close": "Close",
+    "createNotebook": {
+      "title": "Create Notebook",
+      "titleLabel": "Title *",
+      "titlePlaceholder": "Enter notebook title",
+      "descLabel": "Description",
+      "descPlaceholder": "Optional description",
+      "colorLabel": "Color",
+      "colors": {
+        "Blue": "Blue",
+        "Green": "Green",
+        "Purple": "Purple",
+        "Red": "Red",
+        "Orange": "Orange",
+        "Pink": "Pink"
+      }
+    },
+    "createNote": {
+      "title": "Create Note",
+      "titleLabel": "Title *",
+      "titlePlaceholder": "Enter note title",
+      "hintQuick": "This will be created as a quick note (not in any notebook).",
+      "hintNotebook": "This note will be created in <strong>{{notebook}}</strong>."
+    },
+    "noteProperties": {
+      "title": "Note Properties",
+      "noteId": "Note ID",
+      "notebookId": "Notebook ID",
+      "version": "Note Version",
+      "modified": "Note Modified",
+      "created": "Note Created",
+      "synced": "Synced State",
+      "syncedYes": "Synced",
+      "syncedNo": "Local Only",
+      "lastEtag": "Last Sync ETag",
+      "deleted": "Deleted State",
+      "deletedYes": "In Recycle Bin",
+      "deletedNo": "Active",
+      "noValue": "None",
+      "closeBtn": "Close"
+    },
+    "conflict": {
+      "title": "Sync Conflict: {{title}}",
+      "message": "This note has been modified on both this device and the server. Please choose which version to keep.",
+      "local": "Local Version",
+      "remote": "Remote Version",
+      "modified": "Modified: {{date}}",
+      "strokes": "Strokes: {{count}}",
+      "keepLocal": "Keep Local",
+      "keepRemote": "Keep Remote",
+      "noContent": "<i>No text content</i>"
+    },
+    "errors": {
+      "titleRequired": "Title is required"
+    }
+  },
+  "auth": {
+    "setup": {
+      "titleMigration": "🔒 Secure Your Data",
+      "titleNew": "🔒 Create Master Password",
+      "migrationHeading": "We're upgrading your security!",
+      "migrationDesc": "To protect your data with encryption, please create a master password. Your existing data will be encrypted automatically.",
+      "description": "Your master password encrypts all your data. Choose a strong password you'll remember.",
+      "passwordLabel": "Master Password",
+      "passwordPlaceholder": "Enter master password",
+      "confirmLabel": "Confirm Password",
+      "confirmPlaceholder": "Re-enter password",
+      "hintLabel": "Password Hint (Optional)",
+      "hintPlaceholder": "e.g., First pet + birth year",
+      "hintDesc": "A hint to help you remember your password. Don't make it obvious!",
+      "warning": "<strong>⚠️ Important:</strong> Your master password cannot be recovered if forgotten. Make sure you remember it or store it securely.",
+      "cancelBtn": "Cancel",
+      "confirmBtnMigration": "Encrypt & Continue",
+      "confirmBtnNew": "Create Master Password",
+      "settingUp": "Setting up..."
+    },
+    "unlock": {
+      "title": "🔒 Unlock oneJournal",
+      "description": "Enter your master password to unlock the app",
+      "passwordLabel": "Master Password",
+      "passwordPlaceholder": "Enter password",
+      "hint": "Hint: {{hint}}",
+      "unlockBtn": "Unlock",
+      "biometricBtn": "Unlock with {{method}}",
+      "unlocking": "Unlocking..."
+    },
+    "strength": {
+      "enterPassword": "Enter password",
+      "veryWeak": "Very Weak",
+      "weak": "Weak",
+      "fair": "Fair",
+      "good": "Good",
+      "strong": "Strong",
+      "veryStrong": "Very Strong"
+    },
+    "errors": {
+      "enterPassword": "Please enter a master password",
+      "tooShort": "Password must be at least 8 characters long",
+      "mismatch": "Passwords do not match",
+      "tooWeak": "Password is too weak. Please choose a stronger password.",
+      "wrongPassword": "Incorrect password. Please try again.",
+      "biometricFailed": "Biometric authentication failed. Please use your password.",
+      "biometricUnavailable": "Biometric unlock not available. Please use your password.",
+      "setupFailed": "Failed to set up master password"
+    }
+  },
+  "footer": {
+    "syncing": "Syncing...",
+    "notSynced": "Not synced",
+    "syncClickHint": "Click to sync now",
+    "syncFailed": "Sync failed",
+    "notConnected": "Not connected",
+    "lastSynced": "Last synced {{time}}: ",
+    "recognitionRunning": "Handwriting recognition running..."
+  },
+  "breadcrumb": {
+    "home": "Home",
+    "rename": "Rename",
+    "save": "Save"
+  },
+  "toolbar": {
+    "modes": {
+      "pan": "Pan Mode",
+      "draw": "Draw Mode",
+      "eraser": "Eraser Mode",
+      "lasso": "Lasso Select",
+      "text": "Text Mode"
+    },
+    "actions": {
+      "undo": "Undo (Ctrl+Z)",
+      "redo": "Redo (Ctrl+Y)",
+      "insert": "Insert",
+      "options": "Note Options"
+    },
+    "insert": {
+      "image": "Insert Image",
+      "camera": "Take Photo",
+      "pdf": "Insert PDF",
+      "space": "Insert Vertical Space"
+    },
+    "background": {
+      "label": "Background",
+      "none": "None",
+      "ruledNarrow": "Ruled - Narrow",
+      "ruledMedium": "Ruled - Medium",
+      "ruledWide": "Ruled - Wide",
+      "gridSmall": "Grid - Small",
+      "gridMedium": "Grid - Medium",
+      "gridLarge": "Grid - Large"
+    },
+    "deleteNote": "Delete Note",
+    "penDialog": {
+      "lineWidth": "Line Width: ",
+      "color": "Color",
+      "colorTitle": "Color {{num}}",
+      "expand": "Expand Settings",
+      "collapse": "Collapse",
+      "savePreset": "Save current settings to this preset"
+    },
+    "tasks": {
+      "selectStrokes": "Click to select task strokes"
+    }
+  },
+  "recycleBin": {
+    "notebook": "Notebook",
+    "note": "Note",
+    "deletedOn": "Deleted {{date}}",
+    "restoreTitle": "Restore",
+    "purgeTitle": "Delete Permanently",
+    "restore": "Restore",
+    "purge": "Purge",
+    "emptyNotebooks": "No deleted notebooks",
+    "emptyNotes": "No deleted notes"
+  }
+}

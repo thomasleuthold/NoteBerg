@@ -4,6 +4,7 @@
  */
 
 import { APP_FULL_VERSION } from "../config.js";
+import { t } from "../i18n/index.js";
 import { isAuthenticated } from "./nextcloudSync.js";
 import { getIsSyncing, getLastSyncResult, onSyncStatusChange, performSync } from "./sync.js";
 
@@ -28,16 +29,16 @@ export async function updateSyncStatus() {
   if (isSyncing) {
     syncStatus.dataset.status = "syncing";
     syncIndicator.textContent = "↻";
-    syncText.textContent = "Syncing...";
+    syncText.textContent = t("footer.syncing");
     syncStatus.style.cursor = "wait";
   } else if (authenticated) {
     if (!lastResult) {
       // Authenticated but not yet synced in this session
       syncStatus.dataset.status = "offline"; // Use gray indicator
       syncIndicator.textContent = "○";
-      syncText.textContent = "Not synced";
+      syncText.textContent = t("footer.notSynced");
       syncStatus.style.cursor = "pointer";
-      syncStatus.title = "Click to sync now";
+      syncStatus.title = t("footer.syncClickHint");
     } else if (lastResult.success) {
       // Successful sync
       syncStatus.dataset.status = "connected";
@@ -46,20 +47,20 @@ export async function updateSyncStatus() {
         hour: "2-digit",
         minute: "2-digit",
       });
-      syncText.innerHTML = `Last synced ${time}: <span style="margin: 0 2px">↑</span>${lastResult.uploaded.notes} | <span style="margin: 0 2px">↓</span>${lastResult.downloaded.notes}`;
+      syncText.innerHTML = `${t("footer.lastSynced", { time })}<span style="margin: 0 2px">↑</span>${lastResult.uploaded.notes} | <span style="margin: 0 2px">↓</span>${lastResult.downloaded.notes}`;
       syncStatus.style.cursor = "pointer";
     } else {
       // Sync failed
       syncStatus.dataset.status = "error";
       syncIndicator.textContent = "⚠";
-      syncText.textContent = "Sync failed";
+      syncText.textContent = t("footer.syncFailed");
       syncStatus.style.cursor = "pointer";
       syncStatus.title = lastResult.error || "Unknown error";
     }
   } else {
     syncStatus.dataset.status = "offline";
     syncIndicator.textContent = "○";
-    syncText.textContent = "Not connected";
+    syncText.textContent = t("footer.notConnected");
     syncStatus.style.cursor = "default";
   }
 }
@@ -87,11 +88,7 @@ export function initFooter() {
   if (syncStatus?.parentElement) {
     const recognitionIndicator = document.createElement("div");
     recognitionIndicator.className = "recognition-indicator";
-    recognitionIndicator.style.display = "none";
-    recognitionIndicator.style.alignItems = "center";
-    recognitionIndicator.style.marginLeft = "16px";
-    recognitionIndicator.style.color = "#3b82f6"; // Blue
-    recognitionIndicator.title = "Handwriting recognition running...";
+    recognitionIndicator.title = t("footer.recognitionRunning");
     // Pen icon
     recognitionIndicator.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
 

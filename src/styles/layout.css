@@ -1277,3 +1277,70 @@
 .modal-confirm {
   max-width: 400px;
 }
+
+/* ===== Conflict resolution dialog ===== */
+.conflict-comparison {
+  display: flex;
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.conflict-option {
+  flex: 1;
+  padding: 15px;
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.conflict-option__preview {
+  margin-top: 10px;
+  font-size: 0.9em;
+  max-height: 150px;
+  overflow: auto;
+  background: var(--bg-secondary);
+  padding: 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+}
+
+.conflict-option__keep-btn {
+  width: 100%;
+  margin-top: 15px;
+}
+
+/* ===== Note info modal ===== */
+.note-info-list {
+  line-height: 1.6;
+}
+
+/* ===== Wide modal ===== */
+.modal--wide {
+  max-width: 800px;
+  max-height: 80vh;
+}
+
+/* ===== Logs modal ===== */
+.logs-textarea {
+  width: 100%;
+  height: 400px;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  box-sizing: border-box;
+}
+
+.logs-intro {
+  margin-bottom: 10px;
+}
+
+.modal-footer--gap {
+  gap: 10px;
+}
+
+/* ===== Password modal field ===== */
+.modal-password-field {
+  margin-top: 15px;
+}
