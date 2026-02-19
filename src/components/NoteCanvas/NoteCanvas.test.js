@@ -234,8 +234,11 @@ describe("NoteCanvas Class", () => {
       setZoom: vi.fn(),
       setSelectedStrokes: vi.fn(),
       setSelectedMedia: vi.fn(),
+      setLineSeparators: vi.fn(),
       selectionBounds: null,
       selectedStrokeIndices: new Set(),
+      lineSeparators: [],
+      lineIndentLevels: [],
       destroy: vi.fn(),
     }));
 

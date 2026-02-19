@@ -69,6 +69,8 @@ export class CanvasRenderer {
     this.selectedMediaId = null; // ID of selected media item
     this.lastDrawnPointIndex = 0; // Index of the last point processed in the active stroke
     this.selectionBounds = null;
+    this.lineSeparators = []; // Y positions (content coords) of detected line separators
+    this.lineIndentLevels = []; // indent level per line band (0 = base, 1 = indented)
     this.highlightRects = []; // Search term highlights
 
     // Content bounds
@@ -151,6 +153,21 @@ export class CanvasRenderer {
   setSelectedStrokes(selectedIndices, bounds) {
     this.selectedStrokeIndices = selectedIndices;
     this.selectionBounds = bounds;
+    if (!bounds) {
+      this.lineSeparators = [];
+      this.lineIndentLevels = [];
+    }
+    this.forceRedraw();
+  }
+
+  /**
+   * Set detected line separator Y positions and per-line indent levels for debug visualization.
+   * @param {number[]} separatorYs - Y positions in content coordinates
+   * @param {number[]} indentLevels - indent level per line band (0 = base, 1 = indented)
+   */
+  setLineSeparators(separatorYs, indentLevels = []) {
+    this.lineSeparators = separatorYs;
+    this.lineIndentLevels = indentLevels;
     this.forceRedraw();
   }
 
@@ -786,6 +803,45 @@ export class CanvasRenderer {
         this.ctx.lineWidth = 1 / this.resolutionScale; // Keep line thin regardless of zoom
         this.ctx.setLineDash([5, 5]);
         this.ctx.strokeRect(minX, minY, width, height);
+
+        // Draw detected line separators and indentation markers for debug visualization
+        if (this.lineSeparators.length > 0 || this.lineIndentLevels.length > 0) {
+          const overhang = 8 / this.zoomScale;
+          const markerSize = 6 / this.zoomScale;
+
+          // Separator lines
+          this.ctx.strokeStyle = "rgba(255, 100, 0, 0.7)";
+          this.ctx.lineWidth = 1.5 / this.resolutionScale;
+          this.ctx.setLineDash([6, 4]);
+          for (const sepY of this.lineSeparators) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(minX - overhang, sepY);
+            this.ctx.lineTo(maxX + overhang, sepY);
+            this.ctx.stroke();
+          }
+
+          // Indentation markers: filled arrow on the left edge of each indented band
+          if (this.lineIndentLevels.length > 0) {
+            this.ctx.setLineDash([]);
+            this.ctx.fillStyle = "rgba(255, 100, 0, 0.75)";
+            // Band top/bottom boundaries (separators + selection edges)
+            const bandTops = [minY, ...this.lineSeparators];
+            const bandBottoms = [...this.lineSeparators, maxY];
+            for (let i = 0; i < this.lineIndentLevels.length; i++) {
+              if (this.lineIndentLevels[i] === 0) continue;
+              const bandMidY = (bandTops[i] + bandBottoms[i]) / 2;
+              const arrowX = minX - overhang;
+              // Draw a right-pointing triangle
+              this.ctx.beginPath();
+              this.ctx.moveTo(arrowX, bandMidY - markerSize);
+              this.ctx.lineTo(arrowX + markerSize * 1.2, bandMidY);
+              this.ctx.lineTo(arrowX, bandMidY + markerSize);
+              this.ctx.closePath();
+              this.ctx.fill();
+            }
+          }
+        }
+
         this.ctx.restore();
 
         // Draw resize handles using shared handle positions

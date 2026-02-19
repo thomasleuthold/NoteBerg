@@ -54,6 +54,7 @@ import { NoteToolbar } from "./NoteToolbar.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
+import { detectLineIndentation, detectStrokeLines } from "./strokeLineDetection.js";
 import { TextEditorLayer } from "./TextEditorLayer.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
@@ -2359,25 +2360,43 @@ export class NoteCanvas {
    * @private
    */
   _markSelectedStrokesAsTask() {
-    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
-    if (selectedIndices.length === 0) return;
+    const selectedIndices = this.renderer.selectedStrokeIndices;
+    if (selectedIndices.size === 0) return;
 
-    const strokeIds = selectedIndices.map((i) => this.noteData.strokes[i].id);
+    // Rotated selections have unreliable line detection — treat as a single block.
+    // Otherwise detect text lines and group by indentation.
+    let taskStrokeGroups; // Array<number[]> of stroke indices per task
+    if (this.selectionRotated) {
+      taskStrokeGroups = [[...selectedIndices]];
+    } else {
+      const { lineGroups } = detectStrokeLines(this.noteData.strokes, selectedIndices);
+      const indentLevels = detectLineIndentation(this.noteData.strokes, lineGroups);
 
-    const task = {
+      taskStrokeGroups = [];
+      for (let i = 0; i < lineGroups.length; i++) {
+        if (indentLevels[i] === 0 || taskStrokeGroups.length === 0) {
+          taskStrokeGroups.push([...lineGroups[i]]);
+        } else {
+          for (const idx of lineGroups[i]) taskStrokeGroups[taskStrokeGroups.length - 1].push(idx);
+        }
+      }
+    }
+
+    const now = Date.now();
+    const tasks = taskStrokeGroups.map((indices) => ({
       id: generateId(),
       type: "stroke",
-      strokeIds,
+      strokeIds: indices.map((i) => this.noteData.strokes[i].id),
       checked: false,
-      created: Date.now(),
-      modified: Date.now(),
-    };
+      created: now,
+      modified: now,
+    }));
 
-    this.noteData.tasks.push(task);
+    for (const task of tasks) this.noteData.tasks.push(task);
     this._saveTasks();
 
-    // Push command for undo/redo
-    this.historyManager?.push(new MarkTaskCommand(task));
+    // Single undoable command for all created tasks
+    this.historyManager?.push(new MarkTaskCommand(tasks));
 
     // Clear selection and overlay
     this.renderer.setSelectedStrokes(new Set(), null);
@@ -2571,6 +2590,11 @@ export class NoteCanvas {
       this.strokesChanged = true;
       this.strokeManager.markDirty();
       this.strokeManager.forceSave();
+
+      // Switch to lasso mode so pasted strokes can be immediately moved/transformed
+      if (this.mode !== "lasso") {
+        this._setMode("lasso");
+      }
 
       // Auto-select pasted strokes so the user can immediately move them
       this.renderer.setSelectedStrokes(new Set(newIndices), newBounds);
@@ -3060,6 +3084,16 @@ export class NoteCanvas {
     this.taskSelectionBounds = null;
     this.selectionOverlay.setTaskMode(false);
 
+    // Detect text lines + indentation and show debug visualization
+    this.selectionRotated = false;
+    if (selectedIndices.size > 0) {
+      const { separatorYs, lineGroups } = detectStrokeLines(this.noteData.strokes, selectedIndices);
+      const indentLevels = detectLineIndentation(this.noteData.strokes, lineGroups);
+      this.renderer.setLineSeparators(separatorYs, indentLevels);
+    } else {
+      this.renderer.setLineSeparators([], []);
+    }
+
     // Show selection overlay if strokes are selected
     if (selectionBounds && selectedIndices.size > 0) {
       this._updateSelectionOverlay();
@@ -3332,6 +3366,8 @@ export class NoteCanvas {
       initialBounds: { ...this.renderer.selectionBounds },
       initialStrokes,
       selectedIndices,
+      initialLineSeparators: [...this.renderer.lineSeparators],
+      initialLineIndentLevels: [...this.renderer.lineIndentLevels],
     };
   }
 
@@ -3340,8 +3376,17 @@ export class NoteCanvas {
    * @private
    */
   _handleTransformMove(x, y) {
-    const { mode, handle, startX, startY, initialBounds, initialStrokes, selectedIndices } =
-      this.transformState;
+    const {
+      mode,
+      handle,
+      startX,
+      startY,
+      initialBounds,
+      initialStrokes,
+      selectedIndices,
+      initialLineSeparators,
+      initialLineIndentLevels,
+    } = this.transformState;
     const dx = x - startX;
     const dy = y - startY;
 
@@ -3349,8 +3394,24 @@ export class NoteCanvas {
 
     if (mode === "move") {
       this._handleMove(dx, dy, newBounds, initialStrokes, selectedIndices);
+      // Shift separators by the same dy
+      this.renderer.setLineSeparators(
+        initialLineSeparators.map((sepY) => sepY + dy),
+        initialLineIndentLevels,
+      );
     } else if (mode === "resize") {
       this._handleResize(dx, dy, handle, newBounds, initialBounds, initialStrokes, selectedIndices);
+      // Scale separator Y positions proportionally within the new bounds
+      const oldHeight = initialBounds.maxY - initialBounds.minY;
+      const newHeight = newBounds.maxY - newBounds.minY;
+      if (oldHeight > 0) {
+        this.renderer.setLineSeparators(
+          initialLineSeparators.map(
+            (sepY) => newBounds.minY + ((sepY - initialBounds.minY) / oldHeight) * newHeight,
+          ),
+          initialLineIndentLevels,
+        );
+      }
     } else if (mode === "rotate") {
       newBounds = this._handleRotate(
         x,
@@ -3361,6 +3422,8 @@ export class NoteCanvas {
         initialStrokes,
         selectedIndices,
       );
+      // Clear separators during rotate — they're no longer meaningful as horizontal lines
+      this.renderer.setLineSeparators([], []);
     }
 
     // Update renderer
@@ -3552,6 +3615,14 @@ export class NoteCanvas {
     this.strokeManager.markDirty();
     this.strokeManager.forceSave();
     this.strokesChanged = true;
+
+    // After rotate, line detection is unreliable (rotated strokes span large Y ranges
+    // and confuse the density histogram). Treat the whole selection as one block.
+    if (this.transformState.mode === "rotate") {
+      this.selectionRotated = true;
+      this.renderer.setLineSeparators([], []);
+    }
+
     this.transformState = null;
 
     // Force full redraw to ensure high quality

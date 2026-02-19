@@ -17,17 +17,19 @@ build:
     npm run build
 
 build-w:
+    if (Test-Path "src-tauri\target\release\bundle\msi\") { Remove-Item -Path "src-tauri\target\release\bundle\msi\*" -Force -Recurse -ErrorAction SilentlyContinue }
     Get-Process -Name "OneJournal.Recognition" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*src-tauri*" } | Stop-Process -Force -ErrorAction SilentlyContinue; $true
     just package-sidecar
     npm run tauri build
     New-Item -ItemType Directory -Force -Path dist | Out-Null
-    Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
+    # Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
     Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "C:\Users\ThL\Nextcloud\DEV\oneJournal\Dist\" -Force
 
 build-a:
+    if (Test-Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\") { Remove-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\*" -Force -Recurse -ErrorAction SilentlyContinue }
     npm run tauri android build --release
     New-Item -ItemType Directory -Force -Path builds | Out-Null
-    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\oneJournal_{{version}}_android_universal.apk" -Force
+    # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\oneJournal_{{version}}_android_universal.apk" -Force
     Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\oneJournal\Dist\oneJournal_{{version}}_android_universal.apk" -Force
 
 build-all:
@@ -45,6 +47,16 @@ check:
 
 format:
     npm run format
+
+test:
+    npm run test
+
+fct:
+    just format
+    just check
+    just test
+
+
 
 # Utilities
 clean:

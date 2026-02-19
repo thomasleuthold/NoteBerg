@@ -1,37 +1,38 @@
 /**
- * MarkTaskCommand - Command for marking strokes/text as a task
+ * MarkTaskCommand - Command for marking strokes/text as one or more tasks
  *
- * Undo: Remove the task from note.tasks
- * Redo: Re-add the task to note.tasks
+ * Accepts a single task object or an array of task objects.
+ * Undo: Remove the task(s) from note.tasks
+ * Redo: Re-add the task(s) to note.tasks
  */
 export class MarkTaskCommand {
   /**
-   * @param {Object} task - The task that was created
+   * @param {Object|Object[]} tasks - One task or an array of tasks that were created
    */
-  constructor(task) {
-    this.task = { ...task };
+  constructor(tasks) {
+    this.tasks = Array.isArray(tasks) ? tasks.map((t) => ({ ...t })) : [{ ...tasks }];
   }
 
   /**
-   * Redo: Add the task back
+   * Redo: Add the task(s) back
    * @param {NoteCanvas} noteCanvas
    */
   redo(noteCanvas) {
-    noteCanvas.noteData.tasks.push({ ...this.task });
+    for (const task of this.tasks) {
+      noteCanvas.noteData.tasks.push({ ...task });
+    }
     noteCanvas._saveTasks();
     noteCanvas._updateTaskCheckboxes();
     noteCanvas._updateNavigatorSubjects();
   }
 
   /**
-   * Undo: Remove the task
+   * Undo: Remove the task(s)
    * @param {NoteCanvas} noteCanvas
    */
   undo(noteCanvas) {
-    const idx = noteCanvas.noteData.tasks.findIndex((t) => t.id === this.task.id);
-    if (idx !== -1) {
-      noteCanvas.noteData.tasks.splice(idx, 1);
-    }
+    const ids = new Set(this.tasks.map((t) => t.id));
+    noteCanvas.noteData.tasks = noteCanvas.noteData.tasks.filter((t) => !ids.has(t.id));
     noteCanvas._saveTasks();
     noteCanvas._updateTaskCheckboxes();
     noteCanvas._updateNavigatorSubjects();

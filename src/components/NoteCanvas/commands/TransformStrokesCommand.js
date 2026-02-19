@@ -45,6 +45,7 @@ export class TransformStrokesCommand {
     this._applyCoords(noteCanvas, this.initialCoords);
     // Clear selection since strokes moved back to original position
     noteCanvas.renderer.setSelectedStrokes(new Set(), null);
+    noteCanvas.selectionOverlay?.hide();
   }
 
   /**
