@@ -20,7 +20,6 @@ export class SelectionFloatingBar {
     this._viewport = viewportElement;
     this._bar = null;
 
-    this._onSelectionChange = this._onSelectionChange.bind(this);
     this._onContextMenu = this._onContextMenu.bind(this);
     this._onEditorLongPressDown = this._onEditorLongPressDown.bind(this);
     this._onEditorLongPressMove = this._onEditorLongPressMove.bind(this);
@@ -28,32 +27,11 @@ export class SelectionFloatingBar {
     this._longPressTimer = null;
     this._longPressStart = null;
 
-    document.addEventListener("selectionchange", this._onSelectionChange);
     editorElement.addEventListener("contextmenu", this._onContextMenu);
     editorElement.addEventListener("pointerdown", this._onEditorLongPressDown);
     editorElement.addEventListener("pointermove", this._onEditorLongPressMove);
     editorElement.addEventListener("pointerup", this._onEditorLongPressUp);
     editorElement.addEventListener("pointercancel", this._onEditorLongPressUp);
-  }
-
-  // ─── Selection change ──────────────────────────────────────────────────────
-
-  _onSelectionChange() {
-    const sel = window.getSelection();
-
-    // Only act if the selection is inside our editor
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-      this._hide();
-      return;
-    }
-
-    const range = sel.getRangeAt(0);
-    if (!this._editor.contains(range.commonAncestorContainer)) {
-      this._hide();
-      return;
-    }
-
-    this._showSelectionBar(range);
   }
 
   _showSelectionBar(range) {
@@ -229,6 +207,22 @@ export class SelectionFloatingBar {
     this._viewport.appendChild(bar);
     this._bar = bar;
 
+    // Dismiss on outside tap / click
+    this._onDocPointerDown = (e) => {
+      if (!this._bar?.contains(e.target)) this._hide();
+    };
+    // Use setTimeout(0) so the current pointerdown that triggered _showBar doesn't immediately dismiss it
+    setTimeout(() => {
+      document.addEventListener("pointerdown", this._onDocPointerDown, { capture: true });
+    }, 0);
+
+    // Dismiss when selection is cleared
+    this._onSelectionChangeHide = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) this._hide();
+    };
+    document.addEventListener("selectionchange", this._onSelectionChangeHide);
+
     // Position after paint so we know the bar's dimensions
     requestAnimationFrame(() => {
       if (!this._bar) return;
@@ -258,6 +252,14 @@ export class SelectionFloatingBar {
       this._bar.remove();
       this._bar = null;
     }
+    if (this._onDocPointerDown) {
+      document.removeEventListener("pointerdown", this._onDocPointerDown, { capture: true });
+      this._onDocPointerDown = null;
+    }
+    if (this._onSelectionChangeHide) {
+      document.removeEventListener("selectionchange", this._onSelectionChangeHide);
+      this._onSelectionChangeHide = null;
+    }
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -265,7 +267,6 @@ export class SelectionFloatingBar {
   destroy() {
     this._cancelLongPress();
     this._hide();
-    document.removeEventListener("selectionchange", this._onSelectionChange);
     this._editor.removeEventListener("contextmenu", this._onContextMenu);
     this._editor.removeEventListener("pointerdown", this._onEditorLongPressDown);
     this._editor.removeEventListener("pointermove", this._onEditorLongPressMove);

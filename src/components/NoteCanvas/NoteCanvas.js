@@ -2084,7 +2084,8 @@ export class NoteCanvas {
     const dist = Math.sqrt(
       (clientX - this._canvasLongPressStart.x) ** 2 + (clientY - this._canvasLongPressStart.y) ** 2,
     );
-    if (dist > 10) {
+    // 3px threshold — cancel on any real movement so slow pans don't trigger the paste menu
+    if (dist > 3) {
       this._clearCanvasLongPress();
     }
   }
