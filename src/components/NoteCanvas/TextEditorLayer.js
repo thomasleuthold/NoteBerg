@@ -25,6 +25,7 @@ import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
 import { getIcon } from "../../utils/icons.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
+import { SelectionFloatingBar } from "./SelectionFloatingBar.js";
 import { TextTaskManager } from "./TextTaskManager.js";
 
 // Define Mark as Task plugin for Trumbowyg
@@ -48,6 +49,17 @@ jQuery.extend(true, jQuery.trumbowyg, {
           hasIcon: false,
           text: "Task",
         });
+
+        // Map our pseudo-tag to the button name so active state works
+        trumbowyg.tagToButton.markastask = "markAsTask";
+      },
+      // tagHandler: called by getTagsRecursive for each ancestor element.
+      // Return ["markastask"] when cursor is inside a task span.
+      tagHandler: (element) => {
+        if (element.classList?.contains("task-text") && element.dataset?.taskId) {
+          return ["markastask"];
+        }
+        return [];
       },
     },
   },
@@ -248,6 +260,14 @@ export class TextEditorLayer {
 
     this._editorElement = trumbowygEditor;
 
+    // Floating copy/cut/paste bar for text selections (works on Android and desktop)
+    if (this._editorElement) {
+      this._selectionFloatingBar = new SelectionFloatingBar(
+        this._editorElement,
+        this.viewportElement,
+      );
+    }
+
     // Initialize TextTaskManager
     this.textTaskManager = new TextTaskManager(this._editorElement, {
       onTaskCreate: this.onTaskCreate,
@@ -255,8 +275,66 @@ export class TextEditorLayer {
       triggerChange: () => this.$editor.trigger("tbwchange"),
     });
 
+    // Intercept image paste: compress/downscale before inserting as base64
+    if (this._editorElement) {
+      this._editorElement.addEventListener("paste", (e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of items) {
+          if (item.type.startsWith("image/")) {
+            e.preventDefault();
+            e.stopPropagation();
+            const file = item.getAsFile();
+            if (file) this._insertCompressedImage(file);
+            break;
+          }
+        }
+      });
+    }
+
     // Initial position update
     this._updatePosition();
+  }
+
+  /**
+   * Compress and insert a pasted image into the editor at the current caret position.
+   * Downscales to MAX_WIDTH if larger, encodes as JPEG (or PNG for transparent images).
+   * @param {File} file
+   * @private
+   */
+  _insertCompressedImage(file) {
+    const MAX_WIDTH = 800;
+    const JPEG_QUALITY = 0.85;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = img.width > MAX_WIDTH ? MAX_WIDTH / img.width : 1;
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+
+        // Preserve PNG for images that may have transparency; JPEG for everything else
+        const dataUrl =
+          file.type === "image/png"
+            ? canvas.toDataURL("image/png")
+            : canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+
+        const trumbowyg = this.$editor?.data("trumbowyg");
+        if (!trumbowyg) return;
+        trumbowyg.restoreRange();
+        trumbowyg.execCmd("insertImage", dataUrl, false, true);
+        trumbowyg.syncCode();
+        this.$editor.trigger("tbwchange");
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
   }
 
   /**
@@ -636,6 +714,8 @@ export class TextEditorLayer {
       this.editorDiv.textEditorLayer = null;
     }
 
+    this._selectionFloatingBar?.destroy();
+    this._selectionFloatingBar = null;
     this._editorElement = null;
 
     if (this.$editor) {

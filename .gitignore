@@ -29,6 +29,10 @@ Thumbs.db
 src-tauri/target/
 src-tauri/WixTools/
 src-tauri/gen/
+!src-tauri/gen/android/
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/local.properties
 
 # Tauri build artifacts (Windows)
 src-tauri/target/

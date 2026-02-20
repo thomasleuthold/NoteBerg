@@ -5,12 +5,13 @@
  * with a dropdown menu offering "Mark as Task" and "Delete" actions.
  * Modeled after MediaOverlay.js.
  */
+import { t } from "../../i18n/index.js";
 import { getIcon } from "../../utils/icons.js";
 
 export class SelectionOverlay {
   constructor(container, callbacks) {
     this.container = container;
-    this.callbacks = callbacks; // { onMarkAsTask, onDelete, onRemoveTask }
+    this.callbacks = callbacks; // { onMarkAsTask, onDelete, onRemoveTask, onCopy }
     this.element = null;
     this.menu = null;
     this.optionBtn = null;
@@ -20,6 +21,7 @@ export class SelectionOverlay {
     this._onMarkAsTaskClick = this._onMarkAsTaskClick.bind(this);
     this._onRemoveTaskClick = this._onRemoveTaskClick.bind(this);
     this._onDeleteClick = this._onDeleteClick.bind(this);
+    this._onCopyClick = this._onCopyClick.bind(this);
     this._handleDocumentClick = this._handleDocumentClick.bind(this);
 
     this._createDOM();
@@ -41,28 +43,31 @@ export class SelectionOverlay {
     this.menu = document.createElement("div");
     this.menu.className = "note-canvas-toolbar__options-dialog";
     this.menu.style.position = "absolute";
-    this.menu.style.width = "180px";
     this.menu.style.pointerEvents = "auto";
     this.menu.innerHTML = `
       <div class="note-canvas-toolbar__options-content">
         <div class="note-canvas-toolbar__options-section">
+          <button class="note-canvas-toolbar__option-btn" id="selection-copy-btn">
+            ${getIcon("clipboard", 16)} ${t("canvas.selection.copy")}
+          </button>
           <button class="note-canvas-toolbar__option-btn" id="selection-task-btn">
-            ${getIcon("checkSquare", 16)} Mark as Task
+            ${getIcon("checkSquare", 16)} ${t("canvas.selection.markAsTask")}
           </button>
           <button class="note-canvas-toolbar__option-btn" id="selection-remove-task-btn" style="display:none">
-            ${getIcon("square", 16)} Remove Task
+            ${getIcon("square", 16)} ${t("canvas.selection.removeTask")}
           </button>
         </div>
         <div class="note-canvas-toolbar__separator"></div>
         <div class="note-canvas-toolbar__options-section">
           <button class="note-canvas-toolbar__delete-btn" id="selection-delete-btn">
-            ${getIcon("trash", 16)} Delete
+            ${getIcon("trash", 16)} ${t("canvas.selection.delete")}
           </button>
         </div>
       </div>
     `;
     this.menu.addEventListener("pointerdown", (e) => e.stopPropagation());
 
+    this.menu.querySelector("#selection-copy-btn").addEventListener("click", this._onCopyClick);
     this.menu
       .querySelector("#selection-task-btn")
       .addEventListener("click", this._onMarkAsTaskClick);
@@ -144,6 +149,14 @@ export class SelectionOverlay {
 
     this.menu.style.left = `${menuLeft}px`;
     this.menu.style.top = `${btnRect.top - containerRect.top}px`;
+  }
+
+  _onCopyClick(e) {
+    e.stopPropagation();
+    if (this.callbacks.onCopy) {
+      this.callbacks.onCopy();
+    }
+    this.hide();
   }
 
   _onMarkAsTaskClick(e) {

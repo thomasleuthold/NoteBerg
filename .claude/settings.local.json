@@ -22,7 +22,8 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(npm test:*)",
       "Bash(grep:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "WebFetch(domain:alex-d.github.io)"
     ]
   }
 }

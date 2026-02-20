@@ -3,6 +3,7 @@
  * Manages Pan vs Draw vs Eraser mode switching and pen settings
  */
 
+import { t } from "../../i18n/index.js";
 import { getTheme } from "../../modules/theme.js";
 import { getIcon } from "../../utils/icons.js";
 import { getMarkerPalette, getThemePalette } from "../../utils/noteRenderer.js";
@@ -138,9 +139,6 @@ export class NoteToolbar {
   _createDOM() {
     this.element = document.createElement("div");
     this.element.className = "note-canvas-toolbar";
-    this.element.style.position = "relative";
-    this.element.style.zIndex = "100";
-    this.element.style.overflow = "visible";
 
     const createBtn = (id, icon, title) => {
       const btn = document.createElement("button");
@@ -156,10 +154,10 @@ export class NoteToolbar {
     const eraserIcon = getIcon("eraser", 24);
     const lassoIcon = getLassoIcon(24);
 
-    this.panBtn = createBtn("pan", handIcon, "Pan Mode");
+    this.panBtn = createBtn("pan", handIcon, t("toolbar.modes.pan"));
     this.panBtn.onclick = () => this.onModeChange("pan");
 
-    this.textBtn = createBtn("text", getTextIcon(24), "Text Mode");
+    this.textBtn = createBtn("text", getTextIcon(24), t("toolbar.modes.text"));
     this.textBtn.onclick = () => this.onModeChange("text");
 
     // Draw button container (for positioning dialog)
@@ -174,7 +172,7 @@ export class NoteToolbar {
         ? getMarkerIconWithColor(initialColor, 24)
         : getPenIconWithColor(initialColor, 24);
 
-    this.drawBtn = createBtn("draw", penIcon, "Draw Mode");
+    this.drawBtn = createBtn("draw", penIcon, t("toolbar.modes.draw"));
     this.drawBtn.onclick = (e) => this._handleDrawClick(e);
 
     this.drawBtnContainer.appendChild(this.drawBtn);
@@ -182,69 +180,41 @@ export class NoteToolbar {
     // Create pen settings dialog
     this._createPenSettingsDialog();
 
-    this.eraserBtn = createBtn("eraser", eraserIcon, "Eraser Mode");
+    this.eraserBtn = createBtn("eraser", eraserIcon, t("toolbar.modes.eraser"));
     this.eraserBtn.onclick = () => this.onModeChange("eraser");
 
-    this.lassoBtn = createBtn("lasso", lassoIcon, "Lasso Select");
+    this.lassoBtn = createBtn("lasso", lassoIcon, t("toolbar.modes.lasso"));
     this.lassoBtn.onclick = () => this.onModeChange("lasso");
 
     // Undo/Redo buttons
-    this.undoBtn = createBtn("undo", getUndoIcon(24), "Undo (Ctrl+Z)");
+    this.undoBtn = createBtn("undo", getUndoIcon(24), t("toolbar.actions.undo"));
     this.undoBtn.onclick = () => this.onUndo();
     this.undoBtn.disabled = true;
     this.undoBtn.classList.add("note-canvas-toolbar__button--disabled");
 
-    this.redoBtn = createBtn("redo", getRedoIcon(24), "Redo (Ctrl+Y)");
+    this.redoBtn = createBtn("redo", getRedoIcon(24), t("toolbar.actions.redo"));
     this.redoBtn.onclick = () => this.onRedo();
     this.redoBtn.disabled = true;
     this.redoBtn.classList.add("note-canvas-toolbar__button--disabled");
 
     // Options button container (aligned right)
     this.optionsBtnContainer = document.createElement("div");
-    this.optionsBtnContainer.className = "note-canvas-toolbar__button-container";
-    this.optionsBtnContainer.style.marginLeft = "auto";
-    this.optionsBtnContainer.style.display = "flex";
-    this.optionsBtnContainer.style.gap = "16px";
+    this.optionsBtnContainer.className = "note-canvas-toolbar__options-container";
 
     this.insertBtn = createBtn(
       "insert",
       `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
-      "Insert",
+      t("toolbar.actions.insert"),
     );
     this.insertBtn.onclick = (e) => this._handleInsertClick(e);
     this.optionsBtnContainer.appendChild(this.insertBtn);
     this._createInsertDialog();
 
-    this.optionsBtn = createBtn("options", getMoreIcon(24), "Note Options");
+    this.optionsBtn = createBtn("options", getMoreIcon(24), t("toolbar.actions.options"));
     this.optionsBtn.onclick = (e) => this._handleOptionsClick(e);
     this.optionsBtnContainer.appendChild(this.optionsBtn);
 
     this._createOptionsDialog();
-
-    // Inject theme styles for preset buttons
-    const style = document.createElement("style");
-    style.textContent = `
-      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn {
-        background-color: #333;
-        border: 1px solid #555;
-      }
-      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn:hover {
-        background-color: #444;
-      }
-      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn--active {
-        background-color: #555;
-        border-color: #999;
-      }
-      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn {
-        background-color: #333;
-        border: 1px solid #555;
-        color: #fff;
-      }
-      .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn:hover {
-        background-color: #444;
-      }
-    `;
-    this.element.appendChild(style);
 
     this.element.appendChild(this.panBtn);
     this.element.appendChild(this.textBtn);
@@ -298,7 +268,9 @@ export class NoteToolbar {
     expandBtn.innerHTML = this.isExpanded
       ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>` // Left arrow (collapse)
       : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>`; // Right arrow (expand)
-    expandBtn.title = this.isExpanded ? "Collapse" : "Expand Settings";
+    expandBtn.title = this.isExpanded
+      ? t("toolbar.penDialog.collapse")
+      : t("toolbar.penDialog.expand");
     expandBtn.onclick = (e) => {
       e.stopPropagation();
       this.isExpanded = !this.isExpanded;
@@ -357,7 +329,7 @@ export class NoteToolbar {
       // Save Button
       const saveBtn = document.createElement("button");
       saveBtn.className = "note-canvas-toolbar__save-preset-btn";
-      saveBtn.title = "Save current settings to this preset";
+      saveBtn.title = t("toolbar.penDialog.savePreset");
       saveBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>`;
 
       saveBtn.onclick = (e) => {
@@ -482,7 +454,7 @@ export class NoteToolbar {
           class="note-canvas-toolbar__color-swatch ${index === this.penColorIndex ? "note-canvas-toolbar__color-swatch--active" : ""}"
           data-color-index="${index}"
           style="background-color: ${color}"
-          title="Color ${index + 1}"
+          title="${t("toolbar.penDialog.colorTitle", { num: index + 1 })}"
         ></button>
       `,
       )
@@ -491,7 +463,7 @@ export class NoteToolbar {
     return `
       <div class="note-canvas-toolbar__pen-dialog-section">
         <label class="note-canvas-toolbar__pen-dialog-label">
-          Line Width: <span class="note-canvas-toolbar__width-value">${this.penWidth}</span>
+          ${t("toolbar.penDialog.lineWidth")}<span class="note-canvas-toolbar__width-value">${this.penWidth}</span>
         </label>
         <div class="note-canvas-toolbar__width-control">
           <button class="note-canvas-toolbar__width-btn" data-action="decrease">-</button>
@@ -507,7 +479,7 @@ export class NoteToolbar {
         </div>
       </div>
       <div class="note-canvas-toolbar__pen-dialog-section">
-        <label class="note-canvas-toolbar__pen-dialog-label">Color</label>
+        <label class="note-canvas-toolbar__pen-dialog-label">${t("toolbar.penDialog.color")}</label>
         <div class="note-canvas-toolbar__color-grid">
           ${colorSwatches}
         </div>
@@ -529,24 +501,24 @@ export class NoteToolbar {
     content.innerHTML = `
       <div class="note-canvas-toolbar__options-section">
         <button class="note-canvas-toolbar__option-btn" data-action="insert-image">
-          ${getIcon("image", 16)} Insert Image
+          ${getIcon("image", 16)} ${t("toolbar.insert.image")}
         </button>
         <button class="note-canvas-toolbar__option-btn" data-action="insert-camera">
-          ${getIcon("camera", 16)} Take Photo
+          ${getIcon("camera", 16)} ${t("toolbar.insert.camera")}
         </button>
         <button class="note-canvas-toolbar__option-btn" data-action="insert-pdf">
-          ${getIcon("pdf", 16)} Insert PDF
+          ${getIcon("pdf", 16)} ${t("toolbar.insert.pdf")}
         </button>
       </div>
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
         <button class="note-canvas-toolbar__option-btn" data-action="insert-space">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="note-canvas-toolbar__option-icon">
             <path d="M12 8v8m-4-4 4 4 4-4"/>
             <path d="M4 4h16"/>
             <path d="M4 20h16"/>
           </svg>
-          Insert Vertical Space
+          ${t("toolbar.insert.space")}
         </button>
       </div>
     `;
@@ -580,21 +552,21 @@ export class NoteToolbar {
   _getOptionsDialogHTML() {
     return `
       <div class="note-canvas-toolbar__options-section">
-        <label class="note-canvas-toolbar__options-label">Background</label>
+        <label class="note-canvas-toolbar__options-label">${t("toolbar.background.label")}</label>
         <div class="note-canvas-toolbar__background-list">
-            <button class="note-canvas-toolbar__option-btn background-option" data-value="none">None</button>
-            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-narrow">Ruled - Narrow</button>
-            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-medium">Ruled - Medium</button>
-            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-wide">Ruled - Wide</button>
-            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-small">Grid - Small</button>
-            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-medium">Grid - Medium</button>
-            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-large">Grid - Large</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="none">${t("toolbar.background.none")}</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-narrow">${t("toolbar.background.ruledNarrow")}</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-medium">${t("toolbar.background.ruledMedium")}</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="ruled-wide">${t("toolbar.background.ruledWide")}</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-small">${t("toolbar.background.gridSmall")}</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-medium">${t("toolbar.background.gridMedium")}</button>
+            <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-large">${t("toolbar.background.gridLarge")}</button>
         </div>
       </div>
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
         <button id="nc-delete-note-btn" class="note-canvas-toolbar__delete-btn">
-            ${getIcon("trash", 16)} Delete Note
+            ${getIcon("trash", 16)} ${t("toolbar.deleteNote")}
         </button>
       </div>
     `;

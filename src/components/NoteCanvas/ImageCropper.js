@@ -2,6 +2,8 @@
  * ImageCropper - Handles image cropping and perspective correction
  */
 
+import { t } from "../../i18n/index.js";
+
 export class ImageCropper {
   constructor() {
     this.overlay = null;
@@ -41,12 +43,12 @@ export class ImageCropper {
     modeToggle.className = "crop-mode-toggle";
 
     const simpleModeBtn = document.createElement("button");
-    simpleModeBtn.textContent = "Simple Crop";
+    simpleModeBtn.textContent = t("canvas.crop.simpleCrop");
     simpleModeBtn.className = "crop-mode-btn crop-mode-simple active";
     simpleModeBtn.onclick = () => this._switchCropMode("simple");
 
     const perspectiveModeBtn = document.createElement("button");
-    perspectiveModeBtn.textContent = "Perspective";
+    perspectiveModeBtn.textContent = t("canvas.crop.perspective");
     perspectiveModeBtn.className = "crop-mode-btn crop-mode-perspective";
     perspectiveModeBtn.onclick = () => this._switchCropMode("perspective");
 
@@ -57,8 +59,6 @@ export class ImageCropper {
     this.imageElement = document.createElement("img");
     this.imageElement.className = "crop-image";
     this.imageElement.src = this.originalImage.src;
-    this.imageElement.style.maxWidth = "90vw";
-    this.imageElement.style.maxHeight = "70vh";
 
     // Create crop area
     const cropArea = document.createElement("div");
@@ -99,23 +99,28 @@ export class ImageCropper {
     controls.className = "crop-controls";
 
     const applyBtn = document.createElement("button");
-    applyBtn.textContent = "Apply";
+    applyBtn.textContent = t("canvas.crop.apply");
     applyBtn.className = "crop-btn crop-apply-btn";
     applyBtn.onclick = () => this._applyCrop();
 
     const cancelBtn = document.createElement("button");
-    cancelBtn.textContent = "Cancel";
+    cancelBtn.textContent = t("canvas.crop.cancel");
     cancelBtn.className = "crop-btn crop-cancel-btn";
     cancelBtn.onclick = () => this._close(null);
 
     controls.appendChild(cancelBtn);
     controls.appendChild(applyBtn);
 
+    // Wrap image + overlays so absolute positioning is relative to the image
+    const imageWrapper = document.createElement("div");
+    imageWrapper.className = "crop-image-wrapper";
+    imageWrapper.appendChild(this.imageElement);
+    imageWrapper.appendChild(cropArea);
+    imageWrapper.appendChild(perspectiveArea);
+
     // Assemble UI
     container.appendChild(modeToggle);
-    container.appendChild(this.imageElement);
-    container.appendChild(cropArea);
-    container.appendChild(perspectiveArea);
+    container.appendChild(imageWrapper);
     container.appendChild(controls);
     this.overlay.appendChild(container);
     document.body.appendChild(this.overlay);
@@ -134,12 +139,8 @@ export class ImageCropper {
       cropArea.style.height = `${cropHeight}px`;
 
       this._initCropAreaDrag(cropArea, this.imageElement);
-      this._initPerspectiveCorners(perspectiveArea, this.imageElement, {
-        left: cropLeft,
-        top: cropTop,
-        width: cropWidth,
-        height: cropHeight,
-      });
+      // Perspective corners start at the full image edges (apply = no change)
+      this._initPerspectiveCorners(perspectiveArea, this.imageElement);
     };
   }
 
@@ -171,6 +172,8 @@ export class ImageCropper {
       perspectiveArea.style.display = "block";
       simpleModeBtn.classList.remove("active");
       perspectiveModeBtn.classList.add("active");
+      // Draw lines now that the area is visible (offsetLeft/offsetTop need display != none)
+      this._drawPerspectiveLines(perspectiveArea);
     }
   }
 
@@ -319,6 +322,7 @@ export class ImageCropper {
   _initCropAreaDrag(cropArea, img) {
     let isDragging = false;
     let isResizing = false;
+    let activePointerId = null;
     let resizeHandle = null;
     let startX = 0,
       startY = 0,
@@ -337,6 +341,7 @@ export class ImageCropper {
       } else {
         isDragging = true;
       }
+      activePointerId = e.pointerId;
       startX = e.clientX;
       startY = e.clientY;
       startLeft = cropArea.offsetLeft;
@@ -347,7 +352,9 @@ export class ImageCropper {
     });
 
     cropArea.addEventListener("pointermove", (e) => {
-      if (!isDragging && !isResizing) return;
+      if ((!isDragging && !isResizing) || e.pointerId !== activePointerId) return;
+      // Ignore stylus hover (no contact with screen)
+      if (e.pressure === 0 && e.pointerType !== "mouse") return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
 
@@ -382,22 +389,32 @@ export class ImageCropper {
       }
     });
 
-    cropArea.addEventListener("pointerup", (e) => {
+    const endDrag = (e) => {
+      if (e.pointerId !== activePointerId) return;
       isDragging = false;
       isResizing = false;
-      cropArea.releasePointerCapture(e.pointerId);
-    });
+      activePointerId = null;
+      try {
+        cropArea.releasePointerCapture(e.pointerId);
+      } catch (_) {
+        /* already released */
+      }
+    };
+    cropArea.addEventListener("pointerup", endDrag);
+    cropArea.addEventListener("pointercancel", endDrag);
   }
 
-  _initPerspectiveCorners(perspectiveArea, _img, initialRect) {
+  _initPerspectiveCorners(perspectiveArea, img) {
+    const imgRect = img.getBoundingClientRect();
+
+    // Place corners exactly at the image edges so apply = no change.
+    // The perspective area is inside crop-image-wrapper which matches the image size,
+    // so coordinates are directly relative to the image.
     const corners = {
-      tl: { x: initialRect.left, y: initialRect.top },
-      tr: { x: initialRect.left + initialRect.width, y: initialRect.top },
-      br: {
-        x: initialRect.left + initialRect.width,
-        y: initialRect.top + initialRect.height,
-      },
-      bl: { x: initialRect.left, y: initialRect.top + initialRect.height },
+      tl: { x: 0, y: 0 },
+      tr: { x: imgRect.width, y: 0 },
+      br: { x: imgRect.width, y: imgRect.height },
+      bl: { x: 0, y: imgRect.height },
     };
 
     Object.entries(corners).forEach(([name, pos]) => {
@@ -406,12 +423,11 @@ export class ImageCropper {
       handle.style.top = `${pos.y}px`;
       this._makeDraggable(handle, perspectiveArea);
     });
-
-    this._drawPerspectiveLines(perspectiveArea);
   }
 
   _makeDraggable(element, container) {
     let isDragging = false;
+    let activePointerId = null;
     let startX = 0,
       startY = 0,
       startLeft = 0,
@@ -419,6 +435,7 @@ export class ImageCropper {
 
     element.addEventListener("pointerdown", (e) => {
       isDragging = true;
+      activePointerId = e.pointerId;
       startX = e.clientX;
       startY = e.clientY;
       startLeft = element.offsetLeft;
@@ -429,7 +446,9 @@ export class ImageCropper {
     });
 
     element.addEventListener("pointermove", (e) => {
-      if (!isDragging) return;
+      if (!isDragging || e.pointerId !== activePointerId) return;
+      // Ignore stylus hover (no contact with screen)
+      if (e.pressure === 0 && e.pointerType !== "mouse") return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
       element.style.left = `${startLeft + dx}px`;
@@ -437,10 +456,18 @@ export class ImageCropper {
       this._drawPerspectiveLines(container);
     });
 
-    element.addEventListener("pointerup", (e) => {
+    const endDrag = (e) => {
+      if (e.pointerId !== activePointerId) return;
       isDragging = false;
-      element.releasePointerCapture(e.pointerId);
-    });
+      activePointerId = null;
+      try {
+        element.releasePointerCapture(e.pointerId);
+      } catch (_) {
+        /* already released */
+      }
+    };
+    element.addEventListener("pointerup", endDrag);
+    element.addEventListener("pointercancel", endDrag);
   }
 
   _drawPerspectiveLines(container) {

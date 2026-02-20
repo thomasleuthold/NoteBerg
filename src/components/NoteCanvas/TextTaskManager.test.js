@@ -90,7 +90,7 @@ describe("TextTaskManager", () => {
       expect(p.textContent.trim()).toBe("Task Item");
     });
 
-    it("wraps root text in a div if no block found", () => {
+    it("does nothing for bare root text without a block element", () => {
       editorElement.innerHTML = "Root text";
       const textNode = editorElement.firstChild;
 
@@ -98,9 +98,9 @@ describe("TextTaskManager", () => {
 
       manager.toggleTaskOnSelection();
 
-      const div = editorElement.querySelector("div");
-      expect(div).toBeTruthy();
-      expect(div.querySelector(".task-text-checkbox")).toBeTruthy();
+      // No block element found, so no task is created
+      expect(callbacks.onTaskCreate).not.toHaveBeenCalled();
+      expect(editorElement.textContent).toBe("Root text");
     });
 
     it("handles multiple blocks", () => {

@@ -58,6 +58,13 @@
   box-shadow: none;
 }
 
+/* Images pasted into the editor */
+.note-canvas__text-editor-layer .trumbowyg-editor img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
 /* Search highlights */
 .note-canvas__text-editor-layer mark.search-highlight {
   background: rgba(255, 255, 0, 0.4);

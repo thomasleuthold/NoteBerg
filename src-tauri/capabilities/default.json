@@ -16,6 +16,16 @@
       ]
     },
     {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "OneJournal.Recognition",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    {
       "identifier": "http:default",
       "allow": [
         {
@@ -25,7 +35,7 @@
           "url": "https://**"
         },
         {
-          "url": "http://localhost:5000/**"
+          "url": "http://localhost:5089/**"
         },
         {
           "url": "http://*:5000/**"

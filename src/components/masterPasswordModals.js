@@ -3,6 +3,7 @@
  * UI components for master password setup and unlock
  */
 
+import { t } from "../i18n/index.js";
 import {
   calculatePasswordStrength,
   getPasswordStrengthColor,
@@ -31,7 +32,7 @@ export async function showMasterPasswordSetup({ isMigration = false, onSuccess, 
       <div class="modal-dialog modal-password-setup">
         <div class="modal-header">
           <h3 class="modal-title">
-            ${isMigration ? "🔒 Secure Your Data" : "🔒 Create Master Password"}
+            ${isMigration ? t("auth.setup.titleMigration") : t("auth.setup.titleNew")}
           </h3>
         </div>
         <div class="modal-body">
@@ -39,59 +40,59 @@ export async function showMasterPasswordSetup({ isMigration = false, onSuccess, 
             isMigration
               ? `
             <div class="info-box">
-              <p><strong>We're upgrading your security!</strong></p>
-              <p>To protect your data with encryption, please create a master password. Your existing data will be encrypted automatically.</p>
+              <p><strong>${t("auth.setup.migrationHeading")}</strong></p>
+              <p>${t("auth.setup.migrationDesc")}</p>
             </div>
           `
               : `
             <p class="modal-description">
-              Your master password encrypts all your data. Choose a strong password you'll remember.
+              ${t("auth.setup.description")}
             </p>
           `
           }
 
           <div class="form-group">
-            <label for="setup-password">Master Password</label>
+            <label for="setup-password">${t("auth.setup.passwordLabel")}</label>
             <input
               type="password"
               id="setup-password"
               class="form-control"
-              placeholder="Enter master password"
+              placeholder="${t("auth.setup.passwordPlaceholder")}"
               autocomplete="new-password"
             />
             <div class="password-strength">
               <div class="strength-bar">
                 <div class="strength-fill" id="strength-fill"></div>
               </div>
-              <span class="strength-label" id="strength-label">Enter password</span>
+              <span class="strength-label" id="strength-label">${t("auth.strength.enterPassword")}</span>
             </div>
           </div>
 
           <div class="form-group">
-            <label for="setup-password-confirm">Confirm Password</label>
+            <label for="setup-password-confirm">${t("auth.setup.confirmLabel")}</label>
             <input
               type="password"
               id="setup-password-confirm"
               class="form-control"
-              placeholder="Re-enter password"
+              placeholder="${t("auth.setup.confirmPlaceholder")}"
               autocomplete="new-password"
             />
           </div>
 
           <div class="form-group">
-            <label for="setup-password-hint">Password Hint (Optional)</label>
+            <label for="setup-password-hint">${t("auth.setup.hintLabel")}</label>
             <input
               type="text"
               id="setup-password-hint"
               class="form-control"
-              placeholder="e.g., First pet + birth year"
+              placeholder="${t("auth.setup.hintPlaceholder")}"
               autocomplete="off"
             />
-            <small class="form-text">A hint to help you remember your password. Don't make it obvious!</small>
+            <small class="form-text">${t("auth.setup.hintDesc")}</small>
           </div>
 
           <div class="warning-box">
-            <strong>⚠️ Important:</strong> Your master password cannot be recovered if forgotten. Make sure you remember it or store it securely.
+            ${t("auth.setup.warning")}
           </div>
 
           <div class="modal-error" style="display: none;"></div>
@@ -99,11 +100,11 @@ export async function showMasterPasswordSetup({ isMigration = false, onSuccess, 
         <div class="modal-footer">
           ${
             !isMigration
-              ? `<button class="btn-secondary" id="setup-cancel-btn">Cancel</button>`
+              ? `<button class="btn-secondary" id="setup-cancel-btn">${t("auth.setup.cancelBtn")}</button>`
               : ""
           }
           <button class="btn-primary modal-setup-confirm" id="setup-confirm-btn">
-            ${isMigration ? "Encrypt & Continue" : "Create Master Password"}
+            ${isMigration ? t("auth.setup.confirmBtnMigration") : t("auth.setup.confirmBtnNew")}
           </button>
         </div>
       </div>
@@ -157,33 +158,33 @@ export async function showMasterPasswordSetup({ isMigration = false, onSuccess, 
 
     // Validation
     if (!password) {
-      showError("Please enter a master password");
+      showError(t("auth.errors.enterPassword"));
       passwordInput.focus();
       return;
     }
 
     if (password.length < 8) {
-      showError("Password must be at least 8 characters long");
+      showError(t("auth.errors.tooShort"));
       passwordInput.focus();
       return;
     }
 
     if (password !== confirm) {
-      showError("Passwords do not match");
+      showError(t("auth.errors.mismatch"));
       confirmInput.focus();
       return;
     }
 
     const strength = calculatePasswordStrength(password);
     if (strength < 30) {
-      showError("Password is too weak. Please choose a stronger password.");
+      showError(t("auth.errors.tooWeak"));
       passwordInput.focus();
       return;
     }
 
     // Disable button during setup
     confirmBtn.disabled = true;
-    confirmBtn.textContent = "Setting up...";
+    confirmBtn.textContent = t("auth.setup.settingUp");
 
     try {
       // Biometric unlock is never enabled during setup - password is always stored in keyring
@@ -199,9 +200,11 @@ export async function showMasterPasswordSetup({ isMigration = false, onSuccess, 
       }
     } catch (error) {
       console.error("[MasterPasswordModals] Setup failed:", error);
-      showError(error.message || "Failed to set up master password");
+      showError(error.message || t("auth.errors.setupFailed"));
       confirmBtn.disabled = false;
-      confirmBtn.textContent = isMigration ? "Encrypt & Continue" : "Create Master Password";
+      confirmBtn.textContent = isMigration
+        ? t("auth.setup.confirmBtnMigration")
+        : t("auth.setup.confirmBtnNew");
     }
   });
 
@@ -261,23 +264,23 @@ export async function showAppUnlock({ onSuccess } = {}) {
     <div id="unlock-modal" class="modal-overlay modal-no-close">
       <div class="modal-dialog modal-unlock">
         <div class="modal-header">
-          <h3 class="modal-title">🔒 Unlock oneJournal</h3>
+          <h3 class="modal-title">${t("auth.unlock.title")}</h3>
         </div>
         <div class="modal-body">
           <p class="modal-description">
-            Enter your master password to unlock the app
+            ${t("auth.unlock.description")}
           </p>
 
           <div class="form-group">
-            <label for="unlock-password">Master Password</label>
+            <label for="unlock-password">${t("auth.unlock.passwordLabel")}</label>
             <input
               type="password"
               id="unlock-password"
               class="form-control"
-              placeholder="Enter password"
+              placeholder="${t("auth.unlock.passwordPlaceholder")}"
               autocomplete="current-password"
             />
-            ${hint ? `<small class="form-text">Hint: ${hint}</small>` : ""}
+            ${hint ? `<small class="form-text">${t("auth.unlock.hint", { hint })}</small>` : ""}
           </div>
 
           ${
@@ -298,7 +301,7 @@ export async function showAppUnlock({ onSuccess } = {}) {
         </div>
         <div class="modal-footer">
           <button class="btn-primary modal-unlock-confirm" id="unlock-confirm-btn">
-            Unlock
+            ${t("auth.unlock.unlockBtn")}
           </button>
         </div>
       </div>
@@ -332,14 +335,14 @@ export async function showAppUnlock({ onSuccess } = {}) {
     const password = passwordInput.value;
 
     if (!password) {
-      showError("Please enter your password");
+      showError(t("auth.errors.enterPassword"));
       passwordInput.focus();
       return;
     }
 
     // Disable button during unlock
     confirmBtn.disabled = true;
-    confirmBtn.textContent = "Unlocking...";
+    confirmBtn.textContent = t("auth.unlock.unlocking");
 
     try {
       const success = await unlockApp(password);
@@ -353,17 +356,17 @@ export async function showAppUnlock({ onSuccess } = {}) {
           onSuccess();
         }
       } else {
-        showError("Incorrect password. Please try again.");
+        showError(t("auth.errors.wrongPassword"));
         confirmBtn.disabled = false;
-        confirmBtn.textContent = "Unlock";
+        confirmBtn.textContent = t("auth.unlock.unlockBtn");
         passwordInput.value = "";
         passwordInput.focus();
       }
     } catch (error) {
       console.error("[MasterPasswordModals] Unlock failed:", error);
-      showError(error.message || "Failed to unlock app");
+      showError(error.message || t("auth.errors.setupFailed"));
       confirmBtn.disabled = false;
-      confirmBtn.textContent = "Unlock";
+      confirmBtn.textContent = t("auth.unlock.unlockBtn");
     }
   };
 
@@ -388,16 +391,16 @@ export async function showAppUnlock({ onSuccess } = {}) {
             onSuccess();
           }
         } else {
-          showError("Biometric authentication failed. Please use your password.");
+          showError(t("auth.errors.biometricFailed"));
           biometricBtn.disabled = false;
-          biometricBtn.innerHTML = '<span class="biometric-icon">👆</span> Unlock with Biometric';
+          biometricBtn.innerHTML = `<span class="biometric-icon">👆</span> ${t("auth.unlock.unlockBtn")}`;
           passwordInput.focus();
         }
       } catch (error) {
         console.error("[MasterPasswordModals] Biometric unlock failed:", error);
-        showError("Biometric unlock not available. Please use your password.");
+        showError(t("auth.errors.biometricUnavailable"));
         biometricBtn.disabled = false;
-        biometricBtn.innerHTML = '<span class="biometric-icon">👆</span> Unlock with Biometric';
+        biometricBtn.innerHTML = `<span class="biometric-icon">👆</span> ${t("auth.unlock.unlockBtn")}`;
         passwordInput.focus();
       }
     });

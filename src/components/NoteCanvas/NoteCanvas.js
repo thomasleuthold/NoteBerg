@@ -6,6 +6,7 @@
  * Supports both viewing and drawing with stylus/pen input.
  */
 
+import { t } from "../../i18n/index.js";
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
@@ -20,8 +21,14 @@ import {
 } from "../../modules/storage.js";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
+import {
+  drawStroke as sharedDrawStroke,
+  getThemePalette as sharedGetThemePalette,
+} from "../../utils/noteRenderer.js";
 import { showAlertDialog, showConfirmDialog } from "../modals.js";
+import { AppClipboard } from "./AppClipboard.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
+import { ContextFloatingMenu } from "./ContextFloatingMenu.js";
 import { ImageCropper } from "./ImageCropper.js";
 import { InputHandler } from "./InputHandler.js";
 import { MediaManager } from "./MediaManager.js";
@@ -36,6 +43,7 @@ import {
   EraseStrokesCommand,
   InsertMediaCommand,
   MarkTaskCommand,
+  PasteStrokesCommand,
   ReorderMediaCommand,
   ShiftContentCommand,
   TransformMediaCommand,
@@ -47,6 +55,7 @@ import { NoteToolbar } from "./NoteToolbar.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
+import { detectLineIndentation, detectStrokeLines } from "./strokeLineDetection.js";
 import { TextEditorLayer } from "./TextEditorLayer.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
@@ -457,6 +466,7 @@ export class NoteCanvas {
 
     // Initialize SelectionOverlay (3-dot menu for lasso selection)
     this.selectionOverlay = new SelectionOverlay(this.scroller.getViewportElement(), {
+      onCopy: () => this._copySelectedStrokes(),
       onMarkAsTask: () => this._markSelectedStrokesAsTask(),
       onRemoveTask: () => this._removeTaskFromSelectedStrokes(),
       onDelete: () => this._deleteSelectedStrokes(),
@@ -890,7 +900,7 @@ export class NoteCanvas {
       <div class="note-canvas-toolbar__options-content">
         <div class="note-canvas-toolbar__options-section">
           <button class="note-canvas-toolbar__delete-btn" id="pdf-delete-btn">
-            ${getIcon("trash", 16)} Delete PDF
+            ${getIcon("trash", 16)} ${t("canvas.pdf.delete")}
           </button>
         </div>
       </div>
@@ -1404,6 +1414,16 @@ export class NoteCanvas {
     viewport.addEventListener("pointerup", this._onPointerUpNav);
     viewport.addEventListener("pointercancel", this._onPointerUpNav);
     viewport.addEventListener("pointerleave", this._onPointerUpNav);
+
+    // Right-click paste menu (stopPropagation prevents the global window prevention in main.js)
+    viewport.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (AppClipboard.canPasteInMode(this.mode)) {
+        this._showPasteMenu(e.clientX, e.clientY);
+      }
+    });
+
     window.addEventListener("keydown", this._onKeyDown);
   }
 
@@ -1978,6 +1998,16 @@ export class NoteCanvas {
       return;
     }
 
+    // Paste: Ctrl+V — only on canvas modes (text mode lets the browser/editor handle it)
+    if ((e.ctrlKey || e.metaKey) && e.key === "v" && this.mode !== "text") {
+      if (AppClipboard.canPasteInMode(this.mode)) {
+        e.preventDefault();
+        const center = this._getViewportCenter();
+        this._pasteAtContentPoint(center.x, center.y);
+      }
+      return;
+    }
+
     // Delete/Backspace: delete selected media (not in text mode — let editor handle it)
     if (this.mode !== "text" && (e.key === "Delete" || e.key === "Backspace")) {
       if (this.selectedMediaId) {
@@ -2008,6 +2038,7 @@ export class NoteCanvas {
       this.longPressTimer = null;
     }
     this.longPressStart = null;
+    this._clearCanvasLongPress();
   }
 
   /**
@@ -2022,6 +2053,42 @@ export class NoteCanvas {
     if (dist > 10) {
       // 10px threshold
       this._clearLongPress();
+    }
+    this._checkCanvasLongPressMove(clientX, clientY);
+  }
+
+  /**
+   * Start a canvas-level long press for the paste menu (separate from media long-press).
+   * @private
+   */
+  _startCanvasLongPress(clientX, clientY) {
+    this._clearCanvasLongPress();
+    this._canvasLongPressStart = { x: clientX, y: clientY };
+    this._canvasLongPressTimer = setTimeout(() => {
+      this._canvasLongPressTimer = null;
+      this._canvasLongPressStart = null;
+      this._showPasteMenu(clientX, clientY);
+    }, 500);
+  }
+
+  /** @private */
+  _clearCanvasLongPress() {
+    if (this._canvasLongPressTimer) {
+      clearTimeout(this._canvasLongPressTimer);
+      this._canvasLongPressTimer = null;
+    }
+    this._canvasLongPressStart = null;
+  }
+
+  /** @private */
+  _checkCanvasLongPressMove(clientX, clientY) {
+    if (!this._canvasLongPressStart) return;
+    const dist = Math.sqrt(
+      (clientX - this._canvasLongPressStart.x) ** 2 + (clientY - this._canvasLongPressStart.y) ** 2,
+    );
+    // 3px threshold — cancel on any real movement so slow pans don't trigger the paste menu
+    if (dist > 3) {
+      this._clearCanvasLongPress();
     }
   }
 
@@ -2142,86 +2209,62 @@ export class NoteCanvas {
       const deltaAngle = (currentAngle - startAngle) * (180 / Math.PI);
       item.rotation = (state.initialRotation + deltaAngle) % 360;
     } else if (state.mode === "resize") {
-      // Rotate point back to unrotated coordinate space for simpler resizing logic
-      // This is an approximation; full rotated resizing is complex.
-      // For simplicity, we calculate distance from center or opposite corner.
-
-      // Simple approach: Calculate distance change from center
-      // This works well for corner resizing while maintaining aspect ratio
       const dx = x - state.startX;
       const dy = y - state.startY;
 
-      // Determine resize direction based on handle
       const isLeft = state.handle.includes("w");
       const isTop = state.handle.includes("n");
+      const isRight = state.handle.includes("e");
+      const isBottom = state.handle.includes("s");
 
       // Rotate the delta vector by -rotation to align with item axes
-      const rad = (-(item.rotation || 0) * Math.PI) / 180;
+      const rad = (-state.initialRotation * Math.PI) / 180;
       const rdx = dx * Math.cos(rad) - dy * Math.sin(rad);
       const rdy = dx * Math.sin(rad) + dy * Math.cos(rad);
 
       let newWidth = state.initialWidth;
       let newHeight = state.initialHeight;
-      let newX = state.initialX;
-      let newY = state.initialY;
 
-      // Apply resize logic
       if (state.handle.length === 2) {
-        // Corner (aspect ratio locked)
-        // Use the larger delta to drive the scale
+        // Corner handle: aspect-ratio locked, opposite corner stays pinned
         const ratio = state.initialWidth / state.initialHeight;
-        let change = 0;
 
-        if (state.handle === "se") change = Math.max(rdx, rdy);
-        else if (state.handle === "nw") change = Math.max(-rdx, -rdy);
-        else if (state.handle === "ne") change = Math.max(rdx, -rdy);
-        else if (state.handle === "sw") change = Math.max(-rdx, rdy);
+        // Compute width change based on the dragged corner direction
+        let wChange = 0;
+        if (isRight) wChange = rdx;
+        else if (isLeft) wChange = -rdx;
 
+        let hChange = 0;
+        if (isBottom) hChange = rdy;
+        else if (isTop) hChange = -rdy;
+
+        // Use whichever axis moved more to drive aspect-ratio resize
+        const change = Math.abs(wChange) > Math.abs(hChange) ? wChange : hChange * ratio;
         newWidth = Math.max(50, state.initialWidth + change);
         newHeight = newWidth / ratio;
-
-        // Adjust position to keep opposite corner fixed (roughly)
-        // For perfect rotated resizing, we'd need to rotate the pivot point.
-        // Simplified: Center-based scaling if we don't want to do full matrix math here
-        // Let's do center-based scaling for now as it's robust for rotated items
-        const widthDiff = newWidth - state.initialWidth;
-        const heightDiff = newHeight - state.initialHeight;
-
-        // Adjust center based on handle
-        // This is a simplification. For full corner pinning, we need more math.
-        // But center-expansion is often acceptable for rotated items.
-        // Let's try to pin the center for now to avoid jumping.
-        newX = state.initialX - widthDiff / 2;
-        newY = state.initialY - heightDiff / 2;
       } else {
-        // Side (one dimension)
-        if (state.handle === "e") newWidth += rdx;
-        else if (state.handle === "w") {
-          newWidth -= rdx;
-          newX -= rdx;
-        } // This X adjustment is only valid if rotation is 0
-        else if (state.handle === "s") newHeight += rdy;
-        else if (state.handle === "n") {
-          newHeight -= rdy;
-          newY -= rdy;
-        }
+        // Side handle: adjust one dimension
+        if (isRight) newWidth += rdx;
+        else if (isLeft) newWidth -= rdx;
+        else if (isBottom) newHeight += rdy;
+        else if (isTop) newHeight -= rdy;
 
-        // For rotated side resizing, center-based is safer without full matrix logic
-        if (item.rotation) {
-          newX = state.initialX - (newWidth - state.initialWidth) / 2;
-          newY = state.initialY - (newHeight - state.initialHeight) / 2;
-        }
+        newWidth = Math.max(50, newWidth);
+        newHeight = Math.max(50, newHeight);
       }
 
-      item.width = Math.max(50, newWidth);
-      item.height = Math.max(50, newHeight);
-      if (item.rotation) {
-        item.x = newX;
-        item.y = newY;
+      item.width = newWidth;
+      item.height = newHeight;
+
+      const isRotated = Math.abs(item.rotation || 0) % 360 > 0.1;
+      if (isRotated) {
+        // For rotated items, center-based scaling avoids complex pivot math
+        item.x = state.initialX - (newWidth - state.initialWidth) / 2;
+        item.y = state.initialY - (newHeight - state.initialHeight) / 2;
       } else {
-        // Non-rotated logic (standard)
-        if (isLeft) item.x = state.initialX + (state.initialWidth - item.width);
-        if (isTop) item.y = state.initialY + (state.initialHeight - item.height);
+        // Pin the opposite corner/edge: only move origin when dragging left or top edges
+        item.x = isLeft ? state.initialX + (state.initialWidth - item.width) : state.initialX;
+        item.y = isTop ? state.initialY + (state.initialHeight - item.height) : state.initialY;
       }
     }
   }
@@ -2318,25 +2361,43 @@ export class NoteCanvas {
    * @private
    */
   _markSelectedStrokesAsTask() {
-    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
-    if (selectedIndices.length === 0) return;
+    const selectedIndices = this.renderer.selectedStrokeIndices;
+    if (selectedIndices.size === 0) return;
 
-    const strokeIds = selectedIndices.map((i) => this.noteData.strokes[i].id);
+    // Rotated selections have unreliable line detection — treat as a single block.
+    // Otherwise detect text lines and group by indentation.
+    let taskStrokeGroups; // Array<number[]> of stroke indices per task
+    if (this.selectionRotated) {
+      taskStrokeGroups = [[...selectedIndices]];
+    } else {
+      const { lineGroups } = detectStrokeLines(this.noteData.strokes, selectedIndices);
+      const indentLevels = detectLineIndentation(this.noteData.strokes, lineGroups);
 
-    const task = {
+      taskStrokeGroups = [];
+      for (let i = 0; i < lineGroups.length; i++) {
+        if (indentLevels[i] === 0 || taskStrokeGroups.length === 0) {
+          taskStrokeGroups.push([...lineGroups[i]]);
+        } else {
+          for (const idx of lineGroups[i]) taskStrokeGroups[taskStrokeGroups.length - 1].push(idx);
+        }
+      }
+    }
+
+    const now = Date.now();
+    const tasks = taskStrokeGroups.map((indices) => ({
       id: generateId(),
       type: "stroke",
-      strokeIds,
+      strokeIds: indices.map((i) => this.noteData.strokes[i].id),
       checked: false,
-      created: Date.now(),
-      modified: Date.now(),
-    };
+      created: now,
+      modified: now,
+    }));
 
-    this.noteData.tasks.push(task);
+    for (const task of tasks) this.noteData.tasks.push(task);
     this._saveTasks();
 
-    // Push command for undo/redo
-    this.historyManager?.push(new MarkTaskCommand(task));
+    // Single undoable command for all created tasks
+    this.historyManager?.push(new MarkTaskCommand(tasks));
 
     // Clear selection and overlay
     this.renderer.setSelectedStrokes(new Set(), null);
@@ -2368,6 +2429,187 @@ export class NoteCanvas {
 
     // Clean up orphaned tasks
     this._cleanupOrphanedTasks();
+  }
+
+  /**
+   * Copy currently selected strokes to the in-app clipboard and system clipboard (as PNG).
+   * @private
+   */
+  _copySelectedStrokes() {
+    const selectedIndices = Array.from(this.renderer.selectedStrokeIndices);
+    if (selectedIndices.length === 0) return;
+
+    const bounds = this.renderer.selectionBounds;
+    const strokes = selectedIndices.map((i) => this.noteData.strokes[i]);
+
+    // Deep-clone strokes so later edits don't affect clipboard contents
+    const cloned = strokes.map((s) => ({
+      ...s,
+      x: [...s.x],
+      y: [...s.y],
+      pressure: s.pressure ? [...s.pressure] : [],
+      time: s.time ? [...s.time] : [],
+    }));
+
+    AppClipboard.copy("strokes", cloned, { ...bounds });
+
+    // Also write PNG to system clipboard for cross-app paste
+    this._renderSelectionToPng(strokes, bounds).catch(() => {
+      // System clipboard write failed — in-app clipboard still works
+    });
+  }
+
+  /**
+   * Render a set of strokes to an offscreen canvas and write the PNG to the system clipboard.
+   * @param {Object[]} strokes
+   * @param {{minX:number,minY:number,maxX:number,maxY:number}} bounds - Content coordinates
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _renderSelectionToPng(strokes, bounds) {
+    const MAX_SIZE = 2000;
+    const PADDING = 20; // content-coord padding around strokes
+
+    const rawW = bounds.maxX - bounds.minX + PADDING * 2;
+    const rawH = bounds.maxY - bounds.minY + PADDING * 2;
+    const scale = Math.min(1, MAX_SIZE / Math.max(rawW, rawH));
+    const canvasW = Math.round(rawW * scale);
+    const canvasH = Math.round(rawH * scale);
+
+    const offscreen = document.createElement("canvas");
+    offscreen.width = canvasW;
+    offscreen.height = canvasH;
+    const ctx = offscreen.getContext("2d");
+
+    // White background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    // Translate so bounds.minX/minY maps to PADDING
+    ctx.scale(scale, scale);
+    ctx.translate(-bounds.minX + PADDING, -bounds.minY + PADDING);
+
+    const palette = sharedGetThemePalette();
+    const markers = strokes.filter((s) => s.type === "marker");
+    const pens = strokes.filter((s) => s.type !== "marker");
+    for (const s of [...markers, ...pens]) {
+      sharedDrawStroke(ctx, s, palette, false, false);
+    }
+
+    const blob = await new Promise((resolve) => offscreen.toBlob(resolve, "image/png"));
+    if (!blob) return;
+
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  }
+
+  /**
+   * Returns the center of the current viewport in content coordinates.
+   * @returns {{x: number, y: number}}
+   * @private
+   */
+  _getViewportCenter() {
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const { width, height } = this.scroller.getViewportSize();
+    const x = (scrollLeft + width / 2) / this.zoomScale;
+    const y = (scrollTop + height / 2) / this.zoomScale;
+    return { x, y };
+  }
+
+  /**
+   * Show the paste floating menu at a screen position, if the clipboard has
+   * content that can be pasted in the current mode.
+   * @param {number} clientX
+   * @param {number} clientY
+   * @private
+   */
+  _showPasteMenu(clientX, clientY) {
+    if (!AppClipboard.canPasteInMode(this.mode)) return;
+
+    const { x: contentX, y: contentY } = this.inputHandler.getContentCoordinates(clientX, clientY);
+
+    const viewport = this.scroller.getViewportElement();
+    new ContextFloatingMenu(
+      viewport,
+      [
+        {
+          label: "Paste",
+          icon: getIcon("clipboard", 16),
+          action: () => this._pasteAtContentPoint(contentX, contentY),
+        },
+      ],
+      { x: clientX, y: clientY },
+    );
+  }
+
+  /**
+   * Paste clipboard content at the given content-coordinate position.
+   * Strokes are centered on the point and auto-selected.
+   * @param {number} contentX
+   * @param {number} contentY
+   * @private
+   */
+  _pasteAtContentPoint(contentX, contentY) {
+    const item = AppClipboard.paste();
+    if (!item) return;
+
+    if (item.type === "strokes") {
+      const { data: clonedStrokes, bounds } = item;
+      if (!clonedStrokes?.length) return;
+
+      // Compute offset to center pasted strokes on the target point
+      const centerX = (bounds.minX + bounds.maxX) / 2;
+      const centerY = (bounds.minY + bounds.maxY) / 2;
+      const dx = contentX - centerX;
+      const dy = contentY - centerY;
+
+      const newIndices = [];
+      const newBounds = {
+        minX: bounds.minX + dx,
+        minY: bounds.minY + dy,
+        maxX: bounds.maxX + dx,
+        maxY: bounds.maxY + dy,
+      };
+
+      for (const src of clonedStrokes) {
+        const stroke = {
+          ...src,
+          id: generateId(),
+          x: src.x.map((v) => v + dx),
+          y: src.y.map((v) => v + dy),
+          pressure: src.pressure ? [...src.pressure] : [],
+          time: src.time ? [...src.time] : [],
+          _deleted: false,
+        };
+
+        const newIndex = this.noteData.strokes.length;
+        this.noteData.strokes.push(stroke);
+        this.spatialIndex.insert(stroke, newIndex);
+        newIndices.push(newIndex);
+      }
+
+      this.strokesChanged = true;
+      this.strokeManager.markDirty();
+      this.strokeManager.forceSave();
+
+      // Switch to lasso mode so pasted strokes can be immediately moved/transformed
+      if (this.mode !== "lasso") {
+        this._setMode("lasso");
+      }
+
+      // Auto-select pasted strokes so the user can immediately move them
+      this.renderer.setSelectedStrokes(new Set(newIndices), newBounds);
+      this._updateSelectionOverlay();
+
+      this.historyManager?.push(
+        new PasteStrokesCommand(
+          newIndices.map((i) => this.noteData.strokes[i]),
+          newIndices,
+        ),
+      );
+
+      this.renderer.forceRedraw();
+    }
   }
 
   /**
@@ -2843,6 +3085,16 @@ export class NoteCanvas {
     this.taskSelectionBounds = null;
     this.selectionOverlay.setTaskMode(false);
 
+    // Detect text lines + indentation and show debug visualization
+    this.selectionRotated = false;
+    if (selectedIndices.size > 0) {
+      const { separatorYs, lineGroups } = detectStrokeLines(this.noteData.strokes, selectedIndices);
+      const indentLevels = detectLineIndentation(this.noteData.strokes, lineGroups);
+      this.renderer.setLineSeparators(separatorYs, indentLevels);
+    } else {
+      this.renderer.setLineSeparators([], []);
+    }
+
     // Show selection overlay if strokes are selected
     if (selectionBounds && selectedIndices.size > 0) {
       this._updateSelectionOverlay();
@@ -3115,6 +3367,8 @@ export class NoteCanvas {
       initialBounds: { ...this.renderer.selectionBounds },
       initialStrokes,
       selectedIndices,
+      initialLineSeparators: [...this.renderer.lineSeparators],
+      initialLineIndentLevels: [...this.renderer.lineIndentLevels],
     };
   }
 
@@ -3123,8 +3377,17 @@ export class NoteCanvas {
    * @private
    */
   _handleTransformMove(x, y) {
-    const { mode, handle, startX, startY, initialBounds, initialStrokes, selectedIndices } =
-      this.transformState;
+    const {
+      mode,
+      handle,
+      startX,
+      startY,
+      initialBounds,
+      initialStrokes,
+      selectedIndices,
+      initialLineSeparators,
+      initialLineIndentLevels,
+    } = this.transformState;
     const dx = x - startX;
     const dy = y - startY;
 
@@ -3132,8 +3395,24 @@ export class NoteCanvas {
 
     if (mode === "move") {
       this._handleMove(dx, dy, newBounds, initialStrokes, selectedIndices);
+      // Shift separators by the same dy
+      this.renderer.setLineSeparators(
+        initialLineSeparators.map((sepY) => sepY + dy),
+        initialLineIndentLevels,
+      );
     } else if (mode === "resize") {
       this._handleResize(dx, dy, handle, newBounds, initialBounds, initialStrokes, selectedIndices);
+      // Scale separator Y positions proportionally within the new bounds
+      const oldHeight = initialBounds.maxY - initialBounds.minY;
+      const newHeight = newBounds.maxY - newBounds.minY;
+      if (oldHeight > 0) {
+        this.renderer.setLineSeparators(
+          initialLineSeparators.map(
+            (sepY) => newBounds.minY + ((sepY - initialBounds.minY) / oldHeight) * newHeight,
+          ),
+          initialLineIndentLevels,
+        );
+      }
     } else if (mode === "rotate") {
       newBounds = this._handleRotate(
         x,
@@ -3144,6 +3423,8 @@ export class NoteCanvas {
         initialStrokes,
         selectedIndices,
       );
+      // Clear separators during rotate — they're no longer meaningful as horizontal lines
+      this.renderer.setLineSeparators([], []);
     }
 
     // Update renderer
@@ -3335,6 +3616,14 @@ export class NoteCanvas {
     this.strokeManager.markDirty();
     this.strokeManager.forceSave();
     this.strokesChanged = true;
+
+    // After rotate, line detection is unreliable (rotated strokes span large Y ranges
+    // and confuse the density histogram). Treat the whole selection as one block.
+    if (this.transformState.mode === "rotate") {
+      this.selectionRotated = true;
+      this.renderer.setLineSeparators([], []);
+    }
+
     this.transformState = null;
 
     // Force full redraw to ensure high quality
@@ -3440,6 +3729,7 @@ export class NoteCanvas {
       this._isZooming = true;
       this.lastTouchDistance = this._getPointersDistance();
       this.initialPinchZoom = this.zoomScale;
+      this._clearCanvasLongPress();
     } else if (this.activePointers.size === 1) {
       // Start Pan
       this.lastTouchX = e.clientX;
@@ -3447,6 +3737,11 @@ export class NoteCanvas {
       this.lastMoveTime = Date.now();
       this.velocityX = 0;
       this.velocityY = 0;
+
+      // Start canvas long-press to show paste menu (touch only — right-click handled via contextmenu)
+      if (e.pointerType === "touch" && AppClipboard.canPasteInMode(this.mode)) {
+        this._startCanvasLongPress(e.clientX, e.clientY);
+      }
     }
   }
 
@@ -3458,6 +3753,9 @@ export class NoteCanvas {
     // Check long press movement
     if (this.longPressTimer) {
       this._checkLongPressMove(e.clientX, e.clientY);
+    } else if (this._canvasLongPressTimer) {
+      // Canvas paste long-press: check movement independently (no media item involved)
+      this._checkCanvasLongPressMove(e.clientX, e.clientY);
     }
 
     if (this.mode === "insert-space" && !this.insertSpaceState) {
@@ -3834,9 +4132,9 @@ export class NoteCanvas {
     if (!this.noteData.pdfSource) return;
 
     const confirmed = await showConfirmDialog(
-      "Delete PDF",
-      "Are you sure you want to remove the PDF document? This will remove all pages.",
-      "Delete",
+      t("canvas.pdf.deleteConfirmTitle"),
+      t("canvas.pdf.deleteConfirmMsg"),
+      t("common.delete"),
       "btn-danger",
     );
 

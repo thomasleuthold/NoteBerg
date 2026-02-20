@@ -625,7 +625,8 @@
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
   padding: 12px;
-  width: 220px;
+  min-width: 180px;
+  width: max-content;
   z-index: 100;
 }
 
@@ -744,10 +745,15 @@
   max-height: 80vh;
 }
 
+.crop-image-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
 .crop-image {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
+  max-width: 90vw;
+  max-height: 70vh;
 }
 
 .crop-area {
@@ -755,6 +761,7 @@
   border: 2px solid white;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
   cursor: move;
+  touch-action: none;
 }
 
 .crop-handle {
@@ -763,6 +770,7 @@
   height: 12px;
   background: white;
   border: 1px solid #3b82f6;
+  touch-action: none;
 }
 
 .crop-nw {
@@ -805,6 +813,7 @@
   transform: translate(-50%, -50%);
   cursor: grab;
   pointer-events: auto;
+  touch-action: none;
   z-index: 10;
 }
 
@@ -949,4 +958,164 @@
   font-weight: 600;
   font-size: 11px;
   line-height: 1;
+}
+
+/* ==========================================================================
+   Context Floating Menu (paste menu on canvas long-press / right-click)
+   ========================================================================== */
+
+.context-floating-menu {
+  position: absolute;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  background: var(--bg-secondary, #fff);
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 4px 0;
+  pointer-events: auto;
+}
+
+.context-floating-menu__btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  color: var(--text-primary, #222);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.context-floating-menu__btn:hover,
+.context-floating-menu__btn:active {
+  background: var(--bg-hover, var(--bg-tertiary, #f0f0f0));
+}
+
+.context-floating-menu__icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Selection Floating Bar (copy/cut/paste bar over text selections)
+   ========================================================================== */
+
+.selection-floating-bar {
+  position: absolute;
+  z-index: 200;
+  display: flex;
+  flex-direction: row;
+  background: var(--bg-secondary, #fff);
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.selection-floating-bar__btn {
+  padding: 8px 16px;
+  border: none;
+  border-right: 1px solid var(--border-color, #ddd);
+  background: none;
+  color: var(--text-primary, #222);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.selection-floating-bar__btn:last-child {
+  border-right: none;
+}
+
+.selection-floating-bar__btn:hover,
+.selection-floating-bar__btn:active {
+  background: var(--bg-hover, var(--bg-tertiary, #f0f0f0));
+}
+
+/* ===== Toolbar layout (replaces inline styles) ===== */
+.note-canvas-toolbar {
+  position: relative;
+  z-index: 100;
+  overflow: visible;
+}
+
+.note-canvas-toolbar__options-container {
+  margin-left: auto;
+  display: flex;
+  gap: 16px;
+}
+
+/* ===== Insert dialog SVG icon spacing ===== */
+.note-canvas-toolbar__option-icon {
+  margin-right: 8px;
+}
+
+/* ===== Dark theme pen dialog (replaces injected style tag) ===== */
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn {
+  background-color: #333;
+  border: 1px solid #555;
+}
+
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn:hover {
+  background-color: #444;
+}
+
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn--active {
+  background-color: #555;
+  border-color: #999;
+}
+
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn {
+  background-color: #333;
+  border: 1px solid #555;
+  color: #fff;
+}
+
+.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn:hover {
+  background-color: #444;
+}
+
+/* ===== Task bounding box (replaces injected style tag in TaskCheckboxLayer) ===== */
+.note-canvas__task-bounding-box {
+  position: absolute;
+  border: 1px dashed var(--text-secondary);
+  border-radius: 4px;
+  pointer-events: auto;
+  cursor: pointer;
+  background-color: transparent;
+  opacity: 0.2;
+  transition: opacity 0.2s;
+}
+
+.note-canvas__task-bounding-box:hover {
+  opacity: 0.6;
+  background-color: var(--bg-hover);
+}
+
+/* ===== Text task checkbox (replaces CHECKBOX_STYLE constant) ===== */
+.task-text-checkbox {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+  margin-right: 6px;
+  user-select: none;
+  cursor: pointer;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
+
+.task-text-checkbox--checked {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
 }

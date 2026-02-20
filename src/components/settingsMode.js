@@ -4,6 +4,7 @@
  */
 
 import { APP_FULL_VERSION, APP_NAME } from "../config.js";
+import { changeLanguage, getCurrentLanguage, t } from "../i18n/index.js";
 import {
   clearCredentials,
   getStoredCredentials,
@@ -32,43 +33,77 @@ export async function renderSettings(container) {
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? true; // Default: enabled
   const encryptNextcloudData = (await getSetting("encrypt_nextcloud_data")) ?? false; // Default: disabled
-  const recognitionUrl = (await getSetting("recognition_url")) || "http://localhost:5000";
+  // Migrate old recognition_url setting to recognition_fallback_url
+  const legacyRecognitionUrl = await getSetting("recognition_url");
+  if (legacyRecognitionUrl) {
+    await setSetting("recognition_fallback_url", legacyRecognitionUrl);
+    await setSetting("recognition_url", null);
+  }
+  const recognitionFallbackUrl = (await getSetting("recognition_fallback_url")) || "";
   const recognitionLanguage = (await getSetting("recognition_language")) || "en-US";
+  const currentLanguage = getCurrentLanguage();
+
+  // Check if local sidecar recognition is available
+  let localRecognitionUrl = "";
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    localRecognitionUrl = await invoke("get_recognition_url");
+  } catch (_e) {
+    // Not in Tauri environment or command not available
+  }
+  const hasLocalRecognition = !!localRecognitionUrl;
+
+  const recognitionLangOptions = ["en-US", "de-DE", "fr-FR", "es-ES", "it-IT", "ja-JP", "zh-CN"];
 
   container.innerHTML = `
     <div class="settings-panel">
       <div class="settings-header">
-        <h2>Settings</h2>
+        <h2>${t("settings.title")}</h2>
       </div>
 
       <div class="settings-section">
-        <h3>Appearance</h3>
+        <h3>${t("settings.sections.appearance")}</h3>
 
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Theme</span>
-            <span class="setting-description">Choose your preferred color scheme</span>
+            <span class="setting-name">${t("settings.appearance.theme")}</span>
+            <span class="setting-description">${t("settings.appearance.themeDesc")}</span>
           </div>
           <div class="theme-toggle-group">
             <button class="theme-toggle ${currentTheme === "light" ? "active" : ""}" data-theme="light">
               <div class="theme-toggle-swatch light"></div>
-              <span class="theme-toggle-label">Light</span>
+              <span class="theme-toggle-label">${t("settings.appearance.light")}</span>
             </button>
             <button class="theme-toggle ${currentTheme === "dark" ? "active" : ""}" data-theme="dark">
               <div class="theme-toggle-swatch dark"></div>
-              <span class="theme-toggle-label">Dark</span>
+              <span class="theme-toggle-label">${t("settings.appearance.dark")}</span>
             </button>
           </div>
         </div>
       </div>
 
       <div class="settings-section">
-        <h3>Security</h3>
+        <h3>${t("settings.sections.language")}</h3>
 
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Encrypt Local Data</span>
-            <span class="setting-description">Encrypt notes stored locally on this device</span>
+            <span class="setting-name">${t("settings.language.label")}</span>
+            <span class="setting-description">${t("settings.language.desc")}</span>
+          </div>
+          <select id="language-select" class="setting-control">
+            <option value="en" ${currentLanguage === "en" ? "selected" : ""}>🇬🇧 ${t("settings.language.en")}</option>
+            <option value="de" ${currentLanguage === "de" ? "selected" : ""}>🇩🇪 ${t("settings.language.de")}</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>${t("settings.sections.security")}</h3>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">${t("settings.security.encryptLocal")}</span>
+            <span class="setting-description">${t("settings.security.encryptLocalDesc")}</span>
           </div>
           <label class="toggle-switch">
             <input
@@ -82,12 +117,12 @@ export async function renderSettings(container) {
 
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Encrypt Data on Nextcloud</span>
+            <span class="setting-name">${t("settings.security.encryptNextcloud")}</span>
             <span class="setting-description">
-              ${authenticated ? "Encrypt notes before uploading to Nextcloud (end-to-end encryption)" : "Nextcloud sync not configured"}
+              ${authenticated ? t("settings.security.encryptNextcloudDesc_connected") : t("settings.security.encryptNextcloudDesc_disconnected")}
             </span>
           </div>
-          <label class="toggle-switch" ${!authenticated ? 'style="opacity: 0.5;"' : ""}>
+          <label class="toggle-switch${!authenticated ? " toggle-switch--disabled" : ""}">
             <input
               type="checkbox"
               id="encrypt-nextcloud-toggle"
@@ -148,66 +183,65 @@ export async function renderSettings(container) {
       </div>
 
       <div class="settings-section">
-        <h3>Nextcloud Sync</h3>
+        <h3>${t("settings.sections.nextcloud")}</h3>
 
         ${
           !authenticated
             ? `
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Connect to Nextcloud</span>
-            <span class="setting-description">Use Nextcloud Login Flow to securely connect your account</span>
+            <span class="setting-name">${t("settings.nextcloud.connectLabel")}</span>
+            <span class="setting-description">${t("settings.nextcloud.connectDesc")}</span>
           </div>
         </div>
 
         <div class="setting-item">
           <label for="nextcloud-url" class="setting-label">
-            <span class="setting-name">Nextcloud Server URL</span>
-            <span class="setting-description">Enter your Nextcloud server address</span>
+            <span class="setting-name">${t("settings.nextcloud.urlLabel")}</span>
+            <span class="setting-description">${t("settings.nextcloud.urlDesc")}</span>
           </label>
           <input
             type="url"
             id="nextcloud-url"
             class="setting-control"
-            placeholder="https://cloud.example.com"
+            placeholder="${t("settings.nextcloud.urlPlaceholder")}"
           />
         </div>
 
         <div class="setting-item">
-          <button id="test-connection-btn" class="btn-secondary">Test Connection</button>
-          <button id="connect-nextcloud-btn" class="btn-primary">Connect to Nextcloud</button>
+          <button id="test-connection-btn" class="btn-secondary">${t("settings.nextcloud.testBtn")}</button>
+          <button id="connect-nextcloud-btn" class="btn-primary">${t("settings.nextcloud.connectBtn")}</button>
           <span id="connection-status" class="setting-note"></span>
         </div>
 
         <div class="setting-item" id="login-url-container" style="display: none;">
           <label for="login-url" class="setting-label">
-            <span class="setting-name">Login URL</span>
-            <span class="setting-description">Copy and open this URL in your browser to complete login</span>
+            <span class="setting-name">${t("settings.nextcloud.loginUrlLabel")}</span>
+            <span class="setting-description">${t("settings.nextcloud.loginUrlDesc")}</span>
           </label>
           <input
             type="text"
             id="login-url"
-            class="setting-control"
+            class="setting-control setting-control--selectable"
             readonly
-            style="user-select: all; -webkit-user-select: all;"
           />
-          <button id="copy-login-url-btn" class="btn-secondary" style="margin-top: 8px;">Copy URL</button>
+          <button id="copy-login-url-btn" class="btn-secondary btn--margin-top">${t("settings.nextcloud.copyUrlBtn")}</button>
         </div>
         `
             : `
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Connected</span>
-            <span class="setting-description">Logged in as ${credentials?.loginName || "Unknown"}</span>
+            <span class="setting-name">${t("settings.nextcloud.connected")}</span>
+            <span class="setting-description">${t("settings.nextcloud.connectedAs", { user: credentials?.loginName || "Unknown" })}</span>
           </div>
           <div class="setting-label">
-            <span class="setting-description">Server: ${credentials?.serverUrl || "Unknown"}</span>
+            <span class="setting-description">${t("settings.nextcloud.server", { url: credentials?.serverUrl || "Unknown" })}</span>
           </div>
         </div>
 
         <div class="setting-item">
-          <button id="sync-now-btn" class="btn-primary">Sync Now</button>
-          <button id="disconnect-btn" class="btn-secondary">Disconnect</button>
+          <button id="sync-now-btn" class="btn-primary">${t("settings.nextcloud.syncNow")}</button>
+          <button id="disconnect-btn" class="btn-secondary">${t("settings.nextcloud.disconnect")}</button>
           <span id="sync-status" class="setting-note"></span>
         </div>
         `
@@ -215,113 +249,122 @@ export async function renderSettings(container) {
       </div>
 
       <div class="settings-section">
-        <h3>Handwriting Recognition</h3>
+        <h3>${t("settings.sections.recognition")}</h3>
 
         <div class="setting-item">
-          <label for="recognition-url" class="setting-label">
-            <span class="setting-name">Backend URL</span>
-            <span class="setting-description">URL of the recognition service</span>
+          <div class="setting-label">
+            <span class="setting-name">${t("settings.recognition.statusLabel")}</span>
+            <span class="setting-description" id="recognition-mode-info">
+              ${hasLocalRecognition ? t("settings.recognition.localActive") : recognitionFallbackUrl ? t("settings.recognition.externalService") : t("settings.recognition.notConfigured")}
+            </span>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <label for="recognition-fallback-url" class="setting-label">
+            <span class="setting-name">${t("settings.recognition.fallbackUrlLabel")}</span>
+            <span class="setting-description">${t("settings.recognition.fallbackUrlDesc")}</span>
           </label>
           <input
             type="url"
-            id="recognition-url"
+            id="recognition-fallback-url"
             class="setting-control"
-            value="${recognitionUrl}"
-            placeholder="http://localhost:5000"
+            value="${recognitionFallbackUrl}"
+            placeholder="${t("settings.recognition.fallbackUrlPlaceholder")}"
           />
         </div>
 
         <div class="setting-item">
           <label for="recognition-language" class="setting-label">
-            <span class="setting-name">Language</span>
-            <span class="setting-description">Target language (requires installed Windows language pack)</span>
+            <span class="setting-name">${t("settings.recognition.languageLabel")}</span>
+            <span class="setting-description">${t("settings.recognition.languageDesc")}</span>
           </label>
           <select id="recognition-language" class="setting-control">
-            <option value="en-US" ${recognitionLanguage === "en-US" ? "selected" : ""}>English (US)</option>
-            <option value="de-DE" ${recognitionLanguage === "de-DE" ? "selected" : ""}>German</option>
-            <option value="fr-FR" ${recognitionLanguage === "fr-FR" ? "selected" : ""}>French</option>
-            <option value="es-ES" ${recognitionLanguage === "es-ES" ? "selected" : ""}>Spanish</option>
-            <option value="it-IT" ${recognitionLanguage === "it-IT" ? "selected" : ""}>Italian</option>
-            <option value="ja-JP" ${recognitionLanguage === "ja-JP" ? "selected" : ""}>Japanese</option>
-            <option value="zh-CN" ${recognitionLanguage === "zh-CN" ? "selected" : ""}>Chinese (Simplified)</option>
+            ${recognitionLangOptions.map((code) => `<option value="${code}" ${recognitionLanguage === code ? "selected" : ""}>${t(`settings.recognition.languages.${code}`)}</option>`).join("")}
           </select>
         </div>
 
         <div class="setting-item">
-          <button id="test-recognition-btn" class="btn-secondary">Test Connection</button>
+          <button id="test-recognition-btn" class="btn-secondary">${t("settings.recognition.testBtn")}</button>
           <span id="recognition-status" class="setting-note"></span>
         </div>
       </div>
 
       <div class="settings-section">
-        <h3>Logging</h3>
+        <h3>${t("settings.sections.logging")}</h3>
 
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Log Level</span>
-            <span class="setting-description">Set minimum severity level for logging</span>
+            <span class="setting-name">${t("settings.logging.logLevel")}</span>
+            <span class="setting-description">${t("settings.logging.logLevelDesc")}</span>
           </div>
           <select id="log-level-select" class="setting-control">
-            <option value="debug">Debug (Verbose)</option>
-            <option value="info">Info</option>
-            <option value="warning" selected>Warning (Default)</option>
-            <option value="error">Error (Minimal)</option>
+            <option value="debug">${t("settings.logging.debug")}</option>
+            <option value="info">${t("settings.logging.info")}</option>
+            <option value="warning" selected>${t("settings.logging.warning")}</option>
+            <option value="error">${t("settings.logging.error")}</option>
           </select>
         </div>
 
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Session Logs</span>
-            <span class="setting-description">View in-memory logs for this session</span>
+            <span class="setting-name">${t("settings.logging.sessionLogs")}</span>
+            <span class="setting-description">${t("settings.logging.sessionLogsDesc")}</span>
           </div>
-          <button id="view-logs-btn" class="btn-secondary">View Logs</button>
+          <button id="view-logs-btn" class="btn-secondary">${t("settings.logging.viewLogs")}</button>
         </div>
       </div>
 
       <div class="settings-section">
-        <h3 style="color: var(--color-danger);">Danger Zone</h3>
+        <h3 class="settings-section-heading--danger">${t("settings.sections.dangerZone")}</h3>
 
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Reset Master Password</span>
-            <span class="setting-description">Clear master password and encryption keys. You'll need to set a new password.</span>
+            <span class="setting-name">${t("settings.dangerZone.resetPassword")}</span>
+            <span class="setting-description">${t("settings.dangerZone.resetPasswordDesc")}</span>
           </div>
-          <button id="reset-master-password-btn" class="btn-secondary" style="background-color: var(--color-warning); color: white;">Reset Master Password</button>
+          <button id="reset-master-password-btn" class="btn-secondary btn-warning">${t("settings.dangerZone.resetPasswordBtn")}</button>
         </div>
 
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Purge Local Data</span>
-            <span class="setting-description">Clears ALL local notebooks and notes from this device.</span>
+            <span class="setting-name">${t("settings.dangerZone.purgeLocal")}</span>
+            <span class="setting-description">${t("settings.dangerZone.purgeLocalDesc")}</span>
           </div>
-          <button id="purge-local-btn" class="btn-secondary" style="background-color: var(--color-danger); color: white;">Purge Local Data</button>
+          <button id="purge-local-btn" class="btn-secondary btn-danger-filled">${t("settings.dangerZone.purgeLocalBtn")}</button>
           <span id="purge-status" class="setting-note"></span>
         </div>
 
         <div class="setting-item">
-          <div class="setting-description" style="color: var(--text-secondary); font-size: 0.875rem;">
-            ⚠️ <strong>Warning:</strong> This action will delete all local data including notebooks, notes, and sync history. ${authenticated ? "If you are connected to Nextcloud, you can restore your data by syncing again. Unsynced changes will be permanently lost." : "This action is permanent and cannot be undone."}
+          <div class="danger-zone-desc">
+            ${authenticated ? t("settings.dangerZone.warningConnected") : t("settings.dangerZone.warningDisconnected")}
           </div>
         </div>
       </div>
 
       <div class="settings-section">
-        <h3>About</h3>
+        <h3>${t("settings.sections.about")}</h3>
 
         <div class="setting-item">
           <div class="about-info">
             <p><strong>${APP_NAME}</strong></p>
-            <p>Version: ${APP_FULL_VERSION}</p>
-            <p>A note-taking app supporting handwritten notes, text, and drawings.</p>
+            <p>${t("settings.about.version", { version: APP_FULL_VERSION })}</p>
+            <p>${t("settings.about.description")}</p>
           </div>
         </div>
 
         <div class="setting-item">
-          <button id="show-licenses-btn" class="btn-secondary">License Information</button>
+          <button id="show-licenses-btn" class="btn-secondary">${t("settings.about.licenses")}</button>
         </div>
       </div>
     </div>
   `;
+
+  // Language selector
+  const languageSelect = container.querySelector("#language-select");
+  languageSelect?.addEventListener("change", async () => {
+    await changeLanguage(languageSelect.value);
+  });
 
   // Attach event listeners to theme toggle buttons
   const themeToggles = container.querySelectorAll(".theme-toggle");
@@ -331,8 +374,8 @@ export async function renderSettings(container) {
       setTheme(theme);
 
       // Update active state
-      for (const t of themeToggles) {
-        t.classList.remove("active");
+      for (const btn of themeToggles) {
+        btn.classList.remove("active");
       }
       toggle.classList.add("active");
     });
@@ -374,8 +417,8 @@ export async function renderSettings(container) {
               console.log("[Settings] Master password setup complete for local encryption");
               await setSetting("encrypt_local_data", true);
               await showAlertDialog(
-                "Encryption Enabled",
-                "✓ Master password created and local data encryption enabled. New notes will be encrypted.",
+                t("settings.encryption.enabledLocalTitle"),
+                t("settings.encryption.enabledLocalMsg"),
               );
               resolve(true);
             },
@@ -398,10 +441,10 @@ export async function renderSettings(container) {
 
     // Show confirmation message
     const statusMsg = enabled
-      ? "✓ Local data encryption enabled. New notes will be encrypted."
-      : "Local data encryption disabled. Existing encrypted notes remain encrypted.";
+      ? t("settings.encryption.enabledLocalMsg")
+      : t("settings.encryption.disabledLocalMsg");
 
-    await showAlertDialog("Encryption Setting Updated", statusMsg);
+    await showAlertDialog(t("settings.encryption.updatedTitle"), statusMsg);
   });
 
   encryptNextcloudToggle?.addEventListener("change", async () => {
@@ -433,8 +476,8 @@ export async function renderSettings(container) {
             console.log("[Settings] Master password setup complete for Nextcloud encryption");
             await setSetting("encrypt_nextcloud_data", true);
             await showAlertDialog(
-              "Encryption Enabled",
-              "✓ Master password created and Nextcloud encryption enabled. Notes will be encrypted before uploading.<br><br><strong>Important:</strong> Encrypted notes cannot be read in Nextcloud's web interface or other clients.",
+              t("settings.encryption.enabledNextcloudTitle"),
+              t("settings.encryption.enabledNextcloudMsg"),
             );
           },
           onCancel: () => {
@@ -451,24 +494,27 @@ export async function renderSettings(container) {
 
     // Show confirmation message
     const statusMsg = enabled
-      ? "✓ Nextcloud encryption enabled. Notes will be encrypted before uploading.<br><br><strong>Important:</strong> Encrypted notes cannot be read in Nextcloud's web interface or other clients."
-      : "Nextcloud encryption disabled. Notes will be synced as plain text.";
+      ? t("settings.encryption.enabledNextcloudMsg")
+      : t("settings.encryption.disabledNextcloudMsg");
 
-    await showAlertDialog("Encryption Setting Updated", statusMsg);
+    await showAlertDialog(t("settings.encryption.updatedTitle"), statusMsg);
   });
 
   // Biometric authentication removed for performance - event listeners removed
 
   // Recognition settings listeners
-  const recognitionUrlInput = container.querySelector("#recognition-url");
+  const recognitionFallbackUrlInput = container.querySelector("#recognition-fallback-url");
   const recognitionLanguageSelect = container.querySelector("#recognition-language");
   const testRecognitionBtn = container.querySelector("#test-recognition-btn");
   const recognitionStatus = container.querySelector("#recognition-status");
 
-  recognitionUrlInput?.addEventListener("change", async () => {
-    let url = recognitionUrlInput.value.trim();
+  recognitionFallbackUrlInput?.addEventListener("change", async () => {
+    let url = recognitionFallbackUrlInput.value.trim();
     if (url.endsWith("/")) url = url.slice(0, -1);
-    await setSetting("recognition_url", url);
+    await setSetting("recognition_fallback_url", url);
+    // Invalidate cached URL so next recognition uses the new value
+    const { invalidateRecognitionUrl } = await import("../modules/autoRecognition.js");
+    invalidateRecognitionUrl();
     if (recognitionStatus) recognitionStatus.textContent = "";
   });
 
@@ -477,12 +523,19 @@ export async function renderSettings(container) {
   });
 
   testRecognitionBtn?.addEventListener("click", async () => {
-    const url = recognitionUrlInput.value.trim().replace(/\/$/, "");
-    const apiUrl = `${url}/recognize`;
+    // Test whichever backend is active: sidecar first, then fallback URL
+    const testUrl =
+      localRecognitionUrl || recognitionFallbackUrlInput.value.trim().replace(/\/$/, "");
+    if (!testUrl) {
+      recognitionStatus.textContent = t("settings.recognition.notConfiguredError");
+      recognitionStatus.style.color = "var(--color-error)";
+      return;
+    }
+    const apiUrl = `${testUrl}/recognize`;
 
     testRecognitionBtn.disabled = true;
-    testRecognitionBtn.textContent = "Testing...";
-    recognitionStatus.textContent = "Connecting...";
+    testRecognitionBtn.textContent = t("settings.recognition.testing");
+    recognitionStatus.textContent = t("settings.recognition.connecting");
     recognitionStatus.style.color = "var(--color-text)";
 
     try {
@@ -494,20 +547,27 @@ export async function renderSettings(container) {
       });
 
       if (response.ok) {
-        recognitionStatus.textContent = "✓ Connection successful!";
+        const source = localRecognitionUrl
+          ? t("settings.recognition.localSidecar")
+          : t("settings.recognition.externalServiceLabel");
+        recognitionStatus.textContent = t("settings.recognition.success", { source });
         recognitionStatus.style.color = "var(--color-success)";
       } else {
-        recognitionStatus.textContent = `✗ Server returned ${response.status}`;
+        recognitionStatus.textContent = t("settings.recognition.errorStatus", {
+          status: response.status,
+        });
         recognitionStatus.style.color = "var(--color-error)";
       }
     } catch (error) {
       console.error("Recognition test failed:", error);
       const errorMessage = error.message || String(error);
-      recognitionStatus.textContent = `✗ Connection failed: ${errorMessage}`;
+      recognitionStatus.textContent = t("settings.recognition.errorFailed", {
+        message: errorMessage,
+      });
       recognitionStatus.style.color = "var(--color-error)";
     } finally {
       testRecognitionBtn.disabled = false;
-      testRecognitionBtn.textContent = "Test Connection";
+      testRecognitionBtn.textContent = t("settings.recognition.testBtn");
     }
   });
 
@@ -537,30 +597,30 @@ export async function renderSettings(container) {
     const logsText = getLogsAsText();
 
     if (logCount === 0) {
-      await showAlertDialog("Debug Logs", "No logs available in this session.");
+      await showAlertDialog(t("settings.sections.logging"), t("settings.logging.noLogs"));
       return;
     }
 
     // Create a custom modal with copy and clear buttons
     const modalHtml = `
       <div id="logs-modal" class="modal-overlay">
-        <div class="modal-dialog" style="max-width: 800px; max-height: 80vh;">
+        <div class="modal-dialog modal--wide">
           <div class="modal-header">
-            <h3 class="modal-title">Debug Logs (${logCount} entries)</h3>
-            <button class="modal-close" aria-label="Close">&times;</button>
+            <h3 class="modal-title">${t("settings.logging.logsTitle", { count: logCount })}</h3>
+            <button class="modal-close" aria-label="${t("modals.close")}">&times;</button>
           </div>
           <div class="modal-body">
-            <p style="margin-bottom: 10px;">Session logs from this app run:</p>
+            <p class="logs-intro">${t("settings.logging.logsIntro")}</p>
             <textarea
               id="logs-content"
+              class="logs-textarea"
               readonly
-              style="width: 100%; height: 400px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary);"
             >${logsText}</textarea>
           </div>
-          <div class="modal-footer" style="gap: 10px;">
-            <button class="btn-secondary" id="copy-logs-btn">Copy to Clipboard</button>
-            <button class="btn-danger" id="clear-logs-btn">Clear Logs</button>
-            <button class="btn-primary modal-close-btn">Close</button>
+          <div class="modal-footer modal-footer--gap">
+            <button class="btn-secondary" id="copy-logs-btn">${t("settings.logging.copyLogs")}</button>
+            <button class="btn-danger" id="clear-logs-btn">${t("settings.logging.clearLogs")}</button>
+            <button class="btn-primary modal-close-btn">${t("modals.noteProperties.closeBtn")}</button>
           </div>
         </div>
       </div>
@@ -586,9 +646,9 @@ export async function renderSettings(container) {
     copyBtn.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(logsText);
-        copyBtn.textContent = "✓ Copied!";
+        copyBtn.textContent = t("settings.logging.copied");
         setTimeout(() => {
-          copyBtn.textContent = "Copy to Clipboard";
+          copyBtn.textContent = t("settings.logging.copyLogs");
         }, 2000);
       } catch (error) {
         console.error("Failed to copy logs:", error);
@@ -597,7 +657,7 @@ export async function renderSettings(container) {
     });
 
     clearBtn.addEventListener("click", () => {
-      if (confirm("Are you sure you want to clear all debug logs?")) {
+      if (confirm(t("settings.logging.clearConfirm"))) {
         clearLogs();
         logsContent.value = "";
         closeModal();
@@ -627,13 +687,13 @@ export async function renderSettings(container) {
       const serverUrl = urlInput.value.trim();
 
       if (!serverUrl) {
-        statusSpan.textContent = "Please enter a server URL";
+        statusSpan.textContent = t("settings.nextcloud.errorNoUrl");
         statusSpan.style.color = "var(--color-error)";
         return;
       }
 
       testBtn.disabled = true;
-      testBtn.textContent = "Testing...";
+      testBtn.textContent = t("settings.nextcloud.testing");
       statusSpan.textContent = "";
 
       try {
@@ -650,7 +710,7 @@ export async function renderSettings(container) {
         statusSpan.style.color = "var(--color-error)";
       } finally {
         testBtn.disabled = false;
-        testBtn.textContent = "Test Connection";
+        testBtn.textContent = t("settings.nextcloud.testBtn");
       }
     });
 
@@ -658,14 +718,14 @@ export async function renderSettings(container) {
       const serverUrl = urlInput.value.trim();
 
       if (!serverUrl) {
-        statusSpan.textContent = "Please enter a server URL";
+        statusSpan.textContent = t("settings.nextcloud.errorNoUrl");
         statusSpan.style.color = "var(--color-error)";
         return;
       }
 
       connectBtn.disabled = true;
-      connectBtn.textContent = "Initializing...";
-      statusSpan.textContent = "Starting Nextcloud Login Flow...";
+      connectBtn.textContent = t("settings.nextcloud.initializing");
+      statusSpan.textContent = t("settings.nextcloud.startingFlow");
       statusSpan.style.color = "var(--color-text)";
 
       const loginUrlContainer = container.querySelector("#login-url-container");
@@ -678,7 +738,7 @@ export async function renderSettings(container) {
           loginUrlContainer.style.display = "block";
           loginUrlInput.value = loginUrl;
 
-          statusSpan.textContent = "Waiting for login... Open the URL above in your browser";
+          statusSpan.textContent = t("settings.nextcloud.waitingLogin");
           statusSpan.style.color = "var(--color-text)";
 
           // Add copy button handler
@@ -686,16 +746,16 @@ export async function renderSettings(container) {
             try {
               loginUrlInput.select();
               await navigator.clipboard.writeText(loginUrl);
-              copyLoginUrlBtn.textContent = "✓ Copied!";
+              copyLoginUrlBtn.textContent = t("settings.logging.copied");
               setTimeout(() => {
-                copyLoginUrlBtn.textContent = "Copy URL";
+                copyLoginUrlBtn.textContent = t("settings.nextcloud.copyUrlBtn");
               }, 2000);
             } catch (_err) {
               // Fallback: select the text
               loginUrlInput.select();
-              copyLoginUrlBtn.textContent = "Selected - use Ctrl+C";
+              copyLoginUrlBtn.textContent = t("settings.nextcloud.selectedCopyHint");
               setTimeout(() => {
-                copyLoginUrlBtn.textContent = "Copy URL";
+                copyLoginUrlBtn.textContent = t("settings.nextcloud.copyUrlBtn");
               }, 2000);
             }
           };
@@ -718,7 +778,7 @@ export async function renderSettings(container) {
         statusSpan.textContent = `✗ ${errorMessage}`;
         statusSpan.style.color = "var(--color-error)";
         connectBtn.disabled = false;
-        connectBtn.textContent = "Connect to Nextcloud";
+        connectBtn.textContent = t("settings.nextcloud.connectBtn");
       }
     });
   } else {
@@ -728,8 +788,8 @@ export async function renderSettings(container) {
 
     syncBtn?.addEventListener("click", async () => {
       syncBtn.disabled = true;
-      syncBtn.textContent = "Syncing...";
-      syncStatus.textContent = "Syncing with Nextcloud...";
+      syncBtn.textContent = t("footer.syncing");
+      syncStatus.textContent = t("settings.nextcloud.syncing");
       syncStatus.style.color = "var(--color-text)";
 
       try {
@@ -762,12 +822,12 @@ export async function renderSettings(container) {
         syncStatus.style.color = "var(--color-error)";
       } finally {
         syncBtn.disabled = false;
-        syncBtn.textContent = "Sync Now";
+        syncBtn.textContent = t("settings.nextcloud.syncNow");
       }
     });
 
     disconnectBtn?.addEventListener("click", async () => {
-      if (confirm("Are you sure you want to disconnect from Nextcloud?")) {
+      if (confirm(t("settings.nextcloud.disconnectConfirm"))) {
         await clearCredentials();
 
         // Notify footer about auth change
@@ -782,11 +842,9 @@ export async function renderSettings(container) {
   const resetMasterPasswordBtn = container.querySelector("#reset-master-password-btn");
   resetMasterPasswordBtn?.addEventListener("click", async () => {
     const confirmed = await showConfirmDialog(
-      "Reset Master Password",
-      "⚠️ This will clear your master password and encryption keys.<br><br>" +
-        "After reset, you'll need to set a new master password to use encryption.<br><br>" +
-        "<strong>Note:</strong> Encrypted notes will remain encrypted and cannot be decrypted without the original password.",
-      "Reset Password",
+      t("settings.dangerZone.resetPasswordConfirmTitle"),
+      t("settings.dangerZone.resetPasswordConfirmMsg"),
+      t("settings.dangerZone.resetPasswordConfirmBtn"),
       "btn-warning",
     );
 
@@ -801,8 +859,8 @@ export async function renderSettings(container) {
       await clearMasterPassword();
 
       await showAlertDialog(
-        "Master Password Reset",
-        "✓ Master password has been cleared. You can now set a new password by enabling encryption.",
+        t("settings.dangerZone.resetPasswordSuccessTitle"),
+        t("settings.dangerZone.resetPasswordSuccessMsg"),
       );
 
       // Re-render settings to update UI
@@ -819,23 +877,18 @@ export async function renderSettings(container) {
 
   purgeLocalBtn?.addEventListener("click", async () => {
     const confirmed = await showConfirmDialog(
-      "Purge Local Data",
-      "⚠️ DANGER: This will DELETE ALL local notebooks and notes from this device!<br><br>" +
-        "This includes:<ul>" +
-        "<li>All notebooks and notes</li>" +
-        "<li>All deleted items (recycle bin)</li>" +
-        "<li>Local sync history</li></ul>" +
-        "This action cannot be undone. Are you absolutely sure you want to continue?",
-      "Purge Everything",
+      t("settings.dangerZone.purgeConfirmTitle"),
+      t("settings.dangerZone.purgeConfirmMsg"),
+      t("settings.dangerZone.purgeConfirmBtn"),
       "btn-danger",
     );
 
     if (!confirmed) return;
 
     purgeLocalBtn.disabled = true;
-    purgeLocalBtn.textContent = "Purging...";
+    purgeLocalBtn.textContent = t("settings.dangerZone.purging");
     if (purgeStatus) {
-      purgeStatus.textContent = "Purging local data...";
+      purgeStatus.textContent = t("settings.dangerZone.purgingStatus");
       purgeStatus.style.color = "var(--color-danger)";
     }
 
@@ -845,8 +898,8 @@ export async function renderSettings(container) {
       const isAuth = await isAuthenticated();
       if (purgeStatus) {
         purgeStatus.textContent = isAuth
-          ? `✓ Local data purged successfully! Click "Sync Now" to download from server.`
-          : `✓ Local data purged successfully!`;
+          ? t("settings.dangerZone.purgeSuccessStatus")
+          : t("settings.dangerZone.purgeSuccessStatusOffline");
         purgeStatus.style.color = "var(--color-success)";
       }
 
@@ -855,25 +908,29 @@ export async function renderSettings(container) {
 
       if (isAuth) {
         await showAlertDialog(
-          "Purge Successful",
-          "Local data purged successfully!<br><br>" +
-            "Next steps:<ol>" +
-            "<li>Click 'Sync Now' to download all data from Nextcloud</li>" +
-            "<li>Wait for sync to complete</li>" +
-            "<li>Your notes will be restored from the server</li></ol>",
+          t("settings.dangerZone.purgeSuccessTitle"),
+          t("settings.dangerZone.purgeSuccessMsgConnected"),
         );
       } else {
-        await showAlertDialog("Purge Successful", "Local data purged successfully!");
+        await showAlertDialog(
+          t("settings.dangerZone.purgeSuccessTitle"),
+          t("settings.dangerZone.purgeSuccessMsgOffline"),
+        );
       }
     } catch (error) {
       if (purgeStatus) {
-        purgeStatus.textContent = `✗ Purge failed: ${error.message}`;
+        purgeStatus.textContent = t("settings.dangerZone.purgeFailedStatus", {
+          message: error.message,
+        });
         purgeStatus.style.color = "var(--color-error)";
       }
-      await showAlertDialog("Purge Failed", `Purge failed: ${error.message}`);
+      await showAlertDialog(
+        t("settings.dangerZone.purgeFailedTitle"),
+        t("settings.dangerZone.purgeFailedMsg", { message: error.message }),
+      );
     } finally {
       purgeLocalBtn.disabled = false;
-      purgeLocalBtn.textContent = "Purge Local Data";
+      purgeLocalBtn.textContent = t("settings.dangerZone.purgeLocalBtn");
     }
   });
 

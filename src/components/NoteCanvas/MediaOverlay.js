@@ -1,6 +1,7 @@
 /**
  * MediaOverlay - Manages the floating UI for selected media items
  */
+import { t } from "../../i18n/index.js";
 import { getIcon } from "../../utils/icons.js";
 
 export class MediaOverlay {
@@ -39,25 +40,24 @@ export class MediaOverlay {
     this.menu = document.createElement("div");
     this.menu.className = "note-canvas-toolbar__options-dialog"; // Reuse toolbar styles
     this.menu.style.position = "absolute";
-    this.menu.style.width = "150px";
     this.menu.style.pointerEvents = "auto";
     this.menu.innerHTML = `
       <div class="note-canvas-toolbar__options-content">
         <div class="note-canvas-toolbar__options-section">
           <button class="note-canvas-toolbar__option-btn" id="media-crop-btn">
-            ${getIcon("crop", 16)} Crop
+            ${getIcon("crop", 16)} ${t("canvas.media.crop")}
           </button>
           <button class="note-canvas-toolbar__option-btn" id="media-front-btn">
-            ${getIcon("arrowUp", 16)} Send to Front
+            ${getIcon("arrowUp", 16)} ${t("canvas.media.sendToFront")}
           </button>
           <button class="note-canvas-toolbar__option-btn" id="media-back-btn">
-            ${getIcon("arrowDown", 16)} Send to Back
+            ${getIcon("arrowDown", 16)} ${t("canvas.media.sendToBack")}
           </button>
         </div>
         <div class="note-canvas-toolbar__separator"></div>
         <div class="note-canvas-toolbar__options-section">
           <button class="note-canvas-toolbar__delete-btn" id="media-delete-btn">
-            ${getIcon("trash", 16)} Delete
+            ${getIcon("trash", 16)} ${t("canvas.media.delete")}
           </button>
         </div>
       </div>
@@ -158,7 +158,7 @@ export class MediaOverlay {
   _positionMenu(viewportRect) {
     if (!this.menu.classList.contains("note-canvas-toolbar__options-dialog--open")) return;
 
-    const menuWidth = this.menu.offsetWidth || 150;
+    const menuWidth = this.menu.offsetWidth || 180;
     const btnRect = this.optionBtn.getBoundingClientRect();
     const containerRect = viewportRect || this.container.getBoundingClientRect();
 

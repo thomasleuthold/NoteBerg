@@ -3,6 +3,8 @@
  * Renders a clickable card for a notebook with metadata
  */
 
+import { t } from "../i18n/index.js";
+
 /**
  * Render a notebook card
  * @param {Object} notebook - Notebook object from storage
@@ -10,7 +12,7 @@
  * @returns {string} HTML string for the notebook card
  */
 export function renderNotebookCard(notebook, noteCount = 0) {
-  const lastModified = new Date(notebook.modified).toLocaleDateString("en-US", {
+  const lastModified = new Date(notebook.modified).toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -18,11 +20,11 @@ export function renderNotebookCard(notebook, noteCount = 0) {
 
   const description = notebook.description
     ? truncateText(notebook.description, 80)
-    : "No description";
+    : t("overview.notebook.noDescription");
 
   return `
     <div class="notebook-card" data-notebook-id="${notebook.id}">
-      <button class="card-delete-btn" data-notebook-id="${notebook.id}" title="Delete notebook" aria-label="Delete notebook">
+      <button class="card-delete-btn" data-notebook-id="${notebook.id}" title="${t("overview.notebook.deleteTitle")}" aria-label="${t("overview.notebook.deleteTitle")}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
         </svg>
@@ -33,11 +35,11 @@ export function renderNotebookCard(notebook, noteCount = 0) {
       </div>
       <p class="notebook-card-description">${escapeHtml(description)}</p>
       <div class="notebook-card-footer">
-        <span class="notebook-card-count">${noteCount} ${noteCount === 1 ? "note" : "notes"}</span>
+        <span class="notebook-card-count">${t("overview.notebook.noteCount", { count: noteCount })}</span>
         <span class="notebook-card-date">${lastModified}</span>
       </div>
-      <button class="card-new-note-btn" data-notebook-id="${notebook.id}" title="New note in this notebook">
-        + New Note
+      <button class="card-new-note-btn" data-notebook-id="${notebook.id}" title="${t("overview.notebook.newNote")}">
+        ${t("overview.notebook.newNote")}
       </button>
     </div>
   `;

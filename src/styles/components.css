@@ -180,3 +180,69 @@ input:disabled + .toggle-slider {
   cursor: not-allowed;
   opacity: 0.5;
 }
+
+/* ===== Breadcrumb editable items ===== */
+.breadcrumb-item--editable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.breadcrumb-edit-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  padding: 4px;
+}
+
+.breadcrumb-edit-input {
+  font: inherit;
+  min-width: 100px;
+}
+
+/* ===== Recognition indicator ===== */
+.recognition-indicator {
+  display: none;
+  align-items: center;
+  margin-left: 16px;
+  color: var(--color-primary);
+}
+
+/* ===== Toggle switch disabled state ===== */
+.toggle-switch--disabled {
+  opacity: 0.5;
+}
+
+/* ===== Selectable setting value ===== */
+.setting-control--selectable {
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+/* ===== Button variants ===== */
+.btn-warning {
+  background-color: var(--color-warning);
+  color: white;
+}
+
+.btn-danger-filled {
+  background-color: var(--color-danger);
+  color: white;
+}
+
+.btn--margin-top {
+  margin-top: 8px;
+}
+
+/* ===== Settings danger zone ===== */
+.settings-section-heading--danger {
+  color: var(--color-danger);
+}
+
+.danger-zone-desc {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
