@@ -8,6 +8,7 @@
  *   const bar = new SelectionFloatingBar(editorElement, viewportElement, appClipboard);
  *   bar.destroy();
  */
+import { t } from "../../i18n/index.js";
 import { AppClipboard } from "./AppClipboard.js";
 
 export class SelectionFloatingBar {
@@ -44,12 +45,12 @@ export class SelectionFloatingBar {
 
     const buttons = [];
 
-    buttons.push({ label: "Cut", action: () => this._cut() });
-    buttons.push({ label: "Copy", action: () => this._copy() });
+    buttons.push({ label: t("canvas.textSelection.cut"), action: () => this._cut() });
+    buttons.push({ label: t("canvas.textSelection.copy"), action: () => this._copy() });
 
     // Show Paste only if clipboard has compatible content
     if (AppClipboard.canPasteInMode("text")) {
-      buttons.push({ label: "Paste", action: () => this._paste() });
+      buttons.push({ label: t("canvas.textSelection.paste"), action: () => this._paste() });
     }
 
     this._showBar(buttons, {
@@ -76,7 +77,7 @@ export class SelectionFloatingBar {
         const range = sel.getRangeAt(0);
         this._showSelectionBar(range);
       } else if (AppClipboard.canPasteInMode("text")) {
-        this._showBar([{ label: "Paste", action: () => this._paste() }], {
+        this._showBar([{ label: t("canvas.textSelection.paste"), action: () => this._paste() }], {
           x: startPos?.x ?? e.clientX,
           y: startPos?.y ?? e.clientY,
           preferAbove: false,
@@ -142,7 +143,7 @@ export class SelectionFloatingBar {
       const range = sel.getRangeAt(0);
       this._showSelectionBar(range);
     } else if (AppClipboard.canPasteInMode("text")) {
-      this._showBar([{ label: "Paste", action: () => this._paste() }], {
+      this._showBar([{ label: t("canvas.textSelection.paste"), action: () => this._paste() }], {
         x: e.clientX,
         y: e.clientY,
         preferAbove: false,

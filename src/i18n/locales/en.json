@@ -59,7 +59,16 @@
       "hideCompleted_other": "Hide {{count}} completed tasks",
       "textTask": "Text task",
       "strokeTask": "Handwriting task",
-      "selectStrokes": "Click to select task strokes"
+      "selectStrokes": "Click to select task strokes",
+      "showAsText": "Show tasks as text",
+      "showAsStrokes": "Show tasks as handwriting"
+    },
+    "notebook": {
+      "noDescription": "No description",
+      "deleteTitle": "Delete notebook",
+      "newNote": "+ New Note",
+      "noteCount_one": "{{count}} note",
+      "noteCount_other": "{{count}} notes"
     },
     "delete": {
       "notebookTitle": "Delete Notebook",
@@ -119,7 +128,14 @@
       "syncNow": "Sync Now",
       "disconnect": "Disconnect",
       "testing": "Testing...",
-      "connecting": "Connecting..."
+      "connecting": "Connecting...",
+      "errorNoUrl": "Please enter a server URL",
+      "initializing": "Initializing...",
+      "startingFlow": "Starting Nextcloud Login Flow...",
+      "waitingLogin": "Waiting for login... Open the URL above in your browser",
+      "selectedCopyHint": "Selected - use Ctrl+C",
+      "syncing": "Syncing with Nextcloud...",
+      "disconnectConfirm": "Are you sure you want to disconnect from Nextcloud?"
     },
     "recognition": {
       "statusLabel": "Status",
@@ -172,9 +188,27 @@
       "resetPassword": "Reset Master Password",
       "resetPasswordDesc": "Clear master password and encryption keys. You'll need to set a new password.",
       "resetPasswordBtn": "Reset Master Password",
+      "resetPasswordConfirmTitle": "Reset Master Password",
+      "resetPasswordConfirmMsg": "⚠️ This will clear your master password and encryption keys.<br><br>After reset, you'll need to set a new master password to use encryption.<br><br><strong>Note:</strong> Encrypted notes will remain encrypted and cannot be decrypted without the original password.",
+      "resetPasswordConfirmBtn": "Reset Password",
+      "resetPasswordSuccessTitle": "Master Password Reset",
+      "resetPasswordSuccessMsg": "✓ Master password has been cleared. You can now set a new password by enabling encryption.",
       "purgeLocal": "Purge Local Data",
       "purgeLocalDesc": "Clears ALL local notebooks and notes from this device.",
       "purgeLocalBtn": "Purge Local Data",
+      "purgeConfirmTitle": "Purge Local Data",
+      "purgeConfirmMsg": "⚠️ DANGER: This will DELETE ALL local notebooks and notes from this device!<br><br>This includes:<ul><li>All notebooks and notes</li><li>All deleted items (recycle bin)</li><li>Local sync history</li></ul>This action cannot be undone. Are you absolutely sure you want to continue?",
+      "purgeConfirmBtn": "Purge Everything",
+      "purging": "Purging...",
+      "purgingStatus": "Purging local data...",
+      "purgeSuccessStatus": "✓ Local data purged successfully! Click \"Sync Now\" to download from server.",
+      "purgeSuccessStatusOffline": "✓ Local data purged successfully!",
+      "purgeSuccessTitle": "Purge Successful",
+      "purgeSuccessMsgConnected": "Local data purged successfully!<br><br>Next steps:<ol><li>Click 'Sync Now' to download all data from Nextcloud</li><li>Wait for sync to complete</li><li>Your notes will be restored from the server</li></ol>",
+      "purgeSuccessMsgOffline": "Local data purged successfully!",
+      "purgeFailedStatus": "✗ Purge failed: {{message}}",
+      "purgeFailedTitle": "Purge Failed",
+      "purgeFailedMsg": "Purge failed: {{message}}",
       "warningConnected": "⚠️ This action will delete all local data including notebooks, notes, and sync history. If you are connected to Nextcloud, you can restore your data by syncing again. Unsynced changes will be permanently lost.",
       "warningDisconnected": "⚠️ This action will delete all local data including notebooks, notes, and sync history. This action is permanent and cannot be undone."
     },
@@ -355,6 +389,42 @@
     },
     "tasks": {
       "selectStrokes": "Click to select task strokes"
+    }
+  },
+  "licenses": {
+    "title": "Open Source Licenses",
+    "intro": "oneJournal is built with the help of these amazing open source projects:",
+    "viewLicense": "View License",
+    "close": "Close"
+  },
+  "canvas": {
+    "selection": {
+      "copy": "Copy",
+      "markAsTask": "Mark as Task",
+      "removeTask": "Remove Task",
+      "delete": "Delete"
+    },
+    "media": {
+      "crop": "Crop",
+      "sendToFront": "Send to Front",
+      "sendToBack": "Send to Back",
+      "delete": "Delete"
+    },
+    "pdf": {
+      "delete": "Delete PDF",
+      "deleteConfirmTitle": "Delete PDF",
+      "deleteConfirmMsg": "Are you sure you want to remove the PDF document? This will remove all pages."
+    },
+    "textSelection": {
+      "cut": "Cut",
+      "copy": "Copy",
+      "paste": "Paste"
+    },
+    "crop": {
+      "simpleCrop": "Simple Crop",
+      "perspective": "Perspective",
+      "apply": "Apply",
+      "cancel": "Cancel"
     }
   },
   "recycleBin": {

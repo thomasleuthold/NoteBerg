@@ -625,7 +625,8 @@
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
   padding: 12px;
-  width: 220px;
+  min-width: 180px;
+  width: max-content;
   z-index: 100;
 }
 

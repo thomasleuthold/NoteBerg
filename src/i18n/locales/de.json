@@ -59,7 +59,16 @@
       "hideCompleted_other": "{{count}} erledigte Aufgaben ausblenden",
       "textTask": "Textaufgabe",
       "strokeTask": "Handschriftaufgabe",
-      "selectStrokes": "Klicken, um Aufgabe auszuwählen"
+      "selectStrokes": "Klicken, um Aufgabe auszuwählen",
+      "showAsText": "Aufgaben als Text anzeigen",
+      "showAsStrokes": "Aufgaben als Handschrift anzeigen"
+    },
+    "notebook": {
+      "noDescription": "Keine Beschreibung",
+      "deleteTitle": "Notizbuch löschen",
+      "newNote": "+ Neue Notiz",
+      "noteCount_one": "{{count}} Notiz",
+      "noteCount_other": "{{count}} Notizen"
     },
     "delete": {
       "notebookTitle": "Notizbuch löschen",
@@ -119,7 +128,14 @@
       "syncNow": "Jetzt synchronisieren",
       "disconnect": "Trennen",
       "testing": "Testen...",
-      "connecting": "Verbinden..."
+      "connecting": "Verbinden...",
+      "errorNoUrl": "Bitte gib eine Server-URL ein",
+      "initializing": "Wird initialisiert...",
+      "startingFlow": "Nextcloud-Login wird gestartet...",
+      "waitingLogin": "Warte auf Anmeldung... Öffne die URL oben im Browser",
+      "selectedCopyHint": "Ausgewählt – Strg+C zum Kopieren",
+      "syncing": "Wird mit Nextcloud synchronisiert...",
+      "disconnectConfirm": "Möchtest du die Verbindung zu Nextcloud wirklich trennen?"
     },
     "recognition": {
       "statusLabel": "Status",
@@ -175,6 +191,24 @@
       "purgeLocal": "Lokale Daten löschen",
       "purgeLocalDesc": "Löscht ALLE lokalen Notizbücher und Notizen von diesem Gerät.",
       "purgeLocalBtn": "Lokale Daten löschen",
+      "resetPasswordConfirmTitle": "Master-Passwort zurücksetzen",
+      "resetPasswordConfirmMsg": "⚠️ Dies löscht dein Master-Passwort und die Verschlüsselungsschlüssel.<br><br>Nach dem Zurücksetzen musst du ein neues Master-Passwort festlegen, um die Verschlüsselung zu verwenden.<br><br><strong>Hinweis:</strong> Verschlüsselte Notizen bleiben verschlüsselt und können ohne das ursprüngliche Passwort nicht entschlüsselt werden.",
+      "resetPasswordConfirmBtn": "Passwort zurücksetzen",
+      "resetPasswordSuccessTitle": "Master-Passwort zurückgesetzt",
+      "resetPasswordSuccessMsg": "✓ Master-Passwort wurde gelöscht. Du kannst jetzt ein neues Passwort festlegen, indem du die Verschlüsselung aktivierst.",
+      "purgeConfirmTitle": "Lokale Daten löschen",
+      "purgeConfirmMsg": "⚠️ GEFAHR: Alle lokalen Notizbücher und Notizen werden von diesem Gerät gelöscht!<br><br>Dies umfasst:<ul><li>Alle Notizbücher und Notizen</li><li>Alle gelöschten Elemente (Papierkorb)</li><li>Lokalen Synchronisationsverlauf</li></ul>Diese Aktion kann nicht rückgängig gemacht werden. Bist du absolut sicher?",
+      "purgeConfirmBtn": "Alles löschen",
+      "purging": "Wird gelöscht...",
+      "purgingStatus": "Lokale Daten werden gelöscht...",
+      "purgeSuccessStatus": "✓ Lokale Daten erfolgreich gelöscht! Klicke auf \"Jetzt synchronisieren\", um Daten vom Server herunterzuladen.",
+      "purgeSuccessStatusOffline": "✓ Lokale Daten erfolgreich gelöscht!",
+      "purgeSuccessTitle": "Löschen erfolgreich",
+      "purgeSuccessMsgConnected": "Lokale Daten erfolgreich gelöscht!<br><br>Nächste Schritte:<ol><li>Klicke auf \"Jetzt synchronisieren\", um alle Daten von Nextcloud herunterzuladen</li><li>Warte, bis die Synchronisierung abgeschlossen ist</li><li>Deine Notizen werden vom Server wiederhergestellt</li></ol>",
+      "purgeSuccessMsgOffline": "Lokale Daten erfolgreich gelöscht!",
+      "purgeFailedStatus": "✗ Löschen fehlgeschlagen: {{message}}",
+      "purgeFailedTitle": "Löschen fehlgeschlagen",
+      "purgeFailedMsg": "Löschen fehlgeschlagen: {{message}}",
       "warningConnected": "⚠️ Diese Aktion löscht alle lokalen Daten einschließlich Notizbücher, Notizen und Synchronisationsverlauf. Wenn du mit Nextcloud verbunden bist, kannst du deine Daten durch erneutes Synchronisieren wiederherstellen. Nicht synchronisierte Änderungen gehen dauerhaft verloren.",
       "warningDisconnected": "⚠️ Diese Aktion löscht alle lokalen Daten einschließlich Notizbücher, Notizen und Synchronisationsverlauf. Diese Aktion ist dauerhaft und kann nicht rückgängig gemacht werden."
     },
@@ -355,6 +389,42 @@
     },
     "tasks": {
       "selectStrokes": "Klicken, um Aufgabenstriche auszuwählen"
+    }
+  },
+  "licenses": {
+    "title": "Open-Source-Lizenzen",
+    "intro": "oneJournal wurde mit Hilfe dieser großartigen Open-Source-Projekte entwickelt:",
+    "viewLicense": "Lizenz anzeigen",
+    "close": "Schließen"
+  },
+  "canvas": {
+    "selection": {
+      "copy": "Kopieren",
+      "markAsTask": "Als Aufgabe markieren",
+      "removeTask": "Aufgabe entfernen",
+      "delete": "Löschen"
+    },
+    "media": {
+      "crop": "Zuschneiden",
+      "sendToFront": "In den Vordergrund",
+      "sendToBack": "In den Hintergrund",
+      "delete": "Löschen"
+    },
+    "pdf": {
+      "delete": "PDF löschen",
+      "deleteConfirmTitle": "PDF löschen",
+      "deleteConfirmMsg": "Möchtest du das PDF-Dokument wirklich entfernen? Dabei werden alle Seiten gelöscht."
+    },
+    "textSelection": {
+      "cut": "Ausschneiden",
+      "copy": "Kopieren",
+      "paste": "Einfügen"
+    },
+    "crop": {
+      "simpleCrop": "Einfacher Zuschnitt",
+      "perspective": "Perspektive",
+      "apply": "Anwenden",
+      "cancel": "Abbrechen"
     }
   },
   "recycleBin": {

@@ -6,6 +6,7 @@
  * Supports both viewing and drawing with stylus/pen input.
  */
 
+import { t } from "../../i18n/index.js";
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
@@ -899,7 +900,7 @@ export class NoteCanvas {
       <div class="note-canvas-toolbar__options-content">
         <div class="note-canvas-toolbar__options-section">
           <button class="note-canvas-toolbar__delete-btn" id="pdf-delete-btn">
-            ${getIcon("trash", 16)} Delete PDF
+            ${getIcon("trash", 16)} ${t("canvas.pdf.delete")}
           </button>
         </div>
       </div>
@@ -4131,9 +4132,9 @@ export class NoteCanvas {
     if (!this.noteData.pdfSource) return;
 
     const confirmed = await showConfirmDialog(
-      "Delete PDF",
-      "Are you sure you want to remove the PDF document? This will remove all pages.",
-      "Delete",
+      t("canvas.pdf.deleteConfirmTitle"),
+      t("canvas.pdf.deleteConfirmMsg"),
+      t("common.delete"),
       "btn-danger",
     );
 

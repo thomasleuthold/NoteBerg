@@ -91,8 +91,8 @@ export async function renderSettings(container) {
             <span class="setting-description">${t("settings.language.desc")}</span>
           </div>
           <select id="language-select" class="setting-control">
-            <option value="en" ${currentLanguage === "en" ? "selected" : ""}>${t("settings.language.en")}</option>
-            <option value="de" ${currentLanguage === "de" ? "selected" : ""}>${t("settings.language.de")}</option>
+            <option value="en" ${currentLanguage === "en" ? "selected" : ""}>🇬🇧 ${t("settings.language.en")}</option>
+            <option value="de" ${currentLanguage === "de" ? "selected" : ""}>🇩🇪 ${t("settings.language.de")}</option>
           </select>
         </div>
       </div>
@@ -687,7 +687,7 @@ export async function renderSettings(container) {
       const serverUrl = urlInput.value.trim();
 
       if (!serverUrl) {
-        statusSpan.textContent = "Please enter a server URL";
+        statusSpan.textContent = t("settings.nextcloud.errorNoUrl");
         statusSpan.style.color = "var(--color-error)";
         return;
       }
@@ -718,14 +718,14 @@ export async function renderSettings(container) {
       const serverUrl = urlInput.value.trim();
 
       if (!serverUrl) {
-        statusSpan.textContent = "Please enter a server URL";
+        statusSpan.textContent = t("settings.nextcloud.errorNoUrl");
         statusSpan.style.color = "var(--color-error)";
         return;
       }
 
       connectBtn.disabled = true;
-      connectBtn.textContent = "Initializing...";
-      statusSpan.textContent = "Starting Nextcloud Login Flow...";
+      connectBtn.textContent = t("settings.nextcloud.initializing");
+      statusSpan.textContent = t("settings.nextcloud.startingFlow");
       statusSpan.style.color = "var(--color-text)";
 
       const loginUrlContainer = container.querySelector("#login-url-container");
@@ -738,7 +738,7 @@ export async function renderSettings(container) {
           loginUrlContainer.style.display = "block";
           loginUrlInput.value = loginUrl;
 
-          statusSpan.textContent = "Waiting for login... Open the URL above in your browser";
+          statusSpan.textContent = t("settings.nextcloud.waitingLogin");
           statusSpan.style.color = "var(--color-text)";
 
           // Add copy button handler
@@ -753,7 +753,7 @@ export async function renderSettings(container) {
             } catch (_err) {
               // Fallback: select the text
               loginUrlInput.select();
-              copyLoginUrlBtn.textContent = "Selected - use Ctrl+C";
+              copyLoginUrlBtn.textContent = t("settings.nextcloud.selectedCopyHint");
               setTimeout(() => {
                 copyLoginUrlBtn.textContent = t("settings.nextcloud.copyUrlBtn");
               }, 2000);
@@ -789,7 +789,7 @@ export async function renderSettings(container) {
     syncBtn?.addEventListener("click", async () => {
       syncBtn.disabled = true;
       syncBtn.textContent = t("footer.syncing");
-      syncStatus.textContent = "Syncing with Nextcloud...";
+      syncStatus.textContent = t("settings.nextcloud.syncing");
       syncStatus.style.color = "var(--color-text)";
 
       try {
@@ -827,7 +827,7 @@ export async function renderSettings(container) {
     });
 
     disconnectBtn?.addEventListener("click", async () => {
-      if (confirm("Are you sure you want to disconnect from Nextcloud?")) {
+      if (confirm(t("settings.nextcloud.disconnectConfirm"))) {
         await clearCredentials();
 
         // Notify footer about auth change
@@ -842,11 +842,9 @@ export async function renderSettings(container) {
   const resetMasterPasswordBtn = container.querySelector("#reset-master-password-btn");
   resetMasterPasswordBtn?.addEventListener("click", async () => {
     const confirmed = await showConfirmDialog(
-      "Reset Master Password",
-      "⚠️ This will clear your master password and encryption keys.<br><br>" +
-        "After reset, you'll need to set a new master password to use encryption.<br><br>" +
-        "<strong>Note:</strong> Encrypted notes will remain encrypted and cannot be decrypted without the original password.",
-      "Reset Password",
+      t("settings.dangerZone.resetPasswordConfirmTitle"),
+      t("settings.dangerZone.resetPasswordConfirmMsg"),
+      t("settings.dangerZone.resetPasswordConfirmBtn"),
       "btn-warning",
     );
 
@@ -861,8 +859,8 @@ export async function renderSettings(container) {
       await clearMasterPassword();
 
       await showAlertDialog(
-        "Master Password Reset",
-        "✓ Master password has been cleared. You can now set a new password by enabling encryption.",
+        t("settings.dangerZone.resetPasswordSuccessTitle"),
+        t("settings.dangerZone.resetPasswordSuccessMsg"),
       );
 
       // Re-render settings to update UI
@@ -879,23 +877,18 @@ export async function renderSettings(container) {
 
   purgeLocalBtn?.addEventListener("click", async () => {
     const confirmed = await showConfirmDialog(
-      "Purge Local Data",
-      "⚠️ DANGER: This will DELETE ALL local notebooks and notes from this device!<br><br>" +
-        "This includes:<ul>" +
-        "<li>All notebooks and notes</li>" +
-        "<li>All deleted items (recycle bin)</li>" +
-        "<li>Local sync history</li></ul>" +
-        "This action cannot be undone. Are you absolutely sure you want to continue?",
-      "Purge Everything",
+      t("settings.dangerZone.purgeConfirmTitle"),
+      t("settings.dangerZone.purgeConfirmMsg"),
+      t("settings.dangerZone.purgeConfirmBtn"),
       "btn-danger",
     );
 
     if (!confirmed) return;
 
     purgeLocalBtn.disabled = true;
-    purgeLocalBtn.textContent = "Purging...";
+    purgeLocalBtn.textContent = t("settings.dangerZone.purging");
     if (purgeStatus) {
-      purgeStatus.textContent = "Purging local data...";
+      purgeStatus.textContent = t("settings.dangerZone.purgingStatus");
       purgeStatus.style.color = "var(--color-danger)";
     }
 
@@ -905,8 +898,8 @@ export async function renderSettings(container) {
       const isAuth = await isAuthenticated();
       if (purgeStatus) {
         purgeStatus.textContent = isAuth
-          ? `✓ Local data purged successfully! Click "Sync Now" to download from server.`
-          : `✓ Local data purged successfully!`;
+          ? t("settings.dangerZone.purgeSuccessStatus")
+          : t("settings.dangerZone.purgeSuccessStatusOffline");
         purgeStatus.style.color = "var(--color-success)";
       }
 
@@ -915,22 +908,26 @@ export async function renderSettings(container) {
 
       if (isAuth) {
         await showAlertDialog(
-          "Purge Successful",
-          "Local data purged successfully!<br><br>" +
-            "Next steps:<ol>" +
-            "<li>Click 'Sync Now' to download all data from Nextcloud</li>" +
-            "<li>Wait for sync to complete</li>" +
-            "<li>Your notes will be restored from the server</li></ol>",
+          t("settings.dangerZone.purgeSuccessTitle"),
+          t("settings.dangerZone.purgeSuccessMsgConnected"),
         );
       } else {
-        await showAlertDialog("Purge Successful", "Local data purged successfully!");
+        await showAlertDialog(
+          t("settings.dangerZone.purgeSuccessTitle"),
+          t("settings.dangerZone.purgeSuccessMsgOffline"),
+        );
       }
     } catch (error) {
       if (purgeStatus) {
-        purgeStatus.textContent = `✗ Purge failed: ${error.message}`;
+        purgeStatus.textContent = t("settings.dangerZone.purgeFailedStatus", {
+          message: error.message,
+        });
         purgeStatus.style.color = "var(--color-error)";
       }
-      await showAlertDialog("Purge Failed", `Purge failed: ${error.message}`);
+      await showAlertDialog(
+        t("settings.dangerZone.purgeFailedTitle"),
+        t("settings.dangerZone.purgeFailedMsg", { message: error.message }),
+      );
     } finally {
       purgeLocalBtn.disabled = false;
       purgeLocalBtn.textContent = t("settings.dangerZone.purgeLocalBtn");

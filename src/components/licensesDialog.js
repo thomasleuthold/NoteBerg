@@ -3,6 +3,8 @@
  * Shows open source software licenses and attributions
  */
 
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { t } from "../i18n/index.js";
 import { getIcon } from "../utils/icons.js";
 
 /**
@@ -29,6 +31,13 @@ const licenses = [
     url: "https://biomejs.dev/",
     license: "MIT License",
     licenseUrl: "https://github.com/biomejs/biome/blob/main/LICENSE-MIT",
+  },
+  {
+    name: "i18next",
+    description: "An internationalization-framework written in and for JavaScript",
+    url: "https://www.i18next.com/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/i18next/i18next/blob/master/LICENSE",
   },
   {
     name: "idb",
@@ -72,6 +81,69 @@ const licenses = [
     license: "MIT License",
     licenseUrl: "https://github.com/fhguilherme/perspective-transform/blob/master/LICENSE",
   },
+  {
+    name: "Testing Library",
+    description: "Simple and complete testing utilities that encourage good testing practices",
+    url: "https://testing-library.com/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/testing-library/dom-testing-library/blob/main/LICENSE",
+  },
+  {
+    name: "Vitest",
+    description: "A blazing fast unit-test framework powered by Vite",
+    url: "https://vitest.dev/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/vitest-dev/vitest/blob/main/LICENSE",
+  },
+  {
+    name: "Express",
+    description: "Fast, unopinionated, minimalist web framework for Node.js",
+    url: "https://expressjs.com/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/expressjs/express/blob/master/LICENSE",
+  },
+  {
+    name: "cors",
+    description: "Node.js CORS middleware",
+    url: "https://github.com/expressjs/cors",
+    license: "MIT License",
+    licenseUrl: "https://github.com/expressjs/cors/blob/master/LICENSE",
+  },
+  {
+    name: "node-fetch",
+    description: "A light-weight module that brings the Fetch API to Node.js",
+    url: "https://github.com/node-fetch/node-fetch",
+    license: "MIT License",
+    licenseUrl: "https://github.com/node-fetch/node-fetch/blob/main/LICENSE.md",
+  },
+  {
+    name: "jsdom",
+    description: "A JavaScript implementation of many web standards",
+    url: "https://github.com/jsdom/jsdom",
+    license: "MIT License",
+    licenseUrl: "https://github.com/jsdom/jsdom/blob/main/LICENSE.md",
+  },
+  {
+    name: "ESLint",
+    description: "Find and fix problems in your JavaScript code",
+    url: "https://eslint.org/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/eslint/eslint/blob/main/LICENSE",
+  },
+  {
+    name: "Prettier",
+    description: "An opinionated code formatter",
+    url: "https://prettier.io/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/prettier/prettier/blob/main/LICENSE",
+  },
+  {
+    name: "vite-plugin-singlefile",
+    description: "Vite plugin to inline all assets into a single HTML file",
+    url: "https://github.com/richardtallent/vite-plugin-singlefile",
+    license: "MIT License",
+    licenseUrl: "https://github.com/richardtallent/vite-plugin-singlefile/blob/main/LICENSE",
+  },
 ];
 
 /**
@@ -103,7 +175,7 @@ export function showLicensesDialog() {
       </div>
       <p class="license-description">${lib.description}</p>
       <a href="${lib.licenseUrl}" target="_blank" rel="noopener noreferrer" class="license-link">
-        View License
+        ${t("licenses.viewLicense")}
       </a>
     </div>
   `,
@@ -113,26 +185,35 @@ export function showLicensesDialog() {
   overlay.innerHTML = `
     <div class="modal-dialog" style="max-width: 600px; max-height: 80vh; overflow: auto;">
       <div class="modal-header">
-        <h3 class="modal-title">Open Source Licenses</h3>
-        <button class="modal-close" aria-label="Close">
+        <h3 class="modal-title">${t("licenses.title")}</h3>
+        <button class="modal-close" aria-label="${t("licenses.close")}">
           ${getIcon("x", 24)}
         </button>
       </div>
       <div class="modal-body">
         <div class="licenses-intro">
-          <p>oneJournal is built with the help of these amazing open source projects:</p>
+          <p>${t("licenses.intro")}</p>
         </div>
         <div class="licenses-list">
           ${licensesHtml}
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn-primary close-licenses-btn">Close</button>
+        <button class="btn-primary close-licenses-btn">${t("licenses.close")}</button>
       </div>
     </div>
   `;
 
   document.body.appendChild(overlay);
+
+  // Open all external links via Tauri opener (works on Android; target="_blank" does not)
+  overlay.addEventListener("click", (e) => {
+    const anchor = e.target.closest("a[href]");
+    if (anchor) {
+      e.preventDefault();
+      openUrl(anchor.href).catch((err) => console.error("Failed to open URL:", err));
+    }
+  });
 
   // Close handlers
   const closeDialog = () => {

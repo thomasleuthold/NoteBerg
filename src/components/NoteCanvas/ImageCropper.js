@@ -2,6 +2,8 @@
  * ImageCropper - Handles image cropping and perspective correction
  */
 
+import { t } from "../../i18n/index.js";
+
 export class ImageCropper {
   constructor() {
     this.overlay = null;
@@ -41,12 +43,12 @@ export class ImageCropper {
     modeToggle.className = "crop-mode-toggle";
 
     const simpleModeBtn = document.createElement("button");
-    simpleModeBtn.textContent = "Simple Crop";
+    simpleModeBtn.textContent = t("canvas.crop.simpleCrop");
     simpleModeBtn.className = "crop-mode-btn crop-mode-simple active";
     simpleModeBtn.onclick = () => this._switchCropMode("simple");
 
     const perspectiveModeBtn = document.createElement("button");
-    perspectiveModeBtn.textContent = "Perspective";
+    perspectiveModeBtn.textContent = t("canvas.crop.perspective");
     perspectiveModeBtn.className = "crop-mode-btn crop-mode-perspective";
     perspectiveModeBtn.onclick = () => this._switchCropMode("perspective");
 
@@ -97,12 +99,12 @@ export class ImageCropper {
     controls.className = "crop-controls";
 
     const applyBtn = document.createElement("button");
-    applyBtn.textContent = "Apply";
+    applyBtn.textContent = t("canvas.crop.apply");
     applyBtn.className = "crop-btn crop-apply-btn";
     applyBtn.onclick = () => this._applyCrop();
 
     const cancelBtn = document.createElement("button");
-    cancelBtn.textContent = "Cancel";
+    cancelBtn.textContent = t("canvas.crop.cancel");
     cancelBtn.className = "crop-btn crop-cancel-btn";
     cancelBtn.onclick = () => this._close(null);
 
