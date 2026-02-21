@@ -76,6 +76,20 @@
       "noteTitle": "Notiz löschen",
       "noteMessage": "Möchtest du \"{{title}}\" wirklich löschen?"
     },
+    "noteOptions": {
+      "title": "Optionen",
+      "moveCopy": "Verschieben / Kopieren",
+      "delete": "Löschen"
+    },
+    "moveCopy": {
+      "title": "Notiz verschieben / kopieren",
+      "move": "Verschieben",
+      "copy": "Kopieren",
+      "targetLabel": "Ziel auswählen",
+      "quickNotes": "Schnellnotizen",
+      "current": "aktuell",
+      "apply": "Übernehmen"
+    },
     "loading": "Laden...",
     "errorTab": "Fehler beim Laden des Tabs: {{message}}",
     "errorRender": "Fehler: {{message}}"

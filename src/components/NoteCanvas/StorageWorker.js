@@ -149,9 +149,10 @@ async function processMessage(e) {
       if (note) {
         note.thumbnailFileId = thumbnailFileId;
         note.thumbnailTimestamp = thumbnailTimestamp;
-        note.modified = Date.now();
-        note.version = (note.version || 0) + 1;
-        note.synced = false;
+        // Do NOT set synced=false or bump modified/version here.
+        // Thumbnails are local-only UI metadata — they do not need to be
+        // uploaded to Nextcloud and should not trigger unnecessary re-uploads
+        // that cause etag oscillation across sync cycles.
 
         await store.put(note);
       }

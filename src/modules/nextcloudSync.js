@@ -16,6 +16,7 @@ import {
 } from "./secureStorage.js";
 import {
   checkFileExists,
+  clearNoteMoveFlag,
   getFile,
   isNextcloudEncryptionEnabled,
   permanentlyDeleteNote,
@@ -542,28 +543,41 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     throw new Error(`Failed to upload file: ${response.status} ${response.statusText}`);
   }
 
-  let newEtag = response.headers.get("etag")?.replace(/"/g, "");
-
-  // If ETag is missing (e.g. 204 response), try to fetch it via HEAD
-  if (!newEtag && response.ok) {
-    try {
-      const headResponse = await fetch(webdavUrl, {
-        method: "HEAD",
-        headers: {
-          Authorization: headers.Authorization,
-        },
-      });
-      newEtag = headResponse.headers.get("etag")?.replace(/"/g, "");
-    } catch (e) {
-      console.warn("Failed to fetch ETag after upload:", e);
+  // Always do a PROPFIND after upload to get the canonical ETag that future PROPFINDs will return.
+  // Nextcloud's PUT/HEAD response ETag can differ from what PROPFIND reports (due to server-side
+  // versioning, chunked storage, or etag propagation quirks), which causes spurious re-downloads
+  // on every subsequent sync. Using the PROPFIND etag ensures our stored lastSyncedEtag matches
+  // exactly what the directory listing will show.
+  try {
+    const propfindResponse = await fetch(webdavUrl, {
+      method: "PROPFIND",
+      headers: {
+        Authorization: headers.Authorization,
+        Depth: "0",
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
+    });
+    if (propfindResponse.ok) {
+      const xmlText = await propfindResponse.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xmlText, "text/xml");
+      const propfindEtag = doc.getElementsByTagName("d:getetag")[0]?.textContent?.replace(/"/g, "");
+      if (propfindEtag) {
+        return propfindEtag;
+      }
     }
+  } catch (e) {
+    console.warn("[NextcloudSync] Failed to fetch canonical ETag via PROPFIND after upload:", e);
   }
 
-  if (!newEtag) {
-    throw new Error("Server did not return an ETag for the uploaded file");
+  // Fallback: use the ETag from the PUT response headers
+  const putEtag = response.headers.get("etag")?.replace(/"/g, "");
+  if (putEtag) {
+    return putEtag;
   }
 
-  return newEtag;
+  throw new Error("Server did not return an ETag for the uploaded file");
 }
 
 /**
@@ -1223,6 +1237,11 @@ export async function syncNotes(notes) {
 
   const uploadResults = await runInBatches(activeNotes, CONCURRENCY, async (note) => {
     try {
+      // If the note was moved from another location, clean up the old Nextcloud path first
+      if (note.previousNotebookId !== undefined) {
+        await cleanupMovedNote(note.id, note.previousNotebookId);
+      }
+
       // Get the correct path based on whether note is in a notebook or is a quick note
       const path = getNotePath(note.id, note.notebookId);
 
@@ -1249,13 +1268,24 @@ export async function syncNotes(notes) {
       delete noteForUpload.synced;
       delete noteForUpload.encrypted;
       delete noteForUpload._currentFileEtag;
+      delete noteForUpload.previousNotebookId;
+      // Thumbnails are local-only blobs stored in IndexedDB — other clients cannot
+      // access them, so uploading thumbnailFileId / thumbnailTimestamp just causes
+      // unnecessary etag changes when a thumbnail is regenerated locally.
+      delete noteForUpload.thumbnailFileId;
+      delete noteForUpload.thumbnailTimestamp;
 
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
 
       const etag = await uploadFile(path, content, syncedNote.modified, note.lastSyncedEtag);
       console.log(`Successfully uploaded note ${note.id}`);
-      return { success: true, id: note.id, etag };
+      return {
+        success: true,
+        id: note.id,
+        etag,
+        hadPreviousLocation: note.previousNotebookId !== undefined,
+      };
     } catch (error) {
       console.error(`Failed to sync note ${note.id}:`, error);
       return { success: false, id: note.id, error: error.message };
@@ -1279,6 +1309,11 @@ export async function syncNotes(notes) {
         results.uploaded++;
         results.uploadedIds.push(res.id);
         results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+
+        // Clear previousNotebookId now that the move has been synced to Nextcloud
+        if (res.hadPreviousLocation) {
+          await clearNoteMoveFlag(res.id);
+        }
       }
     } else {
       results.failed++;
@@ -1287,6 +1322,39 @@ export async function syncNotes(notes) {
   }
 
   return results;
+}
+
+/**
+ * Delete the old Nextcloud file and write a tombstone when a note was moved.
+ * @param {string} noteId
+ * @param {string|null} oldNotebookId - The notebook the note was in before the move
+ */
+async function cleanupMovedNote(noteId, oldNotebookId) {
+  const oldNotePath = getNotePath(noteId, oldNotebookId);
+  const oldMediaFolder = getNoteMediaFolder(noteId, oldNotebookId);
+
+  // Delete old note file and media folder (ignore 404s)
+  await deleteFile(oldNotePath).catch(() => {});
+  await deleteFile(oldMediaFolder).catch(() => {});
+
+  // Write a tombstone in the old notebook/quickNotes so other clients remove it
+  const tombstonePath = oldNotebookId
+    ? getNotebookTombstonePath(oldNotebookId)
+    : getQuickNotesTombstonePath();
+
+  let tombstone;
+  try {
+    const { content } = await downloadFile(tombstonePath);
+    tombstone = content ? JSON.parse(content) : createEmptyTombstone();
+  } catch {
+    tombstone = createEmptyTombstone();
+  }
+  tombstone = addNoteTombstone(tombstone, noteId);
+  await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+
+  console.log(
+    `[Sync] Cleaned up old location for moved note ${noteId} (was in ${oldNotebookId ?? "quickNotes"})`,
+  );
 }
 
 /**
@@ -1637,6 +1705,7 @@ export async function fullSync(localNotebooks, localNotes) {
   const notebooksToDownload = [];
   const notebooksToDelete = [];
   const notesToDelete = [];
+  const noteEtagsToUpdate = []; // Notes whose etag changed on server but content is not newer
   const conflicts = { notebooks: [], notes: [] };
 
   // Create maps for quick lookup
@@ -1775,7 +1844,26 @@ export async function fullSync(localNotebooks, localNotes) {
     } else if (isModifiedLocally) {
       notesToUpload.push(local);
     } else if (isModifiedRemotely) {
-      notesToDownload.push(remote);
+      // Check if the remote version is actually not newer than our local version.
+      // This happens when Nextcloud's server-side versioning causes the PROPFIND getetag to
+      // alternate between two etags for the same file — one for an older versioned copy, and
+      // one whose mtime matches our local version exactly (the file we last uploaded).
+      // In both cases there is no real remote change: skip the download and just accept
+      // the remote etag so the next PROPFIND comparison is correct.
+      // The guard `!isModifiedLocally` ensures we only skip downloads when local is clean.
+      if (
+        remote.modified &&
+        local.modified &&
+        remote.modified <= local.modified + 2000 &&
+        !isModifiedLocally
+      ) {
+        console.log(
+          `[Sync] Note ${local.id}: remote etag changed but remote is not newer (remote.modified=${remote.modified}, local.modified=${local.modified}). Accepting remote etag without download.`,
+        );
+        noteEtagsToUpdate.push({ id: local.id, etag: remote._currentFileEtag });
+      } else {
+        notesToDownload.push(remote);
+      }
     }
   }
 
@@ -1809,6 +1897,7 @@ export async function fullSync(localNotebooks, localNotes) {
       notebooks: notebooksToDownload,
       notes: notesToDownload,
     },
+    noteEtagsToUpdate,
     conflicts,
     notebooksToUpload,
     notesToUpload,

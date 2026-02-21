@@ -7,6 +7,7 @@ import { t } from "../i18n/index.js";
 import { extractPdfText } from "../modules/pdfManager.js";
 import { navigateTo } from "../modules/router.js";
 import {
+  copyNote,
   deleteNote,
   deleteNotebook,
   getAllNotebooks,
@@ -16,6 +17,7 @@ import {
   getNotebook,
   getNotesByNotebook,
   getQuickNotes,
+  moveNote,
 } from "../modules/storage.js";
 import { getIcon } from "../utils/icons.js";
 import { markdownToHtml } from "../utils/markdown.js";
@@ -25,7 +27,7 @@ import {
   getThemePalette,
   renderNotePreview,
 } from "../utils/noteRenderer.js";
-import { showConfirmDialog } from "./modals.js";
+import { showConfirmDialog, showMoveCopyDialog } from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
 import "./overviewMode.css";
 
@@ -189,10 +191,13 @@ async function renderNotebookContents(container, notebookId) {
     });
   });
 
-  // Delete note buttons
-  const deleteBtns = container.querySelectorAll(".card-delete-btn");
-  deleteBtns.forEach((btn) => {
-    btn.addEventListener("click", (e) => handleDeleteNote(e, btn.dataset.noteId));
+  // Note options buttons
+  const optionsBtns = container.querySelectorAll(".card-options-btn");
+  optionsBtns.forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handleNoteOptions(btn, btn.dataset.noteId);
+    });
   });
 
   // Render previews
@@ -400,10 +405,13 @@ function attachNotesListListeners(container) {
     });
   });
 
-  // Delete note button clicks
-  const noteDeleteBtns = container.querySelectorAll(".note-card .card-delete-btn");
-  noteDeleteBtns.forEach((btn) => {
-    btn.addEventListener("click", (e) => handleDeleteNote(e, btn.dataset.noteId));
+  // Note options button clicks
+  const noteOptionsBtns = container.querySelectorAll(".note-card .card-options-btn");
+  noteOptionsBtns.forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handleNoteOptions(btn, btn.dataset.noteId);
+    });
   });
 
   // New notebook button
@@ -527,8 +535,7 @@ function attachSearchListeners(container) {
   }
 }
 
-async function handleDeleteNote(e, noteId) {
-  e.stopPropagation();
+async function handleDeleteNote(noteId) {
   const note = await getNote(noteId);
   const confirmed = await showConfirmDialog(
     t("overview.delete.noteTitle"),
@@ -540,6 +547,79 @@ async function handleDeleteNote(e, noteId) {
     await deleteNote(noteId);
     window.dispatchEvent(new CustomEvent("datachange"));
   }
+}
+
+async function handleNoteOptions(btn, noteId) {
+  const note = await getNote(noteId);
+  showNoteOptionsMenu(btn, note);
+}
+
+function showNoteOptionsMenu(anchor, note) {
+  // Remove any existing menu
+  const existing = document.getElementById("note-options-menu");
+  if (existing) existing.remove();
+
+  const menu = document.createElement("div");
+  menu.id = "note-options-menu";
+  menu.className = "note-options-menu";
+  menu.innerHTML = `
+    <button class="note-options-menu__item" data-action="movecopy">${t("overview.noteOptions.moveCopy")}</button>
+    <hr class="note-options-menu__separator">
+    <button class="note-options-menu__item note-options-menu__item--danger" data-action="delete">${t("overview.noteOptions.delete")}</button>
+  `;
+
+  // Position below the anchor button
+  document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  let top = rect.bottom + 4;
+  let left = rect.right - menuRect.width;
+  // Keep within viewport
+  if (left < 4) left = 4;
+  if (top + menuRect.height > window.innerHeight - 4) top = rect.top - menuRect.height - 4;
+  menu.style.top = `${top}px`;
+  menu.style.left = `${left}px`;
+
+  const closeMenu = () => menu.remove();
+
+  menu.querySelector("[data-action='movecopy']").addEventListener("click", async () => {
+    closeMenu();
+    const notebooks = await getAllNotebooks();
+    const result = await showMoveCopyDialog(note, notebooks);
+    if (!result) return;
+    if (result.action === "move") {
+      await moveNote(note.id, result.targetNotebookId);
+    } else {
+      await copyNote(note.id, result.targetNotebookId);
+    }
+    window.dispatchEvent(new CustomEvent("datachange"));
+  });
+
+  menu.querySelector("[data-action='delete']").addEventListener("click", async () => {
+    closeMenu();
+    await handleDeleteNote(note.id);
+  });
+
+  // Close on outside click or Escape
+  const onOutside = (e) => {
+    if (!menu.contains(e.target) && e.target !== anchor) {
+      closeMenu();
+      document.removeEventListener("mousedown", onOutside);
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      closeMenu();
+      document.removeEventListener("mousedown", onOutside);
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  // Use setTimeout so the current click doesn't immediately close the menu
+  setTimeout(() => {
+    document.addEventListener("mousedown", onOutside);
+    document.addEventListener("keydown", onKey);
+  }, 0);
 }
 
 function renderSearchResultsList(container, results) {
@@ -624,8 +704,6 @@ function renderPreviewNoteCard(note) {
     previewContent = `<div class="preview-no-content">${t("overview.search.noContent")}</div>`;
   }
 
-  const deleteIcon = getIcon("trash", 16);
-
   return `
     <div class="note-card preview-card" data-note-id="${note.id}">
       <div class="note-card-header">
@@ -636,8 +714,8 @@ function renderPreviewNoteCard(note) {
         ${previewContent}
       </div>
       <div class="note-card-actions">
-         <button class="card-delete-btn btn-icon" data-note-id="${note.id}" title="${t("common.delete")}">
-            ${deleteIcon}
+         <button class="card-options-btn btn-icon" data-note-id="${note.id}" title="${t("overview.noteOptions.title")}">
+            ${getIcon("moreVertical", 16)}
          </button>
       </div>
     </div>

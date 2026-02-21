@@ -76,6 +76,20 @@
       "noteTitle": "Delete Note",
       "noteMessage": "Are you sure you want to delete \"{{title}}\"?"
     },
+    "noteOptions": {
+      "title": "Note options",
+      "moveCopy": "Move / Copy",
+      "delete": "Delete"
+    },
+    "moveCopy": {
+      "title": "Move / Copy Note",
+      "move": "Move",
+      "copy": "Copy",
+      "targetLabel": "Select target",
+      "quickNotes": "Quick Notes",
+      "current": "current",
+      "apply": "Apply"
+    },
     "loading": "Loading...",
     "errorTab": "Error loading tab: {{message}}",
     "errorRender": "Error: {{message}}"

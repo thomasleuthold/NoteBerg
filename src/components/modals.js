@@ -584,6 +584,127 @@ export function showConflictResolutionDialog(local, remote) {
 }
 
 /**
+ * Show move/copy note dialog.
+ * @param {Object} note - The note to move/copy
+ * @param {Array} notebooks - All notebooks from storage
+ * @returns {Promise<{action: string, targetNotebookId: string|null}|null>} Result or null if cancelled
+ */
+export function showMoveCopyDialog(note, notebooks) {
+  return new Promise((resolve) => {
+    const existingModal = document.getElementById("modal-overlay");
+    if (existingModal) existingModal.remove();
+
+    const currentNotebookId = note.notebookId ?? null;
+
+    // Build notebook picker items
+    const quickNotesItem = `
+      <div class="notebook-picker-item${currentNotebookId === null ? " current" : ""}" data-notebook-id="__quicknotes__">
+        <div class="notebook-picker-item__color" style="background-color: var(--text-secondary)"></div>
+        <span class="notebook-picker-item__title">${t("overview.moveCopy.quickNotes")}</span>
+        ${currentNotebookId === null ? `<span class="notebook-picker-item__badge">${t("overview.moveCopy.current")}</span>` : ""}
+      </div>
+    `;
+
+    const notebookItems = notebooks
+      .map((nb) => {
+        const isCurrent = nb.id === currentNotebookId;
+        return `
+          <div class="notebook-picker-item${isCurrent ? " current" : ""}" data-notebook-id="${nb.id}">
+            <div class="notebook-picker-item__color" style="background-color: ${nb.color}"></div>
+            <span class="notebook-picker-item__title">${escapeHtml(nb.title)}</span>
+            ${isCurrent ? `<span class="notebook-picker-item__badge">${t("overview.moveCopy.current")}</span>` : ""}
+          </div>
+        `;
+      })
+      .join("");
+
+    const modalHtml = `
+      <div id="modal-overlay" class="modal-overlay">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 class="modal-title">${t("overview.moveCopy.title")}</h3>
+            <button class="modal-close" aria-label="${t("modals.close")}">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="action-toggle">
+              <input type="radio" name="movecopy-action" id="action-move" value="move" checked>
+              <label for="action-move">${t("overview.moveCopy.move")}</label>
+              <input type="radio" name="movecopy-action" id="action-copy" value="copy">
+              <label for="action-copy">${t("overview.moveCopy.copy")}</label>
+            </div>
+            <p class="form-label">${t("overview.moveCopy.targetLabel")}</p>
+            <div class="notebook-picker">
+              ${quickNotesItem}
+              ${notebookItems}
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary modal-cancel">${t("common.cancel")}</button>
+            <button class="btn-primary modal-confirm" disabled>${t("overview.moveCopy.apply")}</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML("beforeend", modalHtml);
+
+    const overlay = document.getElementById("modal-overlay");
+    const confirmBtn = overlay.querySelector(".modal-confirm");
+    const cancelBtn = overlay.querySelector(".modal-cancel");
+    const closeBtn = overlay.querySelector(".modal-close");
+    const pickerItems = overlay.querySelectorAll(".notebook-picker-item:not(.current)");
+
+    let selectedNotebookId; // undefined = nothing selected yet
+
+    pickerItems.forEach((item) => {
+      item.addEventListener("click", () => {
+        pickerItems.forEach((i) => {
+          i.classList.remove("selected");
+        });
+        item.classList.add("selected");
+        selectedNotebookId =
+          item.dataset.notebookId === "__quicknotes__" ? null : item.dataset.notebookId;
+        confirmBtn.disabled = false;
+      });
+    });
+
+    const closeModal = (result) => {
+      overlay.classList.add("modal-closing");
+      setTimeout(() => {
+        overlay.remove();
+        resolve(result);
+      }, 200);
+    };
+
+    confirmBtn.addEventListener("click", () => {
+      if (selectedNotebookId === undefined) return;
+      const action = overlay.querySelector("input[name='movecopy-action']:checked").value;
+      closeModal({ action, targetNotebookId: selectedNotebookId });
+    });
+
+    cancelBtn.addEventListener("click", () => closeModal(null));
+    closeBtn.addEventListener("click", () => closeModal(null));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeModal(null);
+    });
+
+    const handleEsc = (e) => {
+      if (e.key === "Escape") {
+        closeModal(null);
+        document.removeEventListener("keydown", handleEsc);
+      }
+    };
+    document.addEventListener("keydown", handleEsc);
+  });
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+/**
  * Initialize modal event listeners
  */
 export function initModals() {
