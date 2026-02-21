@@ -392,6 +392,7 @@
       "gridMedium": "Karo – Mittel",
       "gridLarge": "Karo – Groß"
     },
+    "exportPdf": "PDF exportieren",
     "deleteNote": "Notiz löschen",
     "penDialog": {
       "lineWidth": "Linienstärke: ",
@@ -427,7 +428,10 @@
     "pdf": {
       "delete": "PDF löschen",
       "deleteConfirmTitle": "PDF löschen",
-      "deleteConfirmMsg": "Möchtest du das PDF-Dokument wirklich entfernen? Dabei werden alle Seiten gelöscht."
+      "deleteConfirmMsg": "Möchtest du das PDF-Dokument wirklich entfernen? Dabei werden alle Seiten gelöscht.",
+      "exportError": "PDF-Export fehlgeschlagen",
+      "exportProgressTitle": "PDF wird exportiert",
+      "exportProgressPage": "Seite {{current}} von {{total}} wird exportiert ..."
     },
     "textSelection": {
       "cut": "Ausschneiden",

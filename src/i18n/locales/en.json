@@ -392,6 +392,7 @@
       "gridMedium": "Grid - Medium",
       "gridLarge": "Grid - Large"
     },
+    "exportPdf": "Export PDF",
     "deleteNote": "Delete Note",
     "penDialog": {
       "lineWidth": "Line Width: ",
@@ -427,7 +428,10 @@
     "pdf": {
       "delete": "Delete PDF",
       "deleteConfirmTitle": "Delete PDF",
-      "deleteConfirmMsg": "Are you sure you want to remove the PDF document? This will remove all pages."
+      "deleteConfirmMsg": "Are you sure you want to remove the PDF document? This will remove all pages.",
+      "exportError": "PDF Export Failed",
+      "exportProgressTitle": "Exporting PDF",
+      "exportProgressPage": "Exporting page {{current}} of {{total}} ..."
     },
     "textSelection": {
       "cut": "Cut",

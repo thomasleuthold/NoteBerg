@@ -12,6 +12,36 @@ fn get_recognition_url(state: tauri::State<Mutex<RecognitionState>>) -> String {
     state.lock().unwrap().url.clone()
 }
 
+/// Tauri command: show a native Save dialog and write bytes to the chosen path.
+/// Returns the path that was written, or an empty string if the user cancelled.
+/// Only available on desktop (Windows, macOS, Linux) — not on Android/iOS.
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn save_pdf(bytes: Vec<u8>, suggested_name: String) -> Result<String, String> {
+    let path = rfd::AsyncFileDialog::new()
+        .set_file_name(&suggested_name)
+        .add_filter("PDF", &["pdf"])
+        .save_file()
+        .await;
+
+    match path {
+        Some(handle) => {
+            let path_str = handle.path().to_string_lossy().to_string();
+            std::fs::write(handle.path(), &bytes)
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+            Ok(path_str)
+        }
+        None => Ok(String::new()), // user cancelled
+    }
+}
+
+/// Stub for mobile targets where native file dialogs are not available.
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn save_pdf(_bytes: Vec<u8>, _suggested_name: String) -> Result<String, String> {
+    Err("PDF export is not supported on this platform".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -21,7 +51,7 @@ pub fn run() {
         .manage(Mutex::new(RecognitionState {
             url: String::new(),
         }))
-        .invoke_handler(tauri::generate_handler![get_recognition_url])
+        .invoke_handler(tauri::generate_handler![get_recognition_url, save_pdf])
         .setup(|app| {
             #[cfg(target_os = "windows")]
             {

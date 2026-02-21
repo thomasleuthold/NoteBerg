@@ -705,6 +705,52 @@ function escapeHtml(text) {
 }
 
 /**
+ * Show a progress dialog that cannot be dismissed by the user.
+ * Returns a controller object to update or close the dialog.
+ *
+ * @param {string} title - Dialog title
+ * @returns {{ update: (current: number, total: number) => void, close: () => void }}
+ */
+export function showProgressDialog(title) {
+  const existingModal = document.getElementById("modal-overlay");
+  if (existingModal) existingModal.remove();
+
+  const modalHtml = `
+    <div id="modal-overlay" class="modal-overlay modal-no-close">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">${title}</h3>
+        </div>
+        <div class="modal-body modal-progress-body">
+          <div class="modal-progress-spinner"></div>
+          <p class="modal-progress-label">&nbsp;</p>
+          <div class="modal-progress-bar">
+            <div class="modal-progress-fill" style="width: 0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML("beforeend", modalHtml);
+  const overlay = document.getElementById("modal-overlay");
+  const label = overlay.querySelector(".modal-progress-label");
+  const fill = overlay.querySelector(".modal-progress-fill");
+
+  return {
+    update(current, total, text) {
+      const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+      label.textContent = text || `${current} / ${total}`;
+      fill.style.width = `${pct}%`;
+    },
+    close() {
+      overlay.classList.add("modal-closing");
+      setTimeout(() => overlay.remove(), 200);
+    },
+  };
+}
+
+/**
  * Initialize modal event listeners
  */
 export function initModals() {

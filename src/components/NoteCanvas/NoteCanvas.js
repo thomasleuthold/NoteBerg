@@ -9,6 +9,7 @@
 import { t } from "../../i18n/index.js";
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
+import { downloadPdfBytes, exportNoteToPdf } from "../../modules/pdfExport.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
@@ -25,7 +26,7 @@ import {
   drawStroke as sharedDrawStroke,
   getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
-import { showAlertDialog, showConfirmDialog } from "../modals.js";
+import { showAlertDialog, showConfirmDialog, showProgressDialog } from "../modals.js";
 import { AppClipboard } from "./AppClipboard.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { ContextFloatingMenu } from "./ContextFloatingMenu.js";
@@ -594,6 +595,8 @@ export class NoteCanvas {
             this.renderer.background = action.value;
             this.renderer.forceRedraw();
             await updateNote(this.noteId, { background: action.value, modified: Date.now() });
+          } else if (action.type === "export-pdf") {
+            await this._exportPdf();
           } else if (action.type === "delete") {
             const confirmed = await showConfirmDialog(
               "Delete Note",
@@ -4181,10 +4184,39 @@ export class NoteCanvas {
   }
 
   /**
+   * Export the note to a PDF file and trigger a browser download.
+   * @private
+   */
+  async _exportPdf() {
+    const progress = showProgressDialog(t("canvas.pdf.exportProgressTitle"));
+    try {
+      const mediaItems = this.mediaManager.getItems();
+      const bytes = await exportNoteToPdf(this.noteData, mediaItems, (current, total) => {
+        progress.update(current, total, t("canvas.pdf.exportProgressPage", { current, total }));
+      });
+      progress.close();
+      const filename = `${this.noteData.title || "note"}.pdf`;
+      await downloadPdfBytes(bytes, filename);
+    } catch (err) {
+      progress.close();
+      console.error("[NoteCanvas] PDF export failed:", err);
+      await showAlertDialog(t("canvas.pdf.exportError"), err.message);
+    }
+  }
+
+  /**
    * Clean up all resources
    */
   destroy() {
-    // Trigger handwriting recognition if strokes changed
+    // Step 1: Force-flush any pending strokes to the worker immediately.
+    // This must happen before recognition (which reads note content from DB) and before
+    // the thumbnail save, so the DB has the latest strokes when both complete.
+    if (this.strokeManager) {
+      this.strokeManager.forceSave();
+    }
+
+    // Step 2: Trigger handwriting recognition if strokes changed.
+    // Runs concurrently with thumbnail save — both are awaited before sync starts.
     let pendingRecognition = null;
     if (this.strokesChanged && this.noteId && this.noteData?.strokes) {
       const activeStrokes = this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted);
@@ -4195,8 +4227,9 @@ export class NoteCanvas {
       }
     }
 
-    // Save thumbnail if changes were made or if it's missing
-    // This initiates the async save and stores promise in _pendingThumbnailSave
+    // Step 3: Save thumbnail if changes were made or if it's missing.
+    // Must happen before renderer is destroyed (uses renderer.renderSnapshot).
+    // Stores promise in _pendingThumbnailSave.
     if (
       (this.strokesChanged || this.mediaChanged || !this.noteData?.thumbnailFileId) &&
       this.noteId
@@ -4299,12 +4332,13 @@ export class NoteCanvas {
       this.navigator = null;
     }
 
-    // Wait for pending thumbnail save before destroying strokeManager
-    // This ensures SAVE_THUMBNAIL message is sent before CLOSE
+    // Destroy strokeManager after thumbnail save completes.
+    // forceSave() was already called at the top of destroy() to flush pending strokes.
+    // Here we only send CLOSE so the worker shuts down after processing its queue
+    // (which includes the SAVE_THUMBNAIL message posted by _doSaveThumbnail).
     const cleanupStrokeManager = () => {
       if (this.strokeManager) {
-        this.strokeManager.forceSave();
-        this.strokeManager.destroy();
+        this.strokeManager.destroy(); // sends CLOSE to worker
         this.strokeManager = null;
       }
     };

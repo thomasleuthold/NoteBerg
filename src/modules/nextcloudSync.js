@@ -543,41 +543,28 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     throw new Error(`Failed to upload file: ${response.status} ${response.statusText}`);
   }
 
-  // Always do a PROPFIND after upload to get the canonical ETag that future PROPFINDs will return.
-  // Nextcloud's PUT/HEAD response ETag can differ from what PROPFIND reports (due to server-side
-  // versioning, chunked storage, or etag propagation quirks), which causes spurious re-downloads
-  // on every subsequent sync. Using the PROPFIND etag ensures our stored lastSyncedEtag matches
-  // exactly what the directory listing will show.
-  try {
-    const propfindResponse = await fetch(webdavUrl, {
-      method: "PROPFIND",
-      headers: {
-        Authorization: headers.Authorization,
-        Depth: "0",
-        "Cache-Control": "no-cache",
-        Pragma: "no-cache",
-      },
-    });
-    if (propfindResponse.ok) {
-      const xmlText = await propfindResponse.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(xmlText, "text/xml");
-      const propfindEtag = doc.getElementsByTagName("d:getetag")[0]?.textContent?.replace(/"/g, "");
-      if (propfindEtag) {
-        return propfindEtag;
-      }
+  let newEtag = response.headers.get("etag")?.replace(/"/g, "");
+
+  // If ETag is missing (e.g. 204 response), try to fetch it via HEAD
+  if (!newEtag && response.ok) {
+    try {
+      const headResponse = await fetch(webdavUrl, {
+        method: "HEAD",
+        headers: {
+          Authorization: headers.Authorization,
+        },
+      });
+      newEtag = headResponse.headers.get("etag")?.replace(/"/g, "");
+    } catch (e) {
+      console.warn("Failed to fetch ETag after upload:", e);
     }
-  } catch (e) {
-    console.warn("[NextcloudSync] Failed to fetch canonical ETag via PROPFIND after upload:", e);
   }
 
-  // Fallback: use the ETag from the PUT response headers
-  const putEtag = response.headers.get("etag")?.replace(/"/g, "");
-  if (putEtag) {
-    return putEtag;
+  if (!newEtag) {
+    throw new Error("Server did not return an ETag for the uploaded file");
   }
 
-  throw new Error("Server did not return an ETag for the uploaded file");
+  return newEtag;
 }
 
 /**
@@ -1269,11 +1256,6 @@ export async function syncNotes(notes) {
       delete noteForUpload.encrypted;
       delete noteForUpload._currentFileEtag;
       delete noteForUpload.previousNotebookId;
-      // Thumbnails are local-only blobs stored in IndexedDB — other clients cannot
-      // access them, so uploading thumbnailFileId / thumbnailTimestamp just causes
-      // unnecessary etag changes when a thumbnail is regenerated locally.
-      delete noteForUpload.thumbnailFileId;
-      delete noteForUpload.thumbnailTimestamp;
 
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
