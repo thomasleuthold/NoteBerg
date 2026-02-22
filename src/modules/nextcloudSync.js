@@ -1222,13 +1222,54 @@ export async function syncNotes(notes) {
 
   const CONCURRENCY = 5;
 
+  // Pre-process moves: group by old notebook so the tombstone read-modify-write
+  // for each source location is done serially, preventing concurrent overwrites
+  // that would drop tombstone entries and cause ghost notes on other devices.
+  const movedNotes = activeNotes.filter((n) => n.previousNotebookId !== undefined);
+  if (movedNotes.length > 0) {
+    // Group by old notebook key
+    const byOldNotebook = {};
+    for (const note of movedNotes) {
+      const key = note.previousNotebookId ?? "quickNotes";
+      if (!byOldNotebook[key]) byOldNotebook[key] = [];
+      byOldNotebook[key].push(note);
+    }
+
+    for (const [key, groupNotes] of Object.entries(byOldNotebook)) {
+      const oldNotebookId = key === "quickNotes" ? null : key;
+      const tombstonePath = oldNotebookId
+        ? getNotebookTombstonePath(oldNotebookId)
+        : getQuickNotesTombstonePath();
+
+      // Delete old files concurrently (each is an independent path — no collision risk)
+      await runInBatches(groupNotes, CONCURRENCY, async (note) => {
+        const oldNotePath = getNotePath(note.id, oldNotebookId);
+        const oldMediaFolder = getNoteMediaFolder(note.id, oldNotebookId);
+        await deleteFile(oldNotePath).catch(() => {});
+        await deleteFile(oldMediaFolder).catch(() => {});
+      });
+
+      // Write tombstone once for the whole group (serial — no race)
+      let tombstone;
+      try {
+        const { content } = await downloadFile(tombstonePath);
+        tombstone = content ? JSON.parse(content) : createEmptyTombstone();
+      } catch {
+        tombstone = createEmptyTombstone();
+      }
+      for (const note of groupNotes) {
+        tombstone = addNoteTombstone(tombstone, note.id);
+      }
+      await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+
+      console.log(
+        `[Sync] Cleaned up ${groupNotes.length} moved note(s) from ${key}: ${groupNotes.map((n) => n.id).join(", ")}`,
+      );
+    }
+  }
+
   const uploadResults = await runInBatches(activeNotes, CONCURRENCY, async (note) => {
     try {
-      // If the note was moved from another location, clean up the old Nextcloud path first
-      if (note.previousNotebookId !== undefined) {
-        await cleanupMovedNote(note.id, note.previousNotebookId);
-      }
-
       // Get the correct path based on whether note is in a notebook or is a quick note
       const path = getNotePath(note.id, note.notebookId);
 
@@ -1304,39 +1345,6 @@ export async function syncNotes(notes) {
   }
 
   return results;
-}
-
-/**
- * Delete the old Nextcloud file and write a tombstone when a note was moved.
- * @param {string} noteId
- * @param {string|null} oldNotebookId - The notebook the note was in before the move
- */
-async function cleanupMovedNote(noteId, oldNotebookId) {
-  const oldNotePath = getNotePath(noteId, oldNotebookId);
-  const oldMediaFolder = getNoteMediaFolder(noteId, oldNotebookId);
-
-  // Delete old note file and media folder (ignore 404s)
-  await deleteFile(oldNotePath).catch(() => {});
-  await deleteFile(oldMediaFolder).catch(() => {});
-
-  // Write a tombstone in the old notebook/quickNotes so other clients remove it
-  const tombstonePath = oldNotebookId
-    ? getNotebookTombstonePath(oldNotebookId)
-    : getQuickNotesTombstonePath();
-
-  let tombstone;
-  try {
-    const { content } = await downloadFile(tombstonePath);
-    tombstone = content ? JSON.parse(content) : createEmptyTombstone();
-  } catch {
-    tombstone = createEmptyTombstone();
-  }
-  tombstone = addNoteTombstone(tombstone, noteId);
-  await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
-
-  console.log(
-    `[Sync] Cleaned up old location for moved note ${noteId} (was in ${oldNotebookId ?? "quickNotes"})`,
-  );
 }
 
 /**
