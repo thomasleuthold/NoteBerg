@@ -335,6 +335,8 @@ export class NoteCanvas {
     this.spatialIndex.build(inMemoryData.strokes);
     this.mediaManager.setItems(inMemoryData.media);
     this.renderer.setData(inMemoryData.strokes, inMemoryData.background);
+    this.renderer.showA4PageBreaks =
+      !inMemoryData.pdfSource && !this.mediaManager.getItems().some((i) => i.type === "pdf-page");
 
     // Force redraw immediately to show updated state (we know we aren't drawing)
     this.renderer.forceRedraw();
@@ -493,6 +495,8 @@ export class NoteCanvas {
     this.renderer.setData(this.noteData.strokes, this.noteData.background);
     this.renderer.setSpatialIndex(this.spatialIndex);
     this.renderer.setMediaManager(this.mediaManager);
+    this.renderer.showA4PageBreaks =
+      !this.noteData.pdfSource && !this.mediaManager.getItems().some((i) => i.type === "pdf-page");
     this.renderer.setContentSize(contentWidth, this.contentHeight);
     this.renderer.resize(width, height);
 
@@ -774,6 +778,7 @@ export class NoteCanvas {
 
         // Save changes
         await this._saveMediaChanges();
+        this.renderer.showA4PageBreaks = false;
         this.renderer.forceRedraw();
         this._renderPdfControls();
 
@@ -4178,6 +4183,7 @@ export class NoteCanvas {
       deleteFile(sourceFileId).catch(() => {});
     }
 
+    this.renderer.showA4PageBreaks = true;
     this.renderer.forceRedraw();
     this._renderPdfControls();
     this._saveThumbnail();

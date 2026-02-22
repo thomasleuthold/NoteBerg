@@ -218,21 +218,117 @@ function buildSvgPath(stroke, offsetX, offsetY, scaleX, scaleY) {
   if (count === 2) {
     parts.push(`L ${tx(xs[1]).toFixed(3)} ${ty(ys[1]).toFixed(3)}`);
   } else {
+    // Use cubic beziers (C) elevated from quadratic (Q) for better cross-renderer compatibility.
+    // Chained Q segments cause visible gaps in LibreOffice due to per-segment cap rendering.
+    // Elevation formula: CP1 = P0 + 2/3*(Qcp - P0), CP2 = Pend + 2/3*(Qcp - Pend)
+    let p0x = tx(xs[0]);
+    let p0y = ty(ys[0]);
+
     for (let i = 1; i < count - 1; i++) {
-      const xc = (xs[i] + xs[i + 1]) / 2;
-      const yc = (ys[i] + ys[i + 1]) / 2;
+      const qcpx = tx(xs[i]);
+      const qcpy = ty(ys[i]);
+      const endx = (tx(xs[i]) + tx(xs[i + 1])) / 2;
+      const endy = (ty(ys[i]) + ty(ys[i + 1])) / 2;
+
+      const cp1x = p0x + (2 / 3) * (qcpx - p0x);
+      const cp1y = p0y + (2 / 3) * (qcpy - p0y);
+      const cp2x = endx + (2 / 3) * (qcpx - endx);
+      const cp2y = endy + (2 / 3) * (qcpy - endy);
+
       parts.push(
-        `Q ${tx(xs[i]).toFixed(3)} ${ty(ys[i]).toFixed(3)} ${tx(xc).toFixed(3)} ${ty(yc).toFixed(3)}`,
+        `C ${cp1x.toFixed(3)} ${cp1y.toFixed(3)} ${cp2x.toFixed(3)} ${cp2y.toFixed(3)} ${endx.toFixed(3)} ${endy.toFixed(3)}`,
       );
+      p0x = endx;
+      p0y = endy;
     }
+
+    // Final segment: from last midpoint to the actual last point
     const li = count - 1;
-    const si = count - 2;
+    const qcpx = tx(xs[li - 1]);
+    const qcpy = ty(ys[li - 1]);
+    const endx = tx(xs[li]);
+    const endy = ty(ys[li]);
+    const cp1x = p0x + (2 / 3) * (qcpx - p0x);
+    const cp1y = p0y + (2 / 3) * (qcpy - p0y);
+    const cp2x = endx + (2 / 3) * (qcpx - endx);
+    const cp2y = endy + (2 / 3) * (qcpy - endy);
     parts.push(
-      `Q ${tx(xs[si]).toFixed(3)} ${ty(ys[si]).toFixed(3)} ${tx(xs[li]).toFixed(3)} ${ty(ys[li]).toFixed(3)}`,
+      `C ${cp1x.toFixed(3)} ${cp1y.toFixed(3)} ${cp2x.toFixed(3)} ${cp2y.toFixed(3)} ${endx.toFixed(3)} ${endy.toFixed(3)}`,
     );
   }
 
   return parts.join(" ");
+}
+
+/**
+ * Draw the note's background pattern (ruled lines or grid) onto a PDF page.
+ *
+ * Spacing values match drawBackgroundPattern() in noteRenderer.js (20/30/40 px in content space).
+ * The pattern color defaults to #e5e7eb (same as the CSS variable fallback).
+ *
+ * @param {import('pdf-lib').PDFPage} pdfPage
+ * @param {string} backgroundType - e.g. "ruled-narrow", "grid-medium", "none"
+ * @param {number} pdfPageW - PDF page width in pts
+ * @param {number} pdfPageH - PDF page height in pts
+ * @param {number} contentPageW - Page width in content space (px)
+ * @param {number} contentPageH - Page height in content space (px)
+ */
+function drawBackgroundPatternOnPage(
+  pdfPage,
+  backgroundType,
+  pdfPageW,
+  pdfPageH,
+  contentPageW,
+  contentPageH,
+) {
+  if (!backgroundType || backgroundType === "none") return;
+
+  const scaleX = pdfPageW / contentPageW;
+  const scaleY = pdfPageH / contentPageH;
+
+  // Pattern color — matches CSS variable fallback used in noteRenderer.js
+  const { r, g, b } = hexToRgb("#e5e7eb");
+  const color = rgb(r, g, b);
+
+  const spacingMap = {
+    "ruled-narrow": 20,
+    "ruled-medium": 30,
+    "ruled-wide": 40,
+    "grid-small": 20,
+    "grid-medium": 30,
+    "grid-large": 40,
+  };
+  const spacing = spacingMap[backgroundType];
+  if (!spacing) return;
+
+  const isGrid = backgroundType.startsWith("grid");
+  const spacingPtY = spacing * scaleY;
+  const spacingPtX = spacing * scaleX;
+
+  // Horizontal lines (ruled + grid)
+  // PDF Y-up: first line is near the top of the page (pdfPageH - spacingPtY)
+  for (let yPt = pdfPageH - spacingPtY; yPt > 0; yPt -= spacingPtY) {
+    pdfPage.drawLine({
+      start: { x: 0, y: yPt },
+      end: { x: pdfPageW, y: yPt },
+      thickness: 0.5,
+      color,
+      opacity: 1,
+    });
+  }
+
+  // Vertical lines (grid only)
+  if (isGrid) {
+    for (let xPt = spacingPtX; xPt < pdfPageW; xPt += spacingPtX) {
+      pdfPage.drawLine({
+        start: { x: xPt, y: 0 },
+        end: { x: xPt, y: pdfPageH },
+        thickness: 0.5,
+        color,
+        opacity: 1,
+      });
+    }
+  }
 }
 
 /**
@@ -462,6 +558,16 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
       const scaleY = pdfH / mediaPg.height;
       const pageBottom = mediaPg.y + mediaPg.height;
 
+      // Draw background pattern underneath everything else
+      drawBackgroundPatternOnPage(
+        pdfPg,
+        note.background,
+        pdfW,
+        pdfH,
+        mediaPg.width,
+        mediaPg.height,
+      );
+
       // Draw text slice that overlaps this page's Y range
       if (textCanvas && textContentH > mediaPg.y) {
         await drawTextSliceOnPage(
@@ -510,6 +616,16 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
         const extraPage = pdfDoc.addPage([extraW, extraH]);
         const pageContentY = lastPageBottom + ep * extraContentH;
         const pageBottom = pageContentY + extraContentH;
+
+        // Draw background pattern underneath everything else
+        drawBackgroundPatternOnPage(
+          extraPage,
+          note.background,
+          extraW,
+          extraH,
+          lastMediaPg.width,
+          lastMediaPg.height,
+        );
 
         // Draw text slice for this extra page
         if (textCanvas && textContentH > pageContentY) {
@@ -580,6 +696,16 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
       const contentPageY = p * contentPageH;
       const pageBottom = contentPageY + contentPageH;
 
+      // Draw background pattern underneath everything else
+      drawBackgroundPatternOnPage(
+        page,
+        note.background,
+        A4_WIDTH,
+        A4_HEIGHT,
+        CONTENT_WIDTH,
+        contentPageH,
+      );
+
       // Draw text slice for this page
       if (textCanvas && textContentH > contentPageY) {
         await drawTextSliceOnPage(
@@ -614,39 +740,61 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
     }
   }
 
+  // Write document metadata
+  if (note.title) pdfDoc.setTitle(note.title);
+  pdfDoc.setCreator("NoteBerg (pdf-lib)");
+  pdfDoc.setProducer("NoteBerg (pdf-lib)");
+  if (note.modified) pdfDoc.setModificationDate(new Date(note.modified));
+
   return pdfDoc.save();
 }
 
 /**
- * Save PDF bytes to disk.
- * In Tauri: shows a native Save dialog via the `save_pdf` Rust command.
- * In a regular browser: triggers a blob download via a hidden anchor.
+ * Save PDF bytes to disk / open for viewing.
+ * - Desktop Tauri: native Save dialog via the `save_pdf` Rust command.
+ * - Mobile Tauri (Android/iOS): write to app cache dir via Rust (returns file path),
+ *   then open the file with openPath() from tauri-plugin-opener.
+ *   On Android, openPath() uses a FileProvider URI + ACTION_VIEW intent, which hands
+ *   the file off to the system PDF viewer. blob: URLs are not valid Android intents.
+ * - Plain browser: trigger a blob download via a hidden anchor.
  *
  * @param {Uint8Array} bytes
  * @param {string} filename
  */
 export async function downloadPdfBytes(bytes, filename) {
-  const isDesktopTauri =
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  const isTauri =
     typeof window !== "undefined" &&
-    (window.__TAURI_INTERNALS__ !== undefined || window.__TAURI__ !== undefined) &&
-    !navigator.userAgent.includes("Android") &&
-    !/iPad|iPhone|iPod/.test(navigator.userAgent);
+    (window.__TAURI_INTERNALS__ !== undefined || window.__TAURI__ !== undefined);
+  const isAndroid = ua.includes("Android");
+  const isIos = /iPad|iPhone|iPod/.test(ua);
 
-  if (isDesktopTauri) {
-    // Desktop Tauri (Windows/macOS/Linux): show a native Save dialog
+  if (isTauri && !isAndroid && !isIos) {
+    // Desktop Tauri (Windows/macOS/Linux): native Save dialog
     const { invoke } = await import("@tauri-apps/api/core");
-    // Pass bytes as a plain Array so Tauri serialises them as Vec<u8>
     await invoke("save_pdf", { bytes: Array.from(bytes), suggestedName: filename });
-  } else {
-    // Browser or mobile Tauri: trigger a blob download
-    const blob = new Blob([bytes], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    return;
   }
+
+  if (isTauri && (isAndroid || isIos)) {
+    // Write PDF to app cache dir and open it — done entirely in Rust to avoid
+    // an Android Jackson deserialization bug when calling openPath() from JS.
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("save_pdf", {
+      bytes: Array.from(bytes),
+      suggestedName: filename,
+    });
+    return;
+  }
+
+  // Plain browser fallback: trigger download directly
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }

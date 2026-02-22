@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/ThL/.cargo/registry/src/**)",
+      "Read(//c/Users/ThL/.gradle/**)",
+      "Bash(xargs:*)"
+    ]
+  }
+}
