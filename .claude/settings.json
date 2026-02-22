@@ -3,7 +3,10 @@
     "allow": [
       "Read(//c/Users/ThL/.cargo/registry/src/**)",
       "Read(//c/Users/ThL/.gradle/**)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(git -C /c/work/code/oneJournal log --oneline --all)",
+      "Bash(git -C /c/work/code/oneJournal log --oneline -20)",
+      "Bash(git -C /c/work/code/oneJournal show --name-only bf62d76)"
     ]
   }
 }
