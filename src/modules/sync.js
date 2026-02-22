@@ -15,6 +15,7 @@ import {
   permanentlyDeleteNotesInNotebook,
   saveNote,
   saveNotebook,
+  updateNoteEtag,
 } from "./storage.js";
 
 // Sync state
@@ -210,9 +211,7 @@ export async function performSync({
       const note = await getNote(id);
       if (note) {
         const etag = result.uploaded.notes.metadata?.[id]?.etag;
-        if (!silent) {
-          console.log(`Marking note ${id} as synced (was: ${note.synced})`);
-        }
+        console.log(`Marking note ${id} as synced, storing lastSyncedEtag="${etag}"`);
         // Use skipEncryption because note is already in correct encrypted format
         // Wait, getNote returns decrypted. saveNote handles encryption.
         await saveNote({
@@ -252,6 +251,10 @@ export async function performSync({
       // Remove internal _currentFileEtag and update lastSyncedEtag for tracking
       const { _currentFileEtag, ...noteToSave } = note;
       noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
+      // Mark as synced: the downloaded version IS the server's version, so it should not
+      // be re-uploaded on the next sync cycle (prevents oscillation when Nextcloud etags
+      // differ between syncs due to server-side processing or multiple clients).
+      noteToSave.synced = true;
 
       // Check for race condition: has local note changed since sync started?
       const currentLocalNote = await getNote(note.id);
@@ -270,9 +273,23 @@ export async function performSync({
             `[Sync] Merge failed for note ${note.id} (content conflict). Keeping local version.`,
           );
         }
+      } else if (
+        currentLocalNote &&
+        currentLocalNote.version >= (noteToSave.version || 0) &&
+        currentLocalNote.modified >= (noteToSave.modified || 0)
+      ) {
+        // Downloaded content is not newer than local — just update the etag silently.
+        // Handles the case where Nextcloud's "newer" etag resolves to identical content.
+        await updateNoteEtag(note.id, noteToSave.lastSyncedEtag);
       } else {
         await saveNote(noteToSave);
       }
+    }
+
+    // Accept remote etag for notes whose server etag changed but content is not newer than local.
+    // This silently updates lastSyncedEtag without downloading content or firing datachange.
+    for (const { id, etag } of result.noteEtagsToUpdate || []) {
+      await updateNoteEtag(id, etag);
     }
 
     // Process deletions (Remote deleted -> Local delete)

@@ -52,6 +52,9 @@ export class InsertMediaCommand {
 
     noteCanvas.mediaChanged = true;
     noteCanvas._saveMediaChanges();
+    noteCanvas.renderer.showA4PageBreaks =
+      !noteCanvas.noteData.pdfSource &&
+      !noteCanvas.mediaManager.getItems().some((i) => i.type === "pdf-page");
     noteCanvas.renderer.forceRedraw();
     noteCanvas._renderPdfControls();
   }
@@ -82,6 +85,9 @@ export class InsertMediaCommand {
 
     noteCanvas.mediaChanged = true;
     noteCanvas._saveMediaChanges();
+    noteCanvas.renderer.showA4PageBreaks =
+      !noteCanvas.noteData.pdfSource &&
+      !noteCanvas.mediaManager.getItems().some((i) => i.type === "pdf-page");
     noteCanvas.renderer.forceRedraw();
     noteCanvas._renderPdfControls();
   }

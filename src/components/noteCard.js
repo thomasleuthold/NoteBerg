@@ -3,6 +3,8 @@
  * Renders a clickable card for a note with preview and metadata
  */
 
+import { getIcon } from "../utils/icons.js";
+
 /**
  * Render a note card
  * @param {Object} note - Note object from storage
@@ -46,10 +48,8 @@ export function renderNoteCard(note) {
 
   return `
     <div class="note-card" data-note-id="${note.id}">
-      <button class="card-delete-btn" data-note-id="${note.id}" title="Delete note" aria-label="Delete note">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-        </svg>
+      <button class="card-options-btn" data-note-id="${note.id}" title="Note options" aria-label="Note options">
+        ${getIcon("moreVertical", 16)}
       </button>
       <div class="note-card-header">
         <h4 class="note-card-title">${escapeHtml(note.title || "Untitled")}</h4>

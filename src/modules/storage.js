@@ -437,6 +437,90 @@ export async function deleteNote(id) {
 }
 
 /**
+ * Move a note to a different notebook (or to quick notes when targetNotebookId is null).
+ * Sets previousNotebookId so the sync layer can clean up the old Nextcloud location.
+ */
+export async function moveNote(noteId, targetNotebookId) {
+  const note = await db.get("notes", noteId);
+  if (!note) throw new Error("Note not found");
+
+  const previousNotebookId = note.notebookId ?? null;
+  // Normalise: treat undefined and null as the same (quick notes)
+  if (previousNotebookId === (targetNotebookId ?? null)) return; // no-op
+
+  const updated = {
+    ...note,
+    notebookId: targetNotebookId ?? null,
+    previousNotebookId,
+    modified: Date.now(),
+    version: (note.version || 0) + 1,
+    synced: false,
+    lastSyncedEtag: null,
+  };
+  await db.put("notes", updated);
+  console.log(`Note moved: ${noteId} from ${previousNotebookId} to ${targetNotebookId}`);
+}
+
+/**
+ * Copy a note to a different notebook (or to quick notes when targetNotebookId is null).
+ * Media blobs are deep-copied to new fileIds so the two notes are fully independent.
+ */
+export async function copyNote(noteId, targetNotebookId) {
+  const raw = await db.get("notes", noteId);
+  if (!raw) throw new Error("Note not found");
+  const note = await decryptNoteIfNeeded(raw);
+
+  // Deep-copy media blobs
+  const newMedia = [];
+  for (const item of note.media || []) {
+    const blob = await getFile(item.fileId);
+    const newFileId = blob ? await saveFile(blob) : item.fileId;
+    newMedia.push({ ...item, fileId: newFileId });
+  }
+
+  // Deep-copy PDF source if present
+  let newPdfSource = note.pdfSource ?? null;
+  if (note.pdfSource) {
+    const pdfBlob = await getFile(note.pdfSource);
+    newPdfSource = pdfBlob ? await saveFile(pdfBlob) : note.pdfSource;
+  }
+
+  const now = Date.now();
+  const newNote = {
+    ...note,
+    id: generateId(),
+    notebookId: targetNotebookId ?? null,
+    media: newMedia,
+    pdfSource: newPdfSource,
+    thumbnailFileId: null, // regenerated on next open
+    previousNotebookId: undefined,
+    deletedMedia: [],
+    synced: false,
+    lastSyncedEtag: null,
+    version: 1,
+    created: now,
+    modified: now,
+  };
+  delete newNote.previousNotebookId;
+
+  const toStore = await encryptNoteIfEnabled(newNote);
+  await db.put("notes", toStore);
+  console.log(`Note copied: ${noteId} → ${newNote.id} into ${targetNotebookId}`);
+  return newNote;
+}
+
+/**
+ * Clear the previousNotebookId flag after a move has been synced.
+ * Does NOT bump version or mark synced:false — it's a silent bookkeeping update.
+ */
+export async function clearNoteMoveFlag(id) {
+  const note = await db.get("notes", id);
+  if (!note) return;
+  delete note.previousNotebookId;
+  await db.put("notes", note);
+}
+
+/**
  * Purge a note (mark for permanent deletion and remove content/media)
  * This keeps a stub to ensure the deletion is synced to Nextcloud
  */
@@ -739,6 +823,21 @@ export async function saveNote(note, options = {}) {
 
   // Dispatch event for auto-sync and live updates
   window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: note.id } }));
+}
+
+/**
+ * Update only the lastSyncedEtag of a note without triggering a datachange event.
+ * Used when Nextcloud returns an alternating etag for unchanged content — we
+ * acknowledge the remote etag silently so the next sync comparison is correct.
+ * @param {string} noteId
+ * @param {string} etag
+ */
+export async function updateNoteEtag(noteId, etag) {
+  const note = await db.get("notes", noteId);
+  if (!note) return;
+  note.lastSyncedEtag = etag;
+  note.synced = true;
+  await db.put("notes", note);
 }
 
 /**

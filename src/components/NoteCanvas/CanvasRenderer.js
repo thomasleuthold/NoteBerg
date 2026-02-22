@@ -72,6 +72,7 @@ export class CanvasRenderer {
     this.lineSeparators = []; // Y positions (content coords) of detected line separators
     this.lineIndentLevels = []; // indent level per line band (0 = base, 1 = indented)
     this.highlightRects = []; // Search term highlights
+    this.showA4PageBreaks = false; // Show A4 page break lines when no PDF is imported
 
     // Content bounds
     this.contentWidth = 0;
@@ -725,6 +726,11 @@ export class CanvasRenderer {
       this._drawMedia(fastMode);
     }
 
+    // Draw A4 page break lines for notes without an imported PDF
+    if (this.showA4PageBreaks) {
+      this._drawA4PageBreaks();
+    }
+
     // Query spatial index for visible strokes
     const bufferBottom = this.bufferTop + this.bufferHeight;
     let strokeIndices;
@@ -1156,6 +1162,39 @@ export class CanvasRenderer {
     this.ctx.moveTo(item.x, y);
     this.ctx.lineTo(item.x + item.width, y);
     this.ctx.stroke();
+
+    this.ctx.restore();
+  }
+
+  /**
+   * Draw A4 page break lines across the full content width.
+   * Used when the note has no imported PDF so the user can see where pages will break on export.
+   * Matches the A4 proportions used in pdfExport.js (CONTENT_WIDTH=1200, A4 72pt/inch).
+   * @private
+   */
+  _drawA4PageBreaks() {
+    // A4 page height in content space: same calculation as pdfExport.js Case B
+    const A4_CONTENT_PAGE_H = 841.89 / (595.28 / 1200); // ≈ 1696.7 px
+
+    const bufferBottom = this.bufferTop + this.bufferHeight;
+    const lineWidth = 1 / this.resolutionScale;
+
+    this.ctx.save();
+    this.ctx.translate(0, -this.bufferTop);
+    this.ctx.strokeStyle = "#1e3a5f";
+    this.ctx.lineWidth = lineWidth;
+    this.ctx.setLineDash([8, 4]);
+
+    // Draw lines at the bottom of each page (i=1,2,…), skipping y=0 (top of note)
+    const firstBreakIndex = Math.max(1, Math.ceil(this.bufferTop / A4_CONTENT_PAGE_H));
+    for (let i = firstBreakIndex; ; i++) {
+      const y = i * A4_CONTENT_PAGE_H;
+      if (y > bufferBottom) break;
+      this.ctx.beginPath();
+      this.ctx.moveTo(0, y);
+      this.ctx.lineTo(this.contentWidth, y);
+      this.ctx.stroke();
+    }
 
     this.ctx.restore();
   }

@@ -16,6 +16,7 @@ import {
 } from "./secureStorage.js";
 import {
   checkFileExists,
+  clearNoteMoveFlag,
   getFile,
   isNextcloudEncryptionEnabled,
   permanentlyDeleteNote,
@@ -1221,6 +1222,52 @@ export async function syncNotes(notes) {
 
   const CONCURRENCY = 5;
 
+  // Pre-process moves: group by old notebook so the tombstone read-modify-write
+  // for each source location is done serially, preventing concurrent overwrites
+  // that would drop tombstone entries and cause ghost notes on other devices.
+  const movedNotes = activeNotes.filter((n) => n.previousNotebookId !== undefined);
+  if (movedNotes.length > 0) {
+    // Group by old notebook key
+    const byOldNotebook = {};
+    for (const note of movedNotes) {
+      const key = note.previousNotebookId ?? "quickNotes";
+      if (!byOldNotebook[key]) byOldNotebook[key] = [];
+      byOldNotebook[key].push(note);
+    }
+
+    for (const [key, groupNotes] of Object.entries(byOldNotebook)) {
+      const oldNotebookId = key === "quickNotes" ? null : key;
+      const tombstonePath = oldNotebookId
+        ? getNotebookTombstonePath(oldNotebookId)
+        : getQuickNotesTombstonePath();
+
+      // Delete old files concurrently (each is an independent path — no collision risk)
+      await runInBatches(groupNotes, CONCURRENCY, async (note) => {
+        const oldNotePath = getNotePath(note.id, oldNotebookId);
+        const oldMediaFolder = getNoteMediaFolder(note.id, oldNotebookId);
+        await deleteFile(oldNotePath).catch(() => {});
+        await deleteFile(oldMediaFolder).catch(() => {});
+      });
+
+      // Write tombstone once for the whole group (serial — no race)
+      let tombstone;
+      try {
+        const { content } = await downloadFile(tombstonePath);
+        tombstone = content ? JSON.parse(content) : createEmptyTombstone();
+      } catch {
+        tombstone = createEmptyTombstone();
+      }
+      for (const note of groupNotes) {
+        tombstone = addNoteTombstone(tombstone, note.id);
+      }
+      await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+
+      console.log(
+        `[Sync] Cleaned up ${groupNotes.length} moved note(s) from ${key}: ${groupNotes.map((n) => n.id).join(", ")}`,
+      );
+    }
+  }
+
   const uploadResults = await runInBatches(activeNotes, CONCURRENCY, async (note) => {
     try {
       // Get the correct path based on whether note is in a notebook or is a quick note
@@ -1249,13 +1296,19 @@ export async function syncNotes(notes) {
       delete noteForUpload.synced;
       delete noteForUpload.encrypted;
       delete noteForUpload._currentFileEtag;
+      delete noteForUpload.previousNotebookId;
 
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
 
       const etag = await uploadFile(path, content, syncedNote.modified, note.lastSyncedEtag);
       console.log(`Successfully uploaded note ${note.id}`);
-      return { success: true, id: note.id, etag };
+      return {
+        success: true,
+        id: note.id,
+        etag,
+        hadPreviousLocation: note.previousNotebookId !== undefined,
+      };
     } catch (error) {
       console.error(`Failed to sync note ${note.id}:`, error);
       return { success: false, id: note.id, error: error.message };
@@ -1279,6 +1332,11 @@ export async function syncNotes(notes) {
         results.uploaded++;
         results.uploadedIds.push(res.id);
         results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+
+        // Clear previousNotebookId now that the move has been synced to Nextcloud
+        if (res.hadPreviousLocation) {
+          await clearNoteMoveFlag(res.id);
+        }
       }
     } else {
       results.failed++;
@@ -1637,6 +1695,7 @@ export async function fullSync(localNotebooks, localNotes) {
   const notebooksToDownload = [];
   const notebooksToDelete = [];
   const notesToDelete = [];
+  const noteEtagsToUpdate = []; // Notes whose etag changed on server but content is not newer
   const conflicts = { notebooks: [], notes: [] };
 
   // Create maps for quick lookup
@@ -1775,7 +1834,26 @@ export async function fullSync(localNotebooks, localNotes) {
     } else if (isModifiedLocally) {
       notesToUpload.push(local);
     } else if (isModifiedRemotely) {
-      notesToDownload.push(remote);
+      // Check if the remote version is actually not newer than our local version.
+      // This happens when Nextcloud's server-side versioning causes the PROPFIND getetag to
+      // alternate between two etags for the same file — one for an older versioned copy, and
+      // one whose mtime matches our local version exactly (the file we last uploaded).
+      // In both cases there is no real remote change: skip the download and just accept
+      // the remote etag so the next PROPFIND comparison is correct.
+      // The guard `!isModifiedLocally` ensures we only skip downloads when local is clean.
+      if (
+        remote.modified &&
+        local.modified &&
+        remote.modified <= local.modified + 2000 &&
+        !isModifiedLocally
+      ) {
+        console.log(
+          `[Sync] Note ${local.id}: remote etag changed but remote is not newer (remote.modified=${remote.modified}, local.modified=${local.modified}). Accepting remote etag without download.`,
+        );
+        noteEtagsToUpdate.push({ id: local.id, etag: remote._currentFileEtag });
+      } else {
+        notesToDownload.push(remote);
+      }
     }
   }
 
@@ -1809,6 +1887,7 @@ export async function fullSync(localNotebooks, localNotes) {
       notebooks: notebooksToDownload,
       notes: notesToDownload,
     },
+    noteEtagsToUpdate,
     conflicts,
     notebooksToUpload,
     notesToUpload,

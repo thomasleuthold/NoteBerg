@@ -76,6 +76,20 @@
       "noteTitle": "Notiz löschen",
       "noteMessage": "Möchtest du \"{{title}}\" wirklich löschen?"
     },
+    "noteOptions": {
+      "title": "Optionen",
+      "moveCopy": "Verschieben / Kopieren",
+      "delete": "Löschen"
+    },
+    "moveCopy": {
+      "title": "Notiz verschieben / kopieren",
+      "move": "Verschieben",
+      "copy": "Kopieren",
+      "targetLabel": "Ziel auswählen",
+      "quickNotes": "Schnellnotizen",
+      "current": "aktuell",
+      "apply": "Übernehmen"
+    },
     "loading": "Laden...",
     "errorTab": "Fehler beim Laden des Tabs: {{message}}",
     "errorRender": "Fehler: {{message}}"
@@ -378,6 +392,7 @@
       "gridMedium": "Karo – Mittel",
       "gridLarge": "Karo – Groß"
     },
+    "exportPdf": "PDF exportieren",
     "deleteNote": "Notiz löschen",
     "penDialog": {
       "lineWidth": "Linienstärke: ",
@@ -413,7 +428,10 @@
     "pdf": {
       "delete": "PDF löschen",
       "deleteConfirmTitle": "PDF löschen",
-      "deleteConfirmMsg": "Möchtest du das PDF-Dokument wirklich entfernen? Dabei werden alle Seiten gelöscht."
+      "deleteConfirmMsg": "Möchtest du das PDF-Dokument wirklich entfernen? Dabei werden alle Seiten gelöscht.",
+      "exportError": "PDF-Export fehlgeschlagen",
+      "exportProgressTitle": "PDF wird exportiert",
+      "exportProgressPage": "Seite {{current}} von {{total}} wird exportiert ..."
     },
     "textSelection": {
       "cut": "Ausschneiden",

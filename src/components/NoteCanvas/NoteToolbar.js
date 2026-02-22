@@ -565,6 +565,12 @@ export class NoteToolbar {
       </div>
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
+        <button id="nc-export-pdf-btn" class="note-canvas-toolbar__option-btn">
+            ${getIcon("download", 16)} ${t("toolbar.exportPdf")}
+        </button>
+      </div>
+      <div class="note-canvas-toolbar__separator"></div>
+      <div class="note-canvas-toolbar__options-section">
         <button id="nc-delete-note-btn" class="note-canvas-toolbar__delete-btn">
             ${getIcon("trash", 16)} ${t("toolbar.deleteNote")}
         </button>
@@ -679,6 +685,15 @@ export class NoteToolbar {
         e.target.classList.add("note-canvas-toolbar__option-btn--active");
       });
     });
+
+    const exportPdfBtn = this.optionsDialog.querySelector("#nc-export-pdf-btn");
+    if (exportPdfBtn) {
+      exportPdfBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.onOptionsChange({ type: "export-pdf" });
+        this._closeOptionsDialog();
+      });
+    }
 
     const deleteBtn = this.optionsDialog.querySelector("#nc-delete-note-btn");
     if (deleteBtn) {

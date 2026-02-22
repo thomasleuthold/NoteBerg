@@ -206,6 +206,158 @@
   box-shadow: var(--shadow-sm);
 }
 
+/* Card Options Button (three-dots) */
+.card-options-btn {
+  position: absolute;
+  top: var(--spacing-sm);
+  right: var(--spacing-sm);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all var(--transition-fast);
+  z-index: 10;
+  color: var(--text-secondary);
+}
+
+.card-options-btn:hover {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.notebook-card:hover .card-options-btn,
+.note-card:hover .card-options-btn {
+  opacity: 1;
+}
+
+/* Note Options Menu (floating dropdown) */
+.note-options-menu {
+  position: fixed;
+  z-index: 2000;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  min-width: 160px;
+  overflow: hidden;
+}
+
+.note-options-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: var(--text-primary);
+}
+
+.note-options-menu__item:hover {
+  background-color: var(--bg-secondary);
+}
+
+.note-options-menu__item--danger {
+  color: var(--color-danger);
+}
+
+.note-options-menu__separator {
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border-primary);
+}
+
+/* Move/Copy Dialog */
+.action-toggle {
+  display: flex;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: var(--spacing-md);
+}
+
+.action-toggle input[type="radio"] {
+  display: none;
+}
+
+.action-toggle label {
+  flex: 1;
+  text-align: center;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.action-toggle input[type="radio"]:checked + label {
+  background-color: var(--color-primary);
+  color: white;
+}
+
+.notebook-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.notebook-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 2px solid transparent;
+  cursor: pointer;
+  background-color: var(--bg-secondary);
+  transition: all var(--transition-fast);
+}
+
+.notebook-picker-item:hover:not(.current) {
+  border-color: var(--border-secondary);
+}
+
+.notebook-picker-item.selected {
+  border-color: var(--color-primary);
+  background-color: var(--bg-tertiary);
+}
+
+.notebook-picker-item.current {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.notebook-picker-item__color {
+  width: 4px;
+  height: 20px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.notebook-picker-item__title {
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.notebook-picker-item__badge {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
 /* Notebook Cards */
 .notebook-card {
   position: relative;
@@ -472,12 +624,14 @@
   bottom: 0;
   right: 0;
   padding: 8px;
-  z-index: 2;
+  z-index: 20;
 }
 
-.preview-card .card-delete-btn {
+.preview-card .card-delete-btn,
+.preview-card .card-options-btn {
   position: static;
   padding: 4px;
+  opacity: 1;
 }
 
 .preview-no-content {
@@ -1081,6 +1235,45 @@
 /* Master Password Modals */
 .modal-no-close {
   /* Prevent closing by clicking overlay */
+}
+
+.modal-progress-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xl) var(--spacing-lg);
+}
+
+.modal-progress-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-primary);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.modal-progress-label {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-align: center;
+  min-height: 1.4em;
+}
+
+.modal-progress-bar {
+  width: 100%;
+  height: 6px;
+  background-color: var(--bg-tertiary);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.modal-progress-fill {
+  height: 100%;
+  background-color: var(--color-primary);
+  border-radius: 9999px;
+  transition: width 0.25s ease-in-out;
 }
 
 .modal-password-setup {

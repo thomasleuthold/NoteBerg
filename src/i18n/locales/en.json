@@ -76,6 +76,20 @@
       "noteTitle": "Delete Note",
       "noteMessage": "Are you sure you want to delete \"{{title}}\"?"
     },
+    "noteOptions": {
+      "title": "Note options",
+      "moveCopy": "Move / Copy",
+      "delete": "Delete"
+    },
+    "moveCopy": {
+      "title": "Move / Copy Note",
+      "move": "Move",
+      "copy": "Copy",
+      "targetLabel": "Select target",
+      "quickNotes": "Quick Notes",
+      "current": "current",
+      "apply": "Apply"
+    },
     "loading": "Loading...",
     "errorTab": "Error loading tab: {{message}}",
     "errorRender": "Error: {{message}}"
@@ -378,6 +392,7 @@
       "gridMedium": "Grid - Medium",
       "gridLarge": "Grid - Large"
     },
+    "exportPdf": "Export PDF",
     "deleteNote": "Delete Note",
     "penDialog": {
       "lineWidth": "Line Width: ",
@@ -413,7 +428,10 @@
     "pdf": {
       "delete": "Delete PDF",
       "deleteConfirmTitle": "Delete PDF",
-      "deleteConfirmMsg": "Are you sure you want to remove the PDF document? This will remove all pages."
+      "deleteConfirmMsg": "Are you sure you want to remove the PDF document? This will remove all pages.",
+      "exportError": "PDF Export Failed",
+      "exportProgressTitle": "Exporting PDF",
+      "exportProgressPage": "Exporting page {{current}} of {{total}} ..."
     },
     "textSelection": {
       "cut": "Cut",
