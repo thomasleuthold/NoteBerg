@@ -649,7 +649,7 @@ function renderSearchResultsList(container, results) {
   container.querySelectorAll(".search-result-item").forEach((item) => {
     item.addEventListener("click", () => {
       if (searchState.query) {
-        sessionStorage.setItem("onejournal_search_query", searchState.query);
+        sessionStorage.setItem("noteberg_search_query", searchState.query);
       }
       navigateTo("notebook", {
         noteId: item.dataset.noteId,

@@ -58,7 +58,7 @@ fn pdf_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri::plugin::Builder::<tauri::Wry>::new("pdf-save")
         .setup(|app, api| {
             use tauri::Manager;
-            let handle = api.register_android_plugin("com.onejournal.app", "PdfSavePlugin")?;
+            let handle = api.register_android_plugin("eu.noteberg.app", "PdfSavePlugin")?;
             app.manage(PdfSavePlugin(handle));
             Ok(())
         })
@@ -138,7 +138,7 @@ fn spawn_recognition_sidecar(app: &tauri::App) -> Result<(), Box<dyn std::error:
 
     let sidecar = app
         .shell()
-        .sidecar("OneJournal.Recognition")
+        .sidecar("NoteBerg.Recognition")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?
         .args(["--port", &port.to_string()]);
 

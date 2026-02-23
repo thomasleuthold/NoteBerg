@@ -1,4 +1,4 @@
-# oneJournal
+# NoteBerg
 
 A cross-platform note-taking app with handwriting support and Nextcloud sync.
 
@@ -23,7 +23,7 @@ npm run tauri dev
 
 ### Android
 
-See [ANDROID_BUILD_WINDOWS.md](ANDROID_BUILD_WINDOWS.md) for detailed setup.
+See [ANDROID_BUILD_WINDOWS.md](documentation/ANDROID_BUILD_WINDOWS.md) for detailed setup.
 
 ```bash
 npm run tauri android build
@@ -32,7 +32,7 @@ npm run tauri android build
 ## Project Structure
 
 ```
-oneJournal/
+NoteBerg/
 ├── src/
 │   ├── components/      # UI components
 │   ├── modules/         # Core logic (storage, sync, canvas)
@@ -69,8 +69,8 @@ npm run tauri android build  # Android APK
 
 ## Documentation
 
-- [ANDROID_BUILD_WINDOWS.md](ANDROID_BUILD_WINDOWS.md) - Android build setup
-- [DESIGN.md](DESIGN.md) - Architecture and design decisions
+- [ANDROID_BUILD_WINDOWS.md](documentation/ANDROID_BUILD_WINDOWS.md) - Android build setup
+- [DESIGN.md](documentation/DESIGN.md) - Architecture and design decisions
 
 ## License
 

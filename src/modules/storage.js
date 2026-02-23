@@ -5,7 +5,7 @@
 
 import { openDB } from "idb";
 
-export const DB_NAME = "oneJournal";
+export const DB_NAME = "NoteBerg";
 export const DB_VERSION = 3;
 
 let db = null;
@@ -846,7 +846,7 @@ export async function updateNoteEtag(noteId, etag) {
  */
 export async function isLocalEncryptionEnabled() {
   const setting = await getSetting("encrypt_local_data");
-  return setting ?? true; // Default: enabled
+  return setting ?? false; // Default: disabled
 }
 
 /**

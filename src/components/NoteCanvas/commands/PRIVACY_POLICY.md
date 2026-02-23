@@ -1,8 +1,8 @@
-# Privacy Policy for oneJournal
+# Privacy Policy for NoteBerg
 
 **Last updated:** January 26, 2025
 
-**oneJournal** is an open-source note-taking application designed with privacy as a core principle. This Privacy Policy explains how our app handles your information.
+**NoteBerg** is an open-source note-taking application designed with privacy as a core principle. This Privacy Policy explains how our app handles your information.
 
 ## 1. Data Storage and Ownership
 *   **Local Storage**: All your notes, drawings, and media are stored locally on your device.
@@ -18,7 +18,7 @@ To provide its features, the app requires the following permissions:
 *   **Biometric / Fingerprint** (Optional): Used locally to unlock the app if you enable this feature. Biometric data remains on your device and is not accessible to the app.
 
 ## 3. Analytics and Tracking
-**oneJournal** contains **no tracking code**, advertisements, or third-party analytics (e.g., Google Analytics, Firebase). We do not collect usage data.
+**NoteBerg** contains **no tracking code**, advertisements, or third-party analytics (e.g., Google Analytics, Firebase). We do not collect usage data.
 
 ## 4. Children’s Privacy
 Our application does not knowingly collect or solicit personal information from anyone under the age of 13.

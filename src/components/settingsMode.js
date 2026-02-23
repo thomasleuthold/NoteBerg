@@ -31,7 +31,7 @@ export async function renderSettings(container) {
   const biometricEnabled = false;
 
   // Get encryption settings
-  const encryptLocalData = (await getSetting("encrypt_local_data")) ?? true; // Default: enabled
+  const encryptLocalData = (await getSetting("encrypt_local_data")) ?? false; // Default: disabled
   const encryptNextcloudData = (await getSetting("encrypt_nextcloud_data")) ?? false; // Default: disabled
   // Migrate old recognition_url setting to recognition_fallback_url
   const legacyRecognitionUrl = await getSetting("recognition_url");

@@ -4,6 +4,6 @@
 <dict>
   <!-- Face ID Permission -->
   <key>NSFaceIDUsageDescription</key>
-  <string>oneJournal uses Face ID to securely unlock your encrypted notes and credentials.</string>
+  <string>NoteBerg uses Face ID to securely unlock your encrypted notes and credentials.</string>
 </dict>
 </plist>

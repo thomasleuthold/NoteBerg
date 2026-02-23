@@ -41,10 +41,10 @@ export function initNoteCanvasComponent() {
 
     // Fallback: check session storage for search query if not in event detail
     if (!searchQuery) {
-      const storedQuery = sessionStorage.getItem("onejournal_search_query");
+      const storedQuery = sessionStorage.getItem("noteberg_search_query");
       if (storedQuery) {
         searchQuery = storedQuery;
-        sessionStorage.removeItem("onejournal_search_query");
+        sessionStorage.removeItem("noteberg_search_query");
       }
     }
 

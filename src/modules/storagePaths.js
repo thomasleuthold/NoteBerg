@@ -3,7 +3,7 @@
  * Manages hierarchical file paths for Nextcloud sync
  *
  * Structure:
- * /oneJournal/
+ * /NoteBerg/
  *   ├── notebooks/
  *   │   ├── {notebookId}/
  *   │   │   ├── _notebook.json
@@ -20,7 +20,7 @@
  */
 
 export const STORAGE_VERSION = 2; // Hierarchical structure
-export const ROOT_FOLDER = "/oneJournal";
+export const ROOT_FOLDER = "/NoteBerg";
 
 /**
  * Get the folder path for a notebook

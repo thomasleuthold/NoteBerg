@@ -319,7 +319,7 @@
       "settingUp": "Wird eingerichtet..."
     },
     "unlock": {
-      "title": "🔒 oneJournal entsperren",
+      "title": "🔒 NoteBerg entsperren",
       "description": "Gib dein Master-Passwort ein, um die App zu entsperren",
       "passwordLabel": "Master-Passwort",
       "passwordPlaceholder": "Passwort eingeben",
@@ -408,7 +408,7 @@
   },
   "licenses": {
     "title": "Open-Source-Lizenzen",
-    "intro": "oneJournal wurde mit Hilfe dieser großartigen Open-Source-Projekte entwickelt:",
+    "intro": "NoteBerg wurde mit Hilfe dieser großartigen Open-Source-Projekte entwickelt:",
     "viewLicense": "Lizenz anzeigen",
     "close": "Schließen"
   },

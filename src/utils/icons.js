@@ -1,6 +1,6 @@
 /**
  * SVG Icon Collection
- * Centralized icon library for oneJournal
+ * Centralized icon library for NoteBerg
  */
 
 /**

@@ -1,5 +1,5 @@
 /**
- * oneJournal - Main Application Entry Point
+ * NoteBerg - Main Application Entry Point
  */
 
 // Import styles
@@ -40,7 +40,7 @@ const app = {
 async function init() {
   const appStartTime = performance.now();
 
-  console.log("oneJournal initializing...");
+  console.log("NoteBerg initializing...");
 
   // Initialize storage FIRST (required for logger to load saved level)
   const storageStart = performance.now();
@@ -123,7 +123,7 @@ async function init() {
   // Mark as initialized
   app.initialized = true;
   const totalTime = Math.round(performance.now() - appStartTime);
-  console.log(`oneJournal ready! Total startup time: ${totalTime}ms`);
+  console.log(`NoteBerg ready! Total startup time: ${totalTime}ms`);
 }
 
 /**
@@ -196,4 +196,4 @@ if (document.readyState === "loading") {
 }
 
 // Export for debugging
-window.__oneJournal = app;
+window.__noteberg = app;

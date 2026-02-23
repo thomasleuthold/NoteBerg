@@ -844,7 +844,7 @@ async function fetchRemoteState() {
     }
     return {
       ...item,
-      path, // e.g. /oneJournal/notebooks/...
+      path, // e.g. /NoteBerg/notebooks/...
     };
   });
 }

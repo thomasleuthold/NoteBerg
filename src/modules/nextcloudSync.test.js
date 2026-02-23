@@ -81,13 +81,13 @@ class MockWebDAVServer {
 
     // Initialize root
     this.files.set("/", { isCollection: true, mtime: new Date() });
-    this.files.set("/oneJournal", { isCollection: true, mtime: new Date() });
+    this.files.set("/NoteBerg", { isCollection: true, mtime: new Date() });
   }
 
   reset() {
     this.files.clear();
     this.files.set("/", { isCollection: true, mtime: new Date() });
-    this.files.set("/oneJournal", { isCollection: true, mtime: new Date() });
+    this.files.set("/NoteBerg", { isCollection: true, mtime: new Date() });
   }
 
   _normalizePath(url) {
@@ -325,18 +325,18 @@ describe("Nextcloud Sync Module", () => {
   describe("Sync Logic (Incremental & Filtering)", () => {
     it("should upload a new notebook", async () => {
       // Ensure parent notebooks folder exists
-      mockServer.files.set("/oneJournal/notebooks", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks", { isCollection: true, mtime: new Date() });
 
       const notebook = { id: "nb1", title: "Test Notebook", modified: Date.now() };
 
       const result = await syncNotebooks([notebook]);
 
       expect(result.uploaded).toBe(1);
-      expect(mockServer.files.has("/oneJournal/notebooks/nb1")).toBe(true);
-      expect(mockServer.files.has("/oneJournal/notebooks/nb1/_notebook.json")).toBe(true);
+      expect(mockServer.files.has("/NoteBerg/notebooks/nb1")).toBe(true);
+      expect(mockServer.files.has("/NoteBerg/notebooks/nb1/_notebook.json")).toBe(true);
 
       const remoteContent = JSON.parse(
-        mockServer.files.get("/oneJournal/notebooks/nb1/_notebook.json").content,
+        mockServer.files.get("/NoteBerg/notebooks/nb1/_notebook.json").content,
       );
       expect(remoteContent.title).toBe("Test Notebook");
       expect(remoteContent.synced).toBe(true);
@@ -347,12 +347,12 @@ describe("Nextcloud Sync Module", () => {
       const note1 = { id: "n1", content: "A", modified: 1000 };
       const note2 = { id: "n2", content: "B", modified: 1000 };
 
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes/n1.json", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes/n1.json", {
         content: JSON.stringify(note1),
         etag: "etag-A",
         mtime: new Date(),
       });
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes/n2.json", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes/n2.json", {
         content: JSON.stringify(note2),
         etag: "etag-B",
         mtime: new Date(),
@@ -381,12 +381,12 @@ describe("Nextcloud Sync Module", () => {
       const nb2 = { id: "nb2", synced: false }; // Modified
 
       // Remote has nb1 with proper folder structure
-      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true, mtime: new Date() });
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set("/oneJournal/notebooks/nb1/_notebook.json", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1/_notebook.json", {
         content: JSON.stringify(nb1),
         etag: "etag-1",
         mtime: new Date(),
@@ -425,15 +425,15 @@ describe("Nextcloud Sync Module", () => {
         modified: 2000,
       };
 
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
         isCollection: false,
         content: JSON.stringify(remoteNote),
         etag: "new-etag",
@@ -466,12 +466,12 @@ describe("Nextcloud Sync Module", () => {
       };
 
       // Setup remote with proper folder structure
-      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true, mtime: new Date() });
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}.json`, {
+      mockServer.files.set(`/NoteBerg/notebooks/nb1/notes/${noteId}.json`, {
         content: JSON.stringify(remote),
         etag: "new",
         mtime: new Date(),
@@ -485,7 +485,7 @@ describe("Nextcloud Sync Module", () => {
       // Should upload merged version (local wins content)
       expect(result.uploaded.notes.uploaded).toBe(1);
       const uploadedContent = JSON.parse(
-        mockServer.files.get(`/oneJournal/notebooks/nb1/notes/${noteId}.json`).content,
+        mockServer.files.get(`/NoteBerg/notebooks/nb1/notes/${noteId}.json`).content,
       );
       expect(uploadedContent.content).toBe("Hello World");
     });
@@ -502,15 +502,15 @@ describe("Nextcloud Sync Module", () => {
       };
 
       // Setup remote folder structure
-      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true, mtime: new Date() });
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
         isCollection: true,
         mtime: new Date(),
       });
 
       // Remote: Tombstone says deleted
       const tombstone = { notes: [{ id: noteId, deletedAt: new Date().toISOString() }] };
-      mockServer.files.set("/oneJournal/notebooks/nb1/_tombstones.json", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1/_tombstones.json", {
         content: JSON.stringify(tombstone),
         mtime: new Date(),
       });
@@ -518,7 +518,7 @@ describe("Nextcloud Sync Module", () => {
       const result = await fullSync([], [local]);
 
       expect(result.uploaded.notes.uploaded).toBe(1);
-      expect(mockServer.files.has(`/oneJournal/notebooks/nb1/notes/${noteId}.json`)).toBe(true);
+      expect(mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}.json`)).toBe(true);
     });
 
     it("should preserve background setting during merge", async () => {
@@ -570,7 +570,7 @@ describe("Nextcloud Sync Module", () => {
       };
 
       // Setup remote file
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
         content: JSON.stringify(remoteNote),
         etag: "etag-remote",
         mtime: new Date(),
@@ -619,7 +619,7 @@ describe("Nextcloud Sync Module", () => {
       };
 
       // Setup remote file
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
         content: JSON.stringify(remoteNote),
         etag: "etag-remote",
         mtime: new Date(),
@@ -651,8 +651,8 @@ describe("Nextcloud Sync Module", () => {
       };
 
       // Ensure parent folders exist
-      mockServer.files.set("/oneJournal/notebooks/nb1", { isCollection: true, mtime: new Date() });
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
         isCollection: true,
         mtime: new Date(),
       });
@@ -661,11 +661,11 @@ describe("Nextcloud Sync Module", () => {
       expect(result.uploaded).toBe(1);
 
       // Check note file
-      expect(mockServer.files.has(`/oneJournal/notebooks/nb1/notes/${noteId}.json`)).toBe(true);
+      expect(mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}.json`)).toBe(true);
 
       // Check media file (mock storage returns text/plain -> .bin extension)
       expect(
-        mockServer.files.has(`/oneJournal/notebooks/nb1/notes/${noteId}_media/${fileId}.bin`),
+        mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}_media/${fileId}.bin`),
       ).toBe(true);
     });
 
@@ -675,20 +675,20 @@ describe("Nextcloud Sync Module", () => {
       const deleteFileId = "delete-me";
 
       // Setup remote state: Note folder with 2 files
-      mockServer.files.set(`/oneJournal/notebooks/nb1`, { isCollection: true, mtime: new Date() });
-      mockServer.files.set(`/oneJournal/notebooks/nb1/notes`, {
+      mockServer.files.set(`/NoteBerg/notebooks/nb1`, { isCollection: true, mtime: new Date() });
+      mockServer.files.set(`/NoteBerg/notebooks/nb1/notes`, {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}_media`, {
+      mockServer.files.set(`/NoteBerg/notebooks/nb1/notes/${noteId}_media`, {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}_media/${keepFileId}.bin`, {
+      mockServer.files.set(`/NoteBerg/notebooks/nb1/notes/${noteId}_media/${keepFileId}.bin`, {
         content: "data",
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/nb1/notes/${noteId}_media/${deleteFileId}.bin`, {
+      mockServer.files.set(`/NoteBerg/notebooks/nb1/notes/${noteId}_media/${deleteFileId}.bin`, {
         content: "data",
         mtime: new Date(),
       });
@@ -705,10 +705,10 @@ describe("Nextcloud Sync Module", () => {
 
       // Verify orphaned file is gone
       expect(
-        mockServer.files.has(`/oneJournal/notebooks/nb1/notes/${noteId}_media/${keepFileId}.bin`),
+        mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}_media/${keepFileId}.bin`),
       ).toBe(true);
       expect(
-        mockServer.files.has(`/oneJournal/notebooks/nb1/notes/${noteId}_media/${deleteFileId}.bin`),
+        mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}_media/${deleteFileId}.bin`),
       ).toBe(false);
     });
 
@@ -755,7 +755,7 @@ describe("Nextcloud Sync Module", () => {
 
       await fullSync([], [note]);
 
-      expect(mockServer.files.has("/oneJournal/quickNotes/qn1.json")).toBe(true);
+      expect(mockServer.files.has("/NoteBerg/quickNotes/qn1.json")).toBe(true);
     });
 
     it("should handle concurrent notebook and note purge", async () => {
@@ -766,11 +766,11 @@ describe("Nextcloud Sync Module", () => {
       const note = { id: "n-purge", notebookId: "nb-purge", purged: true };
 
       // Setup remote
-      mockServer.files.set("/oneJournal/notebooks/nb-purge", {
+      mockServer.files.set("/NoteBerg/notebooks/nb-purge", {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set("/oneJournal/notebooks/nb-purge/notes/n-purge.json", {
+      mockServer.files.set("/NoteBerg/notebooks/nb-purge/notes/n-purge.json", {
         content: "{}",
         mtime: new Date(),
       });
@@ -782,7 +782,7 @@ describe("Nextcloud Sync Module", () => {
       expect(noteInUploadList).toBeUndefined();
 
       // Verify remote deletion happened via notebook purge
-      expect(mockServer.files.has("/oneJournal/notebooks/nb-purge")).toBe(false);
+      expect(mockServer.files.has("/NoteBerg/notebooks/nb-purge")).toBe(false);
     });
 
     it("should retry upload on 412 Precondition Failed", async () => {
@@ -795,7 +795,7 @@ describe("Nextcloud Sync Module", () => {
       };
 
       // Remote exists with different etag
-      mockServer.files.set("/oneJournal/notebooks/nb1/notes/n-412.json", {
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes/n-412.json", {
         content: "{}",
         etag: "real-etag",
         mtime: new Date(),
@@ -807,7 +807,7 @@ describe("Nextcloud Sync Module", () => {
 
       await fullSync([], [note]);
 
-      const file = mockServer.files.get("/oneJournal/notebooks/nb1/notes/n-412.json");
+      const file = mockServer.files.get("/NoteBerg/notebooks/nb1/notes/n-412.json");
       const content = JSON.parse(file.content);
       expect(content.content).toBe("New");
     });
@@ -820,7 +820,7 @@ describe("Nextcloud Sync Module", () => {
       const result = await fullSync([], [note]);
 
       expect(result.uploaded.notes.uploaded).toBe(1);
-      expect(mockServer.files.has("/oneJournal/notebooks/nb1/notes/n-heal.json")).toBe(true);
+      expect(mockServer.files.has("/NoteBerg/notebooks/nb1/notes/n-heal.json")).toBe(true);
     });
   });
 
@@ -829,20 +829,20 @@ describe("Nextcloud Sync Module", () => {
       const notebookId = "nb-purge-test";
 
       // Setup remote state
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/_notebook.json`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/_notebook.json`, {
         isCollection: false,
         content: "{}",
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/note1.json`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/note1.json`, {
         isCollection: false,
         content: "{}",
         mtime: new Date(),
@@ -860,12 +860,12 @@ describe("Nextcloud Sync Module", () => {
       await fullSync([localNotebook], []);
 
       // Verify remote deletion
-      expect(mockServer.files.has(`/oneJournal/notebooks/${notebookId}`)).toBe(false);
+      expect(mockServer.files.has(`/NoteBerg/notebooks/${notebookId}`)).toBe(false);
 
       // Verify tombstone update
-      expect(mockServer.files.has("/oneJournal/notebooks/_tombstones.json")).toBe(true);
+      expect(mockServer.files.has("/NoteBerg/notebooks/_tombstones.json")).toBe(true);
       const tombstone = JSON.parse(
-        mockServer.files.get("/oneJournal/notebooks/_tombstones.json").content,
+        mockServer.files.get("/NoteBerg/notebooks/_tombstones.json").content,
       );
       expect(tombstone.notebooks.some((n) => n.id === notebookId)).toBe(true);
       // Verify deletedAt is present
@@ -880,7 +880,7 @@ describe("Nextcloud Sync Module", () => {
         notebooks: [{ id: notebookId, deletedAt: new Date().toISOString() }],
         notes: [],
       };
-      mockServer.files.set("/oneJournal/notebooks/_tombstones.json", {
+      mockServer.files.set("/NoteBerg/notebooks/_tombstones.json", {
         isCollection: false,
         content: JSON.stringify(tombstone),
         etag: "tomb-etag",
@@ -912,31 +912,31 @@ describe("Nextcloud Sync Module", () => {
       const notebookId = "nb1";
 
       // Setup remote
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
         content: "{}",
         mtime: new Date(),
       });
-      mockServer.files.set(`/oneJournal/notebooks/${notebookId}/_tombstones.json`, {
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/_tombstones.json`, {
         content: "{}",
         mtime: new Date(),
       });
 
       await deleteRemoteNote(noteId, notebookId);
 
-      expect(mockServer.files.has(`/oneJournal/notebooks/${notebookId}/notes/${noteId}.json`)).toBe(
+      expect(mockServer.files.has(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`)).toBe(
         false,
       );
 
       const tombstone = JSON.parse(
-        mockServer.files.get(`/oneJournal/notebooks/${notebookId}/_tombstones.json`).content,
+        mockServer.files.get(`/NoteBerg/notebooks/${notebookId}/_tombstones.json`).content,
       );
       expect(tombstone.notes.some((n) => n.id === noteId)).toBe(true);
     });
@@ -964,7 +964,7 @@ describe("Nextcloud Sync Module", () => {
   describe("Migration Logic", () => {
     it("should detect migration needed (Legacy files present, v1 storage)", async () => {
       // Mock legacy files
-      mockServer.files.set("/oneJournal/notebook_old.json", { content: "{}", mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebook_old.json", { content: "{}", mtime: new Date() });
 
       // Storage version is 1 by default in mocks
       const needed = await needsMigration();
@@ -976,11 +976,11 @@ describe("Nextcloud Sync Module", () => {
       const nbContent = JSON.stringify({ id: "nb-mig", title: "Migrated" });
       const noteContent = JSON.stringify({ id: "n-mig", notebookId: "nb-mig", title: "Note" });
 
-      mockServer.files.set("/oneJournal/notebook_nb-mig.json", {
+      mockServer.files.set("/NoteBerg/notebook_nb-mig.json", {
         content: nbContent,
         mtime: new Date(),
       });
-      mockServer.files.set("/oneJournal/note_n-mig.json", {
+      mockServer.files.set("/NoteBerg/note_n-mig.json", {
         content: noteContent,
         mtime: new Date(),
       });
@@ -988,20 +988,20 @@ describe("Nextcloud Sync Module", () => {
       await migrateToHierarchical();
 
       // Verify new structure exists
-      expect(mockServer.files.has("/oneJournal/notebooks/nb-mig/_notebook.json")).toBe(true);
-      expect(mockServer.files.has("/oneJournal/notebooks/nb-mig/notes/n-mig.json")).toBe(true);
+      expect(mockServer.files.has("/NoteBerg/notebooks/nb-mig/_notebook.json")).toBe(true);
+      expect(mockServer.files.has("/NoteBerg/notebooks/nb-mig/notes/n-mig.json")).toBe(true);
     });
 
     it("should cleanup legacy files", async () => {
-      mockServer.files.set("/oneJournal/notebook_old.json", { content: "{}", mtime: new Date() });
-      mockServer.files.set("/oneJournal/note_old.json", { content: "{}", mtime: new Date() });
-      mockServer.files.set("/oneJournal/other.txt", { content: "{}", mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebook_old.json", { content: "{}", mtime: new Date() });
+      mockServer.files.set("/NoteBerg/note_old.json", { content: "{}", mtime: new Date() });
+      mockServer.files.set("/NoteBerg/other.txt", { content: "{}", mtime: new Date() });
 
       await cleanupLegacyFiles();
 
-      expect(mockServer.files.has("/oneJournal/notebook_old.json")).toBe(false);
-      expect(mockServer.files.has("/oneJournal/note_old.json")).toBe(false);
-      expect(mockServer.files.has("/oneJournal/other.txt")).toBe(true);
+      expect(mockServer.files.has("/NoteBerg/notebook_old.json")).toBe(false);
+      expect(mockServer.files.has("/NoteBerg/note_old.json")).toBe(false);
+      expect(mockServer.files.has("/NoteBerg/other.txt")).toBe(true);
     });
   });
 });

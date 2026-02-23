@@ -4,7 +4,7 @@
 
 ### Q1: Should we combine Markdown and Images (e.g., Milkdown)?
 **Decision:** **No, keep them separate layers.**
-*   **Reasoning:** `oneJournal` is primarily an "Infinite Canvas" tool. Libraries like Milkdown or Tiptap treat the document as a linear flow of blocks. While great for typing, they make free-form handwriting and arbitrary image placement (e.g., annotating *over* an image) difficult to manage.
+*   **Reasoning:** `NoteBerg` is primarily an "Infinite Canvas" tool. Libraries like Milkdown or Tiptap treat the document as a linear flow of blocks. While great for typing, they make free-form handwriting and arbitrary image placement (e.g., annotating *over* an image) difficult to manage.
 *   **Approach:**
     1.  **Text Layer (Bottom):** A background layer for Markdown text (linear flow).
     2.  **Media Layer (Middle):** Free-floating images/PDF pages positioned via absolute coordinates.

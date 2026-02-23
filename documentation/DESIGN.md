@@ -1,4 +1,4 @@
-# oneJournal - Architecture & Design
+# NoteBerg - Architecture & Design
 
 ## Architecture Overview
 
@@ -55,7 +55,7 @@ Switched from web app to Tauri to eliminate CORS issues with Nextcloud sync.
 **Nextcloud Integration:**
 - Authentication: Login Flow v2 (OAuth-style)
 - File Storage: WebDAV API
-- Structure: `/oneJournal/{notebook|note}_{id}.json`
+- Structure: `/NoteBerg/{notebook|note}_{id}.json`
 
 **Sync Flow:**
 1. Upload local changes (PUT)

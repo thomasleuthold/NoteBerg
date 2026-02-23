@@ -319,7 +319,7 @@
       "settingUp": "Setting up..."
     },
     "unlock": {
-      "title": "🔒 Unlock oneJournal",
+      "title": "🔒 Unlock NoteBerg",
       "description": "Enter your master password to unlock the app",
       "passwordLabel": "Master Password",
       "passwordPlaceholder": "Enter password",
@@ -408,7 +408,7 @@
   },
   "licenses": {
     "title": "Open Source Licenses",
-    "intro": "oneJournal is built with the help of these amazing open source projects:",
+    "intro": "NoteBerg is built with the help of these amazing open source projects:",
     "viewLicense": "View License",
     "close": "Close"
   },

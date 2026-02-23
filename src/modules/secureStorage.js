@@ -9,7 +9,7 @@
  */
 
 // Hardcoded password for deriving encryption key
-const STORAGE_PASSWORD = "onejournal_secure_storage_2025";
+const STORAGE_PASSWORD = "noteberg_secure_storage_2025";
 
 // Cache for encryption key to avoid re-deriving it
 let encryptionKey = null;
@@ -52,7 +52,7 @@ async function getEncryptionKey() {
   }
 
   // Use fixed salt for deterministic key derivation
-  const salt = new TextEncoder().encode("onejournal_salt_v1");
+  const salt = new TextEncoder().encode("noteberg_salt_v1");
 
   // Import password as key material
   const keyMaterial = await window.crypto.subtle.importKey(
