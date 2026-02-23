@@ -304,8 +304,18 @@ export async function performSync({
       await permanentlyDeleteNote(noteId);
     }
 
-    // Dispatch event for UI updates (always, even in silent mode)
-    window.dispatchEvent(new CustomEvent("datachange"));
+    // Dispatch event for UI updates only when content visible in the overview actually changed.
+    // Uploads (marking synced=true) don't affect what the overview displays, so they don't
+    // need a re-render. Downloads, merges, and deletions do.
+    const hasVisibleChanges =
+      result.downloaded.notes.length > 0 ||
+      result.downloaded.notebooks.length > 0 ||
+      (result.notesToDelete?.length ?? 0) > 0 ||
+      (result.notebooksToDelete?.length ?? 0) > 0;
+
+    if (hasVisibleChanges) {
+      window.dispatchEvent(new CustomEvent("datachange"));
+    }
 
     const totalConflicts =
       (result.conflicts?.notebooks?.length || 0) + (result.conflicts?.notes?.length || 0);

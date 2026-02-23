@@ -46,12 +46,22 @@ const searchState = {
 // Module state for active tab
 let currentActiveTab = "notes";
 
+// Render concurrency guard: prevents two renderOverview calls from racing on the same container.
+// If a render is in progress when datachange fires, we note that a refresh is pending and
+// let the active render trigger it when done, rather than starting a second concurrent render.
+let isRendering = false;
+let pendingRender = false;
+
 /**
  * Render overview UI
  * @param {HTMLElement} container - Container element to render into
  * @param {string|null} notebookId - Optional notebook ID to show contents of
  */
-export async function renderOverview(container, notebookId = null) {
+export async function renderOverview(container, notebookId = null, { preserveScroll = false } = {}) {
+  // Save scroll position before wiping the DOM, restore it after if requested.
+  const tabContent = container.querySelector("#overview-tab-content");
+  const savedScrollTop = preserveScroll && tabContent ? tabContent.scrollTop : 0;
+
   try {
     // Render Shell
     const trashIcon = getIcon("trash", 18);
@@ -87,6 +97,12 @@ export async function renderOverview(container, notebookId = null) {
 
     // Render Initial Tab
     await renderActiveTab(container.querySelector("#overview-tab-content"), notebookId);
+
+    // Restore scroll position after content is in the DOM
+    if (preserveScroll && savedScrollTop > 0) {
+      const newTabContent = container.querySelector("#overview-tab-content");
+      if (newTabContent) newTabContent.scrollTop = savedScrollTop;
+    }
   } catch (error) {
     console.error("Error rendering overview:", error);
     renderError(container, error);
@@ -876,17 +892,43 @@ export function initOverview() {
     const container = document.getElementById("overview-content");
     const notebookId = e.detail ? e.detail.notebookId : null;
     currentNotebookId = notebookId || null;
-    if (container) {
+    if (!container) return;
+
+    // Navigation always does a fresh render (no scroll preserve). Cancel any pending
+    // datachange render — the fresh render supersedes it.
+    pendingRender = false;
+    isRendering = true;
+    try {
       await renderOverview(container, notebookId);
+    } finally {
+      isRendering = false;
     }
   });
 
-  // Listen for data changes to refresh overview (skip search tab to avoid clearing input)
+  // Listen for data changes to refresh overview (skip search tab to avoid clearing input).
+  // The guard prevents a second concurrent renderOverview from starting while one is already
+  // running (e.g. the initial renderoverview and a sync-triggered datachange overlapping).
+  // If a render is in progress we set a flag; the active render will re-run when it finishes.
   window.addEventListener("datachange", async () => {
     if (currentActiveTab === "search") return;
     const container = document.getElementById("overview-content");
-    if (container && container.offsetParent !== null) {
-      await renderOverview(container, currentNotebookId);
+    if (!container || container.offsetParent === null) return;
+
+    if (isRendering) {
+      pendingRender = true;
+      return;
+    }
+
+    isRendering = true;
+    try {
+      await renderOverview(container, currentNotebookId, { preserveScroll: true });
+      // If another datachange arrived while we were rendering, do one more pass now.
+      while (pendingRender) {
+        pendingRender = false;
+        await renderOverview(container, currentNotebookId, { preserveScroll: true });
+      }
+    } finally {
+      isRendering = false;
     }
   });
 

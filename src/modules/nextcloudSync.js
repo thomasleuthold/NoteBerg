@@ -17,6 +17,7 @@ import {
 import {
   checkFileExists,
   clearNoteMoveFlag,
+  saveNote,
   getFile,
   isNextcloudEncryptionEnabled,
   permanentlyDeleteNote,
@@ -1301,7 +1302,10 @@ export async function syncNotes(notes) {
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
 
-      const etag = await uploadFile(path, content, syncedNote.modified, note.lastSyncedEtag);
+      // For moved notes, the file at the new path is new — there is no existing etag to match.
+      // Passing null omits the If-Match header and avoids a guaranteed 412.
+      const uploadEtag = note.previousNotebookId !== undefined ? null : note.lastSyncedEtag;
+      const etag = await uploadFile(path, content, syncedNote.modified, uploadEtag);
       console.log(`Successfully uploaded note ${note.id}`);
       return {
         success: true,
@@ -1826,8 +1830,10 @@ export async function fullSync(localNotebooks, localNotes) {
         const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
         notesToUpload.push(mergedWithRemoteBase);
 
-        // Save merged note locally to ensure client sees merged state immediately
-        await updateNote(merged.id, merged);
+        // Save merged note locally so the client sees the merged state immediately.
+        // Use saveNote (not updateNote) to avoid bumping modified/version, which would
+        // falsely trigger the race-condition detector in the post-sync download phase.
+        await saveNote({ ...merged, synced: false });
       } else {
         conflicts.notes.push({ local, remote });
       }
