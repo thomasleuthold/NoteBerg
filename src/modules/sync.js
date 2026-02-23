@@ -6,8 +6,8 @@
 import { showConflictResolutionDialog } from "../components/modals.js";
 import { attemptMerge, fullSync, isAuthenticated } from "./nextcloudSync.js";
 import {
+  getAllNoteMetadataForSync,
   getAllNotebooksForSync,
-  getAllNotesForSync,
   getNote,
   getNotebook,
   permanentlyDeleteNote,
@@ -81,7 +81,9 @@ export async function performSync({
     console.log(`Sync: Starting ${silent ? "silent" : "manual"} sync...`);
 
     const notebooks = await getAllNotebooksForSync();
-    const notes = await getAllNotesForSync();
+    // Fetch lightweight metadata only — no strokes, content, or media blobs.
+    // Full note content is lazy-loaded inside fullSync only for notes that need uploading or merging.
+    const notes = await getAllNoteMetadataForSync();
 
     // Debug: Show unsynced items count
     if (!silent) {

@@ -17,6 +17,7 @@ import {
 import {
   checkFileExists,
   clearNoteMoveFlag,
+  getNote,
   saveNote,
   getFile,
   isNextcloudEncryptionEnabled,
@@ -1691,6 +1692,17 @@ export async function fullSync(localNotebooks, localNotes) {
   console.log(`Local data: ${localNotebooks.length} notebooks, ${localNotes.length} notes`);
   console.log(`Unsynced notes: ${localNotes.filter((n) => n.synced === false).length}`);
 
+  // Cache of full note objects loaded on demand. localNotes may contain lightweight metadata
+  // stubs (no strokes/content) when called from performSync. We only fetch the full object
+  // for notes that actually need to be uploaded or merged — typically just 1 note per sync.
+  const fullNoteCache = new Map();
+  async function getFullNote(stub) {
+    if (fullNoteCache.has(stub.id)) return fullNoteCache.get(stub.id);
+    const full = await getNote(stub.id);
+    if (full) fullNoteCache.set(stub.id, full);
+    return full ?? stub; // fall back to stub if note was deleted between sync start and now
+  }
+
   // Step 1: Download remote data first
   const remoteData = await downloadAllData(localNotebooks, localNotes);
 
@@ -1784,6 +1796,7 @@ export async function fullSync(localNotebooks, localNotes) {
       if (parentNotebookPurged) {
         continue;
       }
+      // Purge only needs id/notebookId — stub is sufficient, no need for full note.
       notesToUpload.push(local);
       continue;
     }
@@ -1802,7 +1815,7 @@ export async function fullSync(localNotebooks, localNotes) {
           console.log(
             `[Sync] Note ${local.id} was deleted remotely but modified locally. Restoring.`,
           );
-          notesToUpload.push({ ...local, lastSyncedEtag: null });
+          notesToUpload.push({ ...(await getFullNote(local)), lastSyncedEtag: null });
         } else {
           // Deleted remotely, no local changes. Delete locally.
           console.log(`[Sync] Note ${local.id} was deleted remotely. Deleting locally.`);
@@ -1813,7 +1826,7 @@ export async function fullSync(localNotebooks, localNotes) {
         if (local.synced === true) {
           console.log(`[Sync] Note ${local.id} missing on server. Re-uploading.`);
         }
-        notesToUpload.push({ ...local, lastSyncedEtag: null });
+        notesToUpload.push({ ...(await getFullNote(local)), lastSyncedEtag: null });
       }
       continue;
     }
@@ -1824,7 +1837,8 @@ export async function fullSync(localNotebooks, localNotes) {
     const isModifiedRemotely = local.lastSyncedEtag !== remote._currentFileEtag;
 
     if (isModifiedLocally && isModifiedRemotely) {
-      const merged = attemptMerge(local, remote);
+      const fullLocal = await getFullNote(local);
+      const merged = attemptMerge(fullLocal, remote);
       if (merged) {
         // Use the remote's current file ETag for the upload to succeed via If-Match
         const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
@@ -1835,10 +1849,10 @@ export async function fullSync(localNotebooks, localNotes) {
         // falsely trigger the race-condition detector in the post-sync download phase.
         await saveNote({ ...merged, synced: false });
       } else {
-        conflicts.notes.push({ local, remote });
+        conflicts.notes.push({ local: fullLocal, remote });
       }
     } else if (isModifiedLocally) {
-      notesToUpload.push(local);
+      notesToUpload.push(await getFullNote(local));
     } else if (isModifiedRemotely) {
       // Check if the remote version is actually not newer than our local version.
       // This happens when Nextcloud's server-side versioning causes the PROPFIND getetag to

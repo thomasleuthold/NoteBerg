@@ -353,6 +353,43 @@ export async function getAllNotesForSync() {
 }
 
 /**
+ * Get lightweight sync metadata for all notes (no strokes, content, or media blobs).
+ * Used by the sync decision phase to determine what needs uploading/downloading without
+ * loading large stroke arrays for every note. Full note content is lazy-loaded only for
+ * the notes that actually need to be uploaded or merged.
+ *
+ * Uses a cursor instead of getAll() so each record is a separate async step. This lets
+ * other pending IDB requests (e.g. getNote() from NoteCanvas.load) interleave between
+ * records rather than waiting for one large synchronous deserialisation burst to finish.
+ */
+export async function getAllNoteMetadataForSync() {
+  if (!db) await initStorage();
+  const result = [];
+  const tx = db.transaction("notes", "readonly");
+  for await (const cursor of tx.store) {
+    const note = cursor.value;
+    result.push({
+      id: note.id,
+      notebookId: note.notebookId ?? null,
+      modified: note.modified,
+      version: note.version,
+      synced: note.synced,
+      lastSyncedEtag: note.lastSyncedEtag,
+      deleted: note.deleted,
+      purged: note.purged,
+      previousNotebookId: note.previousNotebookId,
+      // media array needed to decide whether to queue a media check (no blobs, just metadata)
+      media: Array.isArray(note.media)
+        ? note.media.map(({ id, name, type, size, deleted }) => ({ id, name, type, size, deleted }))
+        : [],
+      // encrypted flag needed so the lazy full-load knows to decrypt
+      encrypted: note.encrypted,
+    });
+  }
+  return result;
+}
+
+/**
  * Get notes by notebook ID
  */
 export async function getNotesByNotebook(notebookId) {
