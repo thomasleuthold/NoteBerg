@@ -1,5 +1,17 @@
 /**
- * StorageWorker - Handles IndexedDB operations off the main thread
+ * StorageWorker - Handles IndexedDB operations off the main thread.
+ *
+ * Schema v4: notes are split across two stores:
+ *   "notes"       — lightweight index (id, modified, version, synced, hasStrokes, …)
+ *   "noteContent" — heavy payload   (strokes, content, media, tasks, recognition, …)
+ *
+ * Each message handler writes ONLY to the store(s) it needs:
+ *   SAVE_STROKES   → noteContent (strokes) + notes (modified/version/synced/hasStrokes)
+ *   SAVE_MEDIA     → noteContent (media)   + notes (modified/version/synced)
+ *   SAVE_PRESETS   → noteContent (penPresets) + notes (modified/version/synced)
+ *   SAVE_THUMBNAIL → noteContent (thumbnail base64) + notes (modified/version/synced)
+ *   SAVE_TASKS     → noteContent (tasks)   + notes (modified/version/synced)
+ *   SAVE_CONTENT   → noteContent (content) + notes (modified/version/synced/hasContent)
  */
 
 import { openDB } from "idb";
@@ -15,13 +27,10 @@ function getDB() {
   return dbPromise;
 }
 
-// Queue for sequential processing of messages
-// This prevents race conditions where concurrent read-modify-write operations
-// on the same note could overwrite each other (e.g., SAVE_MEDIA vs SAVE_THUMBNAIL)
+// Queue for sequential processing — prevents read-modify-write races
 let messageQueue = Promise.resolve();
 
 self.onmessage = (e) => {
-  // Chain the processing of messages to ensure sequential execution
   messageQueue = messageQueue
     .then(() => processMessage(e))
     .catch((err) => {
@@ -34,205 +43,210 @@ async function processMessage(e) {
     e.data;
 
   if (type === "SAVE_STROKES") {
-    try {
-      const db = await getDB();
+    const db = await getDB();
 
-      // First, check if we need to encrypt (read note metadata outside transaction)
-      const noteCheck = await db.get("notes", noteId);
-      if (!noteCheck) return;
+    const noteIndex = await db.get("notes", noteId);
+    if (!noteIndex) return;
 
-      // Encrypt data BEFORE starting the transaction to avoid auto-commit issues
-      // (IndexedDB transactions auto-commit when awaiting non-IDB promises)
-      let strokesData = strokes;
-      if (noteCheck.encrypted) {
-        if (key) {
-          strokesData = await encryptObject(strokes, key);
-        } else {
-          console.error("[StorageWorker] Cannot save encrypted note: Key missing");
-          return;
-        }
+    let strokesData = strokes;
+    if (noteIndex.encrypted) {
+      if (key) {
+        strokesData = await encryptObject(strokes, key);
+      } else {
+        console.error("[StorageWorker] Cannot save encrypted strokes: Key missing");
+        return;
       }
-
-      // Now do the actual update in a transaction
-      const tx = db.transaction("notes", "readwrite");
-      const store = tx.objectStore("notes");
-      const note = await store.get(noteId);
-
-      if (note) {
-        if (deletedStrokes) {
-          note.deletedStrokes = deletedStrokes;
-        }
-        note.strokes = strokesData;
-        note.modified = Date.now();
-        note.version = (note.version || 0) + 1;
-        note.synced = false;
-
-        await store.put(note);
-      }
-
-      await tx.done;
-    } catch (err) {
-      console.error("[StorageWorker] Save failed:", err);
     }
+
+    const tx = db.transaction(["notes", "noteContent"], "readwrite");
+    const notesStore = tx.objectStore("notes");
+    const contentStore = tx.objectStore("noteContent");
+
+    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
+
+    if (index && content) {
+      const now = Date.now();
+      content.strokes = strokesData;
+      if (deletedStrokes) content.deletedStrokes = deletedStrokes;
+
+      index.modified = now;
+      index.version = (index.version || 0) + 1;
+      index.synced = false;
+      index.hasStrokes = Array.isArray(strokes) ? strokes.length > 0 : false;
+
+      await Promise.all([notesStore.put(index), contentStore.put(content)]);
+    }
+
+    await tx.done;
   }
 
   if (type === "SAVE_MEDIA") {
-    try {
-      const db = await getDB();
+    const db = await getDB();
 
-      // First, check if we need to encrypt (read note metadata outside transaction)
-      const noteCheck = await db.get("notes", noteId);
-      if (!noteCheck) return;
+    const noteIndex = await db.get("notes", noteId);
+    if (!noteIndex) return;
 
-      // Encrypt data BEFORE starting the transaction to avoid auto-commit issues
-      let mediaData = media;
-      if (noteCheck.encrypted && media) {
-        if (key) {
-          mediaData = await encryptObject(media, key);
-        } else {
-          console.error("[StorageWorker] Cannot save encrypted media: Key missing");
-          return;
-        }
+    let mediaData = media;
+    if (noteIndex.encrypted && media) {
+      if (key) {
+        mediaData = await encryptObject(media, key);
+      } else {
+        console.error("[StorageWorker] Cannot save encrypted media: Key missing");
+        return;
       }
-
-      // Now do the actual update in a transaction
-      const tx = db.transaction("notes", "readwrite");
-      const store = tx.objectStore("notes");
-      const note = await store.get(noteId);
-
-      if (note) {
-        if (media !== undefined) note.media = mediaData;
-        if (deletedMedia !== undefined) note.deletedMedia = deletedMedia;
-        if (pdfSource !== undefined) note.pdfSource = pdfSource;
-
-        note.modified = Date.now();
-        note.version = (note.version || 0) + 1;
-        note.synced = false;
-
-        await store.put(note);
-      }
-      await tx.done;
-    } catch (err) {
-      console.error("[StorageWorker] Media save failed:", err);
     }
+
+    const tx = db.transaction(["notes", "noteContent"], "readwrite");
+    const notesStore = tx.objectStore("notes");
+    const contentStore = tx.objectStore("noteContent");
+
+    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
+
+    if (index && content) {
+      const now = Date.now();
+      if (media !== undefined) content.media = mediaData;
+      if (deletedMedia !== undefined) content.deletedMedia = deletedMedia;
+      if (pdfSource !== undefined) content.pdfSource = pdfSource;
+
+      // Update index media metadata snapshot (no positions/fileIds)
+      if (media !== undefined && Array.isArray(media)) {
+        index.media = media.map(({ id, name, type, size, deleted }) => ({
+          id,
+          name,
+          type,
+          size,
+          deleted,
+        }));
+      }
+
+      index.modified = now;
+      index.version = (index.version || 0) + 1;
+      index.synced = false;
+
+      await Promise.all([notesStore.put(index), contentStore.put(content)]);
+    }
+
+    await tx.done;
   }
 
   if (type === "SAVE_PRESETS") {
-    try {
-      const db = await getDB();
-      const tx = db.transaction("notes", "readwrite");
-      const store = tx.objectStore("notes");
-      const note = await store.get(noteId);
+    const db = await getDB();
 
-      if (note) {
-        note.penPresets = presets;
-        note.modified = Date.now();
-        note.version = (note.version || 0) + 1;
-        note.synced = false;
+    const tx = db.transaction(["notes", "noteContent"], "readwrite");
+    const notesStore = tx.objectStore("notes");
+    const contentStore = tx.objectStore("noteContent");
 
-        await store.put(note);
-      }
-      await tx.done;
-    } catch (err) {
-      console.error("[StorageWorker] Presets save failed:", err);
+    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
+
+    if (index && content) {
+      content.penPresets = presets;
+
+      index.modified = Date.now();
+      index.version = (index.version || 0) + 1;
+      index.synced = false;
+
+      await Promise.all([notesStore.put(index), contentStore.put(content)]);
     }
+
+    await tx.done;
   }
 
   if (type === "SAVE_THUMBNAIL") {
-    const { thumbnailFileId, thumbnailTimestamp } = e.data;
-    try {
-      const db = await getDB();
-      const tx = db.transaction("notes", "readwrite");
-      const store = tx.objectStore("notes");
-      const note = await store.get(noteId);
+    const { thumbnail } = e.data;
+    const db = await getDB();
 
-      if (note) {
-        note.thumbnailFileId = thumbnailFileId;
-        note.thumbnailTimestamp = thumbnailTimestamp;
-        // Do NOT set synced=false or bump modified/version here.
-        // Thumbnails are local-only UI metadata — they do not need to be
-        // uploaded to Nextcloud and should not trigger unnecessary re-uploads
-        // that cause etag oscillation across sync cycles.
+    const tx = db.transaction(["notes", "noteContent"], "readwrite");
+    const notesStore = tx.objectStore("notes");
+    const contentStore = tx.objectStore("noteContent");
 
-        await store.put(note);
+    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
+
+    if (index && content) {
+      let thumbnailData = thumbnail;
+      if (index.encrypted && key) {
+        thumbnailData = await encryptObject(thumbnail, key);
       }
-      await tx.done;
-    } catch (err) {
-      console.error("[StorageWorker] Thumbnail save failed:", err);
+      content.thumbnail = thumbnailData;
+      index.modified = Date.now();
+      index.version = (index.version || 0) + 1;
+      index.synced = false;
+      await Promise.all([notesStore.put(index), contentStore.put(content)]);
     }
+
+    await tx.done;
   }
 
   if (type === "SAVE_TASKS") {
-    const { tasks, key } = e.data;
-    try {
-      const db = await getDB();
+    const { tasks } = e.data;
+    const db = await getDB();
 
-      const noteCheck = await db.get("notes", noteId);
-      if (!noteCheck) return;
+    const noteIndex = await db.get("notes", noteId);
+    if (!noteIndex) return;
 
-      let tasksData = tasks;
-      if (noteCheck.encrypted) {
-        if (key) {
-          tasksData = await encryptObject(tasks, key);
-        } else {
-          console.error("[StorageWorker] Cannot save encrypted tasks: Key missing");
-          return;
-        }
+    let tasksData = tasks;
+    if (noteIndex.encrypted) {
+      if (key) {
+        tasksData = await encryptObject(tasks, key);
+      } else {
+        console.error("[StorageWorker] Cannot save encrypted tasks: Key missing");
+        return;
       }
-
-      const tx = db.transaction("notes", "readwrite");
-      const store = tx.objectStore("notes");
-      const note = await store.get(noteId);
-
-      if (note) {
-        note.tasks = tasksData;
-        note.modified = Date.now();
-        note.version = (note.version || 0) + 1;
-        note.synced = false;
-
-        await store.put(note);
-      }
-      await tx.done;
-    } catch (err) {
-      console.error("[StorageWorker] Tasks save failed:", err);
     }
+
+    const tx = db.transaction(["notes", "noteContent"], "readwrite");
+    const notesStore = tx.objectStore("notes");
+    const contentStore = tx.objectStore("noteContent");
+
+    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
+
+    if (index && content) {
+      content.tasks = tasksData;
+
+      index.modified = Date.now();
+      index.version = (index.version || 0) + 1;
+      index.synced = false;
+
+      await Promise.all([notesStore.put(index), contentStore.put(content)]);
+    }
+
+    await tx.done;
   }
 
   if (type === "SAVE_CONTENT") {
-    const { content } = e.data;
-    try {
-      const db = await getDB();
+    const { content: newContent } = e.data;
+    const db = await getDB();
 
-      const noteCheck = await db.get("notes", noteId);
-      if (!noteCheck) return;
+    const noteIndex = await db.get("notes", noteId);
+    if (!noteIndex) return;
 
-      // Encrypt content if needed
-      let contentData = content;
-      if (noteCheck.encrypted) {
-        if (key) {
-          contentData = await encryptObject(content, key);
-        } else {
-          console.error("[StorageWorker] Cannot save encrypted content: Key missing");
-          return;
-        }
+    let contentData = newContent;
+    if (noteIndex.encrypted) {
+      if (key) {
+        contentData = await encryptObject(newContent, key);
+      } else {
+        console.error("[StorageWorker] Cannot save encrypted content: Key missing");
+        return;
       }
-
-      const tx = db.transaction("notes", "readwrite");
-      const store = tx.objectStore("notes");
-      const note = await store.get(noteId);
-
-      if (note) {
-        note.content = contentData;
-        note.modified = Date.now();
-        note.version = (note.version || 0) + 1;
-        note.synced = false;
-
-        await store.put(note);
-      }
-      await tx.done;
-    } catch (err) {
-      console.error("[StorageWorker] Content save failed:", err);
     }
+
+    const tx = db.transaction(["notes", "noteContent"], "readwrite");
+    const notesStore = tx.objectStore("notes");
+    const contentStore = tx.objectStore("noteContent");
+
+    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
+
+    if (index && content) {
+      content.content = contentData;
+
+      index.modified = Date.now();
+      index.version = (index.version || 0) + 1;
+      index.synced = false;
+      index.hasContent = typeof newContent === "string" ? newContent.trim().length > 0 : false;
+
+      await Promise.all([notesStore.put(index), contentStore.put(content)]);
+    }
+
+    await tx.done;
   }
 
   if (type === "CLOSE") {

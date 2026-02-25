@@ -1,159 +1,210 @@
 /**
  * Storage Module
- * IndexedDB wrapper for notes, notebooks, and settings
+ * IndexedDB wrapper for notes, notebooks, and settings.
+ *
+ * Schema v4 — split note storage:
+ *   "notes"       — lightweight index (unencrypted, read constantly)
+ *   "noteContent" — heavy payload   (encrypted when local encryption is on)
+ *   "notebooks"   — unchanged
+ *   "files"       — binary blobs (unchanged)
+ *   "settings"    — key/value (unchanged)
+ *
+ * "notes" index fields (always unencrypted):
+ *   id, notebookId, title, created, modified, version,
+ *   synced, lastSyncedEtag, deleted, purged, previousNotebookId,
+ *   encrypted, background, formatVersion, tags,
+ *   hasStrokes, hasContent,
+ *   media  — array of { id, name, type, size, deleted } (no blobs, no positions)
+ *
+ * "noteContent" payload fields (content fields encrypted when note.encrypted):
+ *   id, content, strokes, deletedStrokes,
+ *   media  — full objects incl. fileId, x, y, width, height, rotation, …
+ *   deletedMedia, tasks, recognition, penPresets, pdfSource,
+ *   thumbnail  — base64 JPEG string (360×500, encrypted with the rest when local encryption on)
  */
 
 import { openDB } from "idb";
 
 export const DB_NAME = "NoteBerg";
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 let db = null;
 
+// ─── Index field list ─────────────────────────────────────────────────────────
+// Fields stored in the "notes" index store (never encrypted).
+const INDEX_FIELDS = new Set([
+  "id",
+  "notebookId",
+  "title",
+  "created",
+  "modified",
+  "version",
+  "synced",
+  "lastSyncedEtag",
+  "deleted",
+  "purged",
+  "previousNotebookId",
+  "encrypted",
+  "background",
+  "formatVersion",
+  "tags",
+  "hasStrokes",
+  "hasContent",
+  "media", // metadata-only snapshot — see splitNote()
+]);
+
+// ─── Schema helpers ───────────────────────────────────────────────────────────
+
 /**
- * Initialize the database
+ * Split a full note object into { index, content } for storage.
+ * The index entry gets a lightweight media snapshot (no blobs, no positions).
  */
+function splitNote(note) {
+  const index = {};
+  const content = { id: note.id };
+
+  for (const [key, value] of Object.entries(note)) {
+    if (key === "media") {
+      // Index: metadata only (for sync decisions)
+      index.media = Array.isArray(value)
+        ? value.map(({ id, name, type, size, deleted }) => ({ id, name, type, size, deleted }))
+        : [];
+      // Content: full objects (fileId, positions, etc.)
+      content.media = value ?? [];
+    } else if (INDEX_FIELDS.has(key)) {
+      index[key] = value;
+    } else {
+      content[key] = value;
+    }
+  }
+
+  // Derived flags so overview never needs to load content
+  index.hasStrokes = Array.isArray(note.strokes) ? note.strokes.length > 0 : false;
+  index.hasContent = typeof note.content === "string" ? note.content.trim().length > 0 : false;
+
+  return { index, content };
+}
+
+/**
+ * Merge an index entry and a content record back into a single note object.
+ * Content fields win when both sides have the same key.
+ */
+function mergeNote(index, content) {
+  if (!index) return null;
+  // Use full media from content (has positions/fileIds); index media is metadata-only
+  return { ...index, ...(content ?? {}), media: content?.media ?? index.media ?? [] };
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
 export async function initStorage() {
   db = await openDB(DB_NAME, DB_VERSION, {
-    upgrade(database) {
-      // Create notebooks store
+    upgrade(database, oldVersion) {
+      // v4: drop old notes store (monolithic) and create split stores.
+      // Any existing local data is intentionally discarded — the app
+      // will repopulate from Nextcloud on the next sync.
+      if (oldVersion < 4) {
+        if (database.objectStoreNames.contains("notes")) {
+          database.deleteObjectStore("notes");
+        }
+        if (database.objectStoreNames.contains("noteContent")) {
+          database.deleteObjectStore("noteContent");
+        }
+        if (database.objectStoreNames.contains("syncQueue")) {
+          database.deleteObjectStore("syncQueue");
+        }
+      }
+
+      // notes index store
+      if (!database.objectStoreNames.contains("notes")) {
+        const noteStore = database.createObjectStore("notes", { keyPath: "id" });
+        noteStore.createIndex("notebookId", "notebookId");
+        noteStore.createIndex("modified", "modified");
+        noteStore.createIndex("created", "created");
+      }
+
+      // noteContent payload store
+      if (!database.objectStoreNames.contains("noteContent")) {
+        database.createObjectStore("noteContent", { keyPath: "id" });
+      }
+
+      // notebooks — unchanged
       if (!database.objectStoreNames.contains("notebooks")) {
         const notebookStore = database.createObjectStore("notebooks", { keyPath: "id" });
         notebookStore.createIndex("created", "created");
         notebookStore.createIndex("modified", "modified");
       }
 
-      // Create notes store
-      if (!database.objectStoreNames.contains("notes")) {
-        const noteStore = database.createObjectStore("notes", { keyPath: "id" });
-        noteStore.createIndex("notebookId", "notebookId");
-        noteStore.createIndex("created", "created");
-        noteStore.createIndex("modified", "modified");
-      }
-
-      // Create settings store
-      if (!database.objectStoreNames.contains("settings")) {
-        database.createObjectStore("settings", { keyPath: "key" });
-      }
-
-      // Create sync queue store
-      if (!database.objectStoreNames.contains("syncQueue")) {
-        const syncStore = database.createObjectStore("syncQueue", {
-          keyPath: "id",
-          autoIncrement: true,
-        });
-        syncStore.createIndex("timestamp", "timestamp");
-      }
-
-      // Create files store for binary data (blobs)
+      // files — unchanged
       if (!database.objectStoreNames.contains("files")) {
         database.createObjectStore("files", { keyPath: "id" });
+      }
+
+      // settings — unchanged
+      if (!database.objectStoreNames.contains("settings")) {
+        database.createObjectStore("settings", { keyPath: "key" });
       }
     },
   });
 
-  console.log("Storage initialized");
-
-  // Run migrations
-  await migrateStrokeIds();
-
+  await _migrateThumbnailsToNoteContent();
+  console.log("Storage initialized (v4)");
   return db;
 }
 
 /**
- * Migrate existing strokes to add IDs
- * This ensures all strokes have unique IDs for deletion tracking
+ * One-time migration: remove stale thumbnailFileId/thumbnailTimestamp from the notes index
+ * and delete the corresponding orphaned blobs from the files store.
+ * Thumbnail data is now embedded as base64 in noteContent.
  */
-async function migrateStrokeIds() {
-  if (!db) return;
+async function _migrateThumbnailsToNoteContent() {
+  const migrated = await getSetting("thumbnailMigrationV5Done");
+  if (migrated) return;
 
-  try {
-    const notes = await db.getAll("notes");
-    let migratedCount = 0;
+  const allIndexes = await db.getAll("notes");
+  let count = 0;
 
-    for (const note of notes) {
-      let needsUpdate = false;
+  for (const index of allIndexes) {
+    if (!index.thumbnailFileId) continue;
+    const fileId = index.thumbnailFileId;
+    delete index.thumbnailFileId;
+    delete index.thumbnailTimestamp;
+    await db.put("notes", index);
+    try {
+      await db.delete("files", fileId);
+    } catch (_) {}
+    count++;
+  }
 
-      // Check if any strokes are missing IDs
-      if (note.strokes && Array.isArray(note.strokes)) {
-        for (const stroke of note.strokes) {
-          if (!stroke.id) {
-            stroke.id = generateIdHelper(); // Use helper to avoid circular dependency
-            needsUpdate = true;
-          }
-        }
-      }
-
-      // Initialize deletedStrokes array if it doesn't exist
-      if (!note.deletedStrokes) {
-        note.deletedStrokes = [];
-        needsUpdate = true;
-      }
-
-      if (needsUpdate) {
-        await db.put("notes", note);
-        migratedCount++;
-      }
-    }
-
-    if (migratedCount > 0) {
-      console.log(`Migrated stroke IDs for ${migratedCount} notes`);
-    }
-  } catch (error) {
-    console.error("Failed to migrate stroke IDs:", error);
+  await setSetting("thumbnailMigrationV5Done", true);
+  if (count > 0) {
+    console.log(`[Storage] Migrated ${count} notes: removed stale thumbnailFileId fields`);
   }
 }
 
-/**
- * Helper to generate ID (used during migration before generateId is defined)
- */
-function generateIdHelper() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
+// ─── ID generation ────────────────────────────────────────────────────────────
 
-/**
- * Generate a UUID v4
- * Uses crypto.randomUUID() if available, falls back to polyfill for non-secure contexts
- */
 export function generateId() {
-  // Try native crypto.randomUUID() first (works in secure contexts and Tauri)
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     try {
       return crypto.randomUUID();
-    } catch (e) {
-      console.warn("crypto.randomUUID() failed, falling back to polyfill", e);
+    } catch (_e) {
+      /* fall through */
     }
   }
-
-  // Fallback for non-secure contexts (HTTP dev server on mobile)
-  // Generate UUID v4 using crypto.getRandomValues or Math.random as last resort
   if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    // Use crypto.getRandomValues for better randomness
     return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
       (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16),
     );
   }
-
-  // Last resort: Math.random (less secure but works everywhere)
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
   });
 }
 
-// ========== Notebook Operations ==========
+// ─── Notebook Operations ──────────────────────────────────────────────────────
 
-/**
- * Create a new notebook
- */
 export async function createNotebook({ title, description = "", color = "#3b82f6" }) {
   const notebook = {
     id: generateId(),
@@ -170,41 +221,27 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
 
   await db.put("notebooks", notebook);
   console.log("Notebook created:", notebook.id);
-
-  // Dispatch event for auto-sync
-  window.dispatchEvent(
-    new CustomEvent("notebook-created", { detail: { notebookId: notebook.id } }),
-  );
-
+  if (typeof window !== "undefined")
+    window.dispatchEvent(
+      new CustomEvent("notebook-created", { detail: { notebookId: notebook.id } }),
+    );
   return notebook;
 }
 
-/**
- * Get all notebooks (non-deleted)
- */
 export async function getAllNotebooks() {
   const notebooks = await db.getAll("notebooks");
   return notebooks.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
 }
 
-/**
- * Get all notebooks including deleted/tombstones (for sync)
- */
 export async function getAllNotebooksForSync() {
   const notebooks = await db.getAll("notebooks");
   return notebooks.sort((a, b) => b.modified - a.modified);
 }
 
-/**
- * Get a notebook by ID
- */
 export async function getNotebook(id) {
   return db.get("notebooks", id);
 }
 
-/**
- * Update a notebook
- */
 export async function updateNotebook(id, updates) {
   const notebook = await db.get("notebooks", id);
   if (!notebook) throw new Error("Notebook not found");
@@ -222,25 +259,19 @@ export async function updateNotebook(id, updates) {
   return updated;
 }
 
-/**
- * Delete a notebook (soft delete) and all its notes
- */
 export async function deleteNotebook(id) {
   const notebook = await db.get("notebooks", id);
   if (!notebook) throw new Error("Notebook not found");
 
-  // Mark notebook as deleted
   notebook.deleted = true;
   notebook.modified = Date.now();
   notebook.version = (notebook.version || 0) + 1;
   notebook.synced = false;
-
   await db.put("notebooks", notebook);
 
-  // Also delete all notes in this notebook
+  // Soft-delete all notes in this notebook
   const notes = await db.getAllFromIndex("notes", "notebookId", id);
   const timestamp = Date.now();
-
   for (const note of notes) {
     if (!note.deleted) {
       note.deleted = true;
@@ -255,27 +286,21 @@ export async function deleteNotebook(id) {
   return notebook;
 }
 
-/**
- * Purge a notebook (mark for permanent deletion)
- * This also purges all notes within the notebook
- */
 export async function purgeNotebook(id) {
   const notebook = await db.get("notebooks", id);
   if (!notebook) return;
 
-  // Purge all notes in this notebook first
   const notes = await db.getAllFromIndex("notes", "notebookId", id);
   for (const note of notes) {
     await purgeNote(note.id);
   }
 
-  // Create a purged stub for the notebook
   const stub = {
     id: notebook.id,
-    title: notebook.title, // Keep title for logs/debugging
+    title: notebook.title,
     purged: true,
     deleted: true,
-    synced: false, // Mark as unsynced to trigger upload/processing
+    synced: false,
     modified: Date.now(),
     lastSyncedEtag: notebook.lastSyncedEtag,
   };
@@ -284,30 +309,24 @@ export async function purgeNotebook(id) {
   console.log("Notebook purged (stubbed):", id);
 }
 
-/**
- * Permanently delete a notebook record from the database (after sync)
- */
 export async function permanentlyDeleteNotebook(id) {
   await db.delete("notebooks", id);
   console.log("Notebook permanently deleted from DB:", id);
 }
 
-// ========== Note Operations ==========
+// ─── Note Operations ──────────────────────────────────────────────────────────
 
-/**
- * Create a new note
- */
 export async function createNote({ title, notebookId = null }) {
   const note = {
     id: generateId(),
     notebookId,
     title,
-    content: "", // Markdown content
-    strokes: [], // Array of drawing strokes
-    media: [], // Array of media items (images, pdf pages)
-    deletedMedia: [], // Array of deleted media IDs
-    formatVersion: 1, // Stroke format version
-    background: "none", // Background pattern: none, ruled-narrow, ruled-medium, ruled-wide, grid-small, grid-medium, grid-large
+    content: "",
+    strokes: [],
+    media: [],
+    deletedMedia: [],
+    formatVersion: 1,
+    background: "none",
     created: Date.now(),
     modified: Date.now(),
     version: 1,
@@ -315,150 +334,127 @@ export async function createNote({ title, notebookId = null }) {
     lastSyncedEtag: null,
     deleted: false,
     tags: [],
+    tasks: [],
+    penPresets: null,
+    pdfSource: null,
+    recognition: null,
+    deletedStrokes: [],
   };
 
-  // Encrypt note data if local encryption is enabled
-  const encryptedNote = await encryptNoteIfEnabled(note);
-  await db.put("notes", encryptedNote);
+  await _saveNoteSplit(note);
   console.log("Note created:", note.id);
-
-  // Dispatch event for auto-sync
-  window.dispatchEvent(new CustomEvent("note-created", { detail: { noteId: note.id } }));
-
-  return note; // Return unencrypted note to caller
+  if (typeof window !== "undefined")
+    window.dispatchEvent(new CustomEvent("note-created", { detail: { noteId: note.id } }));
+  return note;
 }
 
 /**
- * Get all notes (non-deleted)
+ * Get all non-deleted notes as index entries (no strokes/content).
+ * Used for overview rendering — fast, no decryption needed.
  */
 export async function getAllNotes() {
   const notes = await db.getAll("notes");
-  const filtered = notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
-
-  // Decrypt notes if needed
-  const decrypted = await Promise.all(filtered.map((note) => decryptNoteIfNeeded(note)));
-  return decrypted;
+  return notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
 }
 
 /**
- * Get all notes including deleted/tombstones (for sync)
- * Returns notes in their stored form (encrypted or plain text)
- * The sync layer will handle Nextcloud encryption separately
+ * Get all notes including tombstones, index only.
+ * The sync layer lazy-loads content via getNoteContent() for notes it needs to upload.
  */
 export async function getAllNotesForSync() {
   if (!db) await initStorage();
-  const notes = await db.getAll("notes");
-  // Decrypt all notes before sync so the sync logic can read/merge content
-  return await Promise.all(notes.map((note) => decryptNoteIfNeeded(note)));
+  return db.getAll("notes");
 }
 
 /**
- * Get lightweight sync metadata for all notes (no strokes, content, or media blobs).
- * Used by the sync decision phase to determine what needs uploading/downloading without
- * loading large stroke arrays for every note. Full note content is lazy-loaded only for
- * the notes that actually need to be uploaded or merged.
- *
- * Uses a cursor instead of getAll() so each record is a separate async step. This lets
- * other pending IDB requests (e.g. getNote() from NoteCanvas.load) interleave between
- * records rather than waiting for one large synchronous deserialisation burst to finish.
+ * Get lightweight sync metadata for all notes.
+ * With the split schema, the "notes" store IS the metadata — no projection needed.
  */
 export async function getAllNoteMetadataForSync() {
   if (!db) await initStorage();
-  const result = [];
-  const tx = db.transaction("notes", "readonly");
-  for await (const cursor of tx.store) {
-    const note = cursor.value;
-    result.push({
-      id: note.id,
-      notebookId: note.notebookId ?? null,
-      modified: note.modified,
-      version: note.version,
-      synced: note.synced,
-      lastSyncedEtag: note.lastSyncedEtag,
-      deleted: note.deleted,
-      purged: note.purged,
-      previousNotebookId: note.previousNotebookId,
-      // media array needed to decide whether to queue a media check (no blobs, just metadata)
-      media: Array.isArray(note.media)
-        ? note.media.map(({ id, name, type, size, deleted }) => ({ id, name, type, size, deleted }))
-        : [],
-      // encrypted flag needed so the lazy full-load knows to decrypt
-      encrypted: note.encrypted,
-    });
-  }
-  return result;
+  return db.getAll("notes");
 }
 
 /**
- * Get notes by notebook ID
+ * Get index entries for all notes in a notebook (non-deleted).
+ * Overview uses these — no content/strokes loaded.
  */
 export async function getNotesByNotebook(notebookId) {
   const notes = await db.getAllFromIndex("notes", "notebookId", notebookId);
-  const filtered = notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
-
-  // Decrypt notes if needed
-  const decrypted = await Promise.all(filtered.map((note) => decryptNoteIfNeeded(note)));
-  return decrypted;
+  return notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
 }
 
 /**
- * Get quick notes (notes without a notebook)
+ * Get index entries for quick notes (no notebook), non-deleted.
  */
 export async function getQuickNotes() {
-  // Get all notes and filter for those without a notebook
   const allNotes = await db.getAll("notes");
-  const quickNotes = allNotes.filter((n) => !n.deleted && n.notebookId === null);
-  const sorted = quickNotes.sort((a, b) => b.modified - a.modified);
-
-  // Decrypt notes if needed
-  const decrypted = await Promise.all(sorted.map((note) => decryptNoteIfNeeded(note)));
-  return decrypted;
+  return allNotes
+    .filter((n) => !n.deleted && n.notebookId === null)
+    .sort((a, b) => b.modified - a.modified);
 }
 
 /**
- * Get a note by ID
+ * Get a full note (index + content merged, content decrypted).
+ * Used when opening a note for editing.
  */
 export async function getNote(id) {
-  const note = await db.get("notes", id);
-  const decrypted = await decryptNoteIfNeeded(note);
-  if (decrypted) {
-    decrypted.tasks = decrypted.tasks || [];
-  }
+  const [index, content] = await Promise.all([db.get("notes", id), db.get("noteContent", id)]);
+  if (!index) return null;
+
+  const merged = mergeNote(index, content);
+  const decrypted = await decryptNoteIfNeeded(merged);
+  if (decrypted) decrypted.tasks = decrypted.tasks || [];
   return decrypted;
 }
 
 /**
- * Update a note
+ * Get only the content record for a note (for sync upload).
+ * Returns the raw stored form — sync layer handles Nextcloud encryption separately.
  */
-export async function updateNote(id, updates) {
-  const note = await db.get("notes", id);
-  if (!note) throw new Error("Note not found");
+export async function getNoteContent(id) {
+  return db.get("noteContent", id);
+}
 
-  // Decrypt the existing note if needed (to merge updates properly)
-  const decryptedNote = await decryptNoteIfNeeded(note);
+/**
+ * Get the full note (index + content merged) WITHOUT decryption.
+ * Safe to call from a Web Worker where the encryption key is unavailable.
+ * The sync layer handles Nextcloud-level encryption separately.
+ */
+export async function getRawNote(id) {
+  const [index, content] = await Promise.all([db.get("notes", id), db.get("noteContent", id)]);
+  if (!index) return null;
+  const merged = mergeNote(index, content);
+  if (merged) merged.tasks = merged.tasks || [];
+  return merged;
+}
+
+/**
+ * Get the index entry only (no content). Cheap — used where content isn't needed.
+ */
+export async function getNoteIndex(id) {
+  return db.get("notes", id);
+}
+
+export async function updateNote(id, updates) {
+  const existing = await getNote(id);
+  if (!existing) throw new Error("Note not found");
 
   const updated = {
-    ...decryptedNote,
+    ...existing,
     ...updates,
     modified: Date.now(),
-    version: (decryptedNote.version || 0) + 1,
+    version: (existing.version || 0) + 1,
     synced: false,
   };
 
-  // Encrypt before saving
-  const encryptedNote = await encryptNoteIfEnabled(updated);
-  await db.put("notes", encryptedNote);
+  await _saveNoteSplit(updated);
   console.log("Note updated:", id);
-
-  // Dispatch event for auto-sync and live updates
-  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id } }));
-
-  return updated; // Return unencrypted version to caller
+  if (typeof window !== "undefined")
+    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id } }));
+  return updated;
 }
 
-/**
- * Delete a note (soft delete)
- */
 export async function deleteNote(id) {
   const note = await db.get("notes", id);
   if (!note) throw new Error("Note not found");
@@ -473,17 +469,12 @@ export async function deleteNote(id) {
   return note;
 }
 
-/**
- * Move a note to a different notebook (or to quick notes when targetNotebookId is null).
- * Sets previousNotebookId so the sync layer can clean up the old Nextcloud location.
- */
 export async function moveNote(noteId, targetNotebookId) {
   const note = await db.get("notes", noteId);
   if (!note) throw new Error("Note not found");
 
   const previousNotebookId = note.notebookId ?? null;
-  // Normalise: treat undefined and null as the same (quick notes)
-  if (previousNotebookId === (targetNotebookId ?? null)) return; // no-op
+  if (previousNotebookId === (targetNotebookId ?? null)) return;
 
   const updated = {
     ...note,
@@ -498,14 +489,9 @@ export async function moveNote(noteId, targetNotebookId) {
   console.log(`Note moved: ${noteId} from ${previousNotebookId} to ${targetNotebookId}`);
 }
 
-/**
- * Copy a note to a different notebook (or to quick notes when targetNotebookId is null).
- * Media blobs are deep-copied to new fileIds so the two notes are fully independent.
- */
 export async function copyNote(noteId, targetNotebookId) {
-  const raw = await db.get("notes", noteId);
-  if (!raw) throw new Error("Note not found");
-  const note = await decryptNoteIfNeeded(raw);
+  const note = await getNote(noteId);
+  if (!note) throw new Error("Note not found");
 
   // Deep-copy media blobs
   const newMedia = [];
@@ -515,7 +501,6 @@ export async function copyNote(noteId, targetNotebookId) {
     newMedia.push({ ...item, fileId: newFileId });
   }
 
-  // Deep-copy PDF source if present
   let newPdfSource = note.pdfSource ?? null;
   if (note.pdfSource) {
     const pdfBlob = await getFile(note.pdfSource);
@@ -529,7 +514,7 @@ export async function copyNote(noteId, targetNotebookId) {
     notebookId: targetNotebookId ?? null,
     media: newMedia,
     pdfSource: newPdfSource,
-    thumbnailFileId: null, // regenerated on next open
+    thumbnail: null,
     previousNotebookId: undefined,
     deletedMedia: [],
     synced: false,
@@ -540,16 +525,11 @@ export async function copyNote(noteId, targetNotebookId) {
   };
   delete newNote.previousNotebookId;
 
-  const toStore = await encryptNoteIfEnabled(newNote);
-  await db.put("notes", toStore);
+  await _saveNoteSplit(newNote);
   console.log(`Note copied: ${noteId} → ${newNote.id} into ${targetNotebookId}`);
   return newNote;
 }
 
-/**
- * Clear the previousNotebookId flag after a move has been synced.
- * Does NOT bump version or mark synced:false — it's a silent bookkeeping update.
- */
 export async function clearNoteMoveFlag(id) {
   const note = await db.get("notes", id);
   if (!note) return;
@@ -557,97 +537,64 @@ export async function clearNoteMoveFlag(id) {
   await db.put("notes", note);
 }
 
-/**
- * Purge a note (mark for permanent deletion and remove content/media)
- * This keeps a stub to ensure the deletion is synced to Nextcloud
- */
 export async function purgeNote(id) {
-  const note = await db.get("notes", id);
-  if (!note) return;
+  const index = await db.get("notes", id);
+  if (!index) return;
 
-  // Delete local media files immediately to free space
-  // Handle both encrypted and unencrypted media arrays
-  let mediaItems = [];
+  // Delete local media files — need full content for fileIds
   try {
-    // If note is encrypted, decrypt to access media array
-    if (note.encrypted) {
-      const decrypted = await decryptNoteIfNeeded(note);
-      if (decrypted?.media && Array.isArray(decrypted.media)) {
-        mediaItems = decrypted.media;
-      }
-    } else if (note.media && Array.isArray(note.media)) {
-      mediaItems = note.media;
+    const content = await db.get("noteContent", id);
+    const mediaItems = content?.media ?? [];
+    for (const item of mediaItems) {
+      if (item.fileId) await deleteFile(item.fileId);
     }
   } catch (e) {
-    // If decryption fails (app locked), media files will be orphaned
-    // but purge should still proceed to maintain data consistency
-    console.warn("[Storage] Could not decrypt note for media cleanup during purge:", e);
+    console.warn("[Storage] Could not clean up media during purge:", e);
   }
 
-  for (const item of mediaItems) {
-    if (item.fileId) {
-      await deleteFile(item.fileId);
-    }
-  }
+  // Delete content record
+  await db.delete("noteContent", id);
 
-  // Create a purged stub
+  // Replace index with a minimal stub
   const stub = {
-    id: note.id,
-    notebookId: note.notebookId,
-    purged: true, // Flag for sync
+    id: index.id,
+    notebookId: index.notebookId,
+    purged: true,
     deleted: true,
-    synced: false, // Mark as unsynced to trigger upload/processing
+    synced: false,
     modified: Date.now(),
-    lastSyncedEtag: note.lastSyncedEtag,
-    _currentFileEtag: note._currentFileEtag,
+    lastSyncedEtag: index.lastSyncedEtag,
+    _currentFileEtag: index._currentFileEtag,
   };
-
   await db.put("notes", stub);
   console.log("Note purged (stubbed):", id);
 }
 
-/**
- * Permanently delete a note record from the database (after sync)
- */
 export async function permanentlyDeleteNote(id) {
-  await db.delete("notes", id);
+  await Promise.all([db.delete("notes", id), db.delete("noteContent", id)]);
   console.log("Note permanently deleted from DB:", id);
 }
 
-/**
- * Permanently delete all notes belonging to a notebook (used when purging notebook)
- */
 export async function permanentlyDeleteNotesInNotebook(notebookId) {
   const notes = await db.getAllFromIndex("notes", "notebookId", notebookId);
-  for (const note of notes) {
-    await db.delete("notes", note.id);
-    console.log("Note permanently deleted from DB:", note.id);
-  }
+  await Promise.all(
+    notes.flatMap((note) => [db.delete("notes", note.id), db.delete("noteContent", note.id)]),
+  );
+  console.log(`Permanently deleted ${notes.length} notes for notebook ${notebookId}`);
 }
 
-// ========== Recycle Bin Operations ==========
+// ─── Recycle Bin ──────────────────────────────────────────────────────────────
 
-/**
- * Get all deleted notebooks
- */
 export async function getDeletedNotebooks() {
-  const allNotebooks = await db.getAll("notebooks");
-  // Filter out notebooks that are already purged (stubs)
-  return allNotebooks.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
+  const all = await db.getAll("notebooks");
+  return all.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
 }
 
-/**
- * Get all deleted notes
- */
 export async function getDeletedNotes() {
-  const allNotes = await db.getAll("notes");
-  // Filter out notes that are already purged (stubs)
-  return allNotes.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
+  const all = await db.getAll("notes");
+  return all.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
 }
 
-/**
- * Restore a deleted notebook
- */
 export async function restoreNotebook(id) {
   const notebook = await db.get("notebooks", id);
   if (!notebook) throw new Error("Notebook not found");
@@ -662,9 +609,6 @@ export async function restoreNotebook(id) {
   return notebook;
 }
 
-/**
- * Restore a deleted note
- */
 export async function restoreNote(id) {
   const note = await db.get("notes", id);
   if (!note) throw new Error("Note not found");
@@ -679,30 +623,17 @@ export async function restoreNote(id) {
   return note;
 }
 
-// ========== File/Blob Operations ==========
+// ─── File/Blob Operations ─────────────────────────────────────────────────────
 
-/**
- * Save a binary file (blob)
- * @param {Blob} blob - The file data
- * @param {string} [id] - Optional ID (if syncing from server)
- * @returns {Promise<string>} - The file ID
- */
 export async function saveFile(blob, id = null) {
   const fileId = id || generateId();
-
-  // Convert Blob to ArrayBuffer for maximum compatibility
-  // Some mobile WebViews have issues storing Blobs directly in IndexedDB
-  let dataToStore = blob;
   const mimeType = blob.type;
+  let dataToStore = blob;
 
   if (blob instanceof Blob) {
     try {
       dataToStore = await blob.arrayBuffer();
-    } catch (e) {
-      console.warn(
-        "[Storage] Failed to convert Blob to ArrayBuffer, trying FileReader fallback",
-        e,
-      );
+    } catch (_e) {
       dataToStore = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);
@@ -716,158 +647,63 @@ export async function saveFile(blob, id = null) {
   return fileId;
 }
 
-/**
- * Get a binary file (blob) by ID
- */
 export async function getFile(id) {
   const record = await db.get("files", id);
   if (!record) return null;
-
-  // If stored as ArrayBuffer (new format), convert back to Blob
   if (record.data instanceof ArrayBuffer) {
     return new Blob([record.data], { type: record.type || "application/octet-stream" });
   }
-
-  // If stored as Blob (legacy/direct support), return as is
   return record.data;
 }
 
-/**
- * Check if a file exists in storage without loading it
- * @param {string} id - File ID
- * @returns {Promise<boolean>}
- */
 export async function checkFileExists(id) {
-  const count = await db.count("files", id);
-  return count > 0;
+  return (await db.count("files", id)) > 0;
 }
 
-/**
- * Delete a binary file
- */
 export async function deleteFile(id) {
   await db.delete("files", id);
 }
 
-// ========== Settings Operations ==========
+// ─── Settings ─────────────────────────────────────────────────────────────────
 
-/**
- * Get a setting value
- */
 export async function getSetting(key) {
   const setting = await db.get("settings", key);
   return setting ? setting.value : null;
 }
 
-/**
- * Set a setting value
- */
 export async function setSetting(key, value) {
   await db.put("settings", { key, value });
-  console.log("Setting saved:", key);
 }
 
-/**
- * Get storage version
- * Returns 1 for flat structure, 2 for hierarchical
- */
 export async function getStorageVersion() {
-  const version = await getSetting("storageVersion");
-  return version || 1; // Default to v1 if not set
+  return (await getSetting("storageVersion")) || 1;
 }
 
-/**
- * Set storage version
- */
 export async function setStorageVersion(version) {
   await setSetting("storageVersion", version);
-  console.log("Storage version set to:", version);
 }
 
-// ========== Utility Functions ==========
+// ─── Sync-oriented save functions ─────────────────────────────────────────────
 
 /**
- * Get storage statistics
+ * Save or update a note from sync.
+ * The note object is a full merged note (index + content fields together).
+ * Splits into both stores. Dispatches datachange.
  */
-export async function getStorageStats() {
-  const notebooks = await getAllNotebooks();
-  const notes = await getAllNotes();
-
-  return {
-    notebookCount: notebooks.length,
-    noteCount: notes.length,
-    quickNoteCount: notes.filter((n) => !n.notebookId).length,
-  };
+export async function saveNote(note, options = {}) {
+  const { skipEncryption = false } = options;
+  await _saveNoteSplit(note, { skipEncryption });
+  if (typeof window !== "undefined")
+    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: note.id } }));
 }
 
-/**
- * Clear all data (for debugging/testing)
- */
-export async function clearAllData() {
-  await db.clear("notebooks");
-  await db.clear("notes");
-  await db.clear("settings");
-  await db.clear("syncQueue");
-  console.log("All data cleared");
-}
-
-/**
- * Purge only user data (notebooks and notes), preserve settings
- * Use this to reset local data before downloading from server
- */
-export async function purgeLocalData() {
-  if (!db) {
-    throw new Error("Database not initialized. Call initStorage() first.");
-  }
-
-  await db.clear("notebooks");
-  await db.clear("notes");
-  await db.clear("syncQueue");
-
-  const notebooksAfterPurge = await db.getAll("notebooks");
-  const notesAfterPurge = await db.getAll("notes");
-
-  if (notebooksAfterPurge.length > 0 || notesAfterPurge.length > 0) {
-    throw new Error("Purge failed: Data still exists after clear operation!");
-  }
-}
-
-/**
- * Save or update a notebook from sync
- * @param {Object} notebook - Notebook object to save
- */
 export async function saveNotebook(notebook) {
   await db.put("notebooks", notebook);
 }
 
 /**
- * Save or update a note from sync
- * @param {Object} note - Note object to save
- * @param {Object} options - Save options
- * @param {boolean} options.skipEncryption - If true, skip encryption (note is already in correct format)
- */
-export async function saveNote(note, options = {}) {
-  const { skipEncryption = false } = options;
-
-  // If skipEncryption is true, save note as-is (it's already in the correct format)
-  if (skipEncryption) {
-    await db.put("notes", note);
-  } else {
-    // Encrypt note before saving if local encryption is enabled
-    const encryptedNote = await encryptNoteIfEnabled(note);
-    await db.put("notes", encryptedNote);
-  }
-
-  // Dispatch event for auto-sync and live updates
-  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: note.id } }));
-}
-
-/**
- * Update only the lastSyncedEtag of a note without triggering a datachange event.
- * Used when Nextcloud returns an alternating etag for unchanged content — we
- * acknowledge the remote etag silently so the next sync comparison is correct.
- * @param {string} noteId
- * @param {string} etag
+ * Update only lastSyncedEtag + synced on the index — no datachange event,
+ * no content write. Used for etag oscillation fix.
  */
 export async function updateNoteEtag(noteId, etag) {
   const note = await db.get("notes", noteId);
@@ -877,244 +713,259 @@ export async function updateNoteEtag(noteId, etag) {
   await db.put("notes", note);
 }
 
-/**
- * Check if local data encryption is enabled
- * @returns {Promise<boolean>}
- */
+// ─── Utility ──────────────────────────────────────────────────────────────────
+
+export async function getStorageStats() {
+  const notebooks = await getAllNotebooks();
+  const notes = await getAllNotes();
+  return {
+    notebookCount: notebooks.length,
+    noteCount: notes.length,
+    quickNoteCount: notes.filter((n) => !n.notebookId).length,
+  };
+}
+
+export async function clearAllData() {
+  await Promise.all([
+    db.clear("notebooks"),
+    db.clear("notes"),
+    db.clear("noteContent"),
+    db.clear("settings"),
+  ]);
+  console.log("All data cleared");
+}
+
+export async function purgeLocalData() {
+  if (!db) throw new Error("Database not initialized. Call initStorage() first.");
+
+  await Promise.all([db.clear("notebooks"), db.clear("notes"), db.clear("noteContent")]);
+
+  const [nb, n] = await Promise.all([db.getAll("notebooks"), db.getAll("notes")]);
+  if (nb.length > 0 || n.length > 0) throw new Error("Purge failed: Data still exists!");
+}
+
 export async function isLocalEncryptionEnabled() {
-  const setting = await getSetting("encrypt_local_data");
-  return setting ?? false; // Default: disabled
+  return (await getSetting("encrypt_local_data")) ?? false;
 }
 
-/**
- * Check if Nextcloud sync encryption is enabled
- * @returns {Promise<boolean>}
- */
 export async function isNextcloudEncryptionEnabled() {
-  const setting = await getSetting("encrypt_nextcloud_data");
-  return setting ?? false; // Default: disabled
+  return (await getSetting("encrypt_nextcloud_data")) ?? false;
 }
 
-/**
- * Fix corrupted notes that have encrypted content but no encrypted flag
- * This happens if sync ran while app was locked
- * @returns {Promise<{fixed: number, skipped: number}>}
- */
 export async function fixCorruptedNotes() {
   console.log("[Storage] Scanning for corrupted notes...");
-
-  const allNotes = await db.getAll("notes");
+  const allContent = await db.getAll("noteContent");
   let fixed = 0;
   let skipped = 0;
 
-  for (const note of allNotes) {
+  for (const content of allContent) {
     try {
-      // Check if note has encrypted content but no encrypted flag
       const hasEncryptedContent =
-        note.content &&
-        typeof note.content === "object" &&
-        note.content.data &&
-        note.content.iv &&
-        note.content.version;
-
+        content.content &&
+        typeof content.content === "object" &&
+        content.content.data &&
+        content.content.iv;
       const hasEncryptedStrokes =
-        note.strokes &&
-        typeof note.strokes === "object" &&
-        note.strokes.data &&
-        note.strokes.iv &&
-        note.strokes.version;
+        content.strokes &&
+        typeof content.strokes === "object" &&
+        content.strokes.data &&
+        content.strokes.iv;
 
-      if ((hasEncryptedContent || hasEncryptedStrokes) && !note.encrypted) {
-        console.warn(`[Storage] Found corrupted note ${note.id} - fixing encrypted flag`);
+      const index = await db.get("notes", content.id);
+      if (!index) continue;
 
-        // Fix the note by adding the encrypted flag
-        const fixedNote = {
-          ...note,
-          encrypted: true,
-        };
-
-        await db.put("notes", fixedNote);
+      if ((hasEncryptedContent || hasEncryptedStrokes) && !index.encrypted) {
+        await db.put("notes", { ...index, encrypted: true });
         fixed++;
-
-        console.log(`[Storage] Fixed note ${note.id}`);
+        console.log(`[Storage] Fixed encrypted flag for note ${content.id}`);
       } else {
         skipped++;
       }
     } catch (error) {
-      console.error(`[Storage] Failed to check/fix note ${note.id}:`, error);
+      console.error(`[Storage] Failed to check note ${content.id}:`, error);
     }
   }
 
   console.log(`[Storage] Corruption scan complete: ${fixed} fixed, ${skipped} skipped`);
-
   return { fixed, skipped };
 }
 
-/**
- * Migrate existing plain text notes to encrypted format
- * This function encrypts all notes that are currently stored in plain text
- * @returns {Promise<{migrated: number, skipped: number, failed: number}>}
- */
 export async function migrateNotesToEncrypted() {
   const encryptionEnabled = await isLocalEncryptionEnabled();
-
-  if (!encryptionEnabled) {
-    console.log("[Storage] Local encryption is disabled, skipping migration");
-    return { migrated: 0, skipped: 0, failed: 0 };
-  }
-
-  console.log("[Storage] Starting note encryption migration...");
+  if (!encryptionEnabled) return { migrated: 0, skipped: 0, failed: 0 };
 
   const { isAppUnlocked } = await import("./masterPassword.js");
+  if (!isAppUnlocked()) throw new Error("Cannot migrate notes - app is locked");
 
-  if (!isAppUnlocked()) {
-    throw new Error("Cannot migrate notes - app is locked");
-  }
+  const allContent = await db.getAll("noteContent");
+  let migrated = 0,
+    skipped = 0,
+    failed = 0;
 
-  const allNotes = await db.getAll("notes");
-  let migrated = 0;
-  let skipped = 0;
-  let failed = 0;
-
-  for (const note of allNotes) {
+  for (const content of allContent) {
     try {
-      // Skip already encrypted notes
-      if (note.encrypted) {
+      const index = await db.get("notes", content.id);
+      if (!index || index.encrypted) {
         skipped++;
         continue;
       }
 
-      // Encrypt the note
-      const encryptedNote = await encryptNoteIfEnabled(note);
-
-      // Save the encrypted version
-      await db.put("notes", encryptedNote);
+      const merged = mergeNote(index, content);
+      await _saveNoteSplit(merged, { skipEncryption: false });
       migrated++;
-
-      console.log(`[Storage] Migrated note ${note.id} to encrypted format`);
     } catch (error) {
-      console.error(`[Storage] Failed to migrate note ${note.id}:`, error);
+      console.error(`[Storage] Failed to migrate note ${content.id}:`, error);
       failed++;
     }
   }
 
   console.log(
-    `[Storage] Migration complete: ${migrated} migrated, ${skipped} skipped, ${failed} failed`,
+    `[Storage] Encryption migration: ${migrated} migrated, ${skipped} skipped, ${failed} failed`,
   );
-
   return { migrated, skipped, failed };
 }
 
-/**
- * Encrypt note data if local encryption is enabled
- * @param {Object} note - Note object
- * @returns {Promise<Object>} - Note object (encrypted if enabled)
- */
-async function encryptNoteIfEnabled(note) {
-  const shouldEncrypt = await isLocalEncryptionEnabled();
+// ─── Internal helpers ─────────────────────────────────────────────────────────
 
-  if (!shouldEncrypt) {
-    return note;
+/**
+ * Write a full note object to both "notes" (index) and "noteContent" stores.
+ * Encrypts content fields when local encryption is enabled.
+ */
+async function _saveNoteSplit(note, { skipEncryption = false } = {}) {
+  let { index, content } = splitNote(note);
+
+  if (!skipEncryption) {
+    content = await _encryptContent(content, index);
+    // encrypted flag lives on the index so getAllNoteMetadataForSync can see it
+    index.encrypted = content._encrypted;
+    delete content._encrypted;
   }
 
-  // Import encryption modules
+  // Single transaction across both stores for atomicity
+  const tx = db.transaction(["notes", "noteContent"], "readwrite");
+  await Promise.all([
+    tx.objectStore("notes").put(index),
+    tx.objectStore("noteContent").put(content),
+    tx.done,
+  ]);
+}
+
+/**
+ * Encrypt the content fields of a noteContent record if local encryption is on.
+ * Returns the (possibly encrypted) content object, with a temporary `_encrypted`
+ * boolean flag that _saveNoteSplit copies to the index entry.
+ */
+async function _encryptContent(content, index) {
+  const shouldEncrypt = await isLocalEncryptionEnabled();
+  if (!shouldEncrypt) return { ...content, _encrypted: false };
+
   const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
   const { encryptObject } = await import("./encryption.js");
 
-  // Check if app is unlocked
   if (!isAppUnlocked()) {
-    console.warn("[Storage] Cannot encrypt note - app is locked");
-    return note;
+    console.warn("[Storage] Cannot encrypt note content - app is locked");
+    return { ...content, _encrypted: index.encrypted ?? false };
   }
 
   try {
-    const encryptionKey = getEncryptionKey();
-
-    // Encrypt sensitive fields (content, strokes, media, and tasks)
-    const encryptedContent = await encryptObject(note.content || "", encryptionKey);
-    const encryptedStrokes = await encryptObject(note.strokes || [], encryptionKey);
-    const encryptedMedia = await encryptObject(note.media || [], encryptionKey);
-    const encryptedTasks = await encryptObject(note.tasks || [], encryptionKey);
+    const key = getEncryptionKey();
+    // Helper: skip encryption if the value is already an encrypted blob {data, iv}
+    const isEncryptedBlob = (v) =>
+      v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
 
     return {
-      ...note,
-      content: encryptedContent,
-      strokes: encryptedStrokes,
-      media: encryptedMedia,
-      tasks: encryptedTasks,
-      encrypted: true, // Mark as encrypted
+      ...content,
+      content: isEncryptedBlob(content.content)
+        ? content.content
+        : await encryptObject(content.content || "", key),
+      strokes: isEncryptedBlob(content.strokes)
+        ? content.strokes
+        : await encryptObject(content.strokes || [], key),
+      media: isEncryptedBlob(content.media)
+        ? content.media
+        : await encryptObject(content.media || [], key),
+      tasks: isEncryptedBlob(content.tasks)
+        ? content.tasks
+        : await encryptObject(content.tasks || [], key),
+      recognition: isEncryptedBlob(content.recognition)
+        ? content.recognition
+        : content.recognition
+          ? await encryptObject(content.recognition, key)
+          : null,
+      thumbnail: isEncryptedBlob(content.thumbnail)
+        ? content.thumbnail
+        : content.thumbnail
+          ? await encryptObject(content.thumbnail, key)
+          : null,
+      _encrypted: true,
     };
   } catch (error) {
-    console.error("[Storage] Failed to encrypt note:", error);
-    // Return unencrypted note if encryption fails
-    return note;
+    console.error("[Storage] Failed to encrypt note content:", error);
+    return { ...content, _encrypted: false };
   }
 }
 
 /**
- * Decrypt note data if it's encrypted
- * @param {Object} note - Note object (possibly encrypted)
- * @returns {Promise<Object>} - Decrypted note object
+ * Decrypt a merged note object's content fields if needed.
  */
 async function decryptNoteIfNeeded(note) {
-  if (!note || !note.encrypted) {
-    return note;
-  }
+  if (!note || !note.encrypted) return note;
 
-  // Check if encryption is currently enabled
   const encryptionEnabled = await isLocalEncryptionEnabled();
   if (!encryptionEnabled) {
-    // Encryption is disabled but note is encrypted - we cannot decrypt it
-    // because we don't have access to the encryption key
-    console.warn(
-      "[Storage] Note is encrypted but encryption is disabled. Cannot decrypt without master password.",
-    );
-    throw new Error(
-      "Cannot access encrypted note - encryption is disabled. Please enable local encryption or reset your data.",
-    );
+    throw new Error("Cannot access encrypted note - encryption is disabled.");
   }
 
-  // Import encryption modules
   const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
   const { decryptObject } = await import("./encryption.js");
 
-  // Check if app is unlocked
   if (!isAppUnlocked()) {
-    throw new Error(
-      "Cannot decrypt note - app is locked. Please refresh the page to unlock with your master password.",
-    );
+    throw new Error("Cannot decrypt note - app is locked.");
   }
 
   try {
-    const encryptionKey = getEncryptionKey();
+    const key = getEncryptionKey();
 
-    // Decrypt sensitive fields
-    const decryptedContent = await decryptObject(note.content, encryptionKey);
-    const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
-
-    // Only decrypt media if it exists and has the encrypted structure
-    // (notes encrypted before media support won't have this field)
     let decryptedMedia = [];
     if (note.media && typeof note.media === "object" && note.media.data && note.media.iv) {
-      decryptedMedia = await decryptObject(note.media, encryptionKey);
+      let once = await decryptObject(note.media, key);
+      // Guard against double-encryption: decrypt a second time if still an encrypted blob
+      if (once && typeof once === "object" && once.data && once.iv) {
+        once = await decryptObject(once, key);
+      }
+      decryptedMedia = Array.isArray(once) ? once : [];
     }
 
-    // Decrypt tasks
     let decryptedTasks = [];
     if (note.tasks && typeof note.tasks === "object" && note.tasks.data && note.tasks.iv) {
-      decryptedTasks = await decryptObject(note.tasks, encryptionKey);
+      decryptedTasks = await decryptObject(note.tasks, key);
     } else if (note.tasks) {
-      // Fallback for tasks that were not encrypted due to the old bug
       decryptedTasks = note.tasks;
     }
 
+    let decryptedRecognition = null;
+    if (note.recognition && typeof note.recognition === "object" && note.recognition.data) {
+      decryptedRecognition = await decryptObject(note.recognition, key);
+    } else if (note.recognition) {
+      decryptedRecognition = note.recognition;
+    }
+
+    const isEncryptedBlob = (v) =>
+      v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
+
+    const decryptedThumbnail = isEncryptedBlob(note.thumbnail)
+      ? await decryptObject(note.thumbnail, key)
+      : (note.thumbnail ?? null);
+
     return {
       ...note,
-      content: decryptedContent,
-      strokes: decryptedStrokes,
+      content: await decryptObject(note.content, key),
+      strokes: await decryptObject(note.strokes, key),
       media: decryptedMedia,
       tasks: decryptedTasks,
-      encrypted: undefined, // Remove encrypted flag from decrypted version
+      recognition: decryptedRecognition,
+      thumbnail: decryptedThumbnail,
+      encrypted: undefined,
     };
   } catch (error) {
     console.error("[Storage] Failed to decrypt note:", error);

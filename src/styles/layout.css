@@ -583,7 +583,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 18 / 25;
   border: 2px solid var(--border-primary);
   border-radius: 8px;
   overflow: hidden;
@@ -644,8 +644,8 @@
   position: absolute;
   top: 0;
   left: 0;
-  width: 800px;
-  height: 600px;
+  width: 360px;
+  height: 500px;
   transform-origin: top left;
   pointer-events: none;
 }
@@ -654,8 +654,8 @@
   position: absolute;
   top: 0;
   left: 0;
-  width: 800px;
-  height: 600px;
+  width: 360px;
+  height: 500px;
   display: block;
   z-index: 0;
 }
@@ -664,8 +664,8 @@
   position: absolute;
   top: 0;
   left: 0;
-  width: 800px;
-  height: 600px;
+  width: 360px;
+  height: 500px;
   padding: 20px;
   font-size: 16px;
   line-height: 1.6;

@@ -13,7 +13,7 @@ import {
   testConnection,
 } from "../modules/nextcloudSync.js";
 import { getSetting, purgeLocalData, setSetting } from "../modules/storage.js";
-import { performSync } from "../modules/sync.js";
+import { performSync, resetSyncWorker } from "../modules/sync.js";
 import { getTheme, setTheme } from "../modules/theme.js";
 import { showLicensesDialog } from "./licensesDialog.js";
 import { showAlertDialog, showConfirmDialog } from "./modals.js";
@@ -761,7 +761,8 @@ export async function renderSettings(container) {
           };
         });
 
-        // Login successful
+        // Login successful — reset worker so it picks up the new credentials
+        resetSyncWorker();
         loginUrlContainer.style.display = "none";
         statusSpan.textContent = "✓ Connected successfully!";
         statusSpan.style.color = "var(--color-success)";
@@ -829,6 +830,7 @@ export async function renderSettings(container) {
     disconnectBtn?.addEventListener("click", async () => {
       if (confirm(t("settings.nextcloud.disconnectConfirm"))) {
         await clearCredentials();
+        resetSyncWorker();
 
         // Notify footer about auth change
         window.dispatchEvent(new CustomEvent("nextcloud-auth-changed"));

@@ -6,10 +6,11 @@
 import { showConflictResolutionDialog } from "../components/modals.js";
 import { attemptMerge, fullSync, isAuthenticated } from "./nextcloudSync.js";
 import {
-  getAllNoteMetadataForSync,
   getAllNotebooksForSync,
+  getAllNoteMetadataForSync,
   getNote,
   getNotebook,
+  getNoteIndex,
   permanentlyDeleteNote,
   permanentlyDeleteNotebook,
   permanentlyDeleteNotesInNotebook,
@@ -55,6 +56,9 @@ export function getIsSyncing() {
 export function getLastSyncResult() {
   return lastSyncResult;
 }
+
+/** No-op: kept for API compatibility with callers that previously used syncWorkerClient. */
+export function resetSyncWorker() {}
 
 /**
  * Perform a full sync
@@ -208,19 +212,13 @@ export async function performSync({
     }
 
     for (const id of result.uploaded.notes.uploadedIds || []) {
-      // Fetch fresh note to avoid overwriting concurrent changes (e.g. new strokes)
-      // getNote returns decrypted note, which is what we want for modification
-      const note = await getNote(id);
-      if (note) {
-        const etag = result.uploaded.notes.metadata?.[id]?.etag;
-        console.log(`Marking note ${id} as synced, storing lastSyncedEtag="${etag}"`);
-        // Use skipEncryption because note is already in correct encrypted format
-        // Wait, getNote returns decrypted. saveNote handles encryption.
-        await saveNote({
-          ...note,
-          synced: true,
-          lastSyncedEtag: etag || note.lastSyncedEtag,
-        });
+      const etag = result.uploaded.notes.metadata?.[id]?.etag;
+      if (etag) {
+        // Patch only the index — avoids loading/decrypting/re-encrypting content.
+        await updateNoteEtag(id, etag);
+      } else {
+        const index = await getNoteIndex(id);
+        if (index) await updateNoteEtag(id, index.lastSyncedEtag);
       }
     }
 
@@ -259,15 +257,19 @@ export async function performSync({
       noteToSave.synced = true;
 
       // Check for race condition: has local note changed since sync started?
-      const currentLocalNote = await getNote(note.id);
+      // Use index-only read to avoid decrypting content unnecessarily.
+      const currentLocalIndex = await getNoteIndex(note.id);
       const originalLocalNote = localNotesMap.get(note.id);
 
       if (
-        currentLocalNote &&
-        (!originalLocalNote || currentLocalNote.modified !== originalLocalNote.modified)
+        currentLocalIndex &&
+        originalLocalNote &&
+        currentLocalIndex.modified !== originalLocalNote.modified
       ) {
         console.warn(`[Sync] Race condition detected for note ${note.id}. Merging changes.`);
-        const merged = attemptMerge(currentLocalNote, noteToSave);
+        // Only load full content now that we know a merge is actually needed.
+        const currentLocal = await getNote(note.id);
+        const merged = currentLocal ? attemptMerge(currentLocal, noteToSave) : null;
         if (merged) {
           await saveNote(merged);
         } else {
@@ -276,12 +278,11 @@ export async function performSync({
           );
         }
       } else if (
-        currentLocalNote &&
-        currentLocalNote.version >= (noteToSave.version || 0) &&
-        currentLocalNote.modified >= (noteToSave.modified || 0)
+        currentLocalIndex &&
+        currentLocalIndex.version >= (noteToSave.version || 0) &&
+        currentLocalIndex.modified >= (noteToSave.modified || 0)
       ) {
         // Downloaded content is not newer than local — just update the etag silently.
-        // Handles the case where Nextcloud's "newer" etag resolves to identical content.
         await updateNoteEtag(note.id, noteToSave.lastSyncedEtag);
       } else {
         await saveNote(noteToSave);

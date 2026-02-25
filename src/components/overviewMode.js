@@ -12,15 +12,15 @@ import {
   deleteNotebook,
   getAllNotebooks,
   getAllNotes,
-  getFile,
   getNote,
   getNotebook,
   getNotesByNotebook,
   getQuickNotes,
   moveNote,
 } from "../modules/storage.js";
+// getAllNotes / getNotesByNotebook / getQuickNotes now return lightweight index entries
+// (no strokes, no content, no recognition). Use getNote(id) when full content is needed.
 import { getIcon } from "../utils/icons.js";
-import { markdownToHtml } from "../utils/markdown.js";
 import {
   drawStroke,
   getStrokeBounds,
@@ -57,7 +57,11 @@ let pendingRender = false;
  * @param {HTMLElement} container - Container element to render into
  * @param {string|null} notebookId - Optional notebook ID to show contents of
  */
-export async function renderOverview(container, notebookId = null, { preserveScroll = false } = {}) {
+export async function renderOverview(
+  container,
+  notebookId = null,
+  { preserveScroll = false } = {},
+) {
   // Save scroll position before wiping the DOM, restore it after if requested.
   const tabContent = container.querySelector("#overview-tab-content");
   const savedScrollTop = preserveScroll && tabContent ? tabContent.scrollTop : 0;
@@ -244,8 +248,11 @@ async function renderSearchTab(container) {
 }
 
 async function renderMarkersTab(container) {
-  // Collect tasks from all notes
-  const allNotes = await getAllNotes();
+  // Collect tasks from all notes — need full content (tasks, strokes, recognition)
+  const noteIndexes = await getAllNotes();
+  const notesWithTasks = noteIndexes.filter((n) => n.hasStrokes || n.hasContent);
+  const fullNotes = await Promise.all(notesWithTasks.map((n) => getNote(n.id)));
+  const allNotes = fullNotes.filter(Boolean);
   const allTasks = [];
   for (const note of allNotes) {
     const tasks = note.tasks || [];
@@ -476,17 +483,22 @@ function attachSearchListeners(container) {
       searchResults.innerHTML = `<div class="search-status">${t("overview.search.searching")}</div>`;
 
       try {
+        // Title search uses index only (fast). Content/recognition/PDF search needs full notes.
         const notebooks = await getAllNotebooks();
-        const quickNotes = await getQuickNotes();
-        const notebookNotes = await Promise.all(notebooks.map((nb) => getNotesByNotebook(nb.id)));
-        const allNotes = [...quickNotes, ...notebookNotes.flat()];
+        const quickNoteIndexes = await getQuickNotes();
+        const notebookNoteIndexes = await Promise.all(
+          notebooks.map((nb) => getNotesByNotebook(nb.id)),
+        );
+        const allIndexes = [...quickNoteIndexes, ...notebookNoteIndexes.flat()];
 
         // Create regex pattern from query with wildcard support
-        // 1. Escape special regex characters
-        // 2. Convert wildcards: * -> .* and ? -> .
         const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const pattern = escapeRegex(rawQuery).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
         const searchRegex = new RegExp(pattern, "i");
+
+        // Load full notes for content/recognition/PDF search
+        const fullNotes = await Promise.all(allIndexes.map((idx) => getNote(idx.id)));
+        const allNotes = fullNotes.filter(Boolean);
 
         // Extract PDF text for notes that have PDF pages
         const pdfTextByNote = new Map();
@@ -495,7 +507,6 @@ function attachSearchListeners(container) {
         });
         await Promise.all(
           notesWithPdfs.map(async (note) => {
-            // Get unique fileIds from PDF pages
             const fileIds = [
               ...new Set(note.media.filter((m) => m.type === "pdf-page").map((m) => m.fileId)),
             ];
@@ -676,44 +687,21 @@ function renderSearchResultsList(container, results) {
 }
 
 function renderPreviewNoteCard(note) {
-  // Defensive check: ensure content is a string
-  const content = typeof note.content === "string" ? note.content : "";
-  if (typeof note.content !== "string" && note.content) {
-    console.error(
-      "[OverviewMode] Note content is not a string:",
-      note.id,
-      typeof note.content,
-      note.content,
-    );
-  }
-
-  const hasDrawings = note.strokes && note.strokes.length > 0;
-  const hasText = content && content.trim().length > 0;
+  // Index entries carry hasStrokes/hasContent flags — no need to load content for layout.
+  const hasDrawings = note.hasStrokes ?? (note.strokes && note.strokes.length > 0);
+  const hasText =
+    note.hasContent ?? (typeof note.content === "string" && note.content.trim().length > 0);
   const hasBackground = note.background && note.background !== "none";
 
   let previewContent = "";
 
-  // Use layered approach like the editor when there are drawings/background
-  if (hasDrawings || hasBackground) {
-    // Create layered structure exactly like the editor, then scale the whole thing
-    // This ensures text and strokes maintain their exact relative positions
-    const textLayer = hasText
-      ? `<div class="text-editor" contenteditable="false">${markdownToHtml(content)}</div>`
-      : "";
-    // Render at full editor size (800x600) then scale down with CSS transform
+  if (hasDrawings || hasBackground || hasText) {
+    // Emit a canvas placeholder; renderNotePreviews() will fill it with the thumbnail
+    // (fast path) or lazy-load strokes/content for live rendering (fallback).
+    // Text content from index is not available here — the thumbnail covers it.
     previewContent = `
       <div class="preview-scaler">
         <canvas class="note-preview-canvas" data-note-id="${note.id}" data-full-size="true"></canvas>
-        ${textLayer}
-      </div>
-    `;
-  } else if (hasText) {
-    // For text-only notes, render the HTML directly with text-editor class
-    // Convert markdown to HTML exactly like the editor does
-    const textLayer = `<div class="text-editor" contenteditable="false">${markdownToHtml(content)}</div>`;
-    previewContent = `
-      <div class="preview-scaler">
-        ${textLayer}
       </div>
     `;
   } else {
@@ -943,14 +931,14 @@ async function renderNotePreviews(container, notes) {
     const note = notes.find((n) => n.id === noteId);
     if (!note) return;
 
-    // Check if this is a full-size canvas that needs to be rendered at 800x600
+    // Check if this is a full-size canvas that needs to be rendered at 360x500
     const isFullSize = canvas.dataset.fullSize === "true";
 
     // Setup layout scaling (must happen for both thumbnails and live rendering)
     if (isFullSize) {
       // Set bitmap size to match the CSS size of the scaler
-      canvas.width = 800;
-      canvas.height = 600;
+      canvas.width = 360;
+      canvas.height = 500;
 
       // Calculate and apply the scale transform to the parent scaler div
       const scaler = canvas.closest(".preview-scaler");
@@ -959,45 +947,40 @@ async function renderNotePreviews(container, notes) {
         const containerRect = previewContainer.getBoundingClientRect();
         // Use a default if rect is zero (e.g. hidden) to avoid divide by zero
         const containerWidth = containerRect.width || 300;
-        const scale = containerWidth / 800;
+        const scale = containerWidth / 360;
         scaler.style.transform = `scale(${scale})`;
       }
     }
 
-    // Check if we have a stored thumbnail
-    if (note.thumbnailFileId) {
-      try {
-        const blob = await getFile(note.thumbnailFileId);
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const ctx = canvas.getContext("2d");
-          const img = new Image();
+    // Load full note content — thumbnail (base64) lives in noteContent, not the index.
+    const fullNote = await getNote(noteId).catch(() => null);
+    if (!fullNote) return;
 
-          await new Promise((resolve, reject) => {
-            img.onload = () => {
-              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-              URL.revokeObjectURL(url);
-              resolve();
-            };
-            img.onerror = reject;
-            img.src = url;
-          });
-          return; // Success, skip legacy rendering
-        }
-      } catch (err) {
-        console.warn("Failed to load thumbnail for note", noteId, err);
-      }
+    // Fast path: use embedded base64 thumbnail
+    if (fullNote.thumbnail) {
+      const ctx = canvas.getContext("2d");
+      const img = new Image();
+      let loaded = false;
+      await new Promise((resolve) => {
+        img.onload = () => {
+          loaded = true;
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = fullNote.thumbnail;
+      });
+      if (loaded) return;
     }
 
-    // Fallback: Live rendering (Strokes only)
+    // Fallback: Live rendering (no thumbnail yet — note hasn't been opened since migration)
     if (isFullSize) {
-      renderNotePreview(canvas, note, {
+      renderNotePreview(canvas, fullNote, {
         padding: 20,
         fullSize: true,
       });
     } else {
-      // Legacy rendering for scaled canvas
-      renderNotePreview(canvas, note, {
+      renderNotePreview(canvas, fullNote, {
         padding: 10,
         showTextIndicator: false,
       });

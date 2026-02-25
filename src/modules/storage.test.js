@@ -6,22 +6,60 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearNoteMoveFlag, copyNote, moveNote } from "./storage.js";
 
-// ── Minimal in-memory DB mock ─────────────────────────────────────────────────
+// ── Multi-store in-memory DB mock ─────────────────────────────────────────────
+// Schema v4 has two note stores: "notes" (index) and "noteContent" (payload).
+// We simulate both with separate Maps.
 
-const store = new Map();
+const stores = {
+  notes: new Map(),
+  noteContent: new Map(),
+  notebooks: new Map(),
+  files: new Map(),
+  settings: new Map(),
+};
 const fileStore = new Map();
 
 vi.mock("idb", () => ({
-  openDB: vi.fn(() =>
-    Promise.resolve({
-      get: vi.fn((_, id) => Promise.resolve(store.get(id) ?? null)),
-      put: vi.fn((_, record) => {
-        store.set(record.id, structuredClone(record));
+  openDB: vi.fn(() => {
+    // Per-transaction objectStore: writes go directly into stores
+    function makeTxStore(name) {
+      return {
+        get: vi.fn((id) => Promise.resolve(stores[name]?.get(id) ?? null)),
+        put: vi.fn((record) => {
+          if (stores[name]) stores[name].set(record.id ?? record.key, structuredClone(record));
+          return Promise.resolve();
+        }),
+      };
+    }
+    return Promise.resolve({
+      get: vi.fn((storeName, id) => Promise.resolve(stores[storeName]?.get(id) ?? null)),
+      put: vi.fn((storeName, record) => {
+        if (stores[storeName])
+          stores[storeName].set(record.id ?? record.key, structuredClone(record));
         return Promise.resolve();
       }),
-      getAll: vi.fn(() => Promise.resolve([...store.values()])),
-    }),
-  ),
+      delete: vi.fn((storeName, id) => {
+        stores[storeName]?.delete(id);
+        return Promise.resolve();
+      }),
+      getAll: vi.fn((storeName) => Promise.resolve([...(stores[storeName]?.values() ?? [])])),
+      getAllFromIndex: vi.fn((storeName, _index, value) =>
+        Promise.resolve(
+          [...(stores[storeName]?.values() ?? [])].filter((r) => r.notebookId === value),
+        ),
+      ),
+      count: vi.fn(() => Promise.resolve(0)),
+      transaction: vi.fn((storeNames) => {
+        const storeMap = {};
+        const names = Array.isArray(storeNames) ? storeNames : [storeNames];
+        for (const n of names) storeMap[n] = makeTxStore(n);
+        return {
+          objectStore: vi.fn((name) => storeMap[name] ?? makeTxStore(name)),
+          done: Promise.resolve(),
+        };
+      }),
+    });
+  }),
 }));
 
 // Minimal mocks for helpers used by copyNote
@@ -57,13 +95,58 @@ function makeNote(overrides = {}) {
   };
 }
 
-// Seed the in-memory store before each test
+/**
+ * Seed both "notes" and "noteContent" stores for a given note.
+ * splitNote puts index fields in "notes" and content fields in "noteContent".
+ */
+function seedNote(note) {
+  // Index fields (matches INDEX_FIELDS set in storage.js)
+  const index = {
+    id: note.id,
+    notebookId: note.notebookId ?? null,
+    title: note.title,
+    created: note.created ?? 1000,
+    modified: note.modified ?? 1000,
+    version: note.version ?? 1,
+    synced: note.synced ?? true,
+    lastSyncedEtag: note.lastSyncedEtag ?? null,
+    deleted: note.deleted ?? false,
+    purged: note.purged,
+    previousNotebookId: note.previousNotebookId,
+    encrypted: note.encrypted ?? false,
+    background: note.background ?? "none",
+    formatVersion: note.formatVersion ?? 1,
+    tags: note.tags ?? [],
+    hasStrokes: Array.isArray(note.strokes) ? note.strokes.length > 0 : false,
+    hasContent: typeof note.content === "string" ? note.content.trim().length > 0 : false,
+    media: Array.isArray(note.media)
+      ? note.media.map(({ id, name, type, size, deleted }) => ({ id, name, type, size, deleted }))
+      : [],
+  };
+  // Content fields
+  const content = {
+    id: note.id,
+    content: note.content ?? "",
+    strokes: note.strokes ?? [],
+    deletedStrokes: note.deletedStrokes ?? [],
+    media: note.media ?? [],
+    deletedMedia: note.deletedMedia ?? [],
+    tasks: note.tasks ?? [],
+    recognition: note.recognition ?? null,
+    penPresets: note.penPresets ?? null,
+    pdfSource: note.pdfSource ?? null,
+  };
+  stores.notes.set(note.id, index);
+  stores.noteContent.set(note.id, content);
+}
+
+// Seed the in-memory stores before each test
 beforeEach(async () => {
-  store.clear();
+  for (const s of Object.values(stores)) s.clear();
   fileStore.clear();
   vi.clearAllMocks();
 
-  // initStorage sets db internally — trigger it once via a side-effect-free import
+  // initStorage sets db internally — trigger it once
   const { initStorage } = await import("./storage.js");
   await initStorage();
 });
@@ -72,51 +155,51 @@ beforeEach(async () => {
 
 describe("moveNote", () => {
   it("updates notebookId and sets previousNotebookId", async () => {
-    store.set("note-1", makeNote());
+    seedNote(makeNote());
 
     await moveNote("note-1", "nb-b");
 
-    const updated = store.get("note-1");
+    const updated = stores.notes.get("note-1");
     expect(updated.notebookId).toBe("nb-b");
     expect(updated.previousNotebookId).toBe("nb-a");
   });
 
   it("marks note as unsynced and bumps version", async () => {
-    store.set("note-1", makeNote({ version: 3, synced: true }));
+    seedNote(makeNote({ version: 3, synced: true }));
 
     await moveNote("note-1", "nb-b");
 
-    const updated = store.get("note-1");
+    const updated = stores.notes.get("note-1");
     expect(updated.synced).toBe(false);
     expect(updated.version).toBe(4);
     expect(updated.lastSyncedEtag).toBeNull();
   });
 
   it("is a no-op when source and target notebook are the same", async () => {
-    store.set("note-1", makeNote({ notebookId: "nb-a", version: 1 }));
+    seedNote(makeNote({ notebookId: "nb-a", version: 1 }));
 
     await moveNote("note-1", "nb-a");
 
-    const note = store.get("note-1");
+    const note = stores.notes.get("note-1");
     expect(note.version).toBe(1); // unchanged
   });
 
   it("treats undefined notebookId as null (quick notes) when comparing", async () => {
-    store.set("note-1", makeNote({ notebookId: undefined }));
+    seedNote(makeNote({ notebookId: undefined }));
 
     // Moving from undefined → null is a no-op (same semantic meaning)
     await moveNote("note-1", null);
 
-    const note = store.get("note-1");
+    const note = stores.notes.get("note-1");
     expect(note.version).toBe(1); // unchanged
   });
 
   it("moves note to quick notes (null target)", async () => {
-    store.set("note-1", makeNote({ notebookId: "nb-a" }));
+    seedNote(makeNote({ notebookId: "nb-a" }));
 
     await moveNote("note-1", null);
 
-    const updated = store.get("note-1");
+    const updated = stores.notes.get("note-1");
     expect(updated.notebookId).toBeNull();
     expect(updated.previousNotebookId).toBe("nb-a");
   });
@@ -130,16 +213,16 @@ describe("moveNote", () => {
 
 describe("copyNote", () => {
   it("creates a new note with a different id", async () => {
-    store.set("note-1", makeNote());
+    seedNote(makeNote());
 
     const copied = await copyNote("note-1", "nb-b");
 
     expect(copied.id).not.toBe("note-1");
-    expect(store.has(copied.id)).toBe(true);
+    expect(stores.notes.has(copied.id)).toBe(true);
   });
 
   it("sets the target notebookId on the copy", async () => {
-    store.set("note-1", makeNote({ notebookId: "nb-a" }));
+    seedNote(makeNote({ notebookId: "nb-a" }));
 
     const copied = await copyNote("note-1", "nb-b");
 
@@ -148,17 +231,17 @@ describe("copyNote", () => {
 
   it("leaves the original note unchanged", async () => {
     const original = makeNote();
-    store.set("note-1", structuredClone(original));
+    seedNote(original);
 
     await copyNote("note-1", "nb-b");
 
-    const still = store.get("note-1");
+    const still = stores.notes.get("note-1");
     expect(still.notebookId).toBe("nb-a");
     expect(still.id).toBe("note-1");
   });
 
   it("resets sync state and version on the copy", async () => {
-    store.set("note-1", makeNote({ version: 5, synced: true, lastSyncedEtag: "etag-xyz" }));
+    seedNote(makeNote({ version: 5, synced: true, lastSyncedEtag: "etag-xyz" }));
 
     const copied = await copyNote("note-1", "nb-b");
 
@@ -167,16 +250,21 @@ describe("copyNote", () => {
     expect(copied.lastSyncedEtag).toBeNull();
   });
 
-  it("clears thumbnailFileId on the copy", async () => {
-    store.set("note-1", makeNote({ thumbnailFileId: "thumb-123" }));
+  it("does not carry thumbnail onto the copy", async () => {
+    seedNote(makeNote({}));
+    stores.noteContent.set("note-1", {
+      id: "note-1",
+      strokes: [],
+      thumbnail: "data:image/jpeg;base64,xyz",
+    });
 
     const copied = await copyNote("note-1", "nb-b");
 
-    expect(copied.thumbnailFileId).toBeNull();
+    expect(copied.thumbnail).toBeNull();
   });
 
   it("does not carry previousNotebookId onto the copy", async () => {
-    store.set("note-1", makeNote({ previousNotebookId: "nb-old" }));
+    seedNote(makeNote({ previousNotebookId: "nb-old" }));
 
     const copied = await copyNote("note-1", "nb-b");
 
@@ -186,7 +274,7 @@ describe("copyNote", () => {
   it("preserves media items (blob not in fileStore — fallback keeps original fileId)", async () => {
     // In the test environment, getFile returns null (mock default), so copyNote
     // falls back to keeping the original fileId rather than creating a new one.
-    store.set("note-1", makeNote({ media: [{ fileId: "file-orig", type: "image" }] }));
+    seedNote(makeNote({ media: [{ fileId: "file-orig", type: "image" }] }));
 
     const copied = await copyNote("note-1", "nb-b");
 
@@ -196,8 +284,7 @@ describe("copyNote", () => {
   });
 
   it("copies all media item metadata onto the copy", async () => {
-    store.set(
-      "note-1",
+    seedNote(
       makeNote({
         media: [{ fileId: "file-1", type: "image", x: 10, y: 20, width: 100, height: 80 }],
       }),
@@ -217,20 +304,20 @@ describe("copyNote", () => {
 
 describe("clearNoteMoveFlag", () => {
   it("removes previousNotebookId from the note", async () => {
-    store.set("note-1", makeNote({ previousNotebookId: "nb-old" }));
+    seedNote(makeNote({ previousNotebookId: "nb-old" }));
 
     await clearNoteMoveFlag("note-1");
 
-    const updated = store.get("note-1");
+    const updated = stores.notes.get("note-1");
     expect(updated.previousNotebookId).toBeUndefined();
   });
 
   it("does not modify version, synced, or modified", async () => {
-    store.set("note-1", makeNote({ previousNotebookId: "nb-old", version: 7, synced: true }));
+    seedNote(makeNote({ previousNotebookId: "nb-old", version: 7, synced: true }));
 
     await clearNoteMoveFlag("note-1");
 
-    const updated = store.get("note-1");
+    const updated = stores.notes.get("note-1");
     expect(updated.version).toBe(7);
     expect(updated.synced).toBe(true);
   });

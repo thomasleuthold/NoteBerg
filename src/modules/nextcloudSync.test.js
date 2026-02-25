@@ -19,7 +19,7 @@ import {
   syncNotebooks,
   syncNotes,
 } from "./nextcloudSync.js";
-import { updateNote } from "./storage.js";
+import { saveNote } from "./storage.js";
 
 // --- Mocks ---
 
@@ -49,6 +49,9 @@ vi.mock("./secureStorage.js", () => ({
   }),
 }));
 
+// In-memory note store for tests — getNote reads from here
+const mockNoteStore = new Map();
+
 // Mock Storage Module (Partial)
 vi.mock("./storage.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -67,6 +70,10 @@ vi.mock("./storage.js", async (importOriginal) => {
     isLocalEncryptionEnabled: vi.fn(() => Promise.resolve(false)),
     initStorage: vi.fn(() => Promise.resolve()),
     updateNote: vi.fn(() => Promise.resolve()),
+    saveNote: vi.fn(() => Promise.resolve()),
+    // getNote / getRawNote return whatever was seeded in mockNoteStore
+    getNote: vi.fn((id) => Promise.resolve(mockNoteStore.get(id) ?? null)),
+    getRawNote: vi.fn((id) => Promise.resolve(mockNoteStore.get(id) ?? null)),
   };
 });
 
@@ -581,9 +588,9 @@ describe("Nextcloud Sync Module", () => {
       // Should upload merged version
       expect(result.uploaded.notes.uploaded).toBe(1);
 
-      // Verify updateNote was called to show merged state locally immediately
-      expect(updateNote).toHaveBeenCalled();
-      const mergedArg = updateNote.mock.calls.find((call) => call[0] === noteId)[1];
+      // Verify saveNote was called to show merged state locally immediately
+      expect(saveNote).toHaveBeenCalled();
+      const mergedArg = saveNote.mock.calls.find((call) => call[0]?.id === noteId)[0];
       expect(mergedArg.strokes).toHaveLength(2); // Should have S1 and S2
       expect(mergedArg.strokes.find((s) => s.id === "s1")).toBeTruthy();
       expect(mergedArg.strokes.find((s) => s.id === "s2")).toBeTruthy();
@@ -627,8 +634,8 @@ describe("Nextcloud Sync Module", () => {
 
       await fullSync([], [localNote]);
 
-      // Verify merged content passed to updateNote
-      const mergedArg = updateNote.mock.calls.find((call) => call[0] === noteId)[1];
+      // Verify merged content passed to saveNote
+      const mergedArg = saveNote.mock.calls.find((call) => call[0]?.id === noteId)[0];
 
       // S1 should be gone (deleted remotely), S2 should be present
       expect(mergedArg.strokes.find((s) => s.id === "s1")).toBeFalsy();

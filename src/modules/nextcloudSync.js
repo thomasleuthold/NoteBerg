@@ -6,26 +6,25 @@
  * Storage Version 2: Hierarchical folder structure
  */
 
-import { fetch } from "@tauri-apps/plugin-http";
+import { fetch as _tauriFetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { APP_NAME, APP_VERSION } from "../config.js";
 import {
+  getSecureCredential as _tauriGetSecureCredential,
   deleteSecureCredential,
-  getSecureCredential,
   saveSecureCredential,
 } from "./secureStorage.js";
 import {
   checkFileExists,
   clearNoteMoveFlag,
-  getNote,
-  saveNote,
   getFile,
+  getRawNote,
   isNextcloudEncryptionEnabled,
   permanentlyDeleteNote,
   permanentlyDeleteNotebook,
   permanentlyDeleteNotesInNotebook,
   saveFile,
-  updateNote,
+  saveNote,
 } from "./storage.js";
 import {
   getAllRequiredFolders,
@@ -49,6 +48,23 @@ import {
   cleanupOldTombstones,
   createEmptyTombstone,
 } from "./tombstones.js";
+
+// ─── Injectable HTTP / credential providers ───────────────────────────────────
+// Defaults to the real Tauri implementations. SyncWorker overrides these with
+// worker-safe shims via configureHttpProvider() before running any sync logic.
+let _fetch = _tauriFetch;
+let _getSecureCredential = _tauriGetSecureCredential;
+
+/**
+ * Override the fetch implementation and credential reader used by this module.
+ * Called by SyncWorker.js to inject worker-safe shims (no Tauri IPC needed).
+ * @param {Function} fetchFn         — drop-in for fetch()
+ * @param {Function} getCredentialFn — drop-in for getSecureCredential(key)
+ */
+export function configureHttpProvider(fetchFn, getCredentialFn) {
+  _fetch = fetchFn;
+  _getSecureCredential = getCredentialFn;
+}
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
 const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
@@ -86,10 +102,36 @@ async function runInBatches(items, batchSize, fn) {
  */
 async function encryptNoteForNextcloud(note) {
   const shouldEncryptForNextcloud = await isNextcloudEncryptionEnabled();
-  // Note is already decrypted by storage.js before reaching here
-  const decryptedNote = note;
 
-  // Step 2: Encrypt for Nextcloud if enabled
+  // If the note has locally-encrypted content blobs, decrypt them first so the
+  // Nextcloud file always contains readable JSON regardless of local encryption setting.
+  let decryptedNote = note;
+  if (note.encrypted) {
+    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+    const { decryptObject } = await import("./encryption.js");
+
+    if (!isAppUnlocked()) {
+      throw new Error("Cannot upload encrypted note - app is locked");
+    }
+
+    const key = getEncryptionKey();
+    const isBlob = (v) =>
+      v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
+
+    decryptedNote = {
+      ...note,
+      content: isBlob(note.content) ? await decryptObject(note.content, key) : note.content,
+      strokes: isBlob(note.strokes) ? await decryptObject(note.strokes, key) : note.strokes,
+      media: isBlob(note.media) ? await decryptObject(note.media, key) : note.media,
+      tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
+      recognition: isBlob(note.recognition)
+        ? await decryptObject(note.recognition, key)
+        : note.recognition,
+      encrypted: undefined,
+    };
+  }
+
+  // Encrypt for Nextcloud if enabled
   if (!shouldEncryptForNextcloud) {
     // Nextcloud encryption disabled - return decrypted note
     return decryptedNote;
@@ -184,7 +226,7 @@ export async function migrateCredentials() {
       return;
     }
 
-    const existingCreds = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    const existingCreds = await _getSecureCredential(NEXTCLOUD_STORAGE_KEY);
     if (existingCreds) {
       localStorage.removeItem(LEGACY_STORAGE_KEY);
       return;
@@ -203,7 +245,7 @@ export async function migrateCredentials() {
  */
 export async function getStoredCredentials() {
   try {
-    const credString = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    const credString = await _getSecureCredential(NEXTCLOUD_STORAGE_KEY);
     if (credString) {
       return JSON.parse(credString);
     }
@@ -223,7 +265,7 @@ async function saveCredentials(credentials) {
     await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, credString);
 
     // Verify save worked
-    const verifyRead = await getSecureCredential(NEXTCLOUD_STORAGE_KEY);
+    const verifyRead = await _getSecureCredential(NEXTCLOUD_STORAGE_KEY);
     if (!verifyRead) {
       console.error("[NextcloudSync] Credential save verification failed");
     }
@@ -260,7 +302,7 @@ export async function testConnection(serverUrl) {
   serverUrl = serverUrl.replace(/\/$/, "");
 
   try {
-    const response = await fetch(`${serverUrl}/status.php`);
+    const response = await _fetch(`${serverUrl}/status.php`);
     const data = await response.json();
 
     if (data.installed && data.version) {
@@ -291,7 +333,7 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
 
     let initResponse;
     try {
-      initResponse = await fetch(`${serverUrl}/index.php/login/v2`, {
+      initResponse = await _fetch(`${serverUrl}/index.php/login/v2`, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -426,7 +468,7 @@ async function pollForCredentials(endpoint, token, popup) {
         const pollUrl = `${endpoint}?token=${encodeURIComponent(token)}`;
         console.log(`Polling attempt ${attempts}/${maxAttempts}...`);
 
-        const response = await fetch(pollUrl, {
+        const response = await _fetch(pollUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -470,7 +512,7 @@ async function createFolder(path) {
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
   const authHeader = `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`;
 
-  const response = await fetch(webdavUrl, {
+  const response = await _fetch(webdavUrl, {
     method: "MKCOL",
     headers: {
       Authorization: authHeader,
@@ -517,7 +559,7 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     headers["If-Match"] = `"${etag}"`;
   }
 
-  let response = await fetch(webdavUrl, {
+  let response = await _fetch(webdavUrl, {
     method: "PUT",
     headers,
     body: content,
@@ -532,7 +574,7 @@ async function uploadFile(path, content, mtime = null, etag = null) {
     }
 
     // Retry upload without the version check
-    response = await fetch(webdavUrl, {
+    response = await _fetch(webdavUrl, {
       method: "PUT",
       headers,
       body: content,
@@ -550,7 +592,7 @@ async function uploadFile(path, content, mtime = null, etag = null) {
   // If ETag is missing (e.g. 204 response), try to fetch it via HEAD
   if (!newEtag && response.ok) {
     try {
-      const headResponse = await fetch(webdavUrl, {
+      const headResponse = await _fetch(webdavUrl, {
         method: "HEAD",
         headers: {
           Authorization: headers.Authorization,
@@ -578,7 +620,7 @@ async function downloadFile(path, asBinary = false) {
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
-  const response = await fetch(webdavUrl, {
+  const response = await _fetch(webdavUrl, {
     method: "GET",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
@@ -612,7 +654,11 @@ async function downloadFile(path, asBinary = false) {
  * Uses parallel uploads for efficiency
  */
 async function syncNoteMedia(note) {
-  if ((!note.media || note.media.length === 0) && !note.pdfSource && !note.thumbnailFileId) return;
+  // When the note is locally encrypted, media is stored as an encrypted blob —
+  // media files were already uploaded when the note was last synced unencrypted,
+  // and the encrypted payload references them by fileId inside the blob.
+  if (note.media !== undefined && !Array.isArray(note.media)) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
@@ -637,9 +683,6 @@ async function syncNoteMedia(note) {
   if (note.pdfSource) {
     itemsToSync.push({ fileId: note.pdfSource, id: "pdf-source" });
   }
-  if (note.thumbnailFileId) {
-    itemsToSync.push({ fileId: note.thumbnailFileId, id: "thumbnail" });
-  }
 
   for (const item of itemsToSync) {
     const fileId = item.fileId;
@@ -652,10 +695,6 @@ async function syncNoteMedia(note) {
     const blob = await getFile(fileId);
     if (!blob) {
       console.warn(`[Sync] Local file not found for media item ${item.id} (fileId: ${fileId})`);
-      // Clear stale thumbnail reference so it gets regenerated on next open
-      if (item.id === "thumbnail") {
-        await updateNote(note.id, { thumbnailFileId: null, thumbnailTimestamp: null });
-      }
       continue;
     }
 
@@ -691,6 +730,8 @@ async function syncNoteMedia(note) {
  * @param {Object} note - Note with media array and deletedMedia array
  */
 async function cleanupOrphanedMedia(note) {
+  // Cannot determine which media is orphaned when fields are encrypted blobs.
+  if (note.media !== undefined && !Array.isArray(note.media)) return;
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
   // Get list of files currently on server
@@ -713,9 +754,6 @@ async function cleanupOrphanedMedia(note) {
   }
   if (note.pdfSource) {
     validFileIds.add(note.pdfSource);
-  }
-  if (note.thumbnailFileId) {
-    validFileIds.add(note.thumbnailFileId);
   }
 
   // Find orphaned files (files on server not referenced in note.media)
@@ -744,10 +782,11 @@ async function cleanupOrphanedMedia(note) {
 
 /**
  * Download media files for a note
- * Ensures all binary files referenced in the note are downloaded to local storage
+ * Ensures all binary files referenced in the note are downloaded to local storage.
  */
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
-  if ((!note.media || note.media.length === 0) && !note.pdfSource && !note.thumbnailFileId) return;
+  if (note.media !== undefined && !Array.isArray(note.media)) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
@@ -757,9 +796,6 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
   const itemsToDownload = [...(note.media || [])];
   if (note.pdfSource) {
     itemsToDownload.push({ fileId: note.pdfSource });
-  }
-  if (note.thumbnailFileId) {
-    itemsToDownload.push({ fileId: note.thumbnailFileId });
   }
 
   for (const item of itemsToDownload) {
@@ -814,7 +850,7 @@ async function fetchRemoteState() {
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${ROOT_FOLDER}`;
 
-  const response = await fetch(webdavUrl, {
+  const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
@@ -860,7 +896,7 @@ export async function listFiles(path) {
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
-  const response = await fetch(webdavUrl, {
+  const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
@@ -891,7 +927,7 @@ export async function listFolders(path) {
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
-  const response = await fetch(webdavUrl, {
+  const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
@@ -917,21 +953,36 @@ export async function listFolders(path) {
 }
 
 /**
- * Parse WebDAV XML response
+ * Extract the text content of the first occurrence of a namespaced XML tag
+ * within a string block. Works without DOMParser (safe in Web Workers).
  */
-function parseWebDAVResponse(xmlText, includeCollections = false) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xmlText, "text/xml");
-  const responses = doc.getElementsByTagName("d:response");
+function xmlText(block, localName) {
+  // Match both namespace-prefixed (d:tag, D:tag) and unprefixed variants
+  const re = new RegExp(`<[^:>]*:?${localName}[^>]*>([\\s\\S]*?)<\\/[^:>]*:?${localName}>`, "i");
+  return block.match(re)?.[1]?.trim() ?? null;
+}
 
+/**
+ * Parse WebDAV XML response without DOMParser (compatible with Web Workers).
+ * Splits on <d:response> blocks and extracts the fields we need via lightweight regex.
+ */
+function parseWebDAVResponse(rawXml, includeCollections = false) {
   const files = [];
-  for (let i = 0; i < responses.length; i++) {
-    const response = responses[i];
-    const href = response.getElementsByTagName("d:href")[0]?.textContent;
-    const resourceType = response.getElementsByTagName("d:resourcetype")[0];
-    const isCollection = resourceType?.getElementsByTagName("d:collection").length > 0;
-    const lastModified = response.getElementsByTagName("d:getlastmodified")[0]?.textContent;
-    const etag = response.getElementsByTagName("d:getetag")[0]?.textContent;
+
+  // Split into per-resource blocks. Handle both prefixed (d:response) and unprefixed.
+  const responseBlocks = rawXml.split(/<\/?[^:>]*:?response>/i).filter((_, i) => i % 2 === 1);
+
+  for (let i = 0; i < responseBlocks.length; i++) {
+    const block = responseBlocks[i];
+
+    const href = xmlText(block, "href");
+    if (!href) continue;
+
+    const resourceTypeBlock =
+      block.match(/<[^:>]*:?resourcetype[^>]*>([\s\S]*?)<\/[^:>]*:?resourcetype>/i)?.[1] ?? "";
+    const isCollection = /<[^:>]*:?collection[^>]*\/?>/i.test(resourceTypeBlock);
+    const lastModified = xmlText(block, "getlastmodified");
+    const etag = xmlText(block, "getetag");
 
     // Extract filename/foldername from href
     const name = decodeURIComponent(
@@ -951,15 +1002,13 @@ function parseWebDAVResponse(xmlText, includeCollections = false) {
       continue;
     }
 
-    if (href) {
-      files.push({
-        name,
-        href,
-        isCollection,
-        lastModified: lastModified ? new Date(lastModified).getTime() : null,
-        etag: etag?.replace(/"/g, ""),
-      });
-    }
+    files.push({
+      name,
+      href,
+      isCollection,
+      lastModified: lastModified ? new Date(lastModified).getTime() : null,
+      etag: etag?.replace(/"/g, ""),
+    });
   }
 
   return files;
@@ -974,7 +1023,7 @@ async function deleteFile(path) {
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
-  const response = await fetch(webdavUrl, {
+  const response = await _fetch(webdavUrl, {
     method: "DELETE",
     headers: {
       Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
@@ -1574,6 +1623,19 @@ function mergeStrokes(
  * Attempt to merge two versions of a note
  */
 export function attemptMerge(local, remote) {
+  // If the local note is encrypted (worker cannot decrypt), merging is not possible.
+  // Return null so the caller treats this as a conflict to be resolved on the main thread.
+  if (local.encrypted) return null;
+
+  // Guard against encrypted content blobs (e.g. index.encrypted flag may be stale).
+  // If strokes or content are encrypted objects rather than expected types, abort merge.
+  if (local.strokes !== undefined && !Array.isArray(local.strokes)) return null;
+  if (remote.strokes !== undefined && !Array.isArray(remote.strokes)) return null;
+  if (local.tags !== undefined && !Array.isArray(local.tags)) return null;
+  if (remote.tags !== undefined && !Array.isArray(remote.tags)) return null;
+  if (local.media !== undefined && !Array.isArray(local.media)) return null;
+  if (remote.media !== undefined && !Array.isArray(remote.media)) return null;
+
   // Determine which note is newer based on modification time
   const localIsNewer = local.modified >= remote.modified;
   const newerNote = localIsNewer ? local : remote;
@@ -1698,7 +1760,9 @@ export async function fullSync(localNotebooks, localNotes) {
   const fullNoteCache = new Map();
   async function getFullNote(stub) {
     if (fullNoteCache.has(stub.id)) return fullNoteCache.get(stub.id);
-    const full = await getNote(stub.id);
+    // Use getRawNote (no decryption) so this is safe to call from a Web Worker.
+    // The sync layer applies Nextcloud-level encryption separately in syncNotes().
+    const full = await getRawNote(stub.id);
     if (full) fullNoteCache.set(stub.id, full);
     return full ?? stub; // fall back to stub if note was deleted between sync start and now
   }
@@ -1838,18 +1902,26 @@ export async function fullSync(localNotebooks, localNotes) {
 
     if (isModifiedLocally && isModifiedRemotely) {
       const fullLocal = await getFullNote(local);
-      const merged = attemptMerge(fullLocal, remote);
-      if (merged) {
-        // Use the remote's current file ETag for the upload to succeed via If-Match
-        const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
-        notesToUpload.push(mergedWithRemoteBase);
 
-        // Save merged note locally so the client sees the merged state immediately.
-        // Use saveNote (not updateNote) to avoid bumping modified/version, which would
-        // falsely trigger the race-condition detector in the post-sync download phase.
-        await saveNote({ ...merged, synced: false });
+      // Locally-encrypted notes cannot be merged in the worker (no decryption key).
+      // Treat as "local wins": upload the local version using the remote etag as the
+      // If-Match base so the PUT succeeds even though remote changed.
+      if (local.encrypted) {
+        notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
       } else {
-        conflicts.notes.push({ local: fullLocal, remote });
+        const merged = attemptMerge(fullLocal, remote);
+        if (merged) {
+          // Use the remote's current file ETag for the upload to succeed via If-Match
+          const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
+          notesToUpload.push(mergedWithRemoteBase);
+
+          // Save merged note locally so the client sees the merged state immediately.
+          // Use saveNote (not updateNote) to avoid bumping modified/version, which would
+          // falsely trigger the race-condition detector in the post-sync download phase.
+          await saveNote({ ...merged, synced: false });
+        } else {
+          conflicts.notes.push({ local: fullLocal, remote });
+        }
       }
     } else if (isModifiedLocally) {
       notesToUpload.push(await getFullNote(local));

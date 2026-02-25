@@ -4,7 +4,7 @@
  */
 
 import { isAuthenticated } from "./nextcloudSync.js";
-import { getNote } from "./storage.js";
+import { getNoteIndex } from "./storage.js";
 import { getIsSyncing, performSync } from "./sync.js";
 
 // Configuration
@@ -94,7 +94,7 @@ export async function syncOnNoteClose(noteId) {
 
   if (!(await isAuthenticated())) return;
 
-  const note = await getNote(noteId);
+  const note = await getNoteIndex(noteId);
   if (note?.synced !== false) {
     console.log(`Auto-sync: Note ${noteId} has no local changes, skipping sync`);
     return;
