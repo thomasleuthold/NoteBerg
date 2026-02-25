@@ -14,53 +14,49 @@ import { getIsSyncing, getLastSyncResult, onSyncStatusChange, performSync } from
 export async function updateSyncStatus() {
   const syncStatus = document.querySelector(".sync-status");
   const syncIndicator = document.querySelector(".sync-indicator");
-  const syncText = document.querySelector(".sync-text");
 
-  if (!syncStatus || !syncIndicator || !syncText) return;
+  if (!syncStatus || !syncIndicator) return;
 
   const authenticated = await isAuthenticated();
   const isSyncing = getIsSyncing();
   const lastResult = getLastSyncResult();
 
-  // Reset tooltip and styles
-  syncStatus.title = "";
-  syncIndicator.style.color = "";
-
   if (isSyncing) {
     syncStatus.dataset.status = "syncing";
     syncIndicator.textContent = "↻";
-    syncText.textContent = t("footer.syncing");
+    syncStatus.title = t("footer.syncing");
     syncStatus.style.cursor = "wait";
   } else if (authenticated) {
     if (!lastResult) {
-      // Authenticated but not yet synced in this session
-      syncStatus.dataset.status = "offline"; // Use gray indicator
+      syncStatus.dataset.status = "idle";
       syncIndicator.textContent = "○";
-      syncText.textContent = t("footer.notSynced");
-      syncStatus.style.cursor = "pointer";
       syncStatus.title = t("footer.syncClickHint");
+      syncStatus.style.cursor = "pointer";
     } else if (lastResult.success) {
-      // Successful sync
       syncStatus.dataset.status = "connected";
       syncIndicator.textContent = "●";
       const time = new Date(lastResult.timestamp).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
       });
-      syncText.innerHTML = `${t("footer.lastSynced", { time })}<span style="margin: 0 2px">↑</span>${lastResult.uploaded.notes} | <span style="margin: 0 2px">↓</span>${lastResult.downloaded.notes}`;
+      syncStatus.title = t("footer.lastSyncedTooltip", {
+        time,
+        uploaded: lastResult.uploaded.notes,
+        downloaded: lastResult.downloaded.notes,
+      });
       syncStatus.style.cursor = "pointer";
     } else {
-      // Sync failed
       syncStatus.dataset.status = "error";
       syncIndicator.textContent = "⚠";
-      syncText.textContent = t("footer.syncFailed");
+      syncStatus.title = t("footer.syncFailedTooltip", {
+        error: lastResult.error || t("footer.unknownError"),
+      });
       syncStatus.style.cursor = "pointer";
-      syncStatus.title = lastResult.error || "Unknown error";
     }
   } else {
     syncStatus.dataset.status = "offline";
     syncIndicator.textContent = "○";
-    syncText.textContent = t("footer.notConnected");
+    syncStatus.title = t("footer.notConnected");
     syncStatus.style.cursor = "default";
   }
 }

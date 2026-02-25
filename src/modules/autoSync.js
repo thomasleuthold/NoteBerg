@@ -3,6 +3,7 @@
  * Handles automatic syncing of notes and notebooks to minimize conflicts
  */
 
+import { recognizeUnprocessedNotes } from "./autoRecognition.js";
 import { isAuthenticated } from "./nextcloudSync.js";
 import { getNoteIndex } from "./storage.js";
 import { getIsSyncing, performSync } from "./sync.js";
@@ -139,10 +140,12 @@ export async function syncOnNotebookCreate(notebookId) {
 
 /**
  * Sync on app startup
- * Uses smart conflict resolution - prefers the version with newer timestamp
+ * Uses smart conflict resolution - prefers the version with newer timestamp.
+ * On Windows, also triggers handwriting recognition for notes that were edited
+ * on mobile (where recognition is unavailable), then syncs the results back.
  */
 export async function syncOnAppStart() {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     console.log("Auto-sync: Not authenticated, skipping startup sync");
     return;
   }
@@ -155,6 +158,23 @@ export async function syncOnAppStart() {
     await performSync({ silent: true, skipConflictResolution: true, preferNewer: true });
   } catch (error) {
     console.error("Auto-sync: Startup sync failed", error);
+    return; // Don't attempt recognition if sync itself failed
+  }
+
+  // Post-sync recognition: process notes with strokes but no recognition data.
+  // recognizeUnprocessedNotes() is a no-op when the recognition service is unavailable
+  // (i.e. on mobile or when no sidecar/fallback URL is configured).
+  try {
+    const recognized = await recognizeUnprocessedNotes();
+    if (recognized > 0) {
+      // Upload the recognition data so other devices can use it for search.
+      // This performSync does NOT re-trigger recognizeUnprocessedNotes (one-shot).
+      lastSyncTime = Date.now();
+      console.log(`Auto-sync: Syncing ${recognized} newly recognized note(s)...`);
+      await performSync({ silent: true, skipConflictResolution: true });
+    }
+  } catch (error) {
+    console.error("Auto-sync: Post-recognition sync failed", error);
   }
 }
 

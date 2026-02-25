@@ -50,6 +50,7 @@ const INDEX_FIELDS = new Set([
   "tags",
   "hasStrokes",
   "hasContent",
+  "hasRecognition",
   "media", // metadata-only snapshot — see splitNote()
 ]);
 
@@ -81,6 +82,10 @@ function splitNote(note) {
   // Derived flags so overview never needs to load content
   index.hasStrokes = Array.isArray(note.strokes) ? note.strokes.length > 0 : false;
   index.hasContent = typeof note.content === "string" ? note.content.trim().length > 0 : false;
+  index.hasRecognition =
+    note.recognition != null &&
+    typeof note.recognition.fullText === "string" &&
+    note.recognition.fullText.length > 0;
 
   return { index, content };
 }

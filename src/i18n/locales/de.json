@@ -349,13 +349,13 @@
     }
   },
   "footer": {
-    "syncing": "Synchronisierung...",
-    "notSynced": "Nicht synchronisiert",
-    "syncClickHint": "Klicken, um jetzt zu synchronisieren",
-    "syncFailed": "Synchronisierung fehlgeschlagen",
-    "notConnected": "Nicht verbunden",
-    "lastSynced": "Zuletzt synchronisiert {{time}}: ",
-    "recognitionRunning": "Handschrifterkennung läuft..."
+    "syncing": "Synchronisierung läuft…",
+    "syncClickHint": "Nicht synchronisiert · Klicken zum Synchronisieren",
+    "notConnected": "Nicht mit Nextcloud verbunden",
+    "lastSyncedTooltip": "Zuletzt synchronisiert {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
+    "syncFailedTooltip": "Synchronisierung fehlgeschlagen: {{error}}",
+    "unknownError": "unbekannter Fehler",
+    "recognitionRunning": "Handschrifterkennung läuft…"
   },
   "breadcrumb": {
     "home": "Startseite",

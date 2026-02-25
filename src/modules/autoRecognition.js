@@ -7,7 +7,7 @@
  */
 
 import { fetch } from "@tauri-apps/plugin-http";
-import { getNote, getSetting, setSetting, updateNote } from "./storage.js";
+import { getAllNotes, getNote, getSetting, setSetting, updateNote } from "./storage.js";
 
 // Configuration
 const RECOGNITION_DEBOUNCE_MS = 2500; // 2.5 seconds inactivity
@@ -63,6 +63,46 @@ async function resolveRecognitionUrl() {
  */
 export function invalidateRecognitionUrl() {
   cachedRecognitionUrl = null;
+}
+
+/**
+ * Find all notes with strokes but no recognition and process them sequentially.
+ * Called once per app start on Windows (after startup sync completes).
+ * Is a no-op when the recognition service is unavailable (mobile / no sidecar).
+ * @returns {Promise<number>} Number of notes successfully recognized.
+ */
+export async function recognizeUnprocessedNotes() {
+  const baseUrl = await resolveRecognitionUrl();
+  if (!baseUrl) return 0;
+
+  const allIndexes = await getAllNotes(); // index entries only — no content loaded
+  const candidates = allIndexes.filter((n) => n.hasStrokes && !n.hasRecognition && !n.deleted);
+
+  if (candidates.length === 0) {
+    console.log("[Recognition] No unprocessed notes found.");
+    return 0;
+  }
+
+  console.log(`[Recognition] Processing ${candidates.length} unrecognized note(s)...`);
+  let processed = 0;
+
+  for (const index of candidates) {
+    try {
+      const note = await getNote(index.id);
+      if (!note) continue;
+
+      const activeStrokes = (note.strokes || []).filter((s) => !s._deleted && !s.isDeleted);
+      if (activeStrokes.length === 0) continue;
+
+      await performRecognition(index.id, activeStrokes);
+      processed++;
+    } catch (err) {
+      console.error(`[Recognition] Failed for note ${index.id}:`, err);
+    }
+  }
+
+  console.log(`[Recognition] Finished: ${processed} note(s) recognized.`);
+  return processed;
 }
 
 /**
