@@ -129,7 +129,7 @@ async function encryptNoteForNextcloud(note) {
         : note.recognition,
       thumbnail: isBlob(note.thumbnail)
         ? await decryptObject(note.thumbnail, key)
-        : note.thumbnail ?? null,
+        : (note.thumbnail ?? null),
       encrypted: undefined,
     };
   }
@@ -206,7 +206,12 @@ async function decryptNoteFromNextcloud(note) {
       }
 
       let decryptedThumbnail = null;
-      if (note.thumbnail && typeof note.thumbnail === "object" && note.thumbnail.data && note.thumbnail.iv) {
+      if (
+        note.thumbnail &&
+        typeof note.thumbnail === "object" &&
+        note.thumbnail.data &&
+        note.thumbnail.iv
+      ) {
         decryptedThumbnail = await decryptObject(note.thumbnail, encryptionKey);
       } else {
         decryptedThumbnail = note.thumbnail ?? null;
