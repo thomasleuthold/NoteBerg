@@ -127,6 +127,9 @@ async function encryptNoteForNextcloud(note) {
       recognition: isBlob(note.recognition)
         ? await decryptObject(note.recognition, key)
         : note.recognition,
+      thumbnail: isBlob(note.thumbnail)
+        ? await decryptObject(note.thumbnail, key)
+        : note.thumbnail ?? null,
       encrypted: undefined,
     };
   }
@@ -148,16 +151,20 @@ async function encryptNoteForNextcloud(note) {
   try {
     const encryptionKey = getEncryptionKey();
 
-    // Encrypt content, strokes, and media for Nextcloud storage
+    // Encrypt content, strokes, media and thumbnail for Nextcloud storage
     const encryptedContent = await encryptObject(decryptedNote.content || "", encryptionKey);
     const encryptedStrokes = await encryptObject(decryptedNote.strokes || [], encryptionKey);
     const encryptedMedia = await encryptObject(decryptedNote.media || [], encryptionKey);
+    const encryptedThumbnail = decryptedNote.thumbnail
+      ? await encryptObject(decryptedNote.thumbnail, encryptionKey)
+      : null;
 
     return {
       ...decryptedNote,
       content: encryptedContent,
       strokes: encryptedStrokes,
       media: encryptedMedia,
+      thumbnail: encryptedThumbnail,
       nextcloudEncrypted: true, // Mark as Nextcloud-encrypted
     };
   } catch (error) {
@@ -198,11 +205,19 @@ async function decryptNoteFromNextcloud(note) {
         decryptedMedia = await decryptObject(note.media, encryptionKey);
       }
 
+      let decryptedThumbnail = null;
+      if (note.thumbnail && typeof note.thumbnail === "object" && note.thumbnail.data && note.thumbnail.iv) {
+        decryptedThumbnail = await decryptObject(note.thumbnail, encryptionKey);
+      } else {
+        decryptedThumbnail = note.thumbnail ?? null;
+      }
+
       decryptedNote = {
         ...note,
         content: decryptedContent,
         strokes: decryptedStrokes,
         media: decryptedMedia,
+        thumbnail: decryptedThumbnail,
         nextcloudEncrypted: undefined, // Remove Nextcloud encryption flag
       };
     } catch (error) {
