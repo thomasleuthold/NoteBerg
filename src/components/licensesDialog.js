@@ -75,6 +75,20 @@ const licenses = [
     licenseUrl: "https://github.com/Alex-D/Trumbowyg/blob/main/LICENSE",
   },
   {
+    name: "pdf-lib",
+    description: "Create and modify PDF documents in any JavaScript environment",
+    url: "https://pdf-lib.js.org/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/Hopding/pdf-lib/blob/master/LICENSE.md",
+  },
+  {
+    name: "html2canvas",
+    description: "Screenshots with JavaScript",
+    url: "https://html2canvas.hertzen.com/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/niklasvh/html2canvas/blob/master/LICENSE",
+  },
+  {
     name: "perspective-transform",
     description: "Create a perspective transform from 4 points",
     url: "https://github.com/fhguilherme/perspective-transform",

@@ -1,10 +1,10 @@
 /**
- * Service Worker for oneJournal
+ * Service Worker for NoteBerg
  * Handles app caching with versioning to allow updates without losing user data
  */
 
 const CACHE_VERSION = 'v1.0.0';
-const CACHE_NAME = `onejournal-${CACHE_VERSION}`;
+const CACHE_NAME = `noteberg-${CACHE_VERSION}`;
 
 // Files to cache for offline functionality
 const urlsToCache = [
@@ -36,7 +36,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME && cacheName.startsWith('onejournal-')) {
+          if (cacheName !== CACHE_NAME && cacheName.startsWith('noteberg-')) {
             console.log('[Service Worker] Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }

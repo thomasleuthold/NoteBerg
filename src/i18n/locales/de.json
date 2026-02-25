@@ -319,7 +319,7 @@
       "settingUp": "Wird eingerichtet..."
     },
     "unlock": {
-      "title": "🔒 oneJournal entsperren",
+      "title": "🔒 NoteBerg entsperren",
       "description": "Gib dein Master-Passwort ein, um die App zu entsperren",
       "passwordLabel": "Master-Passwort",
       "passwordPlaceholder": "Passwort eingeben",
@@ -349,13 +349,13 @@
     }
   },
   "footer": {
-    "syncing": "Synchronisierung...",
-    "notSynced": "Nicht synchronisiert",
-    "syncClickHint": "Klicken, um jetzt zu synchronisieren",
-    "syncFailed": "Synchronisierung fehlgeschlagen",
-    "notConnected": "Nicht verbunden",
-    "lastSynced": "Zuletzt synchronisiert {{time}}: ",
-    "recognitionRunning": "Handschrifterkennung läuft..."
+    "syncing": "Synchronisierung läuft…",
+    "syncClickHint": "Nicht synchronisiert · Klicken zum Synchronisieren",
+    "notConnected": "Nicht mit Nextcloud verbunden",
+    "lastSyncedTooltip": "Zuletzt synchronisiert {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
+    "syncFailedTooltip": "Synchronisierung fehlgeschlagen: {{error}}",
+    "unknownError": "unbekannter Fehler",
+    "recognitionRunning": "Handschrifterkennung läuft…"
   },
   "breadcrumb": {
     "home": "Startseite",
@@ -408,7 +408,7 @@
   },
   "licenses": {
     "title": "Open-Source-Lizenzen",
-    "intro": "oneJournal wurde mit Hilfe dieser großartigen Open-Source-Projekte entwickelt:",
+    "intro": "NoteBerg wurde mit Hilfe dieser großartigen Open-Source-Projekte entwickelt:",
     "viewLicense": "Lizenz anzeigen",
     "close": "Schließen"
   },

@@ -1,12 +1,12 @@
 [package]
-name = "onejournal"
+name = "noteberg"
 version = "0.2.1"
 description = "A note-taking app supporting handwritten notes, text, and drawings"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "onejournal_lib"
+name = "noteberg_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

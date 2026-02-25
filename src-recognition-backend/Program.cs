@@ -12,7 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Configure Serilog
 builder.Host.UseSerilog((context, services, configuration) => {
     // Ensure log path is in a writable directory for a Windows Service
-    var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "oneJournal", "RecognitionService", "logs", "log-.txt");
+    var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "NoteBerg", "RecognitionService", "logs", "log-.txt");
 
     configuration
         .ReadFrom.Configuration(context.Configuration)
@@ -27,7 +27,7 @@ builder.Host.UseSerilog((context, services, configuration) => {
 // 1. Configure as Windows Service
 builder.Services.AddWindowsService(options =>
 {
-    options.ServiceName = "OneJournalRecognition";
+    options.ServiceName = "NoteBergRecognition";
 });
 
 // 2. Configure Kestrel to listen on port from CLI arg or config

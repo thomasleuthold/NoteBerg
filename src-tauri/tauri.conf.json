@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "oneJournal",
-  "version": "0.5.17",
-  "identifier": "com.onejournal.app",
+  "productName": "NoteBerg",
+  "version": "0.5.21",
+  "identifier": "eu.noteberg.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "oneJournal",
+        "title": "NoteBerg",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

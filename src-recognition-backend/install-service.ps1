@@ -1,6 +1,6 @@
 param (
-    [string]$InstallPath = "C:\Program Files\OneJournal\RecognitionService",
-    [string]$ServiceName = "OneJournalRecognition"
+    [string]$InstallPath = "C:\Program Files\NoteBerg\RecognitionService",
+    [string]$ServiceName = "NoteBergRecognition"
 )
 
 # Ensure Admin
@@ -42,11 +42,11 @@ Write-Host "Copying files to $InstallPath..."
 Copy-Item -Path "$PSScriptRoot\*" -Destination $InstallPath -Recurse -Force -Exclude "install-service.ps1", "*.pdb"
 
 # Register Service
-$exePath = Join-Path $InstallPath "OneJournal.Recognition.exe"
+$exePath = Join-Path $InstallPath "NoteBerg.Recognition.exe"
 
 if (Test-Path $exePath) {
     Write-Host "Registering service..."
-    New-Service -Name $ServiceName -BinaryPathName $exePath -DisplayName "OneJournal Handwriting Recognition" -Description "Backend service for OneJournal handwriting recognition." -StartupType Automatic
+    New-Service -Name $ServiceName -BinaryPathName $exePath -DisplayName "NoteBerg Handwriting Recognition" -Description "Backend service for NoteBerg handwriting recognition." -StartupType Automatic
     Write-Host "Starting service..."
     Start-Service -Name $ServiceName
     Write-Host "Installation successfully completed."

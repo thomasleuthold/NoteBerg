@@ -258,30 +258,25 @@ body {
 }
 
 .sync-status {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-sm);
   transition: background-color var(--transition-fast);
+  overflow: hidden;
 }
 
 .sync-status:hover {
   background-color: var(--bg-hover);
 }
 
-.sync-status[data-status="connected"] {
-  cursor: pointer;
-}
-
-.sync-status[data-status="syncing"] {
-  cursor: wait;
-}
-
 .sync-indicator {
   font-size: 0.875rem;
+  line-height: 1;
 }
 
+/* State colors */
 .sync-status[data-status="connected"] .sync-indicator {
   color: var(--color-success);
 }
@@ -289,6 +284,15 @@ body {
 .sync-status[data-status="syncing"] .sync-indicator {
   color: var(--color-warning);
   animation: spin 1s linear infinite;
+}
+
+.sync-status[data-status="idle"] .sync-indicator,
+.sync-status[data-status="offline"] .sync-indicator {
+  color: var(--text-tertiary);
+}
+
+.sync-status[data-status="error"] .sync-indicator {
+  color: var(--color-error);
 }
 
 @keyframes spin {
@@ -300,12 +304,36 @@ body {
   }
 }
 
-.sync-status[data-status="offline"] .sync-indicator {
-  color: var(--text-tertiary);
+/* Progress bar — shown only while syncing */
+.sync-progress {
+  display: none;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 40%;
+  background-color: var(--color-warning);
+  border-radius: 1px;
 }
 
-.sync-status[data-status="error"] .sync-indicator {
-  color: var(--color-error);
+.sync-status[data-status="syncing"] .sync-progress {
+  display: block;
+  animation: sync-progress-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes sync-progress-slide {
+  0% {
+    left: -40%;
+    width: 40%;
+  }
+  50% {
+    left: 60%;
+    width: 40%;
+  }
+  100% {
+    left: 100%;
+    width: 40%;
+  }
 }
 
 /* Sidebar */

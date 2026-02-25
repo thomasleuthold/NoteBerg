@@ -41,10 +41,10 @@ export function initNoteCanvasComponent() {
 
     // Fallback: check session storage for search query if not in event detail
     if (!searchQuery) {
-      const storedQuery = sessionStorage.getItem("onejournal_search_query");
+      const storedQuery = sessionStorage.getItem("noteberg_search_query");
       if (storedQuery) {
         searchQuery = storedQuery;
-        sessionStorage.removeItem("onejournal_search_query");
+        sessionStorage.removeItem("noteberg_search_query");
       }
     }
 
@@ -77,6 +77,8 @@ export function initNoteCanvasComponent() {
 
       if (noteId) {
         await destroyPromise;
+        // Thumbnail has been saved to DB by now — refresh the overview so it picks it up.
+        window.dispatchEvent(new CustomEvent("datachange"));
         syncOnNoteClose(noteId);
       }
     }

@@ -1,7 +1,7 @@
 {
   "bundle": {
     "externalBin": [
-      "binaries/OneJournal.Recognition"
+      "binaries/NoteBerg.Recognition"
     ]
   }
 }

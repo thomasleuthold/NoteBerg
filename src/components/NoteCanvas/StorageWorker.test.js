@@ -13,13 +13,14 @@ vi.mock("../../modules/encryption.js", () => ({
 
 vi.mock("../../modules/storage.js", () => ({
   DB_NAME: "test-db",
-  DB_VERSION: 1,
+  DB_VERSION: 4,
 }));
 
 describe("StorageWorker", () => {
   let mockDb;
   let mockTx;
-  let mockStore;
+  let mockNotesStore;
+  let mockContentStore;
   let workerHandler;
 
   // Helper to wait for async worker processing
@@ -30,13 +31,20 @@ describe("StorageWorker", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
 
-    // Mock IndexedDB structure
-    mockStore = {
+    // Two separate stores: notes (index) and noteContent (payload)
+    mockNotesStore = {
+      get: vi.fn(),
+      put: vi.fn(),
+    };
+    mockContentStore = {
       get: vi.fn(),
       put: vi.fn(),
     };
     mockTx = {
-      objectStore: vi.fn(() => mockStore),
+      objectStore: vi.fn((name) => {
+        if (name === "noteContent") return mockContentStore;
+        return mockNotesStore;
+      }),
       done: Promise.resolve(),
     };
     mockDb = {
@@ -58,9 +66,14 @@ describe("StorageWorker", () => {
   });
 
   it("should handle SAVE_STROKES", async () => {
-    const note = { id: "note-1", strokes: [], version: 1 };
-    mockDb.get.mockResolvedValue({ id: "note-1", encrypted: false });
-    mockStore.get.mockResolvedValue(note);
+    const indexEntry = { id: "note-1", version: 1, encrypted: false };
+    const contentEntry = { id: "note-1", strokes: [], deletedStrokes: [] };
+
+    // db.get returns note index (encrypted check)
+    mockDb.get.mockResolvedValue(indexEntry);
+    // tx stores return their respective records
+    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
+    mockContentStore.get.mockResolvedValue({ ...contentEntry });
 
     const data = {
       type: "SAVE_STROKES",
@@ -72,22 +85,32 @@ describe("StorageWorker", () => {
     await workerHandler({ data });
     await flushPromises();
 
-    expect(mockDb.get).toHaveBeenCalledWith("notes", "note-1");
-    expect(mockStore.put).toHaveBeenCalledWith(
+    // Index store gets version bump + synced=false + hasStrokes flag
+    expect(mockNotesStore.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "note-1",
+        version: 2,
+        synced: false,
+        hasStrokes: true,
+      }),
+    );
+    // Content store gets strokes
+    expect(mockContentStore.put).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "note-1",
         strokes: [{ id: "s1" }],
         deletedStrokes: ["s2"],
-        version: 2,
-        synced: false,
       }),
     );
   });
 
   it("should handle SAVE_STROKES with encryption", async () => {
-    const note = { id: "note-1", strokes: [], version: 1 };
-    mockDb.get.mockResolvedValue({ id: "note-1", encrypted: true });
-    mockStore.get.mockResolvedValue(note);
+    const indexEntry = { id: "note-1", version: 1, encrypted: true };
+    const contentEntry = { id: "note-1", strokes: [] };
+
+    mockDb.get.mockResolvedValue(indexEntry);
+    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
+    mockContentStore.get.mockResolvedValue({ ...contentEntry });
     encryptObject.mockResolvedValue("encrypted-strokes");
 
     const data = {
@@ -101,7 +124,7 @@ describe("StorageWorker", () => {
     await flushPromises();
 
     expect(encryptObject).toHaveBeenCalledWith([{ id: "s1" }], "fake-key");
-    expect(mockStore.put).toHaveBeenCalledWith(
+    expect(mockContentStore.put).toHaveBeenCalledWith(
       expect.objectContaining({
         strokes: "encrypted-strokes",
       }),
@@ -123,21 +146,25 @@ describe("StorageWorker", () => {
     await flushPromises();
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Cannot save encrypted note: Key missing"),
+      expect.stringContaining("Cannot save encrypted strokes: Key missing"),
     );
-    expect(mockStore.put).not.toHaveBeenCalled();
+    expect(mockNotesStore.put).not.toHaveBeenCalled();
+    expect(mockContentStore.put).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 
   it("should handle SAVE_MEDIA", async () => {
-    const note = { id: "note-1", media: [], version: 1 };
-    mockDb.get.mockResolvedValue({ id: "note-1", encrypted: false });
-    mockStore.get.mockResolvedValue(note);
+    const indexEntry = { id: "note-1", version: 1, encrypted: false };
+    const contentEntry = { id: "note-1", media: [], deletedMedia: [] };
+
+    mockDb.get.mockResolvedValue(indexEntry);
+    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
+    mockContentStore.get.mockResolvedValue({ ...contentEntry });
 
     const data = {
       type: "SAVE_MEDIA",
       noteId: "note-1",
-      media: [{ id: "m1" }],
+      media: [{ id: "m1", name: "photo.jpg", type: "image/jpeg", size: 100 }],
       deletedMedia: ["m2"],
       pdfSource: "pdf1",
     };
@@ -145,18 +172,30 @@ describe("StorageWorker", () => {
     await workerHandler({ data });
     await flushPromises();
 
-    expect(mockStore.put).toHaveBeenCalledWith(
+    // Content store gets full media objects
+    expect(mockContentStore.put).toHaveBeenCalledWith(
       expect.objectContaining({
-        media: [{ id: "m1" }],
+        media: [{ id: "m1", name: "photo.jpg", type: "image/jpeg", size: 100 }],
         deletedMedia: ["m2"],
         pdfSource: "pdf1",
+      }),
+    );
+    // Index store gets metadata snapshot (id, name, type, size, deleted only)
+    expect(mockNotesStore.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media: [{ id: "m1", name: "photo.jpg", type: "image/jpeg", size: 100, deleted: undefined }],
+        version: 2,
+        synced: false,
       }),
     );
   });
 
   it("should handle SAVE_PRESETS", async () => {
-    const note = { id: "note-1", penPresets: [], version: 1 };
-    mockStore.get.mockResolvedValue(note);
+    const indexEntry = { id: "note-1", version: 1 };
+    const contentEntry = { id: "note-1", penPresets: [] };
+
+    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
+    mockContentStore.get.mockResolvedValue({ ...contentEntry });
 
     const data = {
       type: "SAVE_PRESETS",
@@ -167,39 +206,55 @@ describe("StorageWorker", () => {
     await workerHandler({ data });
     await flushPromises();
 
-    expect(mockStore.put).toHaveBeenCalledWith(
+    expect(mockContentStore.put).toHaveBeenCalledWith(
       expect.objectContaining({
         penPresets: [{ color: "red" }],
       }),
     );
+    expect(mockNotesStore.put).toHaveBeenCalledWith(
+      expect.objectContaining({ version: 2, synced: false }),
+    );
   });
 
-  it("should handle SAVE_THUMBNAIL", async () => {
-    const note = { id: "note-1", version: 1 };
-    mockStore.get.mockResolvedValue(note);
+  it("should handle SAVE_THUMBNAIL — writes thumbnail to noteContent, bumps version and synced", async () => {
+    const indexEntry = { id: "note-1", version: 1, encrypted: false };
+    const contentEntry = { id: "note-1", strokes: [] };
+    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
+    mockContentStore.get.mockResolvedValue({ ...contentEntry });
 
     const data = {
       type: "SAVE_THUMBNAIL",
       noteId: "note-1",
-      thumbnailFileId: "thumb-1",
-      thumbnailTimestamp: 123456,
+      thumbnail: "data:image/jpeg;base64,/9j/abc",
     };
 
     await workerHandler({ data });
     await flushPromises();
 
-    expect(mockStore.put).toHaveBeenCalledWith(
+    // Content store MUST be updated with thumbnail
+    expect(mockContentStore.put).toHaveBeenCalledWith(
       expect.objectContaining({
-        thumbnailFileId: "thumb-1",
-        thumbnailTimestamp: 123456,
+        thumbnail: "data:image/jpeg;base64,/9j/abc",
       }),
     );
+    // Index store MUST bump version and mark unsynced
+    expect(mockNotesStore.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        version: 2,
+        synced: false,
+      }),
+    );
+    // Transaction must use both stores
+    expect(mockDb.transaction).toHaveBeenCalledWith(["notes", "noteContent"], "readwrite");
   });
 
   it("should handle SAVE_TASKS", async () => {
-    const note = { id: "note-1", tasks: [], version: 1 };
-    mockDb.get.mockResolvedValue({ id: "note-1", encrypted: false });
-    mockStore.get.mockResolvedValue(note);
+    const indexEntry = { id: "note-1", version: 1, encrypted: false };
+    const contentEntry = { id: "note-1", tasks: [] };
+
+    mockDb.get.mockResolvedValue(indexEntry);
+    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
+    mockContentStore.get.mockResolvedValue({ ...contentEntry });
 
     const data = {
       type: "SAVE_TASKS",
@@ -210,17 +265,23 @@ describe("StorageWorker", () => {
     await workerHandler({ data });
     await flushPromises();
 
-    expect(mockStore.put).toHaveBeenCalledWith(
+    expect(mockContentStore.put).toHaveBeenCalledWith(
       expect.objectContaining({
         tasks: [{ id: "t1" }],
       }),
     );
+    expect(mockNotesStore.put).toHaveBeenCalledWith(
+      expect.objectContaining({ version: 2, synced: false }),
+    );
   });
 
   it("should handle SAVE_CONTENT", async () => {
-    const note = { id: "note-1", content: "", version: 1 };
-    mockDb.get.mockResolvedValue({ id: "note-1", encrypted: false });
-    mockStore.get.mockResolvedValue(note);
+    const indexEntry = { id: "note-1", version: 1, encrypted: false };
+    const contentEntry = { id: "note-1", content: "" };
+
+    mockDb.get.mockResolvedValue(indexEntry);
+    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
+    mockContentStore.get.mockResolvedValue({ ...contentEntry });
 
     const data = {
       type: "SAVE_CONTENT",
@@ -231,10 +292,13 @@ describe("StorageWorker", () => {
     await workerHandler({ data });
     await flushPromises();
 
-    expect(mockStore.put).toHaveBeenCalledWith(
+    expect(mockContentStore.put).toHaveBeenCalledWith(
       expect.objectContaining({
         content: "<p>Hello</p>",
       }),
+    );
+    expect(mockNotesStore.put).toHaveBeenCalledWith(
+      expect.objectContaining({ version: 2, synced: false, hasContent: true }),
     );
   });
 

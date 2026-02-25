@@ -7,6 +7,7 @@
  */
 
 import { clearRenderCache, getRenderedMedia } from "../../modules/mediaManager.js";
+import { getTheme } from "../../modules/theme.js";
 import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
   drawStroke as sharedDrawStroke,
@@ -1373,8 +1374,10 @@ export class CanvasRenderer {
 
     targetCtx.save();
 
-    // Fill white background first (prevents black background on JPEGs for transparent notes)
-    targetCtx.fillStyle = "#ffffff";
+    // Fill background using the current theme color (prevents black on JPEG for transparent notes)
+    const isDark = getTheme() === "dark";
+    const bgColor = isDark ? "#1e1e2e" : "#ffffff";
+    targetCtx.fillStyle = bgColor;
     targetCtx.fillRect(0, 0, width, height);
 
     targetCtx.scale(scale, scale);
@@ -1446,6 +1449,7 @@ export class CanvasRenderer {
     });
 
     targetCtx.restore();
+    return { bgColor };
   }
 
   /**

@@ -211,6 +211,7 @@ export class NoteCanvas {
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
     this.strokesChanged = false; // Track if strokes have been modified
     this.mediaChanged = false; // Track if media has been modified
+    this.textChanged = false; // Track if text content has been modified
     this.activeSearchQuery = null; // Track active search query for highlighting
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
     this.selectedMediaId = null; // Track selected media item
@@ -1564,6 +1565,7 @@ export class NoteCanvas {
    */
   _onTextContentChange(html) {
     this.noteData.content = html;
+    this.textChanged = true;
 
     // Save via worker (reuse StrokeManager's worker for sequential message processing)
     if (this.strokeManager?.worker) {
@@ -4074,23 +4076,130 @@ export class NoteCanvas {
 
     // Capture all required state SYNCHRONOUSLY before any async work
     const noteId = this.noteId;
-    const oldThumbnailId = this.noteData.thumbnailFileId;
     const worker = this.strokeManager.worker;
 
-    // 1. Create offscreen canvas and render SYNCHRONOUSLY
-    const thumbWidth = 800; // Match display resolution (800x600) to avoid blur
-    const thumbHeight = 600; // 4:3 aspect ratio
+    // 1. Create offscreen canvas and render strokes/media SYNCHRONOUSLY
+    // (must happen before destroy() nullifies the renderer)
+    const thumbWidth = 360;
+    const thumbHeight = 500;
     const canvas = document.createElement("canvas");
     canvas.width = thumbWidth;
     canvas.height = thumbHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // 2. Render snapshot SYNCHRONOUSLY (before destroy() nullifies renderer)
-    this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
+    const { bgColor } = this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
+
+    // 2. Capture text editor element reference before it's destroyed
+    const editorElement = this.textEditorLayer?._editorElement ?? null;
 
     // Store the promise so destroy() can wait for it
-    this._pendingThumbnailSave = this._doSaveThumbnail(canvas, noteId, oldThumbnailId, worker);
+    this._pendingThumbnailSave = this._doSaveThumbnail(
+      canvas,
+      noteId,
+      worker,
+      editorElement,
+      bgColor,
+    );
+  }
+
+  /**
+   * Render the HTML text editor content onto an existing canvas by drawing text directly.
+   * Parses the editor's DOM and draws each block element as wrapped text lines.
+   * This avoids SVG foreignObject (unreliable in Chromium blob URL context).
+   * @private
+   */
+  _drawTextOnCanvas(canvas, editorElement, bgColor = "#ffffff") {
+    try {
+      const ctx = canvas.getContext("2d");
+      const { width, height } = canvas;
+
+      // Choose text color that contrasts with the background
+      const isDarkBg = bgColor !== "#ffffff";
+      const textColor = isDarkBg ? "#e0e0e0" : "#111111";
+
+      // Read font metrics from the live editor element
+      const computed = window.getComputedStyle(editorElement);
+      const baseFontSize = Math.round(parseFloat(computed.fontSize) || 16);
+      const fontFamily = computed.fontFamily || "sans-serif";
+
+      const PADDING = 16;
+      const MAX_WIDTH = width - PADDING * 2;
+      let y = PADDING;
+
+      // Collect block-level segments from the editor DOM
+      const blocks = [];
+      for (const child of editorElement.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent.trim();
+          if (text) blocks.push({ text, tag: "p", bold: false, italic: false, size: baseFontSize });
+          continue;
+        }
+        if (!(child instanceof HTMLElement)) continue;
+        const tag = child.tagName.toLowerCase();
+        const text = child.textContent.replace(/\u200B/g, "").trim(); // strip zero-width spaces
+        if (!text) continue;
+
+        let bold = false;
+        let italic = false;
+        let size = baseFontSize;
+
+        if (tag === "h1") {
+          size = Math.round(baseFontSize * 1.7);
+          bold = true;
+        } else if (tag === "h2") {
+          size = Math.round(baseFontSize * 1.4);
+          bold = true;
+        } else if (tag === "h3") {
+          size = Math.round(baseFontSize * 1.15);
+          bold = true;
+        } else if (tag === "strong" || tag === "b") {
+          bold = true;
+        } else if (tag === "em" || tag === "i") {
+          italic = true;
+        }
+
+        // Check for inline bold/italic inside a block
+        if (!bold && child.querySelector("strong, b")) bold = true;
+        if (!italic && child.querySelector("em, i")) italic = true;
+
+        blocks.push({ text, tag, bold, italic, size });
+      }
+
+      for (const block of blocks) {
+        if (y >= height - PADDING) break;
+
+        const fontStr = `${block.italic ? "italic " : ""}${block.bold ? "bold " : ""}${block.size}px ${fontFamily}`;
+        ctx.font = fontStr;
+        ctx.fillStyle = textColor;
+
+        const lineHeight = Math.round(block.size * 1.45);
+        const afterParagraph = Math.round(block.size * 0.55);
+
+        // Word-wrap
+        const words = block.text.split(/\s+/);
+        let line = "";
+        for (const word of words) {
+          const test = line ? `${line} ${word}` : word;
+          if (ctx.measureText(test).width > MAX_WIDTH && line) {
+            ctx.fillText(line, PADDING, y + block.size);
+            y += lineHeight;
+            line = word;
+            if (y >= height - PADDING) break;
+          } else {
+            line = test;
+          }
+        }
+        if (line && y < height - PADDING) {
+          ctx.fillText(line, PADDING, y + block.size);
+          y += lineHeight;
+        }
+
+        y += afterParagraph;
+      }
+    } catch (err) {
+      console.warn("[NoteCanvas] Text overlay for thumbnail failed:", err);
+    }
   }
 
   /**
@@ -4098,36 +4207,27 @@ export class NoteCanvas {
    * All synchronous state is captured and passed as parameters
    * @private
    */
-  async _doSaveThumbnail(canvas, noteId, oldThumbnailId, worker) {
+  async _doSaveThumbnail(canvas, noteId, worker, editorElement = null, bgColor = "#ffffff") {
     try {
-      // 3. Convert to Blob (async)
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.7));
+      // 3. Composite text editor content on top of the canvas snapshot
+      if (editorElement) {
+        this._drawTextOnCanvas(canvas, editorElement, bgColor);
+      }
 
-      if (!blob) return;
+      // 4. Encode as base64 JPEG (synchronous)
+      const thumbnail = canvas.toDataURL("image/jpeg", 0.7);
 
-      // 4. Save to storage (async)
-      const fileId = await saveFile(blob);
-
-      // 5. Update note metadata
-      const timestamp = Date.now();
-
-      // Update in-memory data if still valid
+      // 5. Update in-memory data if still valid
       if (this.noteData && this.noteId === noteId) {
-        this.noteData.thumbnailFileId = fileId;
-        this.noteData.thumbnailTimestamp = timestamp;
+        this.noteData.thumbnail = thumbnail;
       }
 
       // Post to worker - this must happen before CLOSE is sent
       worker.postMessage({
         type: "SAVE_THUMBNAIL",
         noteId: noteId,
-        thumbnailFileId: fileId,
-        thumbnailTimestamp: timestamp,
+        thumbnail,
       });
-
-      if (oldThumbnailId) {
-        deleteFile(oldThumbnailId).catch(() => {});
-      }
     } catch (error) {
       console.error("[NoteCanvas] Failed to save thumbnail:", error);
     }
@@ -4214,9 +4314,13 @@ export class NoteCanvas {
    * Clean up all resources
    */
   destroy() {
-    // Step 1: Force-flush any pending strokes to the worker immediately.
-    // This must happen before recognition (which reads note content from DB) and before
-    // the thumbnail save, so the DB has the latest strokes when both complete.
+    // Step 1: Force-flush any pending content to the worker immediately.
+    // Text content must be flushed before the thumbnail save so the DB reflects the
+    // latest hasContent flag, and before recognition which reads DB content.
+    // Strokes must be flushed for the same reasons.
+    if (this.textEditorLayer) {
+      this.textEditorLayer.forceSave();
+    }
     if (this.strokeManager) {
       this.strokeManager.forceSave();
     }
@@ -4237,7 +4341,7 @@ export class NoteCanvas {
     // Must happen before renderer is destroyed (uses renderer.renderSnapshot).
     // Stores promise in _pendingThumbnailSave.
     if (
-      (this.strokesChanged || this.mediaChanged || !this.noteData?.thumbnailFileId) &&
+      (this.strokesChanged || this.mediaChanged || this.textChanged || !this.noteData?.thumbnail) &&
       this.noteId
     ) {
       this._saveThumbnail();

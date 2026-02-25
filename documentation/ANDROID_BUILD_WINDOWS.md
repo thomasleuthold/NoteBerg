@@ -1,6 +1,6 @@
 # Android Build Guide for Windows
 
-This guide will help you build oneJournal as an Android app on Windows.
+This guide will help you build NoteBerg as an Android app on Windows.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ You need to install several tools before you can build for Android.
      - ✅ **Android SDK Build-Tools** (latest version)
      - ✅ **Android SDK Command-line Tools (latest)** - This is important!
      - ✅ **Android SDK Platform-Tools**
-     - ✅ **NDK (Side by side)** - Install the latest version (e.g., 26.x.x or 27.x.x)
+     - ✅ **NDK (Side by side)** - Install the latest version
      - ✅ **Android Emulator** (optional, for testing without a device)
 
    - Click `Apply` and wait for installation to complete
@@ -52,35 +52,35 @@ You need to install several tools before you can build for Android.
 3. **Browse to verify folders exist**:
    - Open File Explorer and go to your SDK location
    - You should see folders like: `build-tools`, `ndk`, `platform-tools`, `platforms`, `cmdline-tools`
-   - In `ndk` folder, note the version number (e.g., `26.1.10909125`)
-   - In `build-tools` folder, note the version number (e.g., `34.0.0`)
+   - In `ndk` folder, note the version number (e.g., `29.0.14206865`)
+   - In `build-tools` folder, note the version number (e.g., `36.1.0`)
 
 4. **Create/Update these variables** (User variables):
 
    ```
    ANDROID_HOME = C:\Users\YourUsername\AppData\Local\Android\Sdk
-   NDK_HOME = C:\Users\YourUsername\AppData\Local\Android\Sdk\ndk\26.1.10909125
+   NDK_HOME = C:\Users\YourUsername\AppData\Local\Android\Sdk\ndk\29.0.14206865
    ```
 
    Replace:
    - `YourUsername` with your actual Windows username
-   - `26.1.10909125` with your actual NDK version from step 3
+   - `29.0.14206865` with your actual NDK version from step 3
 
 5. **Add to PATH** (User variables):
    - Click on `Path` → `Edit` → `New`, then add these three entries:
    ```
    C:\Users\YourUsername\AppData\Local\Android\Sdk\platform-tools
    C:\Users\YourUsername\AppData\Local\Android\Sdk\cmdline-tools\latest\bin
-   C:\Users\YourUsername\AppData\Local\Android\Sdk\build-tools\34.0.0
+   C:\Users\YourUsername\AppData\Local\Android\Sdk\build-tools\36.1.0
    ```
 
    Replace:
    - `YourUsername` with your actual Windows username
-   - `34.0.0` with your actual build-tools version from step 3
+   - `36.1.0` with your actual build-tools version from step 3
 
    **Note**: Use full paths, not `%ANDROID_HOME%` in PATH - it's more reliable
 
-4. **Restart your terminal** for changes to take effect
+6. **Restart your terminal** for changes to take effect
 
 ### 3. Install Java JDK 17
 
@@ -124,9 +124,13 @@ This will:
 - Set up Android project structure
 - Configure build files
 
+**Important**: `gen/android` is a **generated folder** — it is gitignored and will be wiped if you delete it or re-run `tauri android init`. Any manual customizations (signing config, custom Kotlin files) must be re-applied after reinitializing. See the sections below.
+
 **During initialization**, you'll be asked:
-- **Package name**: Use `com.onejournal.app` (or your preferred package name)
-- **App name**: `oneJournal`
+- **Package name**: Use `eu.noteberg.app`
+- **App name**: `NoteBerg`
+
+**If you change the bundle identifier** in `tauri.conf.json` or the package name in `Cargo.toml`, you must delete `gen/android` and re-run `tauri android init`, then reapply all manual customizations.
 
 ### 2. Configure Android Permissions
 
@@ -141,6 +145,129 @@ Edit `src-tauri/capabilities/default.json` to ensure it includes Android:
     "http:default",
     "shell:allow-open"
   ]
+}
+```
+
+## Signing the Release APK
+
+**Important**: `key.properties` is gitignored and must be recreated manually whenever `gen/android` is regenerated. Store your keystore file and passwords in a password manager.
+
+### 1. Generate Keystore (one-time)
+
+Run once and keep the keystore file safe permanently:
+
+```bash
+keytool -genkey -v -keystore onejournal-release.keystore -alias onejournal -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Store the keystore file at the **project root** (it is gitignored). To verify your keystore alias later:
+
+```bash
+keytool -list -keystore onejournal-release.keystore -storepass YOUR_PASSWORD
+```
+
+**Save the keystore file and passwords in a password manager — they cannot be recovered!**
+
+### 2. Create key.properties
+
+Create `src-tauri/gen/android/key.properties` (gitignored, must be recreated after each `tauri android init`):
+
+```properties
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=onejournal
+storeFile=C:/work/code/oneJournal/onejournal-release.keystore
+```
+
+Use forward slashes in `storeFile` even on Windows.
+
+### 3. Update build.gradle.kts
+
+Edit `src-tauri/gen/android/app/build.gradle.kts` (must be done after each `tauri android init`).
+
+Add after the `tauriProperties` block and before `android {`:
+
+```kotlin
+val keystoreProperties = Properties().apply {
+    val propFile = file("../key.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+```
+
+Inside `android { }`, add a `signingConfigs` block before `buildTypes`:
+
+```kotlin
+signingConfigs {
+    create("release") {
+        keyAlias = keystoreProperties.getProperty("keyAlias")
+        keyPassword = keystoreProperties.getProperty("keyPassword")
+        storeFile = keystoreProperties.getProperty("storeFile")?.let { file(it) }
+        storePassword = keystoreProperties.getProperty("storePassword")
+    }
+}
+```
+
+Inside `getByName("release") { }`, add:
+
+```kotlin
+signingConfig = signingConfigs.getByName("release")
+```
+
+### 4. Restore PdfSavePlugin.kt
+
+This custom Kotlin file enables opening PDFs from the app and must be recreated after each `tauri android init`.
+
+Create `src-tauri/gen/android/app/src/main/java/eu/noteberg/app/PdfSavePlugin.kt`:
+
+```kotlin
+package eu.noteberg.app
+
+import android.content.Intent
+import androidx.core.content.FileProvider
+import app.tauri.annotation.Command
+import app.tauri.annotation.TauriPlugin
+import app.tauri.plugin.Invoke
+import app.tauri.plugin.Plugin
+import java.io.File
+
+@TauriPlugin
+class PdfSavePlugin(private val activity: android.app.Activity) : Plugin(activity) {
+
+    @Command
+    fun openCachedPdf(invoke: Invoke) {
+        val path = invoke.getArgs().getString("path")
+        if (path == null) {
+            invoke.reject("Missing path argument")
+            return
+        }
+
+        val file = File(path)
+        if (!file.exists()) {
+            invoke.reject("File not found: $path")
+            return
+        }
+
+        try {
+            val uri = FileProvider.getUriForFile(
+                activity,
+                "${activity.packageName}.fileprovider",
+                file
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/pdf")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            activity.startActivity(intent)
+            invoke.resolve()
+        } catch (e: Exception) {
+            invoke.reject("Failed to open PDF: ${e.message}")
+        }
+    }
 }
 ```
 
@@ -162,20 +289,23 @@ This will:
 
 **First build takes 15-30 minutes** (compiling all Rust dependencies for Android)
 
-### Release Build (APK/AAB)
+### Release Build (APK)
 
-To build a release version:
+Use the justfile recipe which handles cleanup and copying:
+
+```bash
+just build-a
+```
+
+Or manually:
 
 ```bash
 npm run tauri android build
 ```
 
-This creates:
-- **APK** at: `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`
-- **AAB** at: `src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab`
+Output APK: `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`
 
-**APK**: Install directly on Android devices
-**AAB**: Upload to Google Play Store
+**Note**: Do not pass `--release` as an npm argument — npm will warn that it's unknown. The Tauri CLI handles release mode internally.
 
 ## Testing on Android Device
 
@@ -218,67 +348,6 @@ This creates:
    ```bash
    npm run tauri android dev
    ```
-
-## Signing the Release APK
-
-For production releases, you need to sign your APK.
-
-### 1. Generate Keystore
-
-```bash
-keytool -genkey -v -keystore onejournal-release.keystore -alias onejournal -keyalg RSA -keysize 2048 -validity 10000
-```
-
-**Save the keystore file and passwords securely!**
-
-### 2. Configure Signing
-
-Create `src-tauri/gen/android/key.properties`:
-
-```properties
-storePassword=YOUR_KEYSTORE_PASSWORD
-keyPassword=YOUR_KEY_PASSWORD
-keyAlias=onejournal
-storeFile=C:/path/to/onejournal-release.keystore
-```
-
-### 3. Update build.gradle
-
-Edit `src-tauri/gen/android/app/build.gradle` and add before `android {`:
-
-```gradle
-def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file('key.properties')
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}
-```
-
-Inside `android { ... }`, add:
-
-```gradle
-signingConfigs {
-    release {
-        keyAlias keystoreProperties['keyAlias']
-        keyPassword keystoreProperties['keyPassword']
-        storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
-        storePassword keystoreProperties['storePassword']
-    }
-}
-
-buildTypes {
-    release {
-        signingConfig signingConfigs.release
-        // ... existing config
-    }
-}
-```
-
-### 4. Build Signed Release
-
-```bash
-npm run tauri android build --release
-```
 
 ## Installing the APK
 
@@ -326,10 +395,25 @@ rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-andro
 
 ### App crashes on startup
 
-Check logcat for errors:
+Most likely `PdfSavePlugin.kt` is missing (e.g. after `tauri android init`). Check logcat:
 ```bash
-adb logcat | grep onejournal
+adb logcat -s AndroidRuntime | grep -i "noteberg\|fatal\|exception"
 ```
+
+Recreate `PdfSavePlugin.kt` as described in the signing section above.
+
+### "Project directory does not exist" error
+
+This happens when the bundle identifier changed but `gen/android` still has the old package structure. Fix:
+```powershell
+Remove-Item -Recurse -Force src-tauri\gen\android
+npm run tauri android init
+```
+Then reapply signing config and `PdfSavePlugin.kt`.
+
+### APK is unsigned (filename ends with `-unsigned.apk`)
+
+`key.properties` is missing or the signing config was not added to `build.gradle.kts`. Follow the signing steps above.
 
 ### Emulator won't start
 
@@ -341,7 +425,7 @@ Try creating a new emulator with less RAM, or:
 
 1. **Build AAB** (Android App Bundle):
    ```bash
-   npm run tauri android build --release --target aab
+   npm run tauri android build --target aab
    ```
 
 2. **Create Google Play Console account**: https://play.google.com/console
@@ -353,6 +437,16 @@ Try creating a new emulator with less RAM, or:
 5. **Fill in store listing**, screenshots, privacy policy, etc.
 
 6. **Submit for review**
+
+## Checklist After `tauri android init`
+
+Run this after every `gen/android` regeneration:
+
+- [ ] Create `src-tauri/gen/android/key.properties` with keystore credentials
+- [ ] Add `keystoreProperties` block to `build.gradle.kts`
+- [ ] Add `signingConfigs` block to `build.gradle.kts`
+- [ ] Add `signingConfig = signingConfigs.getByName("release")` to release build type
+- [ ] Recreate `PdfSavePlugin.kt`
 
 ## File Sizes
 
@@ -367,40 +461,6 @@ Try creating a new emulator with less RAM, or:
 - App startup: Similar to native Android apps
 - No CORS issues (native HTTP client)
 - Full offline support
-
-## Updating package.json
-
-Add these scripts to your `package.json`:
-
-```json
-{
-  "scripts": {
-    "tauri:android:init": "tauri android init",
-    "tauri:android:dev": "tauri android dev",
-    "tauri:android:build": "tauri android build"
-  }
-}
-```
-
-## Summary
-
-**Setup (one-time):**
-1. Install Android Studio + SDK (30 min)
-2. Install Java 17 (5 min)
-3. Set environment variables (5 min)
-4. Initialize Tauri Android (5 min)
-
-**Development workflow:**
-```bash
-npm run tauri:android:dev    # Test on device/emulator
-npm run tauri:android:build  # Build release APK
-```
-
-**Result:**
-- Native Android app
-- No CORS issues with Nextcloud
-- Full offline support
-- ~10-20 MB APK size
 
 ## Resources
 
