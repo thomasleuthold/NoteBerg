@@ -16,6 +16,7 @@ import {
   getNotebook,
   getNotesByNotebook,
   getQuickNotes,
+  getSetting,
   moveNote,
 } from "../modules/storage.js";
 // getAllNotes / getNotesByNotebook / getQuickNotes now return lightweight index entries
@@ -95,6 +96,13 @@ export async function renderOverview(
         <div id="overview-tab-content" class="overview-tab-content"></div>
       </div>
     `;
+
+    // Apply card size class from settings
+    const cardSize = (await getSetting("card_size")) || "medium";
+    const overviewContainer = container.querySelector(".overview-container");
+    if (overviewContainer) {
+      overviewContainer.classList.add(`card-size-${cardSize}`);
+    }
 
     // Attach Shell Listeners
     attachShellListeners(container, notebookId);
@@ -936,11 +944,14 @@ async function renderNotePreviews(container, notes) {
 
     // Setup layout scaling (must happen for both thumbnails and live rendering)
     if (isFullSize) {
-      // Set bitmap size to match the CSS size of the scaler
-      canvas.width = 360;
-      canvas.height = 500;
+      // Set bitmap size accounting for device pixel ratio for sharp rendering
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = 360 * dpr;
+      canvas.height = 500 * dpr;
 
       // Calculate and apply the scale transform to the parent scaler div
+      // The scaler CSS size is 360x500, so we scale down by dpr to compensate
+      // for the larger bitmap, then scale to fit the container.
       const scaler = canvas.closest(".preview-scaler");
       const previewContainer = canvas.closest(".note-card-preview");
       if (scaler && previewContainer) {
@@ -956,21 +967,28 @@ async function renderNotePreviews(container, notes) {
     const fullNote = await getNote(noteId).catch(() => null);
     if (!fullNote) return;
 
-    // Fast path: use embedded base64 thumbnail
+    // Fast path: use embedded base64 thumbnail as an <img> for best scaling quality
     if (fullNote.thumbnail) {
-      const ctx = canvas.getContext("2d");
       const img = new Image();
       let loaded = false;
       await new Promise((resolve) => {
         img.onload = () => {
           loaded = true;
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           resolve();
         };
         img.onerror = () => resolve();
         img.src = fullNote.thumbnail;
       });
-      if (loaded) return;
+      if (loaded) {
+        img.className = "note-preview-img";
+        // Replace the canvas (and its scaler) with the img directly in the preview container
+        const previewContainer = canvas.closest(".note-card-preview");
+        const scaler = canvas.closest(".preview-scaler");
+        if (previewContainer && scaler) {
+          previewContainer.replaceChild(img, scaler);
+        }
+        return;
+      }
     }
 
     // Fallback: Live rendering (no thumbnail yet — note hasn't been opened since migration)

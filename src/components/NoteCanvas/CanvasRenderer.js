@@ -220,9 +220,9 @@ export class CanvasRenderer {
     this.viewportHeight = height;
     this.bufferHeight = height * this.bufferMultiplier;
 
-    // Resize overlay to match viewport exactly (in screen pixels)
+    // Resize overlay to match screen viewport exactly
     this.overlayCanvas.width = width;
-    this.overlayCanvas.height = height;
+    this.overlayCanvas.height = Math.round(height * this.zoomScale);
 
     // Track if canvas bitmap dimensions actually changed (which clears the canvas)
     const oldWidth = this.canvas.width;

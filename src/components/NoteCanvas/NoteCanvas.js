@@ -4082,12 +4082,14 @@ export class NoteCanvas {
     // (must happen before destroy() nullifies the renderer)
     const thumbWidth = 360;
     const thumbHeight = 500;
+    const dpr = window.devicePixelRatio || 1;
     const canvas = document.createElement("canvas");
-    canvas.width = thumbWidth;
-    canvas.height = thumbHeight;
+    canvas.width = thumbWidth * dpr;
+    canvas.height = thumbHeight * dpr;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    ctx.scale(dpr, dpr);
     const { bgColor } = this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
 
     // 2. Capture text editor element reference before it's destroyed
@@ -4112,7 +4114,9 @@ export class NoteCanvas {
   _drawTextOnCanvas(canvas, editorElement, bgColor = "#ffffff") {
     try {
       const ctx = canvas.getContext("2d");
-      const { width, height } = canvas;
+      const dpr = window.devicePixelRatio || 1;
+      const width = canvas.width / dpr;
+      const height = canvas.height / dpr;
 
       // Choose text color that contrasts with the background
       const isDarkBg = bgColor !== "#ffffff";
@@ -4215,7 +4219,7 @@ export class NoteCanvas {
       }
 
       // 4. Encode as base64 JPEG (synchronous)
-      const thumbnail = canvas.toDataURL("image/jpeg", 0.7);
+      const thumbnail = canvas.toDataURL("image/jpeg", 0.92);
 
       // 5. Update in-memory data if still valid
       if (this.noteData && this.noteId === noteId) {

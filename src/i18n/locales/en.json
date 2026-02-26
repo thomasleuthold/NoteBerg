@@ -110,7 +110,12 @@
       "theme": "Theme",
       "themeDesc": "Choose your preferred color scheme",
       "light": "Light",
-      "dark": "Dark"
+      "dark": "Dark",
+      "cardSize": "Card Size",
+      "cardSizeDesc": "Set the size of note cards in the overview",
+      "cardSizeSmall": "Small",
+      "cardSizeMedium": "Medium",
+      "cardSizeLarge": "Large"
     },
     "language": {
       "label": "Interface Language",

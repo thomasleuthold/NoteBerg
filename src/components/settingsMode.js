@@ -30,6 +30,8 @@ export async function renderSettings(container) {
   const biometricCapability = { available: false };
   const biometricEnabled = false;
 
+  const cardSize = (await getSetting("card_size")) || "medium";
+
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? false; // Default: disabled
   const encryptNextcloudData = (await getSetting("encrypt_nextcloud_data")) ?? false; // Default: disabled
@@ -79,6 +81,18 @@ export async function renderSettings(container) {
               <span class="theme-toggle-label">${t("settings.appearance.dark")}</span>
             </button>
           </div>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">${t("settings.appearance.cardSize")}</span>
+            <span class="setting-description">${t("settings.appearance.cardSizeDesc")}</span>
+          </div>
+          <select id="card-size-select" class="setting-control">
+            <option value="small" ${cardSize === "small" ? "selected" : ""}>${t("settings.appearance.cardSizeSmall")}</option>
+            <option value="medium" ${cardSize === "medium" ? "selected" : ""}>${t("settings.appearance.cardSizeMedium")}</option>
+            <option value="large" ${cardSize === "large" ? "selected" : ""}>${t("settings.appearance.cardSizeLarge")}</option>
+          </select>
         </div>
       </div>
 
@@ -364,6 +378,17 @@ export async function renderSettings(container) {
   const languageSelect = container.querySelector("#language-select");
   languageSelect?.addEventListener("change", async () => {
     await changeLanguage(languageSelect.value);
+  });
+
+  // Card size selector
+  const cardSizeSelect = container.querySelector("#card-size-select");
+  cardSizeSelect?.addEventListener("change", async () => {
+    await setSetting("card_size", cardSizeSelect.value);
+    // Re-render overview if currently visible so the change takes effect immediately
+    const overviewContent = document.getElementById("overview-content");
+    if (overviewContent?.offsetParent !== null) {
+      window.dispatchEvent(new CustomEvent("renderoverview"));
+    }
   });
 
   // Attach event listeners to theme toggle buttons

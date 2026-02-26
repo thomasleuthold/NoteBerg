@@ -40,6 +40,13 @@
     ],
     "category": "Productivity",
     "shortDescription": "Note-taking with handwriting support",
-    "longDescription": "A note-taking app supporting handwritten notes, text, and drawings"
+    "longDescription": "A note-taking app supporting handwritten notes, text, and drawings",
+    "licenseFile": "licenses/license.rtf",
+    "windows": {
+      "wix": {
+        "bannerPath": "icons/msi2.bmp",
+        "dialogImagePath": "icons/msi1.bmp"
+      }
+    }
   }
 }

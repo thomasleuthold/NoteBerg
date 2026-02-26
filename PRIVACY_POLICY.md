@@ -1,6 +1,6 @@
 # Privacy Policy for NoteBerg
 
-**Last updated:** January 26, 2025
+**Last updated:** February 26, 2026
 
 **NoteBerg** is an open-source note-taking application designed with privacy as a core principle. This Privacy Policy explains how our app handles your information.
 
@@ -14,13 +14,14 @@
 To provide its features, the app requires the following permissions:
 
 *   **Camera**: Used only when you explicitly choose to take a photo to insert into a note. These photos are stored with your notes. We do not collect, analyze, or share your camera data.
+*   **Microphone**: Used only when you explicitly choose to record audio to attach to a note. Recordings are stored locally with your notes. We do not collect, analyze, or share your audio data.
 *   **Network / Internet**: Used to communicate with the Nextcloud server and Handwriting Recognition server you have configured in Settings. No data is sent to any other third-party servers.
 *   **Biometric / Fingerprint** (Optional): Used locally to unlock the app if you enable this feature. Biometric data remains on your device and is not accessible to the app.
 
 ## 3. Analytics and Tracking
 **NoteBerg** contains **no tracking code**, advertisements, or third-party analytics (e.g., Google Analytics, Firebase). We do not collect usage data.
 
-## 4. Children’s Privacy
+## 4. Children's Privacy
 Our application does not knowingly collect or solicit personal information from anyone under the age of 13.
 
 ## 5. Changes to This Policy
