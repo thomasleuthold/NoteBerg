@@ -1,6 +1,6 @@
 # NoteBerg
 
-> **Alpha software** — NoteBerg is an experimental, personal note-taking app built almost entirely through **vibe coding** (AI-assisted development). It is not production-ready. Expect rough edges, breaking changes, and missing features.
+> **Beta software** — NoteBerg is an experimental, personal note-taking app built almost entirely through **vibe coding** (AI-assisted development). It is not production-ready. Expect rough edges, breaking changes, and missing features.
 
 A cross-platform note-taking app with handwriting support, text editing, and Nextcloud sync — built as an experiment in how far AI-assisted development can take a real-world desktop application.
 
@@ -55,7 +55,7 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 
 ## Security Warning
 
-> ⚠️ **This app is in alpha and has known security limitations. Do not use it to store highly sensitive data.**
+> ⚠️ **This app is in beta and has known security limitations. Do not use it to store highly sensitive data.**
 
 Current security state:
 
