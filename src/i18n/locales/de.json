@@ -110,7 +110,12 @@
       "theme": "Design",
       "themeDesc": "Wähle dein bevorzugtes Farbschema",
       "light": "Hell",
-      "dark": "Dunkel"
+      "dark": "Dunkel",
+      "cardSize": "Kartengröße",
+      "cardSizeDesc": "Größe der Notizkarten in der Übersicht festlegen",
+      "cardSizeSmall": "Klein",
+      "cardSizeMedium": "Mittel",
+      "cardSizeLarge": "Groß"
     },
     "language": {
       "label": "Sprache",

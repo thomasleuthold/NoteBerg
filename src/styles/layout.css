@@ -50,9 +50,14 @@
 .quick-notes-list,
 .notes-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min-width, 280px), 1fr));
   gap: var(--spacing-md);
 }
+
+/* Card size variants — set on .overview-container */
+.overview-container.card-size-small  { --card-min-width: 180px; }
+.overview-container.card-size-medium { --card-min-width: 280px; }
+.overview-container.card-size-large  { --card-min-width: 380px; }
 
 /* Section headers */
 .section-header {
@@ -367,6 +372,8 @@
   padding: var(--spacing-lg);
   cursor: pointer;
   transition: all var(--transition-fast);
+  display: flex;
+  flex-direction: column;
 }
 
 .notebook-card:hover {
@@ -407,8 +414,9 @@
 .notebook-card-description {
   font-size: 0.875rem;
   color: var(--text-secondary);
-  margin: 0 0 var(--spacing-md) 0;
+  margin: 0;
   line-height: 1.5;
+  flex: 1;
 }
 
 .notebook-card-footer {
@@ -419,6 +427,7 @@
   color: var(--text-tertiary);
   padding-top: var(--spacing-sm);
   border-top: 1px solid var(--border-primary);
+  margin-top: var(--spacing-md);
   margin-bottom: var(--spacing-sm);
 }
 
@@ -637,6 +646,15 @@
 .preview-no-content {
   padding: 12px;
   font-style: italic;
+}
+
+/* Thumbnail image (fast path — replaces canvas/scaler for stored thumbnails) */
+.note-preview-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
 }
 
 /* Preview Scaler */
