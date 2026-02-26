@@ -55,6 +55,10 @@ Cargo.lock
 *.jks
 key.properties
 *.apk
+
+# Build artifacts / binaries
+*.pdb
+/dist-backend/*.exe
 /src-recognition-backend/bin
 /src-recognition-backend/obj
 /coverage
