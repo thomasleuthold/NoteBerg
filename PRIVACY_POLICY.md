@@ -28,7 +28,7 @@ Our application does not knowingly collect or solicit personal information from 
 We may update our Privacy Policy from time to time. Thus, you are advised to review this page periodically for any changes.
 
 ## 6. Contact Us
-If you have any questions or suggestions about our Privacy Policy, do not hesitate to contact us via our GitHub repository.
+If you have any questions or suggestions about our Privacy Policy, do not hesitate to [open an issue on our GitHub repository](https://github.com/thomasleuthold/NoteBerg/issues).
 
 ---
 
