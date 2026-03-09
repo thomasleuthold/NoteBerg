@@ -55,9 +55,15 @@
 }
 
 /* Card size variants — set on .overview-container */
-.overview-container.card-size-small  { --card-min-width: 180px; }
-.overview-container.card-size-medium { --card-min-width: 280px; }
-.overview-container.card-size-large  { --card-min-width: 380px; }
+.overview-container.card-size-small {
+  --card-min-width: 180px;
+}
+.overview-container.card-size-medium {
+  --card-min-width: 280px;
+}
+.overview-container.card-size-large {
+  --card-min-width: 380px;
+}
 
 /* Section headers */
 .section-header {

@@ -216,7 +216,10 @@ describe("StorageWorker", () => {
     );
   });
 
-  it("should handle SAVE_THUMBNAIL — writes thumbnail to noteContent, bumps version and synced", async () => {
+  it("should handle SAVE_THUMBNAIL — writes thumbnail to noteContent only, does NOT bump version or set synced", async () => {
+    // Thumbnails are UI-only metadata. Bumping version/synced causes the note to be
+    // re-uploaded on every sync cycle, which triggers a download on other devices,
+    // which saves the note, regenerates the thumbnail, bumps version again → oscillation.
     const indexEntry = { id: "note-1", version: 1, encrypted: false };
     const contentEntry = { id: "note-1", strokes: [] };
     mockNotesStore.get.mockResolvedValue({ ...indexEntry });
@@ -237,12 +240,10 @@ describe("StorageWorker", () => {
         thumbnail: "data:image/jpeg;base64,/9j/abc",
       }),
     );
-    // Index store MUST bump version and mark unsynced
+    // Index store MUST NOT bump version or set synced=false
+    expect(mockNotesStore.put).toHaveBeenCalledWith(expect.not.objectContaining({ synced: false }));
     expect(mockNotesStore.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        version: 2,
-        synced: false,
-      }),
+      expect.objectContaining({ version: 1 }), // version unchanged
     );
     // Transaction must use both stores
     expect(mockDb.transaction).toHaveBeenCalledWith(["notes", "noteContent"], "readwrite");
