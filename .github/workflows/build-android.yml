@@ -1,0 +1,74 @@
+name: Build Android
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - run: npm ci
+
+      - name: Write key.properties
+        run: |
+          mkdir -p src-tauri/gen/android/app
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            '${{ secrets.ANDROID_KEYSTORE_PATH }}' \
+            '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}' \
+            '${{ secrets.ANDROID_KEY_ALIAS }}' \
+            '${{ secrets.ANDROID_KEY_PASSWORD }}' \
+            > src-tauri/gen/android/key.properties
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/gen/android/app/release.keystore
+
+      - name: Build Android APK (all targets)
+        run: npm run tauri android build -- --apk true --target aarch64 armv7 i686 x86_64
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+
+      - name: Build Android AAB (all targets)
+        run: npm run tauri android build -- --aab true --target aarch64 armv7 i686 x86_64
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+
+      - name: Upload APK + AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: noteberg-android
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
