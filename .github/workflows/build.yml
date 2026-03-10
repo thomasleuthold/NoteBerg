@@ -169,24 +169,25 @@ jobs:
 
       - name: Write key.properties
         run: |
-          cat > src-tauri/gen/android/key.properties <<EOF
-          storeFile=${{ secrets.ANDROID_KEYSTORE_PATH }}
-          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-          EOF
+          mkdir -p src-tauri/gen/android/app
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            '${{ secrets.ANDROID_KEYSTORE_PATH }}' \
+            '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}' \
+            '${{ secrets.ANDROID_KEY_ALIAS }}' \
+            '${{ secrets.ANDROID_KEY_PASSWORD }}' \
+            > src-tauri/gen/android/key.properties
 
       - name: Decode keystore
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/gen/android/app/release.keystore
 
-      - name: Build Android APK (universal)
-        run: npm run tauri android build -- --apk true --target universal
+      - name: Build Android APK (all targets)
+        run: npm run tauri android build -- --apk --target aarch64 armv7 i686 x86_64
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
-      - name: Build Android AAB (universal)
-        run: npm run tauri android build -- --aab true --target universal
+      - name: Build Android AAB (all targets)
+        run: npm run tauri android build -- --aab --target aarch64 armv7 i686 x86_64
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
@@ -195,8 +196,8 @@ jobs:
         with:
           name: noteberg-android
           path: |
-            src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/universalRelease/*.aab
+            src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
 
   # ─── iOS ────────────────────────────────────────────────────────────────────
   # IMPORTANT: iOS requires two manual steps first (run locally on a Mac):
