@@ -169,12 +169,13 @@ jobs:
 
       - name: Write key.properties
         run: |
-          cat > src-tauri/gen/android/key.properties <<EOF
-          storeFile=${{ secrets.ANDROID_KEYSTORE_PATH }}
-          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-          EOF
+          mkdir -p src-tauri/gen/android/app
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            '${{ secrets.ANDROID_KEYSTORE_PATH }}' \
+            '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}' \
+            '${{ secrets.ANDROID_KEY_ALIAS }}' \
+            '${{ secrets.ANDROID_KEY_PASSWORD }}' \
+            > src-tauri/gen/android/key.properties
 
       - name: Decode keystore
         run: |
