@@ -1,0 +1,53 @@
+name: Build Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install .NET SDK (recognition sidecar)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Build recognition sidecar
+        run: |
+          dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained true -o src-tauri/binaries/temp
+          Copy-Item "src-tauri/binaries/temp/NoteBerg.Recognition.exe" -Destination "src-tauri/binaries/NoteBerg.Recognition-x86_64-pc-windows-gnu.exe" -Force
+          Copy-Item "src-tauri/binaries/temp/NoteBerg.Recognition.exe" -Destination "src-tauri/binaries/NoteBerg.Recognition-x86_64-pc-windows-msvc.exe" -Force
+          Copy-Item "src-tauri/binaries/temp/appsettings.json" -Destination "src-tauri/binaries/appsettings.json" -Force
+          Remove-Item -Recurse -Force "src-tauri/binaries/temp"
+        shell: powershell
+
+      - run: npm ci
+
+      - name: Build Tauri app (Windows)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          tauriScript: npm run tauri
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: noteberg-windows
+          path: src-tauri/target/release/bundle/msi/*.msi
