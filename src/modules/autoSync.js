@@ -89,14 +89,18 @@ export function stopInactivityTimer() {
 /**
  * Sync when note is closed
  * @param {string} noteId - Note ID that was closed
+ * @param {Object} [options]
+ * @param {boolean} [options.forceSync] - If true, sync even when the note appears clean.
+ *   Use this when media was changed: the Web Worker's SAVE_MEDIA message may not have been
+ *   processed by IndexedDB yet when we read the synced flag, causing a false "no changes" skip.
  */
-export async function syncOnNoteClose(noteId) {
+export async function syncOnNoteClose(noteId, { forceSync = false } = {}) {
   stopInactivityTimer();
 
   if (!(await isAuthenticated())) return;
 
   const note = await getNoteIndex(noteId);
-  if (note?.synced !== false) {
+  if (note?.synced !== false && !forceSync) {
     console.log(`Auto-sync: Note ${noteId} has no local changes, skipping sync`);
     return;
   }

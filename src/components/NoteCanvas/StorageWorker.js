@@ -9,7 +9,7 @@
  *   SAVE_STROKES   → noteContent (strokes) + notes (modified/version/synced/hasStrokes)
  *   SAVE_MEDIA     → noteContent (media)   + notes (modified/version/synced)
  *   SAVE_PRESETS   → noteContent (penPresets) + notes (modified/version/synced)
- *   SAVE_THUMBNAIL → noteContent (thumbnail base64) + notes (modified/version/synced)
+ *   SAVE_THUMBNAIL → noteContent (thumbnail base64) only — does NOT touch notes index
  *   SAVE_TASKS     → noteContent (tasks)   + notes (modified/version/synced)
  *   SAVE_CONTENT   → noteContent (content) + notes (modified/version/synced/hasContent)
  */
@@ -167,9 +167,11 @@ async function processMessage(e) {
         thumbnailData = await encryptObject(thumbnail, key);
       }
       content.thumbnail = thumbnailData;
-      index.modified = Date.now();
-      index.version = (index.version || 0) + 1;
-      index.synced = false;
+      // Do NOT update modified/version/synced — thumbnails are UI-only metadata.
+      // Bumping these fields causes the note to be re-uploaded on every sync,
+      // and the new modified timestamp triggers a download on the other device,
+      // which saves the note, generates a thumbnail, bumps modified again → infinite oscillation.
+      index.hasThumbnail = true;
       await Promise.all([notesStore.put(index), contentStore.put(content)]);
     }
 

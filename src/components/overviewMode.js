@@ -703,7 +703,7 @@ function renderPreviewNoteCard(note) {
 
   let previewContent = "";
 
-  if (hasDrawings || hasBackground || hasText) {
+  if (hasDrawings || hasBackground || hasText || note.hasThumbnail) {
     // Emit a canvas placeholder; renderNotePreviews() will fill it with the thumbnail
     // (fast path) or lazy-load strokes/content for live rendering (fallback).
     // Text content from index is not available here — the thumbnail covers it.

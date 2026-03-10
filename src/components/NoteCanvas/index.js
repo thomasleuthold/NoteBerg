@@ -76,10 +76,10 @@ export function initNoteCanvasComponent() {
       noteCanvasInstance = null;
 
       if (noteId) {
-        await destroyPromise;
+        const destroyResult = await destroyPromise;
         // Thumbnail has been saved to DB by now — refresh the overview so it picks it up.
         window.dispatchEvent(new CustomEvent("datachange"));
-        syncOnNoteClose(noteId);
+        syncOnNoteClose(noteId, { forceSync: destroyResult?.mediaChanged === true });
       }
     }
   });
