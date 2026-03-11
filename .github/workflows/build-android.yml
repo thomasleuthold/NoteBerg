@@ -58,17 +58,10 @@ jobs:
       - name: Build Android APK (all targets)
         run: npm run tauri android build -- --apk true --target aarch64 armv7 i686 x86_64
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
-      - name: Build Android AAB (all targets)
-        run: npm run tauri android build -- --aab true --target aarch64 armv7 i686 x86_64
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-
-      - name: Upload APK + AAB
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: noteberg-android
-          path: |
-            src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          path: src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
