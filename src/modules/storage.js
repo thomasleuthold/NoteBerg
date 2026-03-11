@@ -51,6 +51,7 @@ const INDEX_FIELDS = new Set([
   "hasStrokes",
   "hasContent",
   "hasRecognition",
+  "hasThumbnail",
   "media", // metadata-only snapshot — see splitNote()
 ]);
 
@@ -86,6 +87,7 @@ function splitNote(note) {
     note.recognition != null &&
     typeof note.recognition.fullText === "string" &&
     note.recognition.fullText.length > 0;
+  index.hasThumbnail = typeof note.thumbnail === "string" && note.thumbnail.length > 0;
 
   return { index, content };
 }

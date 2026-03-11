@@ -95,6 +95,42 @@ async function runInBatches(items, batchSize, fn) {
 }
 
 /**
+ * Decrypt a locally-encrypted note into plain objects.
+ * If the note is not locally encrypted, returns the note unchanged.
+ * @param {Object} note - Note object (may be locally encrypted)
+ * @returns {Promise<Object>} - Note with all content fields decrypted
+ */
+async function decryptNoteLocally(note) {
+  if (!note.encrypted) return note;
+
+  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+  const { decryptObject } = await import("./encryption.js");
+
+  if (!isAppUnlocked()) {
+    throw new Error("Cannot upload encrypted note - app is locked");
+  }
+
+  const key = getEncryptionKey();
+  const isBlob = (v) =>
+    v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
+
+  return {
+    ...note,
+    content: isBlob(note.content) ? await decryptObject(note.content, key) : note.content,
+    strokes: isBlob(note.strokes) ? await decryptObject(note.strokes, key) : note.strokes,
+    media: isBlob(note.media) ? await decryptObject(note.media, key) : note.media,
+    tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
+    recognition: isBlob(note.recognition)
+      ? await decryptObject(note.recognition, key)
+      : note.recognition,
+    thumbnail: isBlob(note.thumbnail)
+      ? await decryptObject(note.thumbnail, key)
+      : (note.thumbnail ?? null),
+    encrypted: undefined,
+  };
+}
+
+/**
  * Encrypt note data for Nextcloud upload if encryption is enabled
  * Handles conversion between local encryption and Nextcloud encryption formats
  * @param {Object} note - Note object (may be locally encrypted)
@@ -105,34 +141,7 @@ async function encryptNoteForNextcloud(note) {
 
   // If the note has locally-encrypted content blobs, decrypt them first so the
   // Nextcloud file always contains readable JSON regardless of local encryption setting.
-  let decryptedNote = note;
-  if (note.encrypted) {
-    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
-    const { decryptObject } = await import("./encryption.js");
-
-    if (!isAppUnlocked()) {
-      throw new Error("Cannot upload encrypted note - app is locked");
-    }
-
-    const key = getEncryptionKey();
-    const isBlob = (v) =>
-      v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
-
-    decryptedNote = {
-      ...note,
-      content: isBlob(note.content) ? await decryptObject(note.content, key) : note.content,
-      strokes: isBlob(note.strokes) ? await decryptObject(note.strokes, key) : note.strokes,
-      media: isBlob(note.media) ? await decryptObject(note.media, key) : note.media,
-      tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
-      recognition: isBlob(note.recognition)
-        ? await decryptObject(note.recognition, key)
-        : note.recognition,
-      thumbnail: isBlob(note.thumbnail)
-        ? await decryptObject(note.thumbnail, key)
-        : (note.thumbnail ?? null),
-      encrypted: undefined,
-    };
-  }
+  const decryptedNote = await decryptNoteLocally(note);
 
   // Encrypt for Nextcloud if enabled
   if (!shouldEncryptForNextcloud) {
@@ -1352,11 +1361,15 @@ export async function syncNotes(notes) {
         // Keep original modified timestamp to preserve history
       };
 
-      // Sync media files (upload binaries)
-      await syncNoteMedia(syncedNote);
+      // Decrypt local encryption before syncing media — syncNoteMedia needs a plain media array.
+      // decryptNoteLocally is a no-op when note.encrypted is falsy.
+      const decryptedNote = await decryptNoteLocally(syncedNote);
+
+      // Sync media files (upload binaries) — must use decrypted media array
+      await syncNoteMedia(decryptedNote);
 
       // Clean up orphaned media files (deleted from note but still on server)
-      await cleanupOrphanedMedia(syncedNote);
+      await cleanupOrphanedMedia(decryptedNote);
 
       // Encrypt note for Nextcloud if encryption is enabled
       const encryptedNote = await encryptNoteForNextcloud(syncedNote);
@@ -1554,11 +1567,17 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
   notes.push(...downloadedNotes.filter((n) => n));
 
   // Check media for unchanged notes (fix for missing images)
+  // Must use getRawNote to get the full content (with fileIds) — the index stub
+  // only has {id, name, type, size, deleted} with no fileId, so downloadNoteMedia
+  // would skip every item and never download any binaries.
   if (mediaCheckQueue.length > 0) {
     console.log(`[Sync] Checking media for ${mediaCheckQueue.length} unchanged notes...`);
-    await runInBatches(mediaCheckQueue, CONCURRENCY, async (note) => {
-      const remoteMedia = remoteMediaMap.get(note.id);
-      await downloadNoteMedia(note, remoteMedia);
+    await runInBatches(mediaCheckQueue, CONCURRENCY, async (stub) => {
+      const remoteMedia = remoteMediaMap.get(stub.id);
+      if (!remoteMedia || remoteMedia.length === 0) return; // no remote media, skip
+      const fullNote = await getRawNote(stub.id);
+      if (!fullNote) return;
+      await downloadNoteMedia(fullNote, remoteMedia);
     });
   }
 

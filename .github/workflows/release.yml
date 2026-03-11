@@ -1,0 +1,207 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.5.23)"
+        required: true
+      platform:
+        description: "Platform to build"
+        required: true
+        type: choice
+        options:
+          - windows
+          - linux
+          - macos
+          - android
+
+jobs:
+  # ─── Windows ────────────────────────────────────────────────────────────────
+  release-windows:
+    if: ${{ inputs.platform == 'windows' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install .NET SDK (recognition sidecar)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Build recognition sidecar
+        run: |
+          dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained true -o src-tauri/binaries/temp
+          Copy-Item "src-tauri/binaries/temp/NoteBerg.Recognition.exe" -Destination "src-tauri/binaries/NoteBerg.Recognition-x86_64-pc-windows-gnu.exe" -Force
+          Copy-Item "src-tauri/binaries/temp/NoteBerg.Recognition.exe" -Destination "src-tauri/binaries/NoteBerg.Recognition-x86_64-pc-windows-msvc.exe" -Force
+          Copy-Item "src-tauri/binaries/temp/appsettings.json" -Destination "src-tauri/binaries/appsettings.json" -Force
+          Remove-Item -Recurse -Force "src-tauri/binaries/temp"
+        shell: powershell
+
+      - run: npm ci
+
+      - name: Build Tauri app (Windows)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          tauriScript: npm run tauri
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: src-tauri/target/release/bundle/msi/*.msi
+
+  # ─── Linux ──────────────────────────────────────────────────────────────────
+  release-linux:
+    if: ${{ inputs.platform == 'linux' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libglib2.0-dev
+
+      - run: npm ci
+
+      - name: Build Tauri app (Linux)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          tauriScript: npm run tauri
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+
+  # ─── macOS ──────────────────────────────────────────────────────────────────
+  release-macos:
+    if: ${{ inputs.platform == 'macos' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build Tauri app (macOS)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          tauriScript: npm run tauri
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: src-tauri/target/release/bundle/dmg/*.dmg
+
+  # ─── Android ────────────────────────────────────────────────────────────────
+  release-android:
+    if: ${{ inputs.platform == 'android' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - run: npm ci
+
+      - name: Write key.properties
+        run: |
+          mkdir -p src-tauri/gen/android/app
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            '${{ secrets.ANDROID_KEYSTORE_PATH }}' \
+            '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}' \
+            '${{ secrets.ANDROID_KEY_ALIAS }}' \
+            '${{ secrets.ANDROID_KEY_PASSWORD }}' \
+            > src-tauri/gen/android/key.properties
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/gen/android/app/release.keystore
+
+      - name: Build Android APK (all targets)
+        run: npm run tauri android build -- --apk true --target aarch64 armv7 i686 x86_64
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk

@@ -754,6 +754,67 @@ describe("Nextcloud Sync Module", () => {
       // Should track deletions
       expect(merged.deletedMedia).toContain("media-B");
     });
+
+    it("should upload media for locally-encrypted notes", async () => {
+      // Regression test: syncNoteMedia was called BEFORE decryptNoteLocally, so
+      // note.media was an encrypted blob {data, iv} and the media upload was silently skipped.
+      const noteId = "note-encrypted-media";
+      const fileId = "file-enc-123";
+      const plainMediaArray = [{ id: "m1", fileId: fileId, type: "image" }];
+
+      // Simulate a locally-encrypted note: media is an encrypted blob
+      const note = {
+        id: noteId,
+        notebookId: "nb1",
+        title: "Encrypted Note",
+        encrypted: true,
+        content: { data: "enc-content", iv: "iv1" },
+        strokes: { data: "enc-strokes", iv: "iv2" },
+        media: { data: "enc-media", iv: "iv3" }, // ← encrypted blob, not array
+        tasks: { data: "enc-tasks", iv: "iv4" },
+        recognition: null,
+        thumbnail: null,
+        modified: Date.now(),
+      };
+
+      // Ensure parent folders exist
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+
+      // Mock masterPassword and encryption so decryptNoteLocally can run
+      vi.doMock("./masterPassword.js", () => ({
+        isAppUnlocked: () => true,
+        getEncryptionKey: () => "test-key",
+      }));
+      vi.doMock("./encryption.js", () => ({
+        decryptObject: vi.fn(async (blob) => {
+          // Return the plain media array when the media blob is decrypted
+          if (blob === note.media) return plainMediaArray;
+          if (blob === note.content) return "";
+          if (blob === note.strokes) return [];
+          if (blob === note.tasks) return [];
+          return null;
+        }),
+        encryptObject: vi.fn(async (_v) => ({ data: "re-encrypted", iv: "iv" })),
+      }));
+
+      const result = await syncNotes([note]);
+      expect(result.uploaded).toBe(1);
+
+      // The note JSON should be uploaded
+      expect(mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}.json`)).toBe(true);
+
+      // The media binary MUST be uploaded — this was the bug
+      expect(
+        mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}_media/${fileId}.bin`),
+      ).toBe(true);
+
+      vi.doUnmock("./masterPassword.js");
+      vi.doUnmock("./encryption.js");
+    });
   });
 
   describe("Edge Cases & Features", () => {

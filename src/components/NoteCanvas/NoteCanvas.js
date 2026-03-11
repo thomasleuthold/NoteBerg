@@ -4457,6 +4457,9 @@ export class NoteCanvas {
       }
     };
 
+    // Capture flags before clearing state
+    const hadMediaChanges = this.mediaChanged;
+
     // Clear state
     this.noteId = null;
     this.noteData = null;
@@ -4467,7 +4470,10 @@ export class NoteCanvas {
       window.__noteCanvas = null;
     }
 
-    // Return promise that resolves when all async work (thumbnail + recognition) completes
+    // Return promise that resolves when all async work (thumbnail + recognition) completes.
+    // Resolves with { mediaChanged } so callers can decide whether to force a sync even
+    // when the note's synced flag appears clean (the Web Worker may not have processed
+    // SAVE_MEDIA yet when syncOnNoteClose reads the index store).
     let pendingThumbnail;
     if (this._pendingThumbnailSave) {
       pendingThumbnail = this._pendingThumbnailSave
@@ -4480,7 +4486,9 @@ export class NoteCanvas {
 
     // Wait for both thumbnail save and recognition to complete before sync
     return pendingRecognition
-      ? Promise.all([pendingThumbnail, pendingRecognition]).then(() => {})
-      : pendingThumbnail;
+      ? Promise.all([pendingThumbnail, pendingRecognition]).then(() => ({
+          mediaChanged: hadMediaChanges,
+        }))
+      : pendingThumbnail.then(() => ({ mediaChanged: hadMediaChanges }));
   }
 }
