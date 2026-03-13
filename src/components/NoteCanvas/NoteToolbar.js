@@ -86,15 +86,19 @@ function getTextIcon(size = 24) {
 }
 
 /**
- * Generate part eraser icon SVG (stroke with a gap in the middle)
+ * Generate part eraser icon SVG (eraser shape with a stroke passing through it, gap inside)
  * @param {number} size
  * @returns {string}
  */
 function getPartEraserIcon(size = 24) {
+  // Eraser shape (same as stroke eraser) overlapping a diagonal stroke.
+  // The stroke is visible on both sides of the eraser but absent underneath it,
+  // conveying that only the part under the eraser is removed.
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M2 12h7"/>
-    <path d="M15 12h7"/>
-    <circle cx="11" cy="12" r="2" fill="currentColor" stroke="none" opacity="0.5"/>
+    <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.9-9.9c1-1 2.5-1 3.4 0l4.4 4.4c1 1 1 2.5 0 3.4L10.5 21z"/>
+    <path d="m22 21-8 0"/>
+    <path d="m1 21 4 0"/>
+    <path d="m18 11-4-4"/>
   </svg>`;
 }
 
