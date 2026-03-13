@@ -42,6 +42,7 @@ import {
   DeleteMediaCommand,
   DrawStrokeCommand,
   EraseStrokesCommand,
+  EraseStrokePartsCommand,
   InsertMediaCommand,
   MarkTaskCommand,
   PasteStrokesCommand,
@@ -229,6 +230,12 @@ export class NoteCanvas {
 
     // Eraser batching for undo (multiple strokes erased in one gesture = one undo)
     this._eraserBatch = null;
+
+    // Eraser settings
+    this.eraserMode = "stroke"; // 'stroke' | 'part'
+    this.eraserSize = 20; // diameter in screen pixels
+    this.eraserHighlighterOnly = false;
+    this._partEraserOps = null; // Array of ops accumulated during a part-erase gesture
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -623,6 +630,14 @@ export class NoteCanvas {
         },
         onUndo: () => this.historyManager?.undo(),
         onRedo: () => this.historyManager?.redo(),
+        onEraserSettingsChange: ({ eraserMode, eraserSize, eraserHighlighterOnly }) => {
+          if (eraserMode !== undefined) {
+            this.eraserMode = eraserMode;
+            this.toolbar.updateEraserIcon(eraserMode);
+          }
+          if (eraserSize !== undefined) this.eraserSize = eraserSize;
+          if (eraserHighlighterOnly !== undefined) this.eraserHighlighterOnly = eraserHighlighterOnly;
+        },
       },
     );
     this.toolbar.updateMode(this.mode);
@@ -1944,7 +1959,11 @@ export class NoteCanvas {
     if (this.mode === "eraser" || this.mode === "lasso") {
       if (this.mode === "eraser") {
         // Commit eraser batch to history (multiple strokes = one undo)
-        this._commitEraserBatch();
+        if (this.eraserMode === "stroke") {
+          this._commitEraserBatch();
+        } else {
+          this._commitPartEraserBatch();
+        }
       } else if (this.mode === "lasso") {
         this._handleLassoEnd();
       }
@@ -3259,8 +3278,8 @@ export class NoteCanvas {
     const rect = this.scroller.getViewportElement().getBoundingClientRect();
     const screenX = clientX - rect.left;
     const screenY = clientY - rect.top;
-    const eraserRadius = 10; // Screen pixels
-    this.renderer.drawEraserCursor(screenX, screenY, eraserRadius);
+    const eraserRadius = this.eraserSize / 2; // Screen pixels (eraserSize is diameter)
+    this.renderer.drawEraserCursor(screenX, screenY, eraserRadius, this.eraserMode);
 
     // 2. Erase strokes
     // Convert screen radius to content radius for hit testing
@@ -3269,32 +3288,121 @@ export class NoteCanvas {
 
     // Query potential hits
     const candidates = this.spatialIndex.query(contentY - queryPadding, contentY + queryPadding);
-    const newlyErased = [];
 
-    for (const index of candidates) {
-      const stroke = this.noteData.strokes[index];
-      if (stroke._deleted) continue;
+    if (this.eraserMode === "stroke") {
+      const newlyErased = [];
 
-      if (this._strokeIntersectsCircle(stroke, contentX, contentY, contentRadius)) {
-        stroke._deleted = true;
-        newlyErased.push({ index, id: stroke.id });
-        if (stroke.id) {
-          this.noteData.deletedStrokes.push(stroke.id);
+      for (const index of candidates) {
+        const stroke = this.noteData.strokes[index];
+        if (stroke._deleted) continue;
+        if (this.eraserHighlighterOnly && stroke.type !== "marker") continue;
+
+        if (this._strokeIntersectsCircle(stroke, contentX, contentY, contentRadius)) {
+          stroke._deleted = true;
+          newlyErased.push({ index, id: stroke.id });
+          if (stroke.id) {
+            this.noteData.deletedStrokes.push(stroke.id);
+          }
         }
       }
-    }
 
-    if (newlyErased.length > 0) {
-      // Add to eraser batch for undo (multiple strokes in one gesture = one undo)
-      if (!this._eraserBatch) {
-        this._eraserBatch = [];
+      if (newlyErased.length > 0) {
+        // Add to eraser batch for undo (multiple strokes in one gesture = one undo)
+        if (!this._eraserBatch) {
+          this._eraserBatch = [];
+        }
+        this._eraserBatch.push(...newlyErased);
+
+        this.renderer.forceRedraw();
+        this.strokeManager.markDirty();
+        this.strokeManager.forceSave();
+        this.strokesChanged = true;
       }
-      this._eraserBatch.push(...newlyErased);
+    } else {
+      // Part eraser: split strokes in real-time
+      if (!this._partEraserOps) {
+        this._partEraserOps = [];
+      }
 
-      this.renderer.forceRedraw();
-      this.strokeManager.markDirty();
-      this.strokeManager.forceSave(); // Save changes
-      this.strokesChanged = true;
+      let anyChanged = false;
+
+      for (const index of candidates) {
+        const stroke = this.noteData.strokes[index];
+        if (stroke._deleted) continue;
+        if (this.eraserHighlighterOnly && stroke.type !== "marker") continue;
+
+        // Effective erase radius accounts for the stroke's own half-width so
+        // wide markers are hit even when the eraser only overlaps their ink,
+        // not their center-line.
+        const halfWidth = (stroke.width || 2) / 2;
+        const effectiveR = contentRadius + halfWidth;
+        const effectiveRSq = effectiveR * effectiveR;
+
+        // Find which point indices are within the effective eraser radius.
+        // Test segment-circle intersection: for each segment [i, i+1], if the
+        // closest point on the segment to the eraser center is within effectiveR,
+        // mark both endpoints as removed.
+        const removedSet = new Set();
+        const n = stroke.x.length;
+        for (let i = 0; i < n; i++) {
+          // Test the point itself
+          const dx = stroke.x[i] - contentX;
+          const dy = stroke.y[i] - contentY;
+          if (dx * dx + dy * dy <= effectiveRSq) {
+            removedSet.add(i);
+          }
+          // Test segment to next point
+          if (i < n - 1) {
+            const ax = stroke.x[i],   ay = stroke.y[i];
+            const bx = stroke.x[i+1], by = stroke.y[i+1];
+            const abx = bx - ax, aby = by - ay;
+            const acx = contentX - ax, acy = contentY - ay;
+            const ab2 = abx * abx + aby * aby;
+            if (ab2 > 0) {
+              const t = Math.max(0, Math.min(1, (acx * abx + acy * aby) / ab2));
+              const closestX = ax + t * abx - contentX;
+              const closestY = ay + t * aby - contentY;
+              if (closestX * closestX + closestY * closestY <= effectiveRSq) {
+                removedSet.add(i);
+                removedSet.add(i + 1);
+              }
+            }
+          }
+        }
+        if (removedSet.size === 0) continue;
+
+        // Split and replace in real-time
+        const subStrokes = this._splitStrokeByRemovedPoints(stroke, removedSet);
+
+        // Soft-delete original
+        stroke._deleted = true;
+        if (stroke.id && !this.noteData.deletedStrokes.includes(stroke.id)) {
+          this.noteData.deletedStrokes.push(stroke.id);
+        }
+
+        // Push sub-strokes into noteData.strokes and spatial index
+        const subStrokeEntries = subStrokes.map((s) => {
+          const subIndex = this.noteData.strokes.length;
+          this.noteData.strokes.push(s);
+          this.spatialIndex.insert(s, subIndex);
+          return { stroke: s, index: subIndex };
+        });
+
+        this._partEraserOps.push({
+          originalIndex: index,
+          originalId: stroke.id,
+          subStrokes: subStrokeEntries,
+        });
+
+        anyChanged = true;
+      }
+
+      if (anyChanged) {
+        this.renderer.forceRedraw();
+        this.strokeManager.markDirty();
+        this.strokeManager.forceSave();
+        this.strokesChanged = true;
+      }
     }
   }
 
@@ -3309,6 +3417,60 @@ export class NoteCanvas {
       this._cleanupOrphanedTasks();
     }
     this._eraserBatch = null;
+  }
+
+  _commitPartEraserBatch() {
+    if (this._partEraserOps && this._partEraserOps.length > 0) {
+      const cmd = new EraseStrokePartsCommand(this._partEraserOps);
+      this.historyManager?.push(cmd);
+      this._cleanupOrphanedTasks();
+    }
+    this._partEraserOps = null;
+  }
+
+  /**
+   * Split a stroke into sub-strokes by removing a set of point indices.
+   * Returns contiguous segments of remaining points (each with at least 2 points).
+   * @param {object} stroke
+   * @param {Set<number>} removedSet
+   * @returns {object[]}
+   */
+  _splitStrokeByRemovedPoints(stroke, removedSet) {
+    const totalPoints = stroke.x.length;
+    const subStrokes = [];
+    let segmentStart = null;
+
+    for (let i = 0; i <= totalPoints; i++) {
+      const isRemoved = i === totalPoints || removedSet.has(i);
+
+      if (!isRemoved && segmentStart === null) {
+        segmentStart = i;
+      } else if (isRemoved && segmentStart !== null) {
+        const length = i - segmentStart;
+        if (length >= 2) {
+          const subStroke = {
+            id: generateId(),
+            x: stroke.x.slice(segmentStart, i),
+            y: stroke.y.slice(segmentStart, i),
+            pressure: stroke.pressure.slice(segmentStart, i),
+            time: stroke.time.slice(segmentStart, i),
+            colorIndex: stroke.colorIndex,
+            width: stroke.width,
+            pointerType: stroke.pointerType,
+            type: stroke.type,
+          };
+          // Marker sub-strokes share a groupId so the renderer can draw them
+          // as one path, preserving flat alpha (no alpha stacking at joins).
+          if (stroke.type === "marker") {
+            subStroke.groupId = stroke.groupId || stroke.id;
+          }
+          subStrokes.push(subStroke);
+        }
+        segmentStart = null;
+      }
+    }
+
+    return subStrokes;
   }
 
   _strokeIntersectsCircle(stroke, cx, cy, r) {

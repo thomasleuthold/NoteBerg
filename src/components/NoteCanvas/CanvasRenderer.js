@@ -13,6 +13,7 @@ import {
   drawStroke as sharedDrawStroke,
   getMarkerPalette as sharedGetMarkerPalette,
   getThemePalette as sharedGetThemePalette,
+  MARKER_ALPHA,
 } from "../../utils/noteRenderer.js";
 import {
   getMediaHandles,
@@ -25,6 +26,81 @@ import {
 const HIGHLIGHT_FILL_STYLE = "rgba(255, 255, 0, 0.3)";
 const HIGHLIGHT_STROKE_STYLE = "rgba(255, 200, 0, 0.8)";
 const HIGHLIGHT_LINE_WIDTH = 2;
+
+/**
+ * Draw a list of marker strokes onto ctx, grouping sub-strokes that share a
+ * groupId into a single beginPath…stroke() call so their alpha doesn't stack.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object[]} markerStrokes - Array of marker stroke objects
+ * @param {string[]} palette - Theme palette (unused for markers, but kept for signature parity)
+ * @param {Set<string>} [selectedIds] - Set of selected stroke IDs (for selection highlight)
+ */
+function drawMarkersGrouped(ctx, markerStrokes, palette, selectedIds = null) {
+  if (markerStrokes.length === 0) return;
+
+  // Group by groupId, falling back to individual stroke id
+  const groups = new Map(); // key -> stroke[]
+  const groupOrder = [];
+  for (const stroke of markerStrokes) {
+    const key = stroke.groupId || stroke.id;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      groupOrder.push(key);
+    }
+    groups.get(key).push(stroke);
+  }
+
+  const colors = sharedGetMarkerPalette();
+
+  for (const key of groupOrder) {
+    const group = groups.get(key);
+    const first = group[0];
+    const isSelected = selectedIds != null && group.some((s) => selectedIds.has(s.id));
+
+    if (group.length === 1) {
+      // Single stroke — delegate to shared draw (handles edge cases)
+      sharedDrawStroke(ctx, first, palette, isSelected, false);
+    } else {
+      // Multiple sub-strokes from the same original — draw as one flat-alpha path.
+      // Selection underline pass (drawn at full opacity beneath the marker color).
+      if (isSelected) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(0, 100, 255, 0.7)";
+        ctx.lineWidth = (first.width || 2) + 4;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        for (const s of group) {
+          ctx.moveTo(s.x[0], s.y[0]);
+          for (let i = 1; i < s.x.length; i++) {
+            ctx.lineTo(s.x[i], s.y[i]);
+          }
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      const color =
+        first.colorIndex !== undefined ? colors[first.colorIndex] : colors[0];
+
+      ctx.save();
+      ctx.globalAlpha = MARKER_ALPHA;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = first.width || 2;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (const s of group) {
+        ctx.moveTo(s.x[0], s.y[0]);
+        for (let i = 1; i < s.x.length; i++) {
+          ctx.lineTo(s.x[i], s.y[i]);
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
 
 export class CanvasRenderer {
   /**
@@ -525,13 +601,20 @@ export class CanvasRenderer {
    * @param {number} y - Screen Y coordinate
    * @param {number} radius - Radius in screen pixels
    */
-  drawEraserCursor(x, y, radius = 10) {
+  drawEraserCursor(x, y, radius = 10, eraserMode = "stroke") {
     this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
     this.overlayCtx.beginPath();
     this.overlayCtx.arc(x, y, radius, 0, Math.PI * 2);
-    this.overlayCtx.strokeStyle = "rgba(255, 0, 0, 0.5)";
+    if (eraserMode === "part") {
+      this.overlayCtx.setLineDash([4, 3]);
+      this.overlayCtx.strokeStyle = "rgba(59, 130, 246, 0.7)";
+    } else {
+      this.overlayCtx.setLineDash([]);
+      this.overlayCtx.strokeStyle = "rgba(255, 0, 0, 0.5)";
+    }
     this.overlayCtx.lineWidth = 2;
     this.overlayCtx.stroke();
+    this.overlayCtx.setLineDash([]);
   }
 
   /**
@@ -763,7 +846,7 @@ export class CanvasRenderer {
     this.ctx.translate(0, -this.bufferTop);
 
     try {
-      // Helper to draw a list of indices
+      // Helper to draw a list of pen indices (no grouping needed)
       const drawList = (indices) => {
         for (const index of indices) {
           const stroke = this.strokes[index];
@@ -772,8 +855,14 @@ export class CanvasRenderer {
         }
       };
 
-      // Draw markers first (lower z-index)
-      drawList(markers);
+      // Helper to draw marker indices, grouping sub-strokes that share a groupId
+      // into one beginPath…stroke() call so their alpha doesn't stack.
+      // Draw markers first (lower z-index), grouped by groupId to preserve flat alpha.
+      const markerStrokes = markers.map((i) => this.strokes[i]);
+      const selectedIds = new Set(
+        [...this.selectedStrokeIndices].map((i) => this.strokes[i]?.id).filter(Boolean),
+      );
+      drawMarkersGrouped(this.ctx, markerStrokes, this.palette, selectedIds);
       // Draw pens on top
       drawList(pens);
 
@@ -1443,10 +1532,11 @@ export class CanvasRenderer {
       }
     }
 
-    // Draw markers then pens
-    [...markers, ...pens].forEach((stroke) => {
+    // Draw markers (grouped by groupId to preserve flat alpha), then pens
+    drawMarkersGrouped(targetCtx, markers, this.palette);
+    for (const stroke of pens) {
       sharedDrawStroke(targetCtx, stroke, this.palette, false, false);
-    });
+    }
 
     targetCtx.restore();
     return { bgColor };

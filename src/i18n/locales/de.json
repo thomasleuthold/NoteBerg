@@ -409,6 +409,12 @@
     },
     "tasks": {
       "selectStrokes": "Klicken, um Aufgabenstriche auszuwählen"
+    },
+    "eraser": {
+      "strokeEraser": "Strich-Radierer",
+      "partEraser": "Teil-Radierer",
+      "highlighterOnly": "Nur Markierungen radieren",
+      "size": "Größe"
     }
   },
   "licenses": {
