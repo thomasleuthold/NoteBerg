@@ -1228,3 +1228,218 @@
   background-color: var(--color-primary);
   border-color: var(--color-primary);
 }
+
+/* ==========================================================================
+   Sound Dialog
+   ========================================================================== */
+
+.sound-dialog__trigger-btn {
+  position: absolute;
+  top: 12px;
+  right: 64px; /* 16px (navigator right) + 40px (navigator width) + 8px gap */
+  z-index: 15;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.sound-dialog__trigger-btn:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+}
+
+.sound-dialog__trigger-btn--recording {
+  color: var(--color-danger, #e53e3e);
+  border-color: var(--color-danger, #e53e3e);
+}
+
+.sound-dialog {
+  position: absolute;
+  top: 60px; /* 12px top + 40px button + 8px gap */
+  right: 64px;
+  z-index: 200;
+  width: 300px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.sound-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.sound-dialog__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sound-dialog__close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.sound-dialog__close-btn:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+  color: var(--text-primary);
+}
+
+.sound-dialog__active-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.sound-dialog__rec-indicator {
+  color: var(--color-danger, #e53e3e);
+  font-size: 14px;
+  animation: sound-dialog-pulse 1s ease-in-out infinite;
+}
+
+@keyframes sound-dialog-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.sound-dialog__rec-label {
+  flex: 1;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+}
+
+.sound-dialog__rec-timer {
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  min-width: 36px;
+  text-align: right;
+}
+
+.sound-dialog__new-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-primary);
+  cursor: pointer;
+  color: var(--color-primary, #3b82f6);
+  font-size: 0.875rem;
+  text-align: left;
+}
+
+.sound-dialog__new-btn:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+}
+
+.sound-dialog__list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.sound-dialog__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.sound-dialog__row:last-child {
+  border-bottom: none;
+}
+
+.sound-dialog__row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sound-dialog__row-name {
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sound-dialog__row-duration {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sound-dialog__row-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.sound-dialog__icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.sound-dialog__icon-btn:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+  color: var(--text-primary);
+}
+
+.sound-dialog__icon-btn--stop {
+  color: var(--color-danger, #e53e3e);
+}
+
+.sound-dialog__icon-btn--danger:hover {
+  color: var(--color-danger, #e53e3e);
+}
+
+.sound-dialog__empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  margin: 0;
+}

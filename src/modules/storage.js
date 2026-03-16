@@ -14,12 +14,15 @@
  *   synced, lastSyncedEtag, deleted, purged, previousNotebookId,
  *   encrypted, background, formatVersion, tags,
  *   hasStrokes, hasContent,
- *   media  — array of { id, name, type, size, deleted } (no blobs, no positions)
+ *   media       — array of { id, name, type, size, deleted } (no blobs, no positions)
+ *   recordings  — array of { id, name, duration, deleted } (no fileId)
  *
  * "noteContent" payload fields (content fields encrypted when note.encrypted):
  *   id, content, strokes, deletedStrokes,
  *   media  — full objects incl. fileId, x, y, width, height, rotation, …
  *   deletedMedia, tasks, recognition, penPresets, pdfSource,
+ *   recordings       — full objects incl. fileId, duration, name, created, deleted
+ *   deletedRecordings — array of fileIds to purge from "files" store
  *   thumbnail  — base64 JPEG string (360×500, encrypted with the rest when local encryption on)
  */
 
@@ -53,6 +56,7 @@ const INDEX_FIELDS = new Set([
   "hasRecognition",
   "hasThumbnail",
   "media", // metadata-only snapshot — see splitNote()
+  "recordings", // metadata-only snapshot — see splitNote()
 ]);
 
 // ─── Schema helpers ───────────────────────────────────────────────────────────
@@ -73,6 +77,13 @@ function splitNote(note) {
         : [];
       // Content: full objects (fileId, positions, etc.)
       content.media = value ?? [];
+    } else if (key === "recordings") {
+      // Index: metadata only (no fileId)
+      index.recordings = Array.isArray(value)
+        ? value.map(({ id, name, duration, deleted }) => ({ id, name, duration, deleted }))
+        : [];
+      // Content: full objects (fileId, etc.)
+      content.recordings = value ?? [];
     } else if (INDEX_FIELDS.has(key)) {
       index[key] = value;
     } else {
@@ -98,8 +109,13 @@ function splitNote(note) {
  */
 function mergeNote(index, content) {
   if (!index) return null;
-  // Use full media from content (has positions/fileIds); index media is metadata-only
-  return { ...index, ...(content ?? {}), media: content?.media ?? index.media ?? [] };
+  // Use full recordings/media from content (have fileIds); index copies are metadata-only
+  return {
+    ...index,
+    ...(content ?? {}),
+    media: content?.media ?? index.media ?? [],
+    recordings: content?.recordings ?? index.recordings ?? [],
+  };
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -346,6 +362,8 @@ export async function createNote({ title, notebookId = null }) {
     pdfSource: null,
     recognition: null,
     deletedStrokes: [],
+    recordings: [],
+    deletedRecordings: [],
   };
 
   await _saveNoteSplit(note);

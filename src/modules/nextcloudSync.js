@@ -77,6 +77,10 @@ const MIME_TYPES = {
   "image/webp": ".webp",
   "image/svg+xml": ".svg",
   "application/pdf": ".pdf",
+  "audio/webm": ".webm",
+  "audio/webm;codecs=opus": ".webm",
+  "audio/ogg": ".ogg",
+  "audio/mp4": ".m4a",
 };
 
 function getExtensionFromMime(mimeType) {
@@ -687,7 +691,8 @@ async function syncNoteMedia(note) {
   // media files were already uploaded when the note was last synced unencrypted,
   // and the encrypted payload references them by fileId inside the blob.
   if (note.media !== undefined && !Array.isArray(note.media)) return;
-  if ((!note.media || note.media.length === 0) && !note.pdfSource) return;
+  const hasRecordings = Array.isArray(note.recordings) && note.recordings.length > 0;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
@@ -707,10 +712,15 @@ async function syncNoteMedia(note) {
   const uploadTasks = [];
   const processedIds = new Set(); // Track processed IDs to avoid duplicates (e.g. multiple PDF pages)
 
-  // Collect all file IDs (media items + pdfSource)
+  // Collect all file IDs (media items + pdfSource + recordings)
   const itemsToSync = [...(note.media || [])];
   if (note.pdfSource) {
     itemsToSync.push({ fileId: note.pdfSource, id: "pdf-source" });
+  }
+  for (const rec of note.recordings || []) {
+    if (!rec.deleted && rec.fileId) {
+      itemsToSync.push({ fileId: rec.fileId, id: rec.id });
+    }
   }
 
   for (const item of itemsToSync) {
@@ -784,6 +794,11 @@ async function cleanupOrphanedMedia(note) {
   if (note.pdfSource) {
     validFileIds.add(note.pdfSource);
   }
+  if (Array.isArray(note.recordings)) {
+    for (const rec of note.recordings) {
+      if (!rec.deleted && rec.fileId) validFileIds.add(rec.fileId);
+    }
+  }
 
   // Find orphaned files (files on server not referenced in note.media)
   const orphanedFiles = remoteFiles.filter((file) => {
@@ -815,16 +830,22 @@ async function cleanupOrphanedMedia(note) {
  */
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
   if (note.media !== undefined && !Array.isArray(note.media)) return;
-  if ((!note.media || note.media.length === 0) && !note.pdfSource) return;
+  const hasRecordings = Array.isArray(note.recordings) && note.recordings.some((r) => !r.deleted);
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
   const processedIds = new Set();
 
-  // Collect all file IDs (media items + pdfSource)
+  // Collect all file IDs (media items + pdfSource + recordings)
   const itemsToDownload = [...(note.media || [])];
   if (note.pdfSource) {
     itemsToDownload.push({ fileId: note.pdfSource });
+  }
+  for (const rec of note.recordings || []) {
+    if (!rec.deleted && rec.fileId) {
+      itemsToDownload.push({ fileId: rec.fileId });
+    }
   }
 
   for (const item of itemsToDownload) {
@@ -1737,6 +1758,26 @@ export function attemptMerge(local, remote) {
   addMedia(localIsNewer ? remoteMedia : localMedia); // Add older first
   addMedia(localIsNewer ? localMedia : remoteMedia); // Add newer second (wins)
 
+  // Merge recordings by ID (same pattern as media)
+  const localRecordings = local.recordings || [];
+  const remoteRecordings = remote.recordings || [];
+  const localDeletedRecordings = local.deletedRecordings || [];
+  const remoteDeletedRecordings = remote.deletedRecordings || [];
+
+  const allDeletedRecordings = new Set([...localDeletedRecordings, ...remoteDeletedRecordings]);
+  const recordingsMap = new Map();
+
+  const addRecordings = (items) => {
+    for (const item of items) {
+      if (item.id && !allDeletedRecordings.has(item.fileId)) {
+        recordingsMap.set(item.id, item);
+      }
+    }
+  };
+
+  addRecordings(localIsNewer ? remoteRecordings : localRecordings);
+  addRecordings(localIsNewer ? localRecordings : remoteRecordings);
+
   // Merge tasks by ID, newer modified timestamp wins for individual tasks
   const localTasks = local.tasks || [];
   const remoteTasks = remote.tasks || [];
@@ -1768,6 +1809,8 @@ export function attemptMerge(local, remote) {
     deletedStrokes: mergedStrokeData.deletedStrokes,
     media: Array.from(mediaMap.values()),
     deletedMedia: Array.from(allDeletedMedia),
+    recordings: Array.from(recordingsMap.values()),
+    deletedRecordings: Array.from(allDeletedRecordings),
     tags: mergedTags,
     tasks: Array.from(taskMap.values()),
     deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted

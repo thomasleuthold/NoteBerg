@@ -54,6 +54,8 @@ import {
 import { HistoryManager } from "./HistoryManager.js";
 import { NoteNavigator } from "./NoteNavigator.js";
 import { NoteToolbar } from "./NoteToolbar.js";
+import { RecordingManager } from "./RecordingManager.js";
+import { SoundDialog } from "./SoundDialog.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
@@ -169,6 +171,8 @@ export class NoteCanvas {
     this.pdfTextLayerManager = null;
     this.toolbar = null;
     this.contentHeight = 0;
+    this.recordingManager = null;
+    this.soundDialog = null;
 
     // State
     this.noteId = null;
@@ -655,6 +659,7 @@ export class NoteCanvas {
     this.isInitialized = true;
     this._renderPdfControls();
     await this._initNavigator(taskId);
+    this._initSoundDialog();
 
     // Expose for debugging
     window.__noteCanvas = this;
@@ -1309,6 +1314,39 @@ export class NoteCanvas {
       this.navigator.expanded = true;
       this.navigator._render();
     }
+  }
+
+  /**
+   * Initialize sound recording dialog.
+   * @private
+   */
+  _initSoundDialog() {
+    const scrollerContainer = this.containerElement.querySelector(
+      ".note-canvas__scroller-container",
+    );
+    if (!scrollerContainer) return;
+
+    this.recordingManager = new RecordingManager({
+      onChange: () => {},
+      onSave: ({ recordings, deletedRecordings }) => {
+        this._saveRecordingChanges(recordings, deletedRecordings);
+      },
+    });
+
+    this.recordingManager.setRecordings(this.noteData.recordings ?? []);
+
+    this.soundDialog = new SoundDialog(scrollerContainer, this.recordingManager);
+  }
+
+  /**
+   * Persist recording changes via the StorageWorker.
+   * @private
+   */
+  _saveRecordingChanges(recordings, deletedRecordings) {
+    if (!this.noteId || !this.strokeManager) return;
+    this.noteData.recordings = recordings;
+    this.noteData.deletedRecordings = deletedRecordings;
+    this.strokeManager.saveRecordings({ recordings, deletedRecordings });
   }
 
   /**
@@ -4606,6 +4644,16 @@ export class NoteCanvas {
     if (this.navigator) {
       this.navigator.destroy();
       this.navigator = null;
+    }
+
+    if (this.soundDialog) {
+      this.soundDialog.destroy();
+      this.soundDialog = null;
+    }
+
+    if (this.recordingManager) {
+      this.recordingManager.destroy();
+      this.recordingManager = null;
     }
 
     // Destroy strokeManager after thumbnail save completes.

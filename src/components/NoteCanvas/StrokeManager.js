@@ -174,6 +174,30 @@ export class StrokeManager {
     });
   }
 
+  /**
+   * Save recordings via the worker
+   */
+  saveRecordings({ recordings, deletedRecordings }) {
+    if (!this.worker) return;
+
+    let key = null;
+    if (isAppUnlocked()) {
+      try {
+        key = getEncryptionKey();
+      } catch (e) {
+        console.warn("[StrokeManager] Could not get encryption key:", e);
+      }
+    }
+
+    this.worker.postMessage({
+      type: "SAVE_RECORDINGS",
+      noteId: this.noteId,
+      recordings,
+      deletedRecordings,
+      key,
+    });
+  }
+
   forceSave() {
     this._save();
   }
