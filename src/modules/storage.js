@@ -884,6 +884,7 @@ async function _encryptContent(content, index) {
   const shouldEncrypt = await isLocalEncryptionEnabled();
   if (!shouldEncrypt) return { ...content, _encrypted: false };
 
+
   const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
   const { encryptObject } = await import("./encryption.js");
 
@@ -961,6 +962,20 @@ async function decryptNoteIfNeeded(note) {
       decryptedMedia = Array.isArray(once) ? once : [];
     }
 
+    let decryptedRecordings = [];
+    if (note.recordings && typeof note.recordings === "object" && note.recordings.data && note.recordings.iv) {
+      try {
+        const once = await decryptObject(note.recordings, key);
+        decryptedRecordings = Array.isArray(once) ? once : [];
+      } catch (_e) {
+        // Encrypted with a different device's key (cross-device sync artifact) — treat as empty
+        console.warn("[Storage] Could not decrypt recordings blob — dropping recordings for note", note.id);
+        decryptedRecordings = [];
+      }
+    } else if (Array.isArray(note.recordings)) {
+      decryptedRecordings = note.recordings;
+    }
+
     let decryptedTasks = [];
     if (note.tasks && typeof note.tasks === "object" && note.tasks.data && note.tasks.iv) {
       decryptedTasks = await decryptObject(note.tasks, key);
@@ -987,6 +1002,7 @@ async function decryptNoteIfNeeded(note) {
       content: await decryptObject(note.content, key),
       strokes: await decryptObject(note.strokes, key),
       media: decryptedMedia,
+      recordings: decryptedRecordings,
       tasks: decryptedTasks,
       recognition: decryptedRecognition,
       thumbnail: decryptedThumbnail,

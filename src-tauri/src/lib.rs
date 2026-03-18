@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 /// State holding the sidecar recognition URL (empty if not available)
 struct RecognitionState {
@@ -65,6 +65,65 @@ fn pdf_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
+#[cfg(target_os = "android")]
+pub struct AudioRecorderPlugin(tauri::plugin::PluginHandle<tauri::Wry>);
+
+/// Register the native AudioRecorderPlugin (bypasses WebView getUserMedia).
+#[cfg(target_os = "android")]
+fn audio_recorder_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::<tauri::Wry>::new("audio-recorder")
+        .setup(|app, api| {
+            use tauri::Manager;
+            let handle = api.register_android_plugin("eu.noteberg.app", "AudioRecorderPlugin")?;
+            app.manage(AudioRecorderPlugin(handle));
+            Ok(())
+        })
+        .build()
+}
+
+/// Start native audio recording (Android only).
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn native_audio_start(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<AudioRecorderPlugin>()
+        .0
+        .run_mobile_plugin::<()>("start", serde_json::json!({}))
+        .map_err(|e| format!("native_audio_start: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn native_audio_start() -> Result<(), String> { Ok(()) }
+
+/// Stop native audio recording and return base64-encoded audio data (Android only).
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn native_audio_stop(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use tauri::Manager;
+    app.state::<AudioRecorderPlugin>()
+        .0
+        .run_mobile_plugin::<serde_json::Value>("stop", serde_json::json!({}))
+        .map_err(|e| format!("native_audio_stop: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn native_audio_stop() -> Result<serde_json::Value, String> { Err("not supported".into()) }
+
+/// Cancel native audio recording (Android only).
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn native_audio_cancel(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<AudioRecorderPlugin>()
+        .0
+        .run_mobile_plugin::<()>("cancel", serde_json::json!({}))
+        .map_err(|e| format!("native_audio_cancel: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn native_audio_cancel() -> Result<(), String> { Ok(()) }
+
+
 /// Android: write PDF to app cache dir, then open via PdfSavePlugin (FileProvider + ACTION_VIEW).
 #[tauri::command]
 #[cfg(target_os = "android")]
@@ -95,6 +154,10 @@ async fn save_pdf(
     Ok(path_str)
 }
 
+/// Guard so we only call grant_media_permissions once per app lifetime.
+#[cfg(target_os = "windows")]
+static PERMISSIONS_GRANTED: OnceLock<()> = OnceLock::new();
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -104,20 +167,43 @@ pub fn run() {
         .manage(Mutex::new(RecognitionState {
             url: String::new(),
         }))
-        .invoke_handler(tauri::generate_handler![get_recognition_url, save_pdf]);
+        .invoke_handler(tauri::generate_handler![
+            get_recognition_url,
+            save_pdf,
+            native_audio_start,
+            native_audio_stop,
+            native_audio_cancel,
+        ]);
 
     #[cfg(target_os = "android")]
     {
         builder = builder.plugin(pdf_plugin());
+        builder = builder.plugin(audio_recorder_plugin());
     }
 
     builder
         .setup(|_app| {
             #[cfg(target_os = "windows")]
             {
+                // Enumerate audio endpoints so Windows registers this process for the
+                // microphone privacy list (required for getUserMedia to find the device).
+                register_audio_privacy();
                 spawn_recognition_sidecar(_app)?;
             }
             Ok(())
+        })
+        // Grant WebView2 microphone permission once the page has loaded (webview is ready).
+        .on_page_load(|webview, _payload| {
+            #[cfg(target_os = "windows")]
+            {
+                if PERMISSIONS_GRANTED.set(()).is_ok() {
+                    eprintln!("[Permissions] on_page_load fired, calling with_webview");
+                    match webview.with_webview(grant_media_permissions) {
+                        Ok(_) => eprintln!("[Permissions] with_webview dispatched OK"),
+                        Err(e) => eprintln!("[Permissions] with_webview ERROR: {:?}", e),
+                    }
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -210,4 +296,121 @@ fn spawn_recognition_sidecar(app: &tauri::App) -> Result<(), Box<dyn std::error:
     }
 
     Ok(())
+}
+
+// ── WebView2 media permissions ─────────────────────────────────────────────────
+
+/// Pre-grant microphone permission on the WebView2 profile so getUserMedia works
+/// without a permission prompt. Uses both approaches:
+///  1. SetPermissionState on the profile (proactive, survives across navigations)
+///  2. add_PermissionRequested handler (catches any runtime request that slips through)
+#[cfg(target_os = "windows")]
+fn grant_media_permissions(webview: tauri::webview::PlatformWebview) {
+    use webview2_com::{
+        Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2_13, ICoreWebView2Profile4,
+            COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+            COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+        },
+        PermissionRequestedEventHandler, SetPermissionStateCompletedHandler,
+    };
+    use windows_core::Interface;
+
+    eprintln!("[Permissions] grant_media_permissions called");
+
+    unsafe {
+        let core = webview
+            .controller()
+            .CoreWebView2()
+            .expect("CoreWebView2");
+
+        eprintln!("[Permissions] Got CoreWebView2, registering handler");
+
+        // 1. Register a PermissionRequested handler to auto-approve mic requests
+        let mut token = Default::default();
+        let _ = core.add_PermissionRequested(
+            &PermissionRequestedEventHandler::create(Box::new(|_, args| {
+                if let Some(args) = args {
+                    let mut kind = Default::default();
+                    let _ = args.PermissionKind(&mut kind);
+                    eprintln!("[Permissions] PermissionRequested fired: kind={:?}", kind);
+                    if kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE {
+                        eprintln!("[Permissions] Granting microphone");
+                        let _ = args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW);
+                    }
+                }
+                Ok(())
+            })),
+            &mut token,
+        );
+
+        eprintln!("[Permissions] Handler registered, setting profile permission");
+
+        // 2. Also pre-grant via the profile so the permission persists
+        if let Ok(core13) = core.cast::<ICoreWebView2_13>() {
+            if let Ok(profile) = core13.Profile() {
+                if let Ok(profile4) = profile.cast::<ICoreWebView2Profile4>() {
+                    eprintln!("[Permissions] Got ICoreWebView2Profile4, calling SetPermissionState");
+                    let handler = SetPermissionStateCompletedHandler::create(Box::new(|_| {
+                        eprintln!("[Permissions] SetPermissionState completed");
+                        Ok(())
+                    }));
+                    let _ = profile4.SetPermissionState(
+                        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+                        windows_core::w!("https://tauri.localhost"),
+                        COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                        &handler,
+                    );
+                    // Also grant for http://localhost (dev mode)
+                    let _ = profile4.SetPermissionState(
+                        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+                        windows_core::w!("http://localhost:3000"),
+                        COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                        &handler,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Write Windows microphone consent registry entries for the host exe and the
+/// WebView2 renderer, so getUserMedia({ audio }) works without NotFoundError.
+/// Windows blocks audio device access for processes not listed under:
+///   HKCU\...\ConsentStore\microphone\NonPackaged\<path-with-#-separators>
+#[cfg(target_os = "windows")]
+fn register_audio_privacy() {
+    fn grant(path: &str) {
+        let key = path.replace('\\', "#");
+        let reg_key = format!(
+            "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\{}",
+            key
+        );
+        let status = std::process::Command::new("reg")
+            .args(["add", &reg_key, "/v", "Value", "/t", "REG_SZ", "/d", "Allow", "/f"])
+            .status();
+        match status {
+            Ok(s) if s.success() => eprintln!("[Permissions] Mic consent granted: {}", path),
+            Ok(s) => eprintln!("[Permissions] reg add failed ({}): {:?}", path, s.code()),
+            Err(e) => eprintln!("[Permissions] reg add error ({}): {}", path, e),
+        }
+    }
+
+    // 1. Host process
+    if let Ok(exe) = std::env::current_exe() {
+        grant(&exe.to_string_lossy());
+    }
+
+    // 2. WebView2 renderer — find all msedgewebview2.exe under EdgeWebView\Application
+    let wv2_base = std::path::Path::new(
+        r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application",
+    );
+    if let Ok(entries) = std::fs::read_dir(wv2_base) {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join("msedgewebview2.exe");
+            if candidate.exists() {
+                grant(&candidate.to_string_lossy());
+            }
+        }
+    }
 }

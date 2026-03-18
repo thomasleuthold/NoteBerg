@@ -1315,6 +1315,11 @@
   border-bottom: 1px solid var(--border-primary);
 }
 
+.sound-dialog__meter {
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
 .sound-dialog__rec-indicator {
   color: var(--color-danger, #e53e3e);
   font-size: 14px;
@@ -1441,5 +1446,12 @@
   text-align: center;
   font-size: 0.8125rem;
   color: var(--text-secondary);
+  margin: 0;
+}
+
+.sound-dialog__error {
+  padding: 8px 12px;
+  font-size: 0.8125rem;
+  color: var(--color-danger, #e53e3e);
   margin: 0;
 }

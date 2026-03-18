@@ -325,7 +325,10 @@ export class NoteToolbar {
       btn.title = title;
       btn.innerHTML = icon;
       if (isActive) btn.classList.add("note-canvas-toolbar__eraser-mode-btn--active");
-      btn.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onClick();
+      });
       return btn;
     };
 
@@ -336,28 +339,32 @@ export class NoteToolbar {
     };
 
     // Stroke eraser button
-    col.appendChild(createEraserBtn(
-      getIcon("eraser", 20),
-      t("toolbar.eraser.strokeEraser"),
-      this.eraserMode === "stroke",
-      () => {
-        this.eraserMode = "stroke";
-        this._renderEraserDialogContent();
-        this.onEraserSettingsChange({ eraserMode: "stroke" });
-      },
-    ));
+    col.appendChild(
+      createEraserBtn(
+        getIcon("eraser", 20),
+        t("toolbar.eraser.strokeEraser"),
+        this.eraserMode === "stroke",
+        () => {
+          this.eraserMode = "stroke";
+          this._renderEraserDialogContent();
+          this.onEraserSettingsChange({ eraserMode: "stroke" });
+        },
+      ),
+    );
 
     // Part eraser button
-    col.appendChild(createEraserBtn(
-      getPartEraserIcon(20),
-      t("toolbar.eraser.partEraser"),
-      this.eraserMode === "part",
-      () => {
-        this.eraserMode = "part";
-        this._renderEraserDialogContent();
-        this.onEraserSettingsChange({ eraserMode: "part" });
-      },
-    ));
+    col.appendChild(
+      createEraserBtn(
+        getPartEraserIcon(20),
+        t("toolbar.eraser.partEraser"),
+        this.eraserMode === "part",
+        () => {
+          this.eraserMode = "part";
+          this._renderEraserDialogContent();
+          this.onEraserSettingsChange({ eraserMode: "part" });
+        },
+      ),
+    );
 
     col.appendChild(sep());
 
@@ -368,7 +375,10 @@ export class NoteToolbar {
       this.eraserHighlighterOnly,
       () => {
         this.eraserHighlighterOnly = !this.eraserHighlighterOnly;
-        hlBtn.classList.toggle("note-canvas-toolbar__eraser-mode-btn--active", this.eraserHighlighterOnly);
+        hlBtn.classList.toggle(
+          "note-canvas-toolbar__eraser-mode-btn--active",
+          this.eraserHighlighterOnly,
+        );
         this.onEraserSettingsChange({ eraserHighlighterOnly: this.eraserHighlighterOnly });
       },
     );
@@ -377,12 +387,11 @@ export class NoteToolbar {
     col.appendChild(sep());
 
     // Size button (opens size flyout)
-    col.appendChild(createEraserBtn(
-      getEraserSizeIcon(20),
-      t("toolbar.eraser.size"),
-      false,
-      () => this._toggleEraserSizeDialog(),
-    ));
+    col.appendChild(
+      createEraserBtn(getEraserSizeIcon(20), t("toolbar.eraser.size"), false, () =>
+        this._toggleEraserSizeDialog(),
+      ),
+    );
 
     this.eraserDialog.appendChild(col);
   }
@@ -441,7 +450,9 @@ export class NoteToolbar {
   }
 
   _toggleEraserSizeDialog() {
-    if (this.eraserSizeDialog?.classList.contains("note-canvas-toolbar__eraser-size-dialog--open")) {
+    if (
+      this.eraserSizeDialog?.classList.contains("note-canvas-toolbar__eraser-size-dialog--open")
+    ) {
       this._closeEraserSizeDialog();
     } else {
       this._openEraserSizeDialog();
@@ -454,9 +465,8 @@ export class NoteToolbar {
    */
   updateEraserIcon(eraserMode) {
     if (!this.eraserBtn) return;
-    this.eraserBtn.innerHTML = eraserMode === "part"
-      ? getPartEraserIcon(24)
-      : getIcon("eraser", 24);
+    this.eraserBtn.innerHTML =
+      eraserMode === "part" ? getPartEraserIcon(24) : getIcon("eraser", 24);
   }
 
   /**

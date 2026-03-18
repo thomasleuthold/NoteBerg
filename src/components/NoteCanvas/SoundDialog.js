@@ -35,12 +35,15 @@ export class SoundDialog {
       this._updateButtonState();
     };
 
+    this._meterRaf = null;
+
     this._buildButton();
     this._buildDialog();
     this._attachDocumentListener();
   }
 
   destroy() {
+    this._stopMeter();
     this._removeDocumentListener();
     this._btnEl?.remove();
     this._dialogEl?.remove();
@@ -73,6 +76,25 @@ export class SoundDialog {
     this.parentElement.appendChild(this._dialogEl);
   }
 
+  _showError(err) {
+    let msg = "Could not start recording.";
+    if (err?.name === "NotFoundError") {
+      msg = "No audio device found. Please connect a microphone.";
+    } else if (err?.name === "NotAllowedError") {
+      msg = "Microphone access denied.";
+    }
+
+    if (!this._open) this._toggle();
+
+    // Remove existing error if any
+    this._dialogEl.querySelector(".sound-dialog__error")?.remove();
+
+    const el = document.createElement("p");
+    el.className = "sound-dialog__error";
+    el.textContent = msg;
+    this._dialogEl.appendChild(el);
+  }
+
   // ── Toggle ─────────────────────────────────────────────────────────────────
 
   _toggle() {
@@ -93,6 +115,7 @@ export class SoundDialog {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   _renderDialogContent() {
+    this._stopMeter();
     const recordings = this.rm.getRecordings();
     const recording = this.rm.isRecording();
     const paused = this.rm.isPaused();
@@ -129,6 +152,13 @@ export class SoundDialog {
       indicator.className = "sound-dialog__rec-indicator";
       indicator.textContent = "●";
       strip.appendChild(indicator);
+
+      const meter = document.createElement("canvas");
+      meter.className = "sound-dialog__meter";
+      meter.width = 48;
+      meter.height = 14;
+      strip.appendChild(meter);
+      this._startMeter(meter);
 
       const label = document.createElement("span");
       label.className = "sound-dialog__rec-label";
@@ -169,15 +199,16 @@ export class SoundDialog {
       // New recording button
       const newBtn = document.createElement("button");
       newBtn.className = "sound-dialog__new-btn";
-      newBtn.innerHTML = `${getIcon("plus", 16)}<span>New recording</span>`;
+      newBtn.innerHTML = `${getIcon("mic", 16)}<span>New recording</span>`;
       newBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         try {
-          await this.rm.startRecording();
-        } catch {
-          // Permission denied — already logged in RecordingManager
+          await this.rm.startRecording("mic");
+        } catch (err) {
+          this._showError(err);
         }
       });
+
       this._dialogEl.appendChild(newBtn);
     }
 
@@ -211,17 +242,21 @@ export class SoundDialog {
     name.textContent = rec.name;
     info.appendChild(name);
 
+    const playing = this.rm.isPlaying(rec.id);
+    const pos = playing ? this.rm.getPlaybackPosition() : 0;
+    const total = rec.duration ?? 0;
+
     const dur = document.createElement("span");
     dur.className = "sound-dialog__row-duration";
-    dur.textContent = formatDuration(rec.duration ?? 0);
+    dur.textContent = playing
+      ? `${formatDuration(pos)} / ${formatDuration(total)}`
+      : formatDuration(total);
     info.appendChild(dur);
 
     row.appendChild(info);
 
     const actions = document.createElement("div");
     actions.className = "sound-dialog__row-actions";
-
-    const playing = this.rm.isPlaying(rec.id);
 
     const playBtn = document.createElement("button");
     playBtn.className = "sound-dialog__icon-btn";
@@ -269,11 +304,7 @@ export class SoundDialog {
 
   _attachDocumentListener() {
     this._onDocumentPointerDown = (e) => {
-      if (
-        this._open &&
-        !this._dialogEl?.contains(e.target) &&
-        !this._btnEl?.contains(e.target)
-      ) {
+      if (this._open && !this._dialogEl?.contains(e.target) && !this._btnEl?.contains(e.target)) {
         this._close();
       }
     };
@@ -283,6 +314,37 @@ export class SoundDialog {
   _removeDocumentListener() {
     if (this._onDocumentPointerDown) {
       document.removeEventListener("pointerdown", this._onDocumentPointerDown, true);
+    }
+  }
+
+  _startMeter(canvas) {
+    this._stopMeter();
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width;
+    const H = canvas.height;
+    const BAR_COUNT = 10;
+    const GAP = 2;
+    const barW = (W - GAP * (BAR_COUNT - 1)) / BAR_COUNT;
+
+    const tick = () => {
+      this._meterRaf = requestAnimationFrame(tick);
+      const amplitude = this.rm.getAmplitude();
+      const lit = Math.round(amplitude * BAR_COUNT);
+
+      ctx.clearRect(0, 0, W, H);
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const activeColor = i < 6 ? "#22c55e" : i < 9 ? "#f59e0b" : "#ef4444";
+        ctx.fillStyle = i < lit ? activeColor : "#cbd5e1";
+        ctx.fillRect(i * (barW + GAP), 0, barW, H);
+      }
+    };
+    tick();
+  }
+
+  _stopMeter() {
+    if (this._meterRaf) {
+      cancelAnimationFrame(this._meterRaf);
+      this._meterRaf = null;
     }
   }
 }

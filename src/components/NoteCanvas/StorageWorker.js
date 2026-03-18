@@ -283,9 +283,10 @@ async function processMessage(e) {
     const notesStore = tx.objectStore("notes");
     const contentStore = tx.objectStore("noteContent");
 
-    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
+    const [index, existingContent] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
+    const content = existingContent ?? { id: noteId };
 
-    if (index && content) {
+    if (index) {
       const now = Date.now();
       if (recordings !== undefined) content.recordings = recordingsData;
       if (deletedRecordings !== undefined) content.deletedRecordings = deletedRecordings;

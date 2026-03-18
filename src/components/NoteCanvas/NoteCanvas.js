@@ -41,8 +41,8 @@ import {
   CropImageCommand,
   DeleteMediaCommand,
   DrawStrokeCommand,
-  EraseStrokesCommand,
   EraseStrokePartsCommand,
+  EraseStrokesCommand,
   InsertMediaCommand,
   MarkTaskCommand,
   PasteStrokesCommand,
@@ -54,9 +54,9 @@ import {
 import { HistoryManager } from "./HistoryManager.js";
 import { NoteNavigator } from "./NoteNavigator.js";
 import { NoteToolbar } from "./NoteToolbar.js";
+import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { RecordingManager } from "./RecordingManager.js";
 import { SoundDialog } from "./SoundDialog.js";
-import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
 import { detectLineIndentation, detectStrokeLines } from "./strokeLineDetection.js";
@@ -640,7 +640,8 @@ export class NoteCanvas {
             this.toolbar.updateEraserIcon(eraserMode);
           }
           if (eraserSize !== undefined) this.eraserSize = eraserSize;
-          if (eraserHighlighterOnly !== undefined) this.eraserHighlighterOnly = eraserHighlighterOnly;
+          if (eraserHighlighterOnly !== undefined)
+            this.eraserHighlighterOnly = eraserHighlighterOnly;
         },
       },
     );
@@ -1346,6 +1347,7 @@ export class NoteCanvas {
     if (!this.noteId || !this.strokeManager) return;
     this.noteData.recordings = recordings;
     this.noteData.deletedRecordings = deletedRecordings;
+    this.mediaChanged = true; // Ensure forceSync on note close (worker write may not be flushed yet)
     this.strokeManager.saveRecordings({ recordings, deletedRecordings });
   }
 
@@ -3391,10 +3393,14 @@ export class NoteCanvas {
           }
           // Test segment to next point
           if (i < n - 1) {
-            const ax = stroke.x[i],   ay = stroke.y[i];
-            const bx = stroke.x[i+1], by = stroke.y[i+1];
-            const abx = bx - ax, aby = by - ay;
-            const acx = contentX - ax, acy = contentY - ay;
+            const ax = stroke.x[i],
+              ay = stroke.y[i];
+            const bx = stroke.x[i + 1],
+              by = stroke.y[i + 1];
+            const abx = bx - ax,
+              aby = by - ay;
+            const acx = contentX - ax,
+              acy = contentY - ay;
             const ab2 = abx * abx + aby * aby;
             if (ab2 > 0) {
               const t = Math.max(0, Math.min(1, (acx * abx + acy * aby) / ab2));

@@ -123,6 +123,7 @@ async function decryptNoteLocally(note) {
     content: isBlob(note.content) ? await decryptObject(note.content, key) : note.content,
     strokes: isBlob(note.strokes) ? await decryptObject(note.strokes, key) : note.strokes,
     media: isBlob(note.media) ? await decryptObject(note.media, key) : note.media,
+    recordings: isBlob(note.recordings) ? await decryptObject(note.recordings, key) : (note.recordings ?? []),
     tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
     recognition: isBlob(note.recognition)
       ? await decryptObject(note.recognition, key)
@@ -164,10 +165,11 @@ async function encryptNoteForNextcloud(note) {
   try {
     const encryptionKey = getEncryptionKey();
 
-    // Encrypt content, strokes, media and thumbnail for Nextcloud storage
+    // Encrypt content, strokes, media, recordings and thumbnail for Nextcloud storage
     const encryptedContent = await encryptObject(decryptedNote.content || "", encryptionKey);
     const encryptedStrokes = await encryptObject(decryptedNote.strokes || [], encryptionKey);
     const encryptedMedia = await encryptObject(decryptedNote.media || [], encryptionKey);
+    const encryptedRecordings = await encryptObject(decryptedNote.recordings || [], encryptionKey);
     const encryptedThumbnail = decryptedNote.thumbnail
       ? await encryptObject(decryptedNote.thumbnail, encryptionKey)
       : null;
@@ -177,6 +179,7 @@ async function encryptNoteForNextcloud(note) {
       content: encryptedContent,
       strokes: encryptedStrokes,
       media: encryptedMedia,
+      recordings: encryptedRecordings,
       thumbnail: encryptedThumbnail,
       nextcloudEncrypted: true, // Mark as Nextcloud-encrypted
     };
@@ -211,11 +214,18 @@ async function decryptNoteFromNextcloud(note) {
       const decryptedContent = await decryptObject(note.content, encryptionKey);
       const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
 
-      // Only decrypt media if it exists and has the encrypted structure
-      // (notes encrypted before media support won't have this field)
+      // Only decrypt media/recordings if they exist and have the encrypted structure
+      // (notes encrypted before these fields were added won't have them)
       let decryptedMedia = [];
       if (note.media && typeof note.media === "object" && note.media.data && note.media.iv) {
         decryptedMedia = await decryptObject(note.media, encryptionKey);
+      }
+
+      let decryptedRecordings = [];
+      if (note.recordings && typeof note.recordings === "object" && note.recordings.data && note.recordings.iv) {
+        decryptedRecordings = await decryptObject(note.recordings, encryptionKey);
+      } else if (Array.isArray(note.recordings)) {
+        decryptedRecordings = note.recordings;
       }
 
       let decryptedThumbnail = null;
@@ -235,12 +245,65 @@ async function decryptNoteFromNextcloud(note) {
         content: decryptedContent,
         strokes: decryptedStrokes,
         media: decryptedMedia,
+        recordings: decryptedRecordings,
         thumbnail: decryptedThumbnail,
         nextcloudEncrypted: undefined, // Remove Nextcloud encryption flag
       };
     } catch (error) {
       console.error("[NextcloudSync] Failed to decrypt note from Nextcloud:", error);
       throw new Error("Failed to decrypt note from Nextcloud");
+    }
+  }
+
+  // Step 2: If the note has local encryption from another client (encrypted: true),
+  // decrypt it now so saveNote can re-encrypt it with this client's local key.
+  // This handles the case where a note was saved encrypted by another client and
+  // uploaded to Nextcloud without Nextcloud-level encryption.
+  if (decryptedNote.encrypted) {
+    try {
+      decryptedNote = await decryptNoteLocally(decryptedNote);
+    } catch (err) {
+      console.error(`[NextcloudSync] Could not decrypt locally-encrypted note ${decryptedNote.id} — wrong key or corrupted:`, err);
+      // Leave as-is; saveNote will store it with encrypted:true and it will fail on read.
+      // This is better than silently discarding the note.
+    }
+  }
+
+  // Step 3: Sanitize any stray locally-encrypted blobs that survived the upload path.
+  // This can happen when recordings/media were encrypted by another client's local key
+  // and uploaded without being decrypted first (e.g. the Android local-encryption bug).
+  // The `encrypted` flag is absent from the Nextcloud JSON, so step 2 never fires.
+  // We attempt to decrypt with our own key and fall back to [] on failure (wrong key).
+  const isEncryptedBlob = (v) =>
+    v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
+
+  if (isEncryptedBlob(decryptedNote.recordings) || isEncryptedBlob(decryptedNote.media)) {
+    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+    const { decryptObject } = await import("./encryption.js");
+
+    if (isAppUnlocked()) {
+      const key = getEncryptionKey();
+
+      if (isEncryptedBlob(decryptedNote.recordings)) {
+        try {
+          const dec = await decryptObject(decryptedNote.recordings, key);
+          decryptedNote = { ...decryptedNote, recordings: Array.isArray(dec) ? dec : [] };
+        } catch (_e) {
+          // Wrong key (from another device) — drop the recordings rather than breaking the note
+          console.warn(`[NextcloudSync] Could not decrypt recordings blob for note ${decryptedNote.id} — dropping recordings`);
+          decryptedNote = { ...decryptedNote, recordings: [] };
+        }
+      }
+
+      if (isEncryptedBlob(decryptedNote.media)) {
+        try {
+          const dec = await decryptObject(decryptedNote.media, key);
+          decryptedNote = { ...decryptedNote, media: Array.isArray(dec) ? dec : [] };
+        } catch (_e) {
+          console.warn(`[NextcloudSync] Could not decrypt media blob for note ${decryptedNote.id} — dropping media`);
+          decryptedNote = { ...decryptedNote, media: [] };
+        }
+      }
     }
   }
 

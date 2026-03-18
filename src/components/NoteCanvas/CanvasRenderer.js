@@ -9,11 +9,11 @@
 import { clearRenderCache, getRenderedMedia } from "../../modules/mediaManager.js";
 import { getTheme } from "../../modules/theme.js";
 import {
+  MARKER_ALPHA,
   drawBackgroundPattern as sharedDrawBackgroundPattern,
   drawStroke as sharedDrawStroke,
   getMarkerPalette as sharedGetMarkerPalette,
   getThemePalette as sharedGetThemePalette,
-  MARKER_ALPHA,
 } from "../../utils/noteRenderer.js";
 import {
   getMediaHandles,
@@ -80,8 +80,7 @@ function drawMarkersGrouped(ctx, markerStrokes, palette, selectedIds = null) {
         ctx.restore();
       }
 
-      const color =
-        first.colorIndex !== undefined ? colors[first.colorIndex] : colors[0];
+      const color = first.colorIndex !== undefined ? colors[first.colorIndex] : colors[0];
 
       ctx.save();
       ctx.globalAlpha = MARKER_ALPHA;
