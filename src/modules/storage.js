@@ -884,7 +884,6 @@ async function _encryptContent(content, index) {
   const shouldEncrypt = await isLocalEncryptionEnabled();
   if (!shouldEncrypt) return { ...content, _encrypted: false };
 
-
   const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
   const { encryptObject } = await import("./encryption.js");
 
@@ -963,13 +962,21 @@ async function decryptNoteIfNeeded(note) {
     }
 
     let decryptedRecordings = [];
-    if (note.recordings && typeof note.recordings === "object" && note.recordings.data && note.recordings.iv) {
+    if (
+      note.recordings &&
+      typeof note.recordings === "object" &&
+      note.recordings.data &&
+      note.recordings.iv
+    ) {
       try {
         const once = await decryptObject(note.recordings, key);
         decryptedRecordings = Array.isArray(once) ? once : [];
       } catch (_e) {
         // Encrypted with a different device's key (cross-device sync artifact) — treat as empty
-        console.warn("[Storage] Could not decrypt recordings blob — dropping recordings for note", note.id);
+        console.warn(
+          "[Storage] Could not decrypt recordings blob — dropping recordings for note",
+          note.id,
+        );
         decryptedRecordings = [];
       }
     } else if (Array.isArray(note.recordings)) {

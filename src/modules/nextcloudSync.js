@@ -123,7 +123,9 @@ async function decryptNoteLocally(note) {
     content: isBlob(note.content) ? await decryptObject(note.content, key) : note.content,
     strokes: isBlob(note.strokes) ? await decryptObject(note.strokes, key) : note.strokes,
     media: isBlob(note.media) ? await decryptObject(note.media, key) : note.media,
-    recordings: isBlob(note.recordings) ? await decryptObject(note.recordings, key) : (note.recordings ?? []),
+    recordings: isBlob(note.recordings)
+      ? await decryptObject(note.recordings, key)
+      : (note.recordings ?? []),
     tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
     recognition: isBlob(note.recognition)
       ? await decryptObject(note.recognition, key)
@@ -222,7 +224,12 @@ async function decryptNoteFromNextcloud(note) {
       }
 
       let decryptedRecordings = [];
-      if (note.recordings && typeof note.recordings === "object" && note.recordings.data && note.recordings.iv) {
+      if (
+        note.recordings &&
+        typeof note.recordings === "object" &&
+        note.recordings.data &&
+        note.recordings.iv
+      ) {
         decryptedRecordings = await decryptObject(note.recordings, encryptionKey);
       } else if (Array.isArray(note.recordings)) {
         decryptedRecordings = note.recordings;
@@ -263,7 +270,10 @@ async function decryptNoteFromNextcloud(note) {
     try {
       decryptedNote = await decryptNoteLocally(decryptedNote);
     } catch (err) {
-      console.error(`[NextcloudSync] Could not decrypt locally-encrypted note ${decryptedNote.id} — wrong key or corrupted:`, err);
+      console.error(
+        `[NextcloudSync] Could not decrypt locally-encrypted note ${decryptedNote.id} — wrong key or corrupted:`,
+        err,
+      );
       // Leave as-is; saveNote will store it with encrypted:true and it will fail on read.
       // This is better than silently discarding the note.
     }
@@ -290,7 +300,9 @@ async function decryptNoteFromNextcloud(note) {
           decryptedNote = { ...decryptedNote, recordings: Array.isArray(dec) ? dec : [] };
         } catch (_e) {
           // Wrong key (from another device) — drop the recordings rather than breaking the note
-          console.warn(`[NextcloudSync] Could not decrypt recordings blob for note ${decryptedNote.id} — dropping recordings`);
+          console.warn(
+            `[NextcloudSync] Could not decrypt recordings blob for note ${decryptedNote.id} — dropping recordings`,
+          );
           decryptedNote = { ...decryptedNote, recordings: [] };
         }
       }
@@ -300,7 +312,9 @@ async function decryptNoteFromNextcloud(note) {
           const dec = await decryptObject(decryptedNote.media, key);
           decryptedNote = { ...decryptedNote, media: Array.isArray(dec) ? dec : [] };
         } catch (_e) {
-          console.warn(`[NextcloudSync] Could not decrypt media blob for note ${decryptedNote.id} — dropping media`);
+          console.warn(
+            `[NextcloudSync] Could not decrypt media blob for note ${decryptedNote.id} — dropping media`,
+          );
           decryptedNote = { ...decryptedNote, media: [] };
         }
       }

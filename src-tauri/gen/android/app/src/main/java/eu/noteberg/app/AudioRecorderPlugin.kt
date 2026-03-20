@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
-import android.util.Base64
 import androidx.core.app.ActivityCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
@@ -40,11 +39,11 @@ class AudioRecorderPlugin(private val activity: android.app.Activity) : Plugin(a
                 MediaRecorder()
             }
 
-            rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+            rec.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             rec.setAudioSamplingRate(44100)
-            rec.setAudioEncodingBitRate(128000)
+            rec.setAudioEncodingBitRate(32000)
             rec.setOutputFile(file.absolutePath)
             rec.prepare()
             rec.start()
@@ -67,20 +66,65 @@ class AudioRecorderPlugin(private val activity: android.app.Activity) : Plugin(a
         try {
             recorder!!.stop()
             stopAndRelease()
-
-            val bytes = file.readBytes()
-            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-            file.delete()
             outputFile = null
 
             val result = JSObject()
-            result.put("data", base64)
+            result.put("path", file.absolutePath)
             result.put("mimeType", "audio/mp4")
             invoke.resolve(result)
         } catch (e: Exception) {
             stopAndRelease()
+            outputFile = null
+            file.delete()
             invoke.reject("Failed to stop recording: ${e.message}")
         }
+    }
+
+    @Command
+    fun pause(invoke: Invoke) {
+        val rec = recorder
+        if (rec == null) {
+            invoke.reject("No active recording")
+            return
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                rec.pause()
+                invoke.resolve()
+            } else {
+                invoke.reject("Pause requires Android 7.0+")
+            }
+        } catch (e: Exception) {
+            invoke.reject("Failed to pause recording: ${e.message}")
+        }
+    }
+
+    @Command
+    fun resume(invoke: Invoke) {
+        val rec = recorder
+        if (rec == null) {
+            invoke.reject("No active recording")
+            return
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                rec.resume()
+                invoke.resolve()
+            } else {
+                invoke.reject("Resume requires Android 7.0+")
+            }
+        } catch (e: Exception) {
+            invoke.reject("Failed to resume recording: ${e.message}")
+        }
+    }
+
+    @Command
+    fun getAmplitude(invoke: Invoke) {
+        val raw = recorder?.maxAmplitude ?: 0  // 0–32767, resets after each call
+        val normalised = (raw / 32767.0).coerceIn(0.0, 1.0)
+        val result = JSObject()
+        result.put("amplitude", normalised)
+        invoke.resolve(result)
     }
 
     @Command

@@ -13,12 +13,12 @@
  *   rm.destroy();
  */
 
-import { generateId, saveFile } from "../../modules/storage.js";
 import { invoke } from "@tauri-apps/api/core";
+import { generateId, saveFile } from "../../modules/storage.js";
 
 /** True when running inside Tauri on Android */
-const IS_ANDROID = typeof window.__TAURI_INTERNALS__ !== "undefined" &&
-  /android/i.test(navigator.userAgent);
+const IS_ANDROID =
+  typeof window.__TAURI_INTERNALS__ !== "undefined" && /android/i.test(navigator.userAgent);
 
 export class RecordingManager {
   /**
@@ -39,6 +39,7 @@ export class RecordingManager {
     this._audioChunks = [];
     this._stream = null;
     this._nativeRecording = false;
+    this._nativePaused = false;
 
     this._recordingId = null;
     this._recordingStartTime = null;
@@ -50,9 +51,8 @@ export class RecordingManager {
     this._analyser = null;
     this._analyserBuffer = null;
 
-    this._playingId = null;
-    this._audioElement = null;
-    this._playbackTimerInterval = null;
+    this._nativeAmplitude = 0;
+    this._amplitudePollInterval = null;
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -75,11 +75,13 @@ export class RecordingManager {
   }
 
   isPaused() {
+    if (this._nativeRecording) return this._nativePaused;
     return this._mediaRecorder !== null && this._mediaRecorder.state === "paused";
   }
 
   /** Returns current input amplitude as 0–1, or 0 if not recording */
   getAmplitude() {
+    if (this._nativeRecording) return this._nativeAmplitude;
     if (!this._analyser || !this._analyserBuffer) return 0;
     this._analyser.getByteTimeDomainData(this._analyserBuffer);
     let max = 0;
@@ -120,6 +122,8 @@ export class RecordingManager {
         throw new Error(String(err));
       }
       this._nativeRecording = true;
+      this._nativeAmplitude = 0;
+      this._startAmplitudePoll();
       this._startTimer();
       this.onChange();
       return;
@@ -134,31 +138,64 @@ export class RecordingManager {
       throw err;
     }
 
-    // Set up amplitude analyser — deferred so MediaRecorder gets the stream first
-    setTimeout(() => {
-      try {
-        this._audioContext = new AudioContext();
-        this._analyser = this._audioContext.createAnalyser();
-        this._analyser.fftSize = 256;
-        this._analyserBuffer = new Uint8Array(this._analyser.frequencyBinCount);
-        this._audioContext.createMediaStreamSource(this._stream).connect(this._analyser);
-      } catch (_e) {
-        this._analyser = null;
-      }
-    }, 500);
-
     this._audioChunks = [];
 
+    // Build audio processing chain: source → compressor → gain → analyser → destination
+    // The processed stream is fed to MediaRecorder so recordings are auto-gained.
+    let recordingStream = this._stream;
+    try {
+      this._audioContext = new AudioContext();
+      const source = this._audioContext.createMediaStreamSource(this._stream);
+
+      // Dynamics compressor: gentle upward compression for quiet passages
+      const compressor = this._audioContext.createDynamicsCompressor();
+      compressor.threshold.value = -18; // dB
+      compressor.knee.value = 12; // dB — soft knee
+      compressor.ratio.value = 3; // gentle ratio
+      compressor.attack.value = 0.05; // seconds
+      compressor.release.value = 0.3; // seconds
+
+      // Modest make-up gain
+      const gain = this._audioContext.createGain();
+      gain.gain.value = 1.1;
+
+      // Hard limiter at the end of the chain to prevent clipping on loud sounds
+      const limiter = this._audioContext.createDynamicsCompressor();
+      limiter.threshold.value = -1; // dB — kick in just below 0 dBFS
+      limiter.knee.value = 0; // hard knee
+      limiter.ratio.value = 20; // near-brick-wall limiting
+      limiter.attack.value = 0.001; // seconds — fast to catch transients
+      limiter.release.value = 0.1; // seconds
+
+      // Analyser for the level meter
+      this._analyser = this._audioContext.createAnalyser();
+      this._analyser.fftSize = 256;
+      this._analyserBuffer = new Uint8Array(this._analyser.frequencyBinCount);
+
+      const destination = this._audioContext.createMediaStreamDestination();
+
+      source.connect(compressor);
+      compressor.connect(gain);
+      gain.connect(limiter);
+      limiter.connect(this._analyser);
+      this._analyser.connect(destination);
+
+      recordingStream = destination.stream;
+    } catch (_e) {
+      this._analyser = null;
+    }
+
     const preferredTypes = [
+      "audio/mp4",
       "audio/webm;codecs=opus",
       "audio/webm",
-      "audio/mp4",
       "audio/ogg;codecs=opus",
       "audio/ogg",
     ];
     const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
 
-    this._mediaRecorder = new MediaRecorder(this._stream, mimeType ? { mimeType } : {});
+    this._mediaRecorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : {});
+    this._mimeType = this._mediaRecorder.mimeType || mimeType || "audio/webm";
 
     this._mediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
@@ -186,21 +223,38 @@ export class RecordingManager {
   }
 
   pauseRecording() {
-    if (!this.isRecording() || this.isPaused() || this._nativeRecording) return;
+    if (!this.isRecording() || this.isPaused()) return;
     this._pauseStart = Date.now();
     this._stopTimer();
-    this._mediaRecorder.pause();
+    if (this._nativeRecording) {
+      this._nativePaused = true;
+      this._stopAmplitudePoll();
+      this._nativeAmplitude = 0;
+      invoke("native_audio_pause").catch((err) =>
+        console.error("[RecordingManager] Native pause error:", err),
+      );
+    } else {
+      this._mediaRecorder.pause();
+    }
     this.onChange();
   }
 
   resumeRecording() {
-    if (!this.isPaused() || this._nativeRecording) return;
+    if (!this.isPaused()) return;
     if (this._pauseStart) {
       this._pausedDuration += Date.now() - this._pauseStart;
       this._pauseStart = null;
     }
     this._startTimer();
-    this._mediaRecorder.resume();
+    if (this._nativeRecording) {
+      this._nativePaused = false;
+      this._startAmplitudePoll();
+      invoke("native_audio_resume").catch((err) =>
+        console.error("[RecordingManager] Native resume error:", err),
+      );
+    } else {
+      this._mediaRecorder.resume();
+    }
     this.onChange();
   }
 
@@ -209,14 +263,18 @@ export class RecordingManager {
     this._stopTimer();
     if (this._nativeRecording) {
       this._nativeRecording = false;
-      invoke("native_audio_stop").then((result) => {
-        this._handleNativeStopped(result);
-      }).catch((err) => {
-        console.error("[RecordingManager] Native audio stop error:", err);
-        this._recordingId = null;
-        this._recordingStartTime = null;
-        this.onChange();
-      });
+      this._nativePaused = false;
+      this._stopAmplitudePoll();
+      invoke("native_audio_stop")
+        .then((result) => {
+          this._handleNativeStopped(result);
+        })
+        .catch((err) => {
+          console.error("[RecordingManager] Native audio stop error:", err);
+          this._recordingId = null;
+          this._recordingStartTime = null;
+          this.onChange();
+        });
       this.onChange();
       return;
     }
@@ -236,56 +294,12 @@ export class RecordingManager {
     this.onChange();
   }
 
-  /**
-   * Toggle playback of a recording blob.
-   * @param {string} id
-   * @param {Blob} blob
-   */
-  playRecording(id, blob) {
-    if (this._playingId === id) {
-      this._stopPlayback();
-      this.onChange();
-      return;
-    }
-    this._stopPlayback();
-    const url = URL.createObjectURL(blob);
-    this._audioElement = new Audio(url);
-    this._audioElement.onended = () => {
-      this._stopPlayback();
-      this.onChange();
-    };
-    this._audioElement.play();
-    this._playingId = id;
-    this._playbackTimerInterval = setInterval(() => this.onChange(), 250);
-    this.onChange();
-  }
-
-  stopPlayback(id) {
-    if (this._playingId === id) {
-      this._stopPlayback();
-      this.onChange();
-    }
-  }
-
-  isPlaying(id) {
-    return this._playingId === id;
-  }
-
-  /** Returns current playback position in seconds, or 0 */
-  getPlaybackPosition() {
-    return this._audioElement ? this._audioElement.currentTime : 0;
-  }
-
-  /** Returns playback duration in seconds, or 0 */
-  getPlaybackDuration() {
-    return this._audioElement ? (this._audioElement.duration || 0) : 0;
-  }
-
   destroy() {
-    this._stopPlayback(); // also calls _stopPlaybackTimer
     this._stopTimer();
     if (this._nativeRecording) {
       this._nativeRecording = false;
+      this._nativePaused = false;
+      this._stopAmplitudePoll();
       invoke("native_audio_cancel").catch(() => {});
     }
     if (this._mediaRecorder && this._mediaRecorder.state !== "inactive") {
@@ -308,16 +322,25 @@ export class RecordingManager {
     this._pausedDuration = 0;
     this._pauseStart = null;
 
-    if (!result?.data) {
+    if (!result?.path) {
       this.onChange();
       return;
     }
 
-    // Convert base64 audio/mp4 to Blob
-    const byteChars = atob(result.data);
-    const byteArr = new Uint8Array(byteChars.length);
-    for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-    const blob = new Blob([byteArr], { type: result.mimeType ?? "audio/mp4" });
+    // Read file on Rust's native heap (avoids Android JVM heap OOM for large files)
+    let blob;
+    try {
+      const base64 = await invoke("native_audio_read_and_delete", { path: result.path });
+      const mimeType = result.mimeType ?? "audio/mp4";
+      const byteChars = atob(base64);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+      blob = new Blob([byteArr], { type: mimeType });
+    } catch (err) {
+      console.error("[RecordingManager] Failed to read native recording file:", err);
+      this.onChange();
+      return;
+    }
 
     await this._saveCompletedRecording(id, blob, duration);
   }
@@ -326,9 +349,11 @@ export class RecordingManager {
     const chunks = this._audioChunks;
     const id = this._recordingId;
     const duration = this.getElapsed();
+    const mimeType = this._mimeType || "audio/webm";
 
     this._mediaRecorder = null;
     this._audioChunks = [];
+    this._mimeType = null;
     this._recordingId = null;
     this._recordingStartTime = null;
     this._pausedDuration = 0;
@@ -339,7 +364,7 @@ export class RecordingManager {
       return;
     }
 
-    const blob = new Blob(chunks, { type: "audio/webm" });
+    const blob = new Blob(chunks, { type: mimeType });
     await this._saveCompletedRecording(id, blob, duration);
   }
 
@@ -387,6 +412,26 @@ export class RecordingManager {
     }
   }
 
+  _startAmplitudePoll() {
+    this._stopAmplitudePoll();
+    this._amplitudePollInterval = setInterval(async () => {
+      try {
+        const result = await invoke("native_audio_get_amplitude");
+        this._nativeAmplitude = result?.amplitude ?? 0;
+      } catch (_e) {
+        // ignore — recording may have just stopped
+      }
+    }, 100);
+  }
+
+  _stopAmplitudePoll() {
+    if (this._amplitudePollInterval) {
+      clearInterval(this._amplitudePollInterval);
+      this._amplitudePollInterval = null;
+    }
+    this._nativeAmplitude = 0;
+  }
+
   _releaseStream() {
     if (this._stream) {
       for (const track of this._stream.getTracks()) track.stop();
@@ -421,24 +466,6 @@ export class RecordingManager {
       }
       throw err;
     }
-  }
-
-  _stopPlaybackTimer() {
-    if (this._playbackTimerInterval) {
-      clearInterval(this._playbackTimerInterval);
-      this._playbackTimerInterval = null;
-    }
-  }
-
-  _stopPlayback() {
-    if (this._audioElement) {
-      this._audioElement.pause();
-      this._audioElement.onended = null;
-      URL.revokeObjectURL(this._audioElement.src);
-      this._audioElement = null;
-    }
-    this._playingId = null;
-    this._stopPlaybackTimer();
   }
 
   _formatRecordingName(timestamp) {

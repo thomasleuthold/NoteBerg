@@ -109,6 +109,61 @@ async fn native_audio_stop(app: tauri::AppHandle) -> Result<serde_json::Value, S
 #[cfg(not(target_os = "android"))]
 async fn native_audio_stop() -> Result<serde_json::Value, String> { Err("not supported".into()) }
 
+/// Read a native recording file into base64 on the Rust (native) heap and delete it.
+/// Using Rust avoids Android JVM heap OOM for large files.
+#[tauri::command]
+async fn native_audio_read_and_delete(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("Failed to read recording file: {}", e))?;
+    let _ = std::fs::remove_file(&path);
+    use base64::{Engine as _, engine::general_purpose};
+    Ok(general_purpose::STANDARD_NO_PAD.encode(&bytes))
+}
+
+/// Get current recording amplitude 0.0–1.0 (Android only).
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn native_audio_get_amplitude(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use tauri::Manager;
+    app.state::<AudioRecorderPlugin>()
+        .0
+        .run_mobile_plugin::<serde_json::Value>("getAmplitude", serde_json::json!({}))
+        .map_err(|e| format!("native_audio_get_amplitude: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn native_audio_get_amplitude() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "amplitude": 0.0 }))
+}
+
+/// Pause native audio recording (Android only).
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn native_audio_pause(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<AudioRecorderPlugin>()
+        .0
+        .run_mobile_plugin::<()>("pause", serde_json::json!({}))
+        .map_err(|e| format!("native_audio_pause: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn native_audio_pause() -> Result<(), String> { Ok(()) }
+
+/// Resume native audio recording (Android only).
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn native_audio_resume(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<AudioRecorderPlugin>()
+        .0
+        .run_mobile_plugin::<()>("resume", serde_json::json!({}))
+        .map_err(|e| format!("native_audio_resume: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn native_audio_resume() -> Result<(), String> { Ok(()) }
+
 /// Cancel native audio recording (Android only).
 #[tauri::command]
 #[cfg(target_os = "android")]
@@ -172,6 +227,10 @@ pub fn run() {
             save_pdf,
             native_audio_start,
             native_audio_stop,
+            native_audio_read_and_delete,
+            native_audio_get_amplitude,
+            native_audio_pause,
+            native_audio_resume,
             native_audio_cancel,
         ]);
 
