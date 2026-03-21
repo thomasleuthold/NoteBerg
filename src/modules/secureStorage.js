@@ -1,74 +1,187 @@
 /**
  * Secure Storage Module
- * Handles encrypted credential storage using Web Crypto API with AES-256-GCM
- * Falls back to plain localStorage in browser/dev mode if crypto unavailable
  *
- * Security note: The encryption key is derived from a hardcoded password.
- * This provides protection against casual local file inspection but is not
- * secure against determined attackers with access to the source code.
+ * In Tauri: uses tauri-plugin-stronghold to store secrets in an encrypted
+ * on-disk vault. The vault is opened with a 32-byte random key managed by the
+ * OS keychain (Windows Credential Manager, macOS/iOS Keychain, Linux Secret
+ * Service, Android Keystore). No hardcoded keys, no localStorage for secrets.
+ *
+ * In browser/dev-without-Tauri: falls back to Web Crypto API with a hardcoded
+ * key (same as the original implementation — acceptable for development only).
+ *
+ * Migration: on first run after this update, existing localStorage secrets
+ * encrypted with the old hardcoded key are transparently migrated to Stronghold
+ * and then removed from localStorage.
  */
 
-// Hardcoded password for deriving encryption key
-const STORAGE_PASSWORD = "noteberg_secure_storage_2025";
+// ── Stronghold state ──────────────────────────────────────────────────────────
 
-// Cache for encryption key to avoid re-deriving it
-let encryptionKey = null;
+let _stronghold = null;
+let _store = null;
+let _initPromise = null;
+
+const MANAGED_KEYS = ["master_password", "nextcloud_credentials"];
+
+// ── Environment detection ─────────────────────────────────────────────────────
+
+function _isTauriEnvironment() {
+  if (typeof window === "undefined") return false;
+  return window.__TAURI_INTERNALS__ !== undefined || window.__TAURI__ !== undefined;
+}
+
+// ── Stronghold initialization ─────────────────────────────────────────────────
+
+async function _initStronghold() {
+  if (_store) return _store;
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const { appLocalDataDir } = await import("@tauri-apps/api/path");
+      const { Stronghold } = await import("@tauri-apps/plugin-stronghold");
+
+      // Get (or create) the 32-byte random vault key from the OS keychain.
+      // Returned as a JSON array of numbers by Tauri's serialization.
+      const keyBytes = await invoke("get_or_create_vault_key");
+
+      // Stronghold.load expects the password as a Uint8Array
+      const vaultPassword = new Uint8Array(keyBytes);
+      const dataDir = await appLocalDataDir();
+      const vaultPath = `${dataDir}/noteberg.vault`;
+
+      _stronghold = await Stronghold.load(vaultPath, vaultPassword);
+      const client = await _stronghold.loadClient("noteberg-v1");
+      _store = client.getStore();
+
+      await _migrateFromLocalStorage(_store);
+
+      return _store;
+    } catch (err) {
+      _initPromise = null; // allow retry on next call
+      throw err;
+    }
+  })();
+
+  return _initPromise;
+}
+
+// ── Migration from legacy localStorage ───────────────────────────────────────
+
+async function _migrateFromLocalStorage(store) {
+  let migrated = 0;
+
+  for (const key of MANAGED_KEYS) {
+    // Skip if already present in Stronghold
+    const existing = await store.get(key).catch(() => null);
+    if (existing) continue;
+
+    // Check for legacy localStorage entry
+    const oldEncrypted = localStorage.getItem(`secure_${key}`);
+    if (!oldEncrypted) continue;
+
+    try {
+      const plaintext = await _legacyDecrypt(oldEncrypted);
+      if (plaintext) {
+        await store.insert(key, Array.from(new TextEncoder().encode(plaintext)));
+        migrated++;
+        console.info(`[SecureStorage] Migrated '${key}' to Stronghold`);
+      }
+    } catch (e) {
+      console.warn(`[SecureStorage] Could not migrate legacy '${key}':`, e);
+    }
+  }
+
+  if (migrated > 0) {
+    await _stronghold.save();
+    for (const key of MANAGED_KEYS) {
+      localStorage.removeItem(`secure_${key}`);
+    }
+    console.info(`[SecureStorage] Migration complete: ${migrated} secret(s) moved to Stronghold`);
+  }
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Check if running in Tauri environment
- * @returns {boolean}
+ * Save a credential. In Tauri, stores in Stronghold. Falls back to encrypted localStorage.
+ * @param {string} key
+ * @param {string} value
  */
-function _isTauriEnvironment() {
-  // Tauri v2 sets window.__TAURI_INTERNALS__
-  if (typeof window !== "undefined" && window.__TAURI_INTERNALS__ !== undefined) {
-    return true;
+export async function saveSecureCredential(key, value) {
+  if (!_isTauriEnvironment()) {
+    return _legacySave(key, value);
   }
-  // Fallback to window.__TAURI__ for older versions
-  if (typeof window !== "undefined" && window.__TAURI__ !== undefined) {
-    return true;
-  }
-  return false;
+  const store = await _initStronghold();
+  await store.insert(key, Array.from(new TextEncoder().encode(value)));
+  await _stronghold.save();
 }
 
 /**
- * Check if Web Crypto API is available
- * @returns {boolean}
+ * Retrieve a credential. In Tauri, reads from Stronghold. Falls back to encrypted localStorage.
+ * @param {string} key
+ * @returns {Promise<string|null>}
  */
-function isCryptoAvailable() {
+export async function getSecureCredential(key) {
+  if (!_isTauriEnvironment()) {
+    return _legacyGet(key);
+  }
+  try {
+    const store = await _initStronghold();
+    const bytes = await store.get(key);
+    if (!bytes) return null;
+    return new TextDecoder().decode(new Uint8Array(bytes));
+  } catch (err) {
+    console.error("[SecureStorage] Stronghold read failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Delete a credential.
+ * @param {string} key
+ */
+export async function deleteSecureCredential(key) {
+  if (!_isTauriEnvironment()) {
+    return _legacyDelete(key);
+  }
+  const store = await _initStronghold();
+  await store.remove(key);
+  await _stronghold.save();
+}
+
+// ── Legacy fallback (browser / dev mode) + migration decryption ──────────────
+//
+// These functions use the original hardcoded-key AES-256-GCM scheme.
+// They are kept for:
+//   1. Browser/dev-mode fallback (no Tauri available)
+//   2. One-time migration: decrypting old localStorage entries on first run
+
+const _LEGACY_PASSWORD = "noteberg_secure_storage_2025";
+const _LEGACY_SALT = "noteberg_salt_v1";
+
+let _legacyKey = null;
+
+function _isCryptoAvailable() {
   return typeof window !== "undefined" && window.crypto && window.crypto.subtle;
 }
 
-/**
- * Derive encryption key from password using PBKDF2
- * @returns {Promise<CryptoKey>}
- */
-async function getEncryptionKey() {
-  if (encryptionKey) {
-    return encryptionKey;
-  }
+async function _getLegacyKey() {
+  if (_legacyKey) return _legacyKey;
+  if (!_isCryptoAvailable()) throw new Error("Web Crypto API not available");
 
-  if (!isCryptoAvailable()) {
-    throw new Error("Web Crypto API not available");
-  }
-
-  // Use fixed salt for deterministic key derivation
-  const salt = new TextEncoder().encode("noteberg_salt_v1");
-
-  // Import password as key material
   const keyMaterial = await window.crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(STORAGE_PASSWORD),
+    new TextEncoder().encode(_LEGACY_PASSWORD),
     "PBKDF2",
     false,
     ["deriveBits", "deriveKey"],
   );
-
-  // Derive AES-GCM key
-  encryptionKey = await window.crypto.subtle.deriveKey(
+  _legacyKey = await window.crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: salt,
-      iterations: 10000, // Reasonable iterations for fast performance
+      salt: new TextEncoder().encode(_LEGACY_SALT),
+      iterations: 10000,
       hash: "SHA-256",
     },
     keyMaterial,
@@ -76,108 +189,57 @@ async function getEncryptionKey() {
     false,
     ["encrypt", "decrypt"],
   );
-
-  return encryptionKey;
+  return _legacyKey;
 }
 
-/**
- * Encrypt data using AES-256-GCM
- * @param {string} plaintext - Data to encrypt
- * @returns {Promise<string>} Base64-encoded encrypted data with IV
- */
-async function encryptData(plaintext) {
-  const key = await getEncryptionKey();
-
-  // Generate random IV for each encryption
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
-
-  // Encrypt the data
-  const encrypted = await window.crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: iv },
-    key,
-    new TextEncoder().encode(plaintext),
-  );
-
-  // Combine IV and encrypted data
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(encrypted), iv.length);
-
-  // Return as base64
-  return btoa(String.fromCharCode(...combined));
-}
-
-/**
- * Decrypt data using AES-256-GCM
- * @param {string} encryptedBase64 - Base64-encoded encrypted data with IV
- * @returns {Promise<string>} Decrypted plaintext
- */
-async function decryptData(encryptedBase64) {
-  const key = await getEncryptionKey();
-
-  // Decode from base64
+async function _legacyDecrypt(encryptedBase64) {
+  const key = await _getLegacyKey();
   const combined = Uint8Array.from(atob(encryptedBase64), (c) => c.charCodeAt(0));
-
-  // Extract IV and encrypted data
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
-
-  // Decrypt the data
-  const decrypted = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, encrypted);
-
+  const decrypted = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, encrypted);
   return new TextDecoder().decode(decrypted);
 }
 
-/**
- * Save credentials to encrypted localStorage
- * @param {string} key - Credential key
- * @param {string} value - Credential value
- */
-export async function saveSecureCredential(key, value) {
-  if (!isCryptoAvailable()) {
-    console.warn("[SecureStorage] Web Crypto API not available - storing in plain localStorage");
+async function _legacyEncrypt(plaintext) {
+  const key = await _getLegacyKey();
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await window.crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(plaintext),
+  );
+  const combined = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(encrypted), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function _legacySave(key, value) {
+  if (!_isCryptoAvailable()) {
     localStorage.setItem(`secure_${key}`, value);
     return;
   }
-
   try {
-    const encrypted = await encryptData(value);
+    const encrypted = await _legacyEncrypt(value);
     localStorage.setItem(`secure_${key}`, encrypted);
-    console.info("[SecureStorage] Credential saved:", key);
-  } catch (error) {
-    console.error("[SecureStorage] Encryption failed, falling back to plain storage:", error);
+  } catch (e) {
+    console.error("[SecureStorage] Legacy encrypt failed, storing plain:", e);
     localStorage.setItem(`secure_${key}`, value);
   }
 }
 
-/**
- * Retrieve credentials from encrypted localStorage
- * @param {string} key - Credential key
- * @returns {Promise<string|null>} Credential value or null
- */
-export async function getSecureCredential(key) {
+async function _legacyGet(key) {
   const stored = localStorage.getItem(`secure_${key}`);
-  if (!stored) {
-    return null;
-  }
-
-  if (!isCryptoAvailable()) {
-    console.warn("[SecureStorage] Web Crypto API not available - returning plain value");
-    return stored;
-  }
-
+  if (!stored) return null;
+  if (!_isCryptoAvailable()) return stored;
   try {
-    return await decryptData(stored);
-  } catch (error) {
-    console.warn("[SecureStorage] Decryption failed, assuming plain storage:", error);
-    return stored;
+    return await _legacyDecrypt(stored);
+  } catch {
+    return stored; // stored as plain text (fallback path)
   }
 }
 
-/**
- * Delete credentials from encrypted localStorage
- * @param {string} key - Credential key
- */
-export async function deleteSecureCredential(key) {
+function _legacyDelete(key) {
   localStorage.removeItem(`secure_${key}`);
 }

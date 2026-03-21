@@ -32,7 +32,7 @@ export class SoundDialog {
     this._blobUrls = new Map(); // fileId → url
 
     // Playback state
-    this._selectedId = null;          // id of selected recording
+    this._selectedId = null; // id of selected recording
     this._playbackPositions = new Map(); // id → seconds
 
     // Snapshot for structural-change detection
@@ -334,9 +334,9 @@ export class SoundDialog {
         const playerWrap = this._dialogEl.querySelector(".sound-dialog__player");
         if (playerWrap) playerWrap.style.display = "none";
         this._selectedId = null;
-        this._dialogEl.querySelectorAll(".sound-dialog__row--selected").forEach((r) =>
-          r.classList.remove("sound-dialog__row--selected"),
-        );
+        for (const r of this._dialogEl.querySelectorAll(".sound-dialog__row--selected")) {
+          r.classList.remove("sound-dialog__row--selected");
+        }
         try {
           await this.rm.startRecording();
         } catch (err) {
@@ -458,9 +458,7 @@ export class SoundDialog {
   _revokeBlobUrls() {
     // Keep the URL of any currently playing recording so playback isn't interrupted
     const keepUrl = this._selectedId
-      ? this._blobUrls.get(
-          this.rm.getRecordings().find((r) => r.id === this._selectedId)?.fileId,
-        )
+      ? this._blobUrls.get(this.rm.getRecordings().find((r) => r.id === this._selectedId)?.fileId)
       : null;
     for (const [fileId, url] of this._blobUrls) {
       if (url !== keepUrl) {

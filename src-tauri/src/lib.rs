@@ -209,6 +209,90 @@ async fn save_pdf(
     Ok(path_str)
 }
 
+// ── Secure vault key ──────────────────────────────────────────────────────────
+//
+// Returns a 32-byte random key from the OS keychain (Windows Credential Manager,
+// macOS/iOS Keychain, Linux Secret Service). On first launch a random key is
+// generated and stored. The key is used to open the Stronghold vault — no Argon2
+// KDF is needed because the key is already high-entropy random data.
+//
+// On Linux, if no Secret Service daemon is available, falls back to a
+// deterministic key derived from the machine UUID (weaker but functional).
+
+const KEYRING_SERVICE: &str = "eu.noteberg.app";
+const KEYRING_ACCOUNT: &str = "stronghold-vault-key";
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+fn get_or_create_vault_key() -> Result<Vec<u8>, String> {
+    use keyring::Entry;
+    let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        .map_err(|e| format!("keyring entry: {e}"))?;
+
+    match entry.get_secret() {
+        Ok(key) if key.len() == 32 => return Ok(key),
+        Ok(_) => { /* wrong size — fall through to regenerate */ }
+        Err(keyring::Error::NoEntry) => { /* first launch — fall through to generate */ }
+        Err(e) => {
+            // Linux: Secret Service unavailable — fall back to device ID
+            #[cfg(target_os = "linux")]
+            {
+                eprintln!("[SecureStorage] keyring unavailable ({e}), using device ID fallback");
+                return get_linux_fallback_key();
+            }
+            #[cfg(not(target_os = "linux"))]
+            return Err(format!("keyring read: {e}"));
+        }
+    }
+
+    // Generate new random 32-byte key and persist it
+    let key: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+    entry.set_secret(&key).map_err(|e| format!("keyring write: {e}"))?;
+    Ok(key)
+}
+
+#[cfg(target_os = "linux")]
+fn get_linux_fallback_key() -> Result<Vec<u8>, String> {
+    use blake2::{Blake2b512, Digest};
+    let uid = machine_uid::get().map_err(|e| format!("machine-uid: {e}"))?;
+    let input = format!("noteberg-vault-v1:{uid}");
+    let hash = Blake2b512::digest(input.as_bytes());
+    Ok(hash[..32].to_vec())
+}
+
+// ── Android vault key plugin ──────────────────────────────────────────────────
+//
+// Android Keystore (hardware-backed TEE) generates and protects a random AES key.
+// That key encrypts the 32-byte vault key stored in SharedPreferences.
+// The Kotlin DeviceKeyPlugin handles this via the Android Keystore API.
+
+#[cfg(target_os = "android")]
+struct DeviceKeyPlugin(tauri::plugin::PluginHandle<tauri::Wry>);
+
+#[cfg(target_os = "android")]
+fn device_key_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::<tauri::Wry>::new("device-key")
+        .setup(|app, api| {
+            use tauri::Manager;
+            let handle = api.register_android_plugin("eu.noteberg.app", "DeviceKeyPlugin")?;
+            app.manage(DeviceKeyPlugin(handle));
+            Ok(())
+        })
+        .build()
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn get_or_create_vault_key(app: tauri::AppHandle) -> Result<Vec<u8>, String> {
+    use tauri::Manager;
+    let hex_key = app
+        .state::<DeviceKeyPlugin>()
+        .0
+        .run_mobile_plugin::<String>("getOrCreateVaultKey", serde_json::json!({}))
+        .map_err(|e| format!("DeviceKeyPlugin: {e}"))?;
+    hex::decode(&hex_key).map_err(|e| format!("hex decode: {e}"))
+}
+
 /// Guard so we only call grant_media_permissions once per app lifetime.
 #[cfg(target_os = "windows")]
 static PERMISSIONS_GRANTED: OnceLock<()> = OnceLock::new();
@@ -216,6 +300,15 @@ static PERMISSIONS_GRANTED: OnceLock<()> = OnceLock::new();
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_stronghold::Builder::new(|password| {
+            // The password is already 32 bytes of OS-keychain-backed random data.
+            // No KDF needed — pass through directly.
+            password
+                .as_ref()
+                .try_into()
+                .expect("vault key must be exactly 32 bytes")
+        })
+        .build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -224,6 +317,7 @@ pub fn run() {
         }))
         .invoke_handler(tauri::generate_handler![
             get_recognition_url,
+            get_or_create_vault_key,
             save_pdf,
             native_audio_start,
             native_audio_stop,
@@ -238,6 +332,7 @@ pub fn run() {
     {
         builder = builder.plugin(pdf_plugin());
         builder = builder.plugin(audio_recorder_plugin());
+        builder = builder.plugin(device_key_plugin());
     }
 
     builder
