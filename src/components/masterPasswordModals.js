@@ -351,6 +351,16 @@ export async function showAppUnlock({ onSuccess } = {}) {
         console.log("[MasterPasswordModals] Unlock successful");
         overlay.remove();
 
+        // Re-save the verified password to the keyring so future auto-unlocks work
+        // (handles the case where keyring had a stale/wrong password)
+        try {
+          const { saveSecureCredential } = await import("../modules/secureStorage.js");
+          await saveSecureCredential("master_password", password);
+          console.log("[MasterPasswordModals] Keyring password refreshed after manual unlock");
+        } catch (e) {
+          console.warn("[MasterPasswordModals] Could not refresh keyring password:", e);
+        }
+
         // Call success callback
         if (onSuccess) {
           onSuccess();

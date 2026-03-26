@@ -4531,8 +4531,9 @@ export class NoteCanvas {
     if (this.textEditorLayer) {
       this.textEditorLayer.forceSave();
     }
+    let pendingStrokeSave = null;
     if (this.strokeManager) {
-      this.strokeManager.forceSave();
+      pendingStrokeSave = this.strokeManager.forceSave() || null;
     }
 
     // Step 2: Trigger handwriting recognition if strokes changed.
@@ -4700,11 +4701,10 @@ export class NoteCanvas {
       pendingThumbnail = Promise.resolve();
     }
 
-    // Wait for both thumbnail save and recognition to complete before sync
-    return pendingRecognition
-      ? Promise.all([pendingThumbnail, pendingRecognition]).then(() => ({
-          mediaChanged: hadMediaChanges,
-        }))
-      : pendingThumbnail.then(() => ({ mediaChanged: hadMediaChanges }));
+    // Wait for thumbnail save, recognition, and (in NC) stroke save to complete before sync
+    const pending = [pendingThumbnail];
+    if (pendingRecognition) pending.push(pendingRecognition);
+    if (pendingStrokeSave) pending.push(pendingStrokeSave);
+    return Promise.all(pending).then(() => ({ mediaChanged: hadMediaChanges }));
   }
 }

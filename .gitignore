@@ -64,3 +64,9 @@ key.properties
 /src-recognition-backend/bin
 /src-recognition-backend/obj
 /coverage
+
+# Nextcloud build output (vite → repo root)
+/assets/
+/css/
+/js/
+/fonts/

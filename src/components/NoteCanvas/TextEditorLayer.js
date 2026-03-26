@@ -147,7 +147,7 @@ export class TextEditorLayer {
     this.$editor = jQuery(this.editorDiv);
 
     // Configure SVG icons path
-    jQuery.trumbowyg.svgPath = "/trumbowyg-icons.svg";
+    jQuery.trumbowyg.svgPath = `${import.meta.env.BASE_URL}trumbowyg-icons.svg`;
 
     this.$editor.trumbowyg({
       btns: [

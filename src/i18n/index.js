@@ -8,11 +8,17 @@ import { getSetting, setSetting } from "../modules/storage.js";
 import de from "./locales/de.json";
 import en from "./locales/en.json";
 
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+
 /**
  * Initialize the i18n system. Must be called after initStorage().
+ * In Nextcloud: reads locale from OC.getLocale() instead of stored setting.
  */
 export async function initI18n() {
-  const savedLang = (await getSetting("ui_language")) || "en";
+  // In Nextcloud the user's locale comes from the server via OC.getLocale()
+  const savedLang = IS_NEXTCLOUD
+    ? (window.OC?.getLocale?.() || "en").substring(0, 2) // e.g. "de_DE" → "de"
+    : (await getSetting("ui_language")) || "en";
 
   await i18next.init({
     lng: savedLang,

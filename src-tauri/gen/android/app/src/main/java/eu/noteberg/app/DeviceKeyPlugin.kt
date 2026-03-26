@@ -5,6 +5,7 @@ import android.security.keystore.KeyProperties
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -14,66 +15,101 @@ import javax.crypto.spec.GCMParameterSpec
 import android.util.Base64
 import java.security.SecureRandom
 
-private const val KEY_ALIAS = "noteberg_vault_key_v1"
-private const val PREFS_NAME = "noteberg_vault"
-private const val PREFS_KEY = "encrypted_vault_key"
-private const val PREFS_IV = "encrypted_vault_iv"
-
 /**
- * Manages a random 32-byte vault key protected by the Android Keystore.
+ * Secure credential storage for Android using Android Keystore + SharedPreferences.
  *
- * On first call: generates a random 32-byte key, encrypts it with a hardware-backed
- * AES-256-GCM key from the Android Keystore, stores the ciphertext in SharedPreferences.
- * On subsequent calls: decrypts and returns the stored key.
+ * Replaces tauri-plugin-stronghold on Android (which cannot be cross-compiled from
+ * Windows due to libsodium C dependency). A hardware-backed AES-256-GCM key in the
+ * Android Keystore encrypts each credential value stored in SharedPreferences.
  *
- * Returns the key as a lowercase hex string.
+ * Commands:
+ *   saveCredential(key, value)  — encrypt and persist a string credential
+ *   getCredential(key)          — decrypt and return { value: string|null }
+ *   deleteCredential(key)       — remove a credential
  */
+
+private const val KEYSTORE_ALIAS = "noteberg_credential_key_v1"
+private const val PREFS_NAME = "noteberg_secure_credentials"
+
 @TauriPlugin
 class DeviceKeyPlugin(private val activity: android.app.Activity) : Plugin(activity) {
 
     @Command
-    fun getOrCreateVaultKey(invoke: Invoke) {
+    fun saveCredential(invoke: Invoke) {
         try {
-            val prefs = activity.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
-            val encryptedKeyB64 = prefs.getString(PREFS_KEY, null)
-            val ivB64 = prefs.getString(PREFS_IV, null)
+            val args = invoke.getArgs()
+            val key = args.getString("key") ?: return invoke.reject("missing key")
+            val value = args.getString("value") ?: return invoke.reject("missing value")
 
-            val rawKey: ByteArray = if (encryptedKeyB64 != null && ivB64 != null) {
-                // Decrypt existing vault key using the Android Keystore AES key
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                val iv = Base64.decode(ivB64, Base64.DEFAULT)
-                cipher.init(Cipher.DECRYPT_MODE, getOrCreateKeystoreKey(), GCMParameterSpec(128, iv))
-                cipher.doFinal(Base64.decode(encryptedKeyB64, Base64.DEFAULT))
-            } else {
-                // First launch: generate a new random 32-byte vault key
-                val newKey = ByteArray(32).also { SecureRandom().nextBytes(it) }
-                // Encrypt with Android Keystore key and persist in SharedPreferences
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKeystoreKey())
-                val encrypted = cipher.doFinal(newKey)
-                prefs.edit()
-                    .putString(PREFS_KEY, Base64.encodeToString(encrypted, Base64.DEFAULT))
-                    .putString(PREFS_IV, Base64.encodeToString(cipher.iv, Base64.DEFAULT))
-                    .apply()
-                newKey
-            }
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+            val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
 
-            // Return as lowercase hex string (Rust side decodes with hex::decode)
-            invoke.resolve(rawKey.joinToString("") { "%02x".format(it) })
+            activity.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putString("enc_$key", Base64.encodeToString(encrypted, Base64.DEFAULT))
+                .putString("iv_$key", Base64.encodeToString(cipher.iv, Base64.DEFAULT))
+                .apply()
+
+            invoke.resolve()
         } catch (e: Exception) {
-            invoke.reject("DeviceKeyPlugin error: ${e.message}")
+            invoke.reject("saveCredential error: ${e.message}")
         }
     }
 
-    private fun getOrCreateKeystoreKey(): SecretKey {
+    @Command
+    fun getCredential(invoke: Invoke) {
+        try {
+            val key = invoke.getArgs().getString("key") ?: return invoke.reject("missing key")
+            val prefs = activity.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            val encB64 = prefs.getString("enc_$key", null)
+            val ivB64 = prefs.getString("iv_$key", null)
+
+            val result = JSObject()
+            if (encB64 == null || ivB64 == null) {
+                // No stored value — resolve with null sentinel so JS can detect absence
+                invoke.resolve(result)
+                return
+            }
+
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                getOrCreateKey(),
+                GCMParameterSpec(128, Base64.decode(ivB64, Base64.DEFAULT))
+            )
+            val decrypted = cipher.doFinal(Base64.decode(encB64, Base64.DEFAULT))
+            result.put("value", String(decrypted, Charsets.UTF_8))
+            invoke.resolve(result)
+        } catch (e: Exception) {
+            invoke.reject("getCredential error: ${e.message}")
+        }
+    }
+
+    @Command
+    fun deleteCredential(invoke: Invoke) {
+        try {
+            val key = invoke.getArgs().getString("key") ?: return invoke.reject("missing key")
+            activity.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .remove("enc_$key")
+                .remove("iv_$key")
+                .apply()
+            invoke.resolve()
+        } catch (e: Exception) {
+            invoke.reject("deleteCredential error: ${e.message}")
+        }
+    }
+
+    private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (keyStore.containsAlias(KEY_ALIAS)) {
-            return (keyStore.getEntry(KEY_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
+        if (keyStore.containsAlias(KEYSTORE_ALIAS)) {
+            return (keyStore.getEntry(KEYSTORE_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
         }
         val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
         keyGen.init(
             KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
+                KEYSTORE_ALIAS,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
             )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)

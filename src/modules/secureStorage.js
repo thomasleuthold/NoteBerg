@@ -1,20 +1,26 @@
 /**
  * Secure Storage Module
  *
- * In Tauri: uses tauri-plugin-stronghold to store secrets in an encrypted
- * on-disk vault. The vault is opened with a 32-byte random key managed by the
- * OS keychain (Windows Credential Manager, macOS/iOS Keychain, Linux Secret
- * Service, Android Keystore). No hardcoded keys, no localStorage for secrets.
+ * Desktop (Windows/macOS/Linux/iOS):
+ *   Uses tauri-plugin-stronghold — an encrypted on-disk vault opened with a
+ *   32-byte random key stored in the OS keychain (Windows Credential Manager,
+ *   macOS/iOS Keychain, Linux Secret Service).
  *
- * In browser/dev-without-Tauri: falls back to Web Crypto API with a hardcoded
- * key (same as the original implementation — acceptable for development only).
+ * Android:
+ *   Uses DeviceKeyPlugin (Kotlin) — credentials encrypted with Android Keystore
+ *   hardware-backed AES-256-GCM and stored in SharedPreferences. Stronghold is
+ *   excluded from Android builds due to a libsodium C cross-compilation issue.
+ *
+ * Browser / dev-without-Tauri:
+ *   Falls back to Web Crypto API with a hardcoded key (development only).
  *
  * Migration: on first run after this update, existing localStorage secrets
- * encrypted with the old hardcoded key are transparently migrated to Stronghold
- * and then removed from localStorage.
+ * encrypted with the old hardcoded key are transparently migrated and removed.
  */
 
-// ── Stronghold state ──────────────────────────────────────────────────────────
+import { invoke } from "@tauri-apps/api/core";
+
+// ── Stronghold state (desktop only) ──────────────────────────────────────────
 
 let _stronghold = null;
 let _store = null;
@@ -29,7 +35,60 @@ function _isTauriEnvironment() {
   return window.__TAURI_INTERNALS__ !== undefined || window.__TAURI__ !== undefined;
 }
 
-// ── Stronghold initialization ─────────────────────────────────────────────────
+// Detect Android via user agent — reliable in Tauri's Android WebView.
+function _isAndroid() {
+  return typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
+}
+
+// ── Android path: DeviceKeyPlugin via Tauri commands ─────────────────────────
+
+let _androidMigrationDone = false;
+
+async function _androidSave(key, value) {
+  await invoke("save_credential", { key, value });
+}
+
+async function _androidGet(key) {
+  const result = await invoke("get_credential", { key });
+  // Rust returns Result<Option<String>> → Tauri serializes as string | null directly
+  return result ?? null;
+}
+
+async function _androidDelete(key) {
+  await invoke("delete_credential", { key });
+}
+
+async function _androidMigrateFromLocalStorage() {
+  if (_androidMigrationDone) return;
+  _androidMigrationDone = true;
+  let migrated = 0;
+  for (const key of MANAGED_KEYS) {
+    const existing = await _androidGet(key).catch(() => null);
+    if (existing) {
+      console.info(`[SecureStorage] Android: '${key}' already in DeviceKeyPlugin`);
+      continue;
+    }
+    const oldEncrypted = localStorage.getItem(`secure_${key}`);
+    console.info(`[SecureStorage] Android: localStorage 'secure_${key}' present=${oldEncrypted !== null}`);
+    if (!oldEncrypted) continue;
+    try {
+      const plaintext = await _legacyDecrypt(oldEncrypted);
+      if (plaintext) {
+        await _androidSave(key, plaintext);
+        migrated++;
+        console.info(`[SecureStorage] Android: migrated '${key}' to DeviceKeyPlugin`);
+      }
+    } catch (e) {
+      console.warn(`[SecureStorage] Android: could not migrate '${key}':`, e);
+    }
+  }
+  if (migrated > 0) {
+    for (const key of MANAGED_KEYS) localStorage.removeItem(`secure_${key}`);
+    console.info(`[SecureStorage] Android: migration complete (${migrated} secret(s))`);
+  }
+}
+
+// ── Desktop path: Stronghold ──────────────────────────────────────────────────
 
 async function _initStronghold() {
   if (_store) return _store;
@@ -37,28 +96,34 @@ async function _initStronghold() {
 
   _initPromise = (async () => {
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
       const { appLocalDataDir } = await import("@tauri-apps/api/path");
       const { Stronghold } = await import("@tauri-apps/plugin-stronghold");
 
-      // Get (or create) the 32-byte random vault key from the OS keychain.
-      // Returned as a JSON array of numbers by Tauri's serialization.
+      // get_or_create_vault_key returns a JSON array of numbers (Vec<u8>).
+      // Pass as hex string — the Stronghold Builder::new closure decodes it.
       const keyBytes = await invoke("get_or_create_vault_key");
+      const vaultPassword = Array.from(keyBytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
 
-      // Stronghold.load expects the password as a Uint8Array
-      const vaultPassword = new Uint8Array(keyBytes);
       const dataDir = await appLocalDataDir();
-      const vaultPath = `${dataDir}/noteberg.vault`;
+      _stronghold = await Stronghold.load(`${dataDir}/noteberg.vault`, vaultPassword);
 
-      _stronghold = await Stronghold.load(vaultPath, vaultPassword);
-      const client = await _stronghold.loadClient("noteberg-v1");
+      // loadClient throws if the client doesn't exist yet (new vault).
+      // In that case, create it.
+      let client;
+      try {
+        client = await _stronghold.loadClient("noteberg-v1");
+      } catch {
+        client = await _stronghold.createClient("noteberg-v1");
+      }
       _store = client.getStore();
 
-      await _migrateFromLocalStorage(_store);
+      await _desktopMigrateFromLocalStorage(_store);
 
       return _store;
     } catch (err) {
-      _initPromise = null; // allow retry on next call
+      _initPromise = null;
       throw err;
     }
   })();
@@ -66,20 +131,13 @@ async function _initStronghold() {
   return _initPromise;
 }
 
-// ── Migration from legacy localStorage ───────────────────────────────────────
-
-async function _migrateFromLocalStorage(store) {
+async function _desktopMigrateFromLocalStorage(store) {
   let migrated = 0;
-
   for (const key of MANAGED_KEYS) {
-    // Skip if already present in Stronghold
     const existing = await store.get(key).catch(() => null);
     if (existing) continue;
-
-    // Check for legacy localStorage entry
     const oldEncrypted = localStorage.getItem(`secure_${key}`);
     if (!oldEncrypted) continue;
-
     try {
       const plaintext = await _legacyDecrypt(oldEncrypted);
       if (plaintext) {
@@ -88,43 +146,34 @@ async function _migrateFromLocalStorage(store) {
         console.info(`[SecureStorage] Migrated '${key}' to Stronghold`);
       }
     } catch (e) {
-      console.warn(`[SecureStorage] Could not migrate legacy '${key}':`, e);
+      console.warn(`[SecureStorage] Could not migrate '${key}':`, e);
     }
   }
-
   if (migrated > 0) {
     await _stronghold.save();
-    for (const key of MANAGED_KEYS) {
-      localStorage.removeItem(`secure_${key}`);
-    }
+    for (const key of MANAGED_KEYS) localStorage.removeItem(`secure_${key}`);
     console.info(`[SecureStorage] Migration complete: ${migrated} secret(s) moved to Stronghold`);
   }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/**
- * Save a credential. In Tauri, stores in Stronghold. Falls back to encrypted localStorage.
- * @param {string} key
- * @param {string} value
- */
 export async function saveSecureCredential(key, value) {
-  if (!_isTauriEnvironment()) {
-    return _legacySave(key, value);
+  if (!_isTauriEnvironment()) return _legacySave(key, value);
+  if (_isAndroid()) {
+    await _androidMigrateFromLocalStorage(); // run once lazily
+    return _androidSave(key, value);
   }
   const store = await _initStronghold();
   await store.insert(key, Array.from(new TextEncoder().encode(value)));
   await _stronghold.save();
 }
 
-/**
- * Retrieve a credential. In Tauri, reads from Stronghold. Falls back to encrypted localStorage.
- * @param {string} key
- * @returns {Promise<string|null>}
- */
 export async function getSecureCredential(key) {
-  if (!_isTauriEnvironment()) {
-    return _legacyGet(key);
+  if (!_isTauriEnvironment()) return _legacyGet(key);
+  if (_isAndroid()) {
+    await _androidMigrateFromLocalStorage(); // run once lazily
+    return _androidGet(key);
   }
   try {
     const store = await _initStronghold();
@@ -137,29 +186,18 @@ export async function getSecureCredential(key) {
   }
 }
 
-/**
- * Delete a credential.
- * @param {string} key
- */
 export async function deleteSecureCredential(key) {
-  if (!_isTauriEnvironment()) {
-    return _legacyDelete(key);
-  }
+  if (!_isTauriEnvironment()) return _legacyDelete(key);
+  if (_isAndroid()) return _androidDelete(key);
   const store = await _initStronghold();
   await store.remove(key);
   await _stronghold.save();
 }
 
 // ── Legacy fallback (browser / dev mode) + migration decryption ──────────────
-//
-// These functions use the original hardcoded-key AES-256-GCM scheme.
-// They are kept for:
-//   1. Browser/dev-mode fallback (no Tauri available)
-//   2. One-time migration: decrypting old localStorage entries on first run
 
 const _LEGACY_PASSWORD = "noteberg_secure_storage_2025";
 const _LEGACY_SALT = "noteberg_salt_v1";
-
 let _legacyKey = null;
 
 function _isCryptoAvailable() {
@@ -169,7 +207,6 @@ function _isCryptoAvailable() {
 async function _getLegacyKey() {
   if (_legacyKey) return _legacyKey;
   if (!_isCryptoAvailable()) throw new Error("Web Crypto API not available");
-
   const keyMaterial = await window.crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(_LEGACY_PASSWORD),
@@ -178,12 +215,7 @@ async function _getLegacyKey() {
     ["deriveBits", "deriveKey"],
   );
   _legacyKey = await window.crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: new TextEncoder().encode(_LEGACY_SALT),
-      iterations: 10000,
-      hash: "SHA-256",
-    },
+    { name: "PBKDF2", salt: new TextEncoder().encode(_LEGACY_SALT), iterations: 10000, hash: "SHA-256" },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
@@ -195,9 +227,11 @@ async function _getLegacyKey() {
 async function _legacyDecrypt(encryptedBase64) {
   const key = await _getLegacyKey();
   const combined = Uint8Array.from(atob(encryptedBase64), (c) => c.charCodeAt(0));
-  const iv = combined.slice(0, 12);
-  const encrypted = combined.slice(12);
-  const decrypted = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, encrypted);
+  const decrypted = await window.crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: combined.slice(0, 12) },
+    key,
+    combined.slice(12),
+  );
   return new TextDecoder().decode(decrypted);
 }
 
@@ -216,13 +250,9 @@ async function _legacyEncrypt(plaintext) {
 }
 
 async function _legacySave(key, value) {
-  if (!_isCryptoAvailable()) {
-    localStorage.setItem(`secure_${key}`, value);
-    return;
-  }
+  if (!_isCryptoAvailable()) { localStorage.setItem(`secure_${key}`, value); return; }
   try {
-    const encrypted = await _legacyEncrypt(value);
-    localStorage.setItem(`secure_${key}`, encrypted);
+    localStorage.setItem(`secure_${key}`, await _legacyEncrypt(value));
   } catch (e) {
     console.error("[SecureStorage] Legacy encrypt failed, storing plain:", e);
     localStorage.setItem(`secure_${key}`, value);
@@ -233,11 +263,7 @@ async function _legacyGet(key) {
   const stored = localStorage.getItem(`secure_${key}`);
   if (!stored) return null;
   if (!_isCryptoAvailable()) return stored;
-  try {
-    return await _legacyDecrypt(stored);
-  } catch {
-    return stored; // stored as plain text (fallback path)
-  }
+  try { return await _legacyDecrypt(stored); } catch { return stored; }
 }
 
 function _legacyDelete(key) {

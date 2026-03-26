@@ -6,14 +6,36 @@
 const THEMES = ["light", "dark"];
 const DEFAULT_THEME = "light";
 const THEME_STORAGE_KEY = "theme";
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 let currentTheme = DEFAULT_THEME;
 
 /**
- * Initialize theme system
- * Detects system preference and loads saved theme
+ * Initialize theme system.
+ * In Nextcloud: follows Nextcloud's own dark/light class on <body>.
+ * In Tauri: detects system preference and loads saved theme.
  */
 export async function initTheme() {
+  if (IS_NEXTCLOUD) {
+    // Nextcloud sets .theme--dark on <body> when dark mode is active
+    const prefersDark = document.body.classList.contains("theme--dark");
+    currentTheme = prefersDark ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", currentTheme);
+
+    // Follow Nextcloud theme changes (user switches in NC settings)
+    new MutationObserver(() => {
+      const dark = document.body.classList.contains("theme--dark");
+      const next = dark ? "dark" : "light";
+      if (next !== currentTheme) {
+        currentTheme = next;
+        document.documentElement.setAttribute("data-theme", currentTheme);
+      }
+    }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+
+    console.log(`Theme initialized (Nextcloud): ${currentTheme}`);
+    return;
+  }
+
   // Try to load saved theme from localStorage
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
 

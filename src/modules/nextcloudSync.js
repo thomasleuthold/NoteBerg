@@ -413,7 +413,16 @@ export async function testConnection(serverUrl) {
 
   try {
     const response = await _fetch(`${serverUrl}/status.php`);
-    const data = await response.json();
+    if (!response.ok) {
+      return { success: false, error: `Server returned HTTP ${response.status}` };
+    }
+    let data;
+    try {
+      data = await response.json();
+    } catch (jsonErr) {
+      console.error("[NextcloudSync] testConnection: invalid JSON from status.php", jsonErr);
+      return { success: false, error: "Server did not return valid JSON — not a Nextcloud server?" };
+    }
 
     if (data.installed && data.version) {
       return {
@@ -425,7 +434,8 @@ export async function testConnection(serverUrl) {
 
     return { success: false, error: "Not a valid Nextcloud server" };
   } catch (error) {
-    return { success: false, error: error.message };
+    console.error("[NextcloudSync] testConnection failed:", error);
+    return { success: false, error: error?.message || String(error) };
   }
 }
 

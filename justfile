@@ -101,6 +101,16 @@ package-backend:
     dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
     Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"
 
+# Nextcloud dev environment (requires Podman)
+# Run 'npm run dev:nextcloud' separately for watch mode rebuilds
+nc-up:
+    podman run --rm --name noteberg-nc -d -p 8080:80 -v "${PWD}:/var/www/html/apps-extra/noteberg" ghcr.io/juliusknorr/nextcloud-dev-php84:latest
+    Write-Host "NoteBerg Nextcloud running at http://localhost:8080"
+    Write-Host "Run 'npm run dev:nextcloud' in a separate terminal for watch mode"
+
+nc-down:
+    podman stop noteberg-nc
+
 # Push to GitHub (default: main branch)
 push-gh branch="main":
     git push github {{branch}}

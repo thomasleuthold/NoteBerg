@@ -5,13 +5,18 @@
 
 import { APP_FULL_VERSION } from "../config.js";
 import { t } from "../i18n/index.js";
-import { isAuthenticated } from "./nextcloudSync.js";
-import { getIsSyncing, getLastSyncResult, onSyncStatusChange, performSync } from "./sync.js";
+
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 /**
- * Update sync status display
+ * Update sync status display (Tauri only)
  */
 export async function updateSyncStatus() {
+  if (IS_NEXTCLOUD) return;
+
+  const { isAuthenticated } = await import("./nextcloudSync.js");
+  const { getIsSyncing, getLastSyncResult } = await import("./sync.js");
+
   const syncStatus = document.querySelector(".sync-status");
   const syncIndicator = document.querySelector(".sync-indicator");
 
@@ -62,9 +67,11 @@ export async function updateSyncStatus() {
 }
 
 /**
- * Perform manual sync (triggered by user clicking footer)
+ * Perform manual sync (triggered by user clicking footer, Tauri only)
  */
 async function handleManualSync() {
+  const { isAuthenticated } = await import("./nextcloudSync.js");
+  const { getIsSyncing, performSync } = await import("./sync.js");
   if (getIsSyncing() || !(await isAuthenticated())) return;
 
   try {
@@ -78,46 +85,43 @@ async function handleManualSync() {
  * Initialize footer
  */
 export function initFooter() {
-  const syncStatus = document.querySelector(".sync-status");
+  if (!IS_NEXTCLOUD) {
+    const syncStatus = document.querySelector(".sync-status");
 
-  // Create recognition indicator
-  if (syncStatus?.parentElement) {
-    const recognitionIndicator = document.createElement("div");
-    recognitionIndicator.className = "recognition-indicator";
-    recognitionIndicator.title = t("footer.recognitionRunning");
-    // Pen icon
-    recognitionIndicator.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
+    // Create recognition indicator
+    if (syncStatus?.parentElement) {
+      const recognitionIndicator = document.createElement("div");
+      recognitionIndicator.className = "recognition-indicator";
+      recognitionIndicator.title = t("footer.recognitionRunning");
+      recognitionIndicator.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
+      syncStatus.insertAdjacentElement("afterend", recognitionIndicator);
 
-    // Insert after sync status
-    syncStatus.insertAdjacentElement("afterend", recognitionIndicator);
+      window.addEventListener("recognition-start", () => {
+        recognitionIndicator.style.display = "flex";
+      });
+      window.addEventListener("recognition-end", () => {
+        recognitionIndicator.style.display = "none";
+      });
+    }
 
-    // Listen for recognition events
-    window.addEventListener("recognition-start", () => {
-      recognitionIndicator.style.display = "flex";
+    if (syncStatus) {
+      syncStatus.addEventListener("click", async () => {
+        const { isAuthenticated } = await import("./nextcloudSync.js");
+        const { getIsSyncing } = await import("./sync.js");
+        if ((await isAuthenticated()) && !getIsSyncing()) {
+          handleManualSync();
+        }
+      });
+    }
+
+    // Register callback to update status when sync state changes
+    import("./sync.js").then(({ onSyncStatusChange }) => {
+      onSyncStatusChange(() => updateSyncStatus());
     });
-    window.addEventListener("recognition-end", () => {
-      recognitionIndicator.style.display = "none";
-    });
-  }
 
-  if (syncStatus) {
-    syncStatus.addEventListener("click", async () => {
-      if ((await isAuthenticated()) && !getIsSyncing()) {
-        handleManualSync();
-      }
-    });
-  }
-
-  // Register callback to update status when sync state changes
-  onSyncStatusChange(() => {
     updateSyncStatus();
-  });
-
-  // Update status on load and when auth changes
-  updateSyncStatus();
-
-  // Listen for auth changes
-  window.addEventListener("nextcloud-auth-changed", updateSyncStatus);
+    window.addEventListener("nextcloud-auth-changed", updateSyncStatus);
+  }
 
   // Initialize version display
   const versionEl = document.querySelector(".app-version");

@@ -1,4 +1,6 @@
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
 
 /// State holding the sidecar recognition URL (empty if not available)
 struct RecognitionState {
@@ -260,11 +262,15 @@ fn get_linux_fallback_key() -> Result<Vec<u8>, String> {
     Ok(hash[..32].to_vec())
 }
 
-// ── Android vault key plugin ──────────────────────────────────────────────────
+// ── Android secure credential plugin ─────────────────────────────────────────
 //
-// Android Keystore (hardware-backed TEE) generates and protects a random AES key.
-// That key encrypts the 32-byte vault key stored in SharedPreferences.
-// The Kotlin DeviceKeyPlugin handles this via the Android Keystore API.
+// On Android, tauri-plugin-stronghold cannot be compiled from Windows (requires
+// libsodium C cross-compilation). Instead, the Kotlin DeviceKeyPlugin handles
+// all credential storage directly using Android Keystore-backed AES-256-GCM
+// encryption, storing ciphertext in SharedPreferences.
+//
+// The JS secureStorage.js calls save_credential / get_credential / delete_credential
+// on both platforms; on Android these route through DeviceKeyPlugin.
 
 #[cfg(target_os = "android")]
 struct DeviceKeyPlugin(tauri::plugin::PluginHandle<tauri::Wry>);
@@ -281,17 +287,55 @@ fn device_key_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
+// Android stub — get_or_create_vault_key is desktop-only (used by Stronghold).
+// On Android, credentials go through save/get/delete_credential directly.
 #[tauri::command]
 #[cfg(target_os = "android")]
-async fn get_or_create_vault_key(app: tauri::AppHandle) -> Result<Vec<u8>, String> {
-    use tauri::Manager;
-    let hex_key = app
-        .state::<DeviceKeyPlugin>()
-        .0
-        .run_mobile_plugin::<String>("getOrCreateVaultKey", serde_json::json!({}))
-        .map_err(|e| format!("DeviceKeyPlugin: {e}"))?;
-    hex::decode(&hex_key).map_err(|e| format!("hex decode: {e}"))
+async fn get_or_create_vault_key() -> Result<Vec<u8>, String> {
+    Err("not used on Android".into())
 }
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn save_credential(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<DeviceKeyPlugin>()
+        .0
+        .run_mobile_plugin::<()>("saveCredential", serde_json::json!({ "key": key, "value": value }))
+        .map_err(|e| format!("DeviceKeyPlugin.saveCredential: {e}"))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn save_credential() -> Result<(), String> { Ok(()) } // unused on desktop — handled via Stronghold JS plugin
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn get_credential(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    #[derive(serde::Deserialize)]
+    struct GetResult { #[serde(default)] value: Option<String> }
+    let result = app.state::<DeviceKeyPlugin>()
+        .0
+        .run_mobile_plugin::<GetResult>("getCredential", serde_json::json!({ "key": key }))
+        .map_err(|e| format!("DeviceKeyPlugin.getCredential: {e}"))?;
+    Ok(result.value)
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn get_credential() -> Result<Option<String>, String> { Ok(None) } // unused on desktop
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn delete_credential(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<DeviceKeyPlugin>()
+        .0
+        .run_mobile_plugin::<()>("deleteCredential", serde_json::json!({ "key": key }))
+        .map_err(|e| format!("DeviceKeyPlugin.deleteCredential: {e}"))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn delete_credential() -> Result<(), String> { Ok(()) } // unused on desktop
 
 /// Guard so we only call grant_media_permissions once per app lifetime.
 #[cfg(target_os = "windows")]
@@ -300,15 +344,6 @@ static PERMISSIONS_GRANTED: OnceLock<()> = OnceLock::new();
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_stronghold::Builder::new(|password| {
-            // The password is already 32 bytes of OS-keychain-backed random data.
-            // No KDF needed — pass through directly.
-            password
-                .as_ref()
-                .try_into()
-                .expect("vault key must be exactly 32 bytes")
-        })
-        .build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -318,6 +353,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_recognition_url,
             get_or_create_vault_key,
+            save_credential,
+            get_credential,
+            delete_credential,
             save_pdf,
             native_audio_start,
             native_audio_stop,
@@ -327,6 +365,20 @@ pub fn run() {
             native_audio_resume,
             native_audio_cancel,
         ]);
+
+    // Stronghold cannot be compiled for Android from Windows (libsodium C dep).
+    // On desktop, register Stronghold; credentials are managed via JS plugin API.
+    // On Android, credentials are stored directly by DeviceKeyPlugin (Kotlin Keystore).
+    #[cfg(not(target_os = "android"))]
+    {
+        builder = builder.plugin(
+            tauri_plugin_stronghold::Builder::new(|password| {
+                // password is the vault key encoded as a hex string from JS
+                hex::decode(password).expect("vault key must be valid hex")
+            })
+            .build(),
+        );
+    }
 
     #[cfg(target_os = "android")]
     {

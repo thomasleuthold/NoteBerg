@@ -17,6 +17,8 @@
     "format": "biome format --write ./src",
     "format-check": "biome format ./src",
     "check": "biome check --write --unsafe ./src",
+    "build:nextcloud": "cross-env VITE_PLATFORM=nextcloud vite build",
+    "dev:nextcloud": "cross-env VITE_PLATFORM=nextcloud vite build --watch",
     "sync-version": "node sync-version.js",
     "version": "npm run sync-version && git add src-tauri/tauri.conf.json"
   },
@@ -37,6 +39,7 @@
     "@testing-library/user-event": "^14.5.2",
     "@vitest/coverage-v8": "^1.6.0",
     "cors": "^2.8.5",
+    "cross-env": "^10.1.0",
     "eslint": "^8.57.0",
     "express": "^4.18.2",
     "jsdom": "^24.1.1",

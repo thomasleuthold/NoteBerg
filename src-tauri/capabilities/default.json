@@ -3,7 +3,7 @@
   "identifier": "default",
   "description": "Default permissions for NoteBerg",
   "windows": ["main"],
-  "platforms": ["windows", "macOS", "linux", "android"],
+  "platforms": ["windows", "macOS", "linux"],
   "permissions": [
     "core:default",
     "opener:default",
