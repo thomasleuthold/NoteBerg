@@ -7,7 +7,6 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "stronghold:default",
     {
       "identifier": "shell:allow-open",
       "allow": [
@@ -34,6 +33,12 @@
         },
         {
           "url": "https://**"
+        },
+        {
+          "url": "http://localhost/**"
+        },
+        {
+          "url": "http://localhost:*/**"
         },
         {
           "url": "http://localhost:5089/**"

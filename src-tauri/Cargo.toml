@@ -20,13 +20,9 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
-rand = "0.8"
-hex = "0.4"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.15"
-machine-uid = "0.5"
-tauri-plugin-stronghold = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ureq = "2"
@@ -43,4 +39,3 @@ keyring = { version = "3", default-features = false, features = ["apple-native"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
-blake2 = "0.10"

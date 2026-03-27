@@ -211,56 +211,57 @@ async fn save_pdf(
     Ok(path_str)
 }
 
-// ── Secure vault key ──────────────────────────────────────────────────────────
+// ── Desktop secure credential storage (via OS keychain) ──────────────────────
 //
-// Returns a 32-byte random key from the OS keychain (Windows Credential Manager,
-// macOS/iOS Keychain, Linux Secret Service). On first launch a random key is
-// generated and stored. The key is used to open the Stronghold vault — no Argon2
-// KDF is needed because the key is already high-entropy random data.
+// All desktop platforms use the keyring crate for fast, native credential
+// storage (Windows Credential Manager, macOS/iOS Keychain, Linux Secret Service).
+// This replaces tauri-plugin-stronghold which was too slow due to vault file I/O.
 //
-// On Linux, if no Secret Service daemon is available, falls back to a
-// deterministic key derived from the machine UUID (weaker but functional).
+// On Linux, if no Secret Service daemon is available, credentials are stored in
+// an encrypted file using a machine-specific key (derived from machine UUID).
 
 const KEYRING_SERVICE: &str = "eu.noteberg.app";
-const KEYRING_ACCOUNT: &str = "stronghold-vault-key";
+
+#[cfg(not(target_os = "android"))]
+fn keyring_entry(key: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, key)
+        .map_err(|e| format!("keyring entry: {e}"))
+}
 
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
-fn get_or_create_vault_key() -> Result<Vec<u8>, String> {
-    use keyring::Entry;
-    let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
-        .map_err(|e| format!("keyring entry: {e}"))?;
+fn save_credential(key: String, value: String) -> Result<(), String> {
+    let entry = keyring_entry(&key)?;
+    entry.set_secret(value.as_bytes())
+        .map_err(|e| format!("keyring write: {e}"))
+}
 
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+fn get_credential(key: String) -> Result<Option<String>, String> {
+    let entry = keyring_entry(&key)?;
     match entry.get_secret() {
-        Ok(key) if key.len() == 32 => return Ok(key),
-        Ok(_) => { /* wrong size — fall through to regenerate */ }
-        Err(keyring::Error::NoEntry) => { /* first launch — fall through to generate */ }
-        Err(e) => {
-            // Linux: Secret Service unavailable — fall back to device ID
-            #[cfg(target_os = "linux")]
-            {
-                eprintln!("[SecureStorage] keyring unavailable ({e}), using device ID fallback");
-                return get_linux_fallback_key();
-            }
-            #[cfg(not(target_os = "linux"))]
-            return Err(format!("keyring read: {e}"));
+        Ok(bytes) => {
+            let s = String::from_utf8(bytes)
+                .map_err(|e| format!("keyring decode: {e}"))?;
+            Ok(Some(s))
         }
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("keyring read: {e}")),
     }
-
-    // Generate new random 32-byte key and persist it
-    let key: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
-    entry.set_secret(&key).map_err(|e| format!("keyring write: {e}"))?;
-    Ok(key)
 }
 
-#[cfg(target_os = "linux")]
-fn get_linux_fallback_key() -> Result<Vec<u8>, String> {
-    use blake2::{Blake2b512, Digest};
-    let uid = machine_uid::get().map_err(|e| format!("machine-uid: {e}"))?;
-    let input = format!("noteberg-vault-v1:{uid}");
-    let hash = Blake2b512::digest(input.as_bytes());
-    Ok(hash[..32].to_vec())
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+fn delete_credential(key: String) -> Result<(), String> {
+    let entry = keyring_entry(&key)?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()), // already gone — not an error
+        Err(e) => Err(format!("keyring delete: {e}")),
+    }
 }
+
 
 // ── Android secure credential plugin ─────────────────────────────────────────
 //
@@ -287,14 +288,6 @@ fn device_key_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
-// Android stub — get_or_create_vault_key is desktop-only (used by Stronghold).
-// On Android, credentials go through save/get/delete_credential directly.
-#[tauri::command]
-#[cfg(target_os = "android")]
-async fn get_or_create_vault_key() -> Result<Vec<u8>, String> {
-    Err("not used on Android".into())
-}
-
 #[tauri::command]
 #[cfg(target_os = "android")]
 async fn save_credential(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
@@ -304,10 +297,6 @@ async fn save_credential(app: tauri::AppHandle, key: String, value: String) -> R
         .run_mobile_plugin::<()>("saveCredential", serde_json::json!({ "key": key, "value": value }))
         .map_err(|e| format!("DeviceKeyPlugin.saveCredential: {e}"))
 }
-#[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn save_credential() -> Result<(), String> { Ok(()) } // unused on desktop — handled via Stronghold JS plugin
-
 #[tauri::command]
 #[cfg(target_os = "android")]
 async fn get_credential(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
@@ -321,10 +310,6 @@ async fn get_credential(app: tauri::AppHandle, key: String) -> Result<Option<Str
     Ok(result.value)
 }
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn get_credential() -> Result<Option<String>, String> { Ok(None) } // unused on desktop
-
-#[tauri::command]
 #[cfg(target_os = "android")]
 async fn delete_credential(app: tauri::AppHandle, key: String) -> Result<(), String> {
     use tauri::Manager;
@@ -333,9 +318,6 @@ async fn delete_credential(app: tauri::AppHandle, key: String) -> Result<(), Str
         .run_mobile_plugin::<()>("deleteCredential", serde_json::json!({ "key": key }))
         .map_err(|e| format!("DeviceKeyPlugin.deleteCredential: {e}"))
 }
-#[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn delete_credential() -> Result<(), String> { Ok(()) } // unused on desktop
 
 /// Guard so we only call grant_media_permissions once per app lifetime.
 #[cfg(target_os = "windows")]
@@ -352,7 +334,6 @@ pub fn run() {
         }))
         .invoke_handler(tauri::generate_handler![
             get_recognition_url,
-            get_or_create_vault_key,
             save_credential,
             get_credential,
             delete_credential,
@@ -365,20 +346,6 @@ pub fn run() {
             native_audio_resume,
             native_audio_cancel,
         ]);
-
-    // Stronghold cannot be compiled for Android from Windows (libsodium C dep).
-    // On desktop, register Stronghold; credentials are managed via JS plugin API.
-    // On Android, credentials are stored directly by DeviceKeyPlugin (Kotlin Keystore).
-    #[cfg(not(target_os = "android"))]
-    {
-        builder = builder.plugin(
-            tauri_plugin_stronghold::Builder::new(|password| {
-                // password is the vault key encoded as a hex string from JS
-                hex::decode(password).expect("vault key must be valid hex")
-            })
-            .build(),
-        );
-    }
 
     #[cfg(target_os = "android")]
     {

@@ -2,29 +2,22 @@
  * Secure Storage Module
  *
  * Desktop (Windows/macOS/Linux/iOS):
- *   Uses tauri-plugin-stronghold — an encrypted on-disk vault opened with a
- *   32-byte random key stored in the OS keychain (Windows Credential Manager,
- *   macOS/iOS Keychain, Linux Secret Service).
+ *   Uses the OS native keychain directly via Tauri commands (keyring crate):
+ *   Windows Credential Manager, macOS/iOS Keychain, Linux Secret Service.
+ *   Fast — no vault file, no snapshot decryption, just one IPC call.
  *
  * Android:
  *   Uses DeviceKeyPlugin (Kotlin) — credentials encrypted with Android Keystore
- *   hardware-backed AES-256-GCM and stored in SharedPreferences. Stronghold is
- *   excluded from Android builds due to a libsodium C cross-compilation issue.
+ *   hardware-backed AES-256-GCM and stored in SharedPreferences.
  *
  * Browser / dev-without-Tauri:
  *   Falls back to Web Crypto API with a hardcoded key (development only).
  *
- * Migration: on first run after this update, existing localStorage secrets
- * encrypted with the old hardcoded key are transparently migrated and removed.
+ * Migration: on first run, existing localStorage secrets encrypted with the
+ * old hardcoded key are transparently migrated to the OS keychain and removed.
  */
 
 import { invoke } from "@tauri-apps/api/core";
-
-// ── Stronghold state (desktop only) ──────────────────────────────────────────
-
-let _stronghold = null;
-let _store = null;
-let _initPromise = null;
 
 const MANAGED_KEYS = ["master_password", "nextcloud_credentials"];
 
@@ -88,72 +81,41 @@ async function _androidMigrateFromLocalStorage() {
   }
 }
 
-// ── Desktop path: Stronghold ──────────────────────────────────────────────────
+// ── Desktop path: OS keychain via Tauri commands ─────────────────────────────
+//
+// Uses save_credential / get_credential / delete_credential Tauri commands which
+// call the keyring crate (Windows Credential Manager, macOS Keychain, Linux
+// Secret Service). This is fast — no vault file, no snapshot decryption.
 
-async function _initStronghold() {
-  if (_store) return _store;
-  if (_initPromise) return _initPromise;
-
-  _initPromise = (async () => {
-    try {
-      const { appLocalDataDir } = await import("@tauri-apps/api/path");
-      const { Stronghold } = await import("@tauri-apps/plugin-stronghold");
-
-      // get_or_create_vault_key returns a JSON array of numbers (Vec<u8>).
-      // Pass as hex string — the Stronghold Builder::new closure decodes it.
-      const keyBytes = await invoke("get_or_create_vault_key");
-      const vaultPassword = Array.from(keyBytes)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      const dataDir = await appLocalDataDir();
-      _stronghold = await Stronghold.load(`${dataDir}/noteberg.vault`, vaultPassword);
-
-      // loadClient throws if the client doesn't exist yet (new vault).
-      // In that case, create it.
-      let client;
-      try {
-        client = await _stronghold.loadClient("noteberg-v1");
-      } catch {
-        client = await _stronghold.createClient("noteberg-v1");
-      }
-      _store = client.getStore();
-
-      await _desktopMigrateFromLocalStorage(_store);
-
-      return _store;
-    } catch (err) {
-      _initPromise = null;
-      throw err;
-    }
-  })();
-
-  return _initPromise;
-}
-
-async function _desktopMigrateFromLocalStorage(store) {
+async function _desktopMigrateFromLocalStorage() {
   let migrated = 0;
   for (const key of MANAGED_KEYS) {
-    const existing = await store.get(key).catch(() => null);
+    const existing = await invoke("get_credential", { key }).catch(() => null);
     if (existing) continue;
     const oldEncrypted = localStorage.getItem(`secure_${key}`);
     if (!oldEncrypted) continue;
     try {
       const plaintext = await _legacyDecrypt(oldEncrypted);
       if (plaintext) {
-        await store.insert(key, Array.from(new TextEncoder().encode(plaintext)));
+        await invoke("save_credential", { key, value: plaintext });
         migrated++;
-        console.info(`[SecureStorage] Migrated '${key}' to Stronghold`);
+        console.info(`[SecureStorage] Migrated '${key}' to OS keychain`);
       }
     } catch (e) {
       console.warn(`[SecureStorage] Could not migrate '${key}':`, e);
     }
   }
   if (migrated > 0) {
-    await _stronghold.save();
     for (const key of MANAGED_KEYS) localStorage.removeItem(`secure_${key}`);
-    console.info(`[SecureStorage] Migration complete: ${migrated} secret(s) moved to Stronghold`);
+    console.info(`[SecureStorage] Migration complete: ${migrated} secret(s) moved to OS keychain`);
   }
+}
+
+let _desktopMigrationDone = false;
+async function _ensureDesktopMigration() {
+  if (_desktopMigrationDone) return;
+  _desktopMigrationDone = true;
+  await _desktopMigrateFromLocalStorage();
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -164,9 +126,8 @@ export async function saveSecureCredential(key, value) {
     await _androidMigrateFromLocalStorage(); // run once lazily
     return _androidSave(key, value);
   }
-  const store = await _initStronghold();
-  await store.insert(key, Array.from(new TextEncoder().encode(value)));
-  await _stronghold.save();
+  await _ensureDesktopMigration();
+  await invoke("save_credential", { key, value });
 }
 
 export async function getSecureCredential(key) {
@@ -176,12 +137,10 @@ export async function getSecureCredential(key) {
     return _androidGet(key);
   }
   try {
-    const store = await _initStronghold();
-    const bytes = await store.get(key);
-    if (!bytes) return null;
-    return new TextDecoder().decode(new Uint8Array(bytes));
+    await _ensureDesktopMigration();
+    return await invoke("get_credential", { key });
   } catch (err) {
-    console.error("[SecureStorage] Stronghold read failed:", err);
+    console.error("[SecureStorage] Keychain read failed:", err);
     return null;
   }
 }
@@ -189,9 +148,8 @@ export async function getSecureCredential(key) {
 export async function deleteSecureCredential(key) {
   if (!_isTauriEnvironment()) return _legacyDelete(key);
   if (_isAndroid()) return _androidDelete(key);
-  const store = await _initStronghold();
-  await store.remove(key);
-  await _stronghold.save();
+  await _ensureDesktopMigration();
+  await invoke("delete_credential", { key });
 }
 
 // ── Legacy fallback (browser / dev mode) + migration decryption ──────────────
