@@ -19,11 +19,11 @@ import {
   getAllRequiredFolders,
   getGlobalNotebookTombstonePath,
   getMediaPath,
-  getNoteMediaFolder,
   getNotebookFolder,
   getNotebookNotesFolder,
   getNotebookPath,
   getNotebookTombstonePath,
+  getNoteMediaFolder,
   getNotePath,
   getQuickNotesTombstonePath,
   ROOT_FOLDER,
@@ -155,7 +155,7 @@ async function davList(path) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(text, "application/xml");
   const hrefs = [...doc.querySelectorAll("response href")].map((el) => el.textContent.trim());
-  const base = `/remote.php/dav/files/`;
+  const _base = `/remote.php/dav/files/`;
   return hrefs
     .map((h) => {
       // strip base + uid prefix, decode
@@ -202,7 +202,11 @@ export async function initStorage() {
 
 export function generateId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    try { return crypto.randomUUID(); } catch (_e) { /* fall through */ }
+    try {
+      return crypto.randomUUID();
+    } catch (_e) {
+      /* fall through */
+    }
   }
   return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
     (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16),
@@ -236,7 +240,9 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
   await davMkcol(getNotebookNotesFolder(notebook.id));
   await davPut(getNotebookPath(notebook.id), notebook);
   console.log("Notebook created:", notebook.id);
-  window.dispatchEvent(new CustomEvent("notebook-created", { detail: { notebookId: notebook.id } }));
+  window.dispatchEvent(
+    new CustomEvent("notebook-created", { detail: { notebookId: notebook.id } }),
+  );
   return notebook;
 }
 
@@ -250,9 +256,7 @@ export async function getAllNotebooks() {
   const notebooks = await Promise.all(
     notebookIds.map((id) => davGet(getNotebookPath(id)).catch(() => null)),
   );
-  return notebooks
-    .filter((n) => n && !n.deleted)
-    .sort((a, b) => b.modified - a.modified);
+  return notebooks.filter((n) => n && !n.deleted).sort((a, b) => b.modified - a.modified);
 }
 
 export async function getNotebook(id) {
@@ -262,7 +266,12 @@ export async function getNotebook(id) {
 export async function updateNotebook(id, updates) {
   const notebook = await getNotebook(id);
   if (!notebook) throw new Error("Notebook not found");
-  const updated = { ...notebook, ...updates, modified: Date.now(), version: (notebook.version || 0) + 1 };
+  const updated = {
+    ...notebook,
+    ...updates,
+    modified: Date.now(),
+    version: (notebook.version || 0) + 1,
+  };
   await davPut(getNotebookPath(id), updated);
   console.log("Notebook updated:", id);
   return updated;
@@ -290,8 +299,13 @@ export async function deleteNotebook(id) {
 
 export async function getDeletedNotebooks() {
   const paths = await davList(`${ROOT_FOLDER}/notebooks`);
-  const notebookIds = paths.filter((p) => !p.endsWith(".json")).map((p) => p.replace(/\/$/, "").split("/").pop()).filter(Boolean);
-  const notebooks = await Promise.all(notebookIds.map((id) => davGet(getNotebookPath(id)).catch(() => null)));
+  const notebookIds = paths
+    .filter((p) => !p.endsWith(".json"))
+    .map((p) => p.replace(/\/$/, "").split("/").pop())
+    .filter(Boolean);
+  const notebooks = await Promise.all(
+    notebookIds.map((id) => davGet(getNotebookPath(id)).catch(() => null)),
+  );
   return notebooks.filter((n) => n?.deleted);
 }
 
@@ -431,12 +445,18 @@ const _notePathCache = new Map();
 async function _findNote(id) {
   // Try quick notes
   const qn = await davGet(getNotePath(id, null));
-  if (qn) { _notePathCache.set(id, null); return qn; }
+  if (qn) {
+    _notePathCache.set(id, null);
+    return qn;
+  }
   // Try all notebooks
   const notebooks = await getAllNotebooks();
   for (const nb of notebooks) {
     const note = await davGet(getNotePath(id, nb.id));
-    if (note) { _notePathCache.set(id, nb.id); return note; }
+    if (note) {
+      _notePathCache.set(id, nb.id);
+      return note;
+    }
   }
   return null;
 }
@@ -444,7 +464,9 @@ async function _findNote(id) {
 export async function getAllNotes() {
   const [quickNotes, ...notebookNotes] = await Promise.all([
     _getNotesInFolder(`${ROOT_FOLDER}/quickNotes`, null),
-    ...(await getAllNotebooks()).map((nb) => _getNotesInFolder(getNotebookNotesFolder(nb.id), nb.id)),
+    ...(await getAllNotebooks()).map((nb) =>
+      _getNotesInFolder(getNotebookNotesFolder(nb.id), nb.id),
+    ),
   ]);
   return [...quickNotes, ...notebookNotes.flat()]
     .filter((n) => !n.deleted)
@@ -478,7 +500,10 @@ const _writeQueues = new Map(); // noteId → Promise
 function _enqueueWrite(id, fn) {
   const prev = _writeQueues.get(id) ?? Promise.resolve();
   // Always run fn after the previous write settles (success or failure)
-  const next = prev.then(() => fn(), () => fn());
+  const next = prev.then(
+    () => fn(),
+    () => fn(),
+  );
   _writeQueues.set(id, next);
   next.finally(() => {
     if (_writeQueues.get(id) === next) _writeQueues.delete(id);
@@ -630,19 +655,21 @@ function _extFromMime(type) {
 
 // Mirror sync's lookup: find first MIME type matching the extension
 function _mimeFromExt(ext) {
-  return Object.keys(MIME_TO_EXT).find((key) => MIME_TO_EXT[key] === ext) || "application/octet-stream";
+  return (
+    Object.keys(MIME_TO_EXT).find((key) => MIME_TO_EXT[key] === ext) || "application/octet-stream"
+  );
 }
 
 // Detect MIME type from magic bytes when the blob has no useful type
 async function _sniffMime(blob) {
   const buf = await blob.slice(0, 12).arrayBuffer();
   const b = new Uint8Array(buf);
-  if (b[0] === 0xFF && b[1] === 0xD8) return "image/jpeg";
-  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return "image/png";
+  if (b[0] === 0xff && b[1] === 0xd8) return "image/jpeg";
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
   if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return "image/gif";
   if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "application/pdf";
   // WebM magic: 0x1A 0x45 0xDF 0xA3
-  if (b[0] === 0x1A && b[1] === 0x45 && b[2] === 0xDF && b[3] === 0xA3) return "audio/webm";
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "audio/webm";
   return null;
 }
 
@@ -692,7 +719,9 @@ export async function getFile(id) {
   const loc = _fileLocationCache.get(id);
   if (loc?.ext) {
     const filename = `${id}${loc.ext}`;
-    const raw = await davGetBinary(getMediaPath(loc.noteId, loc.notebookId, filename)).catch(() => null);
+    const raw = await davGetBinary(getMediaPath(loc.noteId, loc.notebookId, filename)).catch(
+      () => null,
+    );
     if (raw) {
       const blob = await _ensureMimeType(raw, loc.ext);
       _fileCache.set(id, blob);
@@ -764,7 +793,10 @@ export function getFileUrl(id) {
 const _pendingUploads = new Map();
 
 export function registerPendingUpload(fileId, promise) {
-  _pendingUploads.set(fileId, promise.finally(() => _pendingUploads.delete(fileId)));
+  _pendingUploads.set(
+    fileId,
+    promise.finally(() => _pendingUploads.delete(fileId)),
+  );
 }
 
 /**
@@ -792,21 +824,39 @@ export async function purgeLocalData() {
   console.warn("[WebDAV Storage] purgeLocalData is a no-op in Nextcloud build");
 }
 
-export async function getStorageVersion() { return 2; }
+export async function getStorageVersion() {
+  return 2;
+}
 export async function setStorageVersion() {}
 
 // ─── Encryption stubs (always off in NC build) ───────────────────────────────
 
-export async function isLocalEncryptionEnabled() { return false; }
-export async function isNextcloudEncryptionEnabled() { return false; }
-export async function fixCorruptedNotes() { return { fixed: 0 }; }
+export async function isLocalEncryptionEnabled() {
+  return false;
+}
+export async function isNextcloudEncryptionEnabled() {
+  return false;
+}
+export async function fixCorruptedNotes() {
+  return { fixed: 0 };
+}
 export async function migrateNotesToEncrypted() {}
 export async function updateNoteEtag() {}
 
 // ─── Sync stubs (no sync in NC build) ────────────────────────────────────────
 
-export async function getAllNotesForSync() { return []; }
-export async function getAllNoteMetadataForSync() { return []; }
-export async function getAllNotebooksForSync() { return []; }
-export async function purgeNotebook(id) { return permanentlyDeleteNotebook(id); }
-export async function saveNotebook(nb) { return updateNotebook(nb.id, nb); }
+export async function getAllNotesForSync() {
+  return [];
+}
+export async function getAllNoteMetadataForSync() {
+  return [];
+}
+export async function getAllNotebooksForSync() {
+  return [];
+}
+export async function purgeNotebook(id) {
+  return permanentlyDeleteNotebook(id);
+}
+export async function saveNotebook(nb) {
+  return updateNotebook(nb.id, nb);
+}

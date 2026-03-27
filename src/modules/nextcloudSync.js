@@ -421,7 +421,10 @@ export async function testConnection(serverUrl) {
       data = await response.json();
     } catch (jsonErr) {
       console.error("[NextcloudSync] testConnection: invalid JSON from status.php", jsonErr);
-      return { success: false, error: "Server did not return valid JSON — not a Nextcloud server?" };
+      return {
+        success: false,
+        error: "Server did not return valid JSON — not a Nextcloud server?",
+      };
     }
 
     if (data.installed && data.version) {

@@ -25,6 +25,7 @@ import {
 } from "../../modules/storage.js";
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import {
@@ -710,7 +711,10 @@ export class NoteCanvas {
               const res = await fetch(processed.dataUrl);
               blob = await res.blob();
             } catch (fetchErr) {
-              console.warn("[NoteCanvas] fetch(dataUrl) failed, using fallback conversion", fetchErr);
+              console.warn(
+                "[NoteCanvas] fetch(dataUrl) failed, using fallback conversion",
+                fetchErr,
+              );
             }
           }
           if (!blob) {
@@ -1366,9 +1370,13 @@ export class NoteCanvas {
       const uploads = recordings
         .filter((r) => r.fileId)
         .map((r) => {
-          const uploadPromise = getFile(r.fileId).then((blob) => {
-            if (blob) return saveMediaForNote(blob, r.fileId, this.noteId, notebookId);
-          }).catch((e) => console.error("[NoteCanvas] WebDAV recording upload failed:", r.fileId, e));
+          const uploadPromise = getFile(r.fileId)
+            .then((blob) => {
+              if (blob) return saveMediaForNote(blob, r.fileId, this.noteId, notebookId);
+            })
+            .catch((e) =>
+              console.error("[NoteCanvas] WebDAV recording upload failed:", r.fileId, e),
+            );
           // Register so SoundDialog can await upload completion before setting audio src
           registerPendingUpload(r.fileId, uploadPromise);
           return uploadPromise;

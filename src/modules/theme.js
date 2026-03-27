@@ -53,8 +53,14 @@ export async function initTheme() {
         window.dispatchEvent(new CustomEvent("themechange", { detail: { theme: currentTheme } }));
       }
     };
-    new MutationObserver(_onNcThemeChange).observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
-    new MutationObserver(_onNcThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme-dark"] });
+    new MutationObserver(_onNcThemeChange).observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
+    new MutationObserver(_onNcThemeChange).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style", "data-theme-dark"],
+    });
 
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       const next = _detectNextcloudDark() ? "dark" : "light";

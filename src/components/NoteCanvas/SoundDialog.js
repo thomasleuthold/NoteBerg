@@ -8,9 +8,10 @@
  * Depends on RecordingManager for all state; this class is pure UI.
  */
 
-import { getFile, getFileUrl, waitForFileUrl } from "../../modules/storage.js";
+import { getFile, waitForFileUrl } from "../../modules/storage.js";
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+
 import { getIcon } from "../../utils/icons.js";
 import { showConfirmDialog } from "../modals.js";
 

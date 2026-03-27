@@ -69,7 +69,12 @@ export async function initializeApp() {
           // showAppUnlock will re-save the verified password to the keyring on success.
           const { showAppUnlock } = await import("../components/masterPasswordModals.js");
           await new Promise((resolve) => {
-            showAppUnlock({ onSuccess: () => { console.log("[AppInit] Manual unlock succeeded"); resolve(); } });
+            showAppUnlock({
+              onSuccess: () => {
+                console.log("[AppInit] Manual unlock succeeded");
+                resolve();
+              },
+            });
           });
         }
       }

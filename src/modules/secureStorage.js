@@ -62,7 +62,9 @@ async function _androidMigrateFromLocalStorage() {
       continue;
     }
     const oldEncrypted = localStorage.getItem(`secure_${key}`);
-    console.info(`[SecureStorage] Android: localStorage 'secure_${key}' present=${oldEncrypted !== null}`);
+    console.info(
+      `[SecureStorage] Android: localStorage 'secure_${key}' present=${oldEncrypted !== null}`,
+    );
     if (!oldEncrypted) continue;
     try {
       const plaintext = await _legacyDecrypt(oldEncrypted);
@@ -173,7 +175,12 @@ async function _getLegacyKey() {
     ["deriveBits", "deriveKey"],
   );
   _legacyKey = await window.crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: new TextEncoder().encode(_LEGACY_SALT), iterations: 10000, hash: "SHA-256" },
+    {
+      name: "PBKDF2",
+      salt: new TextEncoder().encode(_LEGACY_SALT),
+      iterations: 10000,
+      hash: "SHA-256",
+    },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
@@ -208,7 +215,10 @@ async function _legacyEncrypt(plaintext) {
 }
 
 async function _legacySave(key, value) {
-  if (!_isCryptoAvailable()) { localStorage.setItem(`secure_${key}`, value); return; }
+  if (!_isCryptoAvailable()) {
+    localStorage.setItem(`secure_${key}`, value);
+    return;
+  }
   try {
     localStorage.setItem(`secure_${key}`, await _legacyEncrypt(value));
   } catch (e) {
@@ -221,7 +231,11 @@ async function _legacyGet(key) {
   const stored = localStorage.getItem(`secure_${key}`);
   if (!stored) return null;
   if (!_isCryptoAvailable()) return stored;
-  try { return await _legacyDecrypt(stored); } catch { return stored; }
+  try {
+    return await _legacyDecrypt(stored);
+  } catch {
+    return stored;
+  }
 }
 
 function _legacyDelete(key) {

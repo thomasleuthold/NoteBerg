@@ -693,9 +693,13 @@ export async function deleteFile(id) {
 // In NC build this is replaced by storage.webdav.js which uploads to WebDAV.
 export async function saveMediaForNote(_blob, _filename, _noteId, _notebookId) {}
 // NC-only: returns a direct URL for a file. Always null in Tauri build.
-export function getFileUrl(_id) { return null; }
+export function getFileUrl(_id) {
+  return null;
+}
 export function registerPendingUpload(_fileId, _promise) {}
-export async function waitForFileUrl(_id) { return null; }
+export async function waitForFileUrl(_id) {
+  return null;
+}
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
