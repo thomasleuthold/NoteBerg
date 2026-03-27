@@ -16,10 +16,15 @@ import {
   deleteFile,
   deleteNote,
   generateId,
+  getFile,
   getNote,
+  registerPendingUpload,
   saveFile,
+  saveMediaForNote,
   updateNote,
 } from "../../modules/storage.js";
+
+const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import {
@@ -697,13 +702,18 @@ export class NoteCanvas {
         try {
           const processed = await processImageFile(file);
 
-          // Convert DataURL to Blob for storage
+          // Convert DataURL to Blob for storage.
+          // NC CSP blocks fetch() on data: URLs, so use direct base64 decode there.
           let blob;
-          try {
-            const res = await fetch(processed.dataUrl);
-            blob = await res.blob();
-          } catch (fetchErr) {
-            console.warn("[NoteCanvas] fetch(dataUrl) failed, using fallback conversion", fetchErr);
+          if (!_IS_NEXTCLOUD) {
+            try {
+              const res = await fetch(processed.dataUrl);
+              blob = await res.blob();
+            } catch (fetchErr) {
+              console.warn("[NoteCanvas] fetch(dataUrl) failed, using fallback conversion", fetchErr);
+            }
+          }
+          if (!blob) {
             const arr = processed.dataUrl.split(",");
             const mime = arr[0].match(/:(.*?);/)[1];
             const bstr = atob(arr[1]);
@@ -750,6 +760,7 @@ export class NoteCanvas {
    * Insert a PDF into the note
    */
   async insertPdf() {
+    if (!this.noteData) return;
     // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
     const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
     if (this.noteData.pdfSource || hasPdfPages) {
@@ -1344,10 +1355,33 @@ export class NoteCanvas {
    * @private
    */
   _saveRecordingChanges(recordings, deletedRecordings) {
-    if (!this.noteId || !this.strokeManager) return;
+    if (!this.noteId) return;
     this.noteData.recordings = recordings;
     this.noteData.deletedRecordings = deletedRecordings;
-    this.mediaChanged = true; // Ensure forceSync on note close (worker write may not be flushed yet)
+    this.mediaChanged = true;
+
+    if (_IS_NEXTCLOUD) {
+      const notebookId = this.noteData.notebookId ?? null;
+      // Upload any new recording blobs then save metadata
+      const uploads = recordings
+        .filter((r) => r.fileId)
+        .map((r) => {
+          const uploadPromise = getFile(r.fileId).then((blob) => {
+            if (blob) return saveMediaForNote(blob, r.fileId, this.noteId, notebookId);
+          }).catch((e) => console.error("[NoteCanvas] WebDAV recording upload failed:", r.fileId, e));
+          // Register so SoundDialog can await upload completion before setting audio src
+          registerPendingUpload(r.fileId, uploadPromise);
+          return uploadPromise;
+        });
+      Promise.all(uploads).then(() =>
+        updateNote(this.noteId, { recordings, deletedRecordings }).catch((e) =>
+          console.error("[NoteCanvas] WebDAV recordings save failed:", e),
+        ),
+      );
+      return;
+    }
+
+    if (!this.strokeManager) return;
     this.strokeManager.saveRecordings({ recordings, deletedRecordings });
   }
 
@@ -1622,8 +1656,14 @@ export class NoteCanvas {
     this.noteData.content = html;
     this.textChanged = true;
 
-    // Save via worker (reuse StrokeManager's worker for sequential message processing)
-    if (this.strokeManager?.worker) {
+    if (import.meta.env.VITE_PLATFORM === "nextcloud") {
+      // In NC build the worker is disabled — save content directly to WebDAV.
+      // Text is debounced by TextEditorLayer before calling here, so no extra debounce needed.
+      this._pendingTextSave = updateNote(this.noteId, { content: html }).catch((e) =>
+        console.error("[NoteCanvas] WebDAV text save failed:", e),
+      );
+    } else if (this.strokeManager?.worker) {
+      // Save via worker (reuse StrokeManager's worker for sequential message processing)
       let key = null;
       if (isAppUnlocked()) {
         try {
@@ -2781,6 +2821,12 @@ export class NoteCanvas {
    * @private
    */
   _saveTasks() {
+    if (_IS_NEXTCLOUD) {
+      updateNote(this.noteId, { tasks: this.noteData.tasks }).catch((e) =>
+        console.error("[NoteCanvas] WebDAV tasks save failed:", e),
+      );
+      return;
+    }
     if (this.strokeManager?.worker) {
       let key = null;
       if (isAppUnlocked()) {
@@ -2974,28 +3020,59 @@ export class NoteCanvas {
    * @private
    */
   async _saveMediaChanges() {
-    if (this.noteId && this.mediaManager) {
-      this.mediaChanged = true;
-      const items = this.mediaManager.getItems();
-      // Strip non-serializable properties (renderable, loading, error) before sending to worker
-      // These are runtime-only properties used for rendering, not persisted data
-      const serializableMedia = items.map(
-        ({
-          renderable: _renderable,
-          renderableScale: _renderableScale,
-          loading: _loading,
-          error: _error,
-          ...rest
-        }) => rest,
-      );
-      this.noteData.media = serializableMedia;
-      this.mediaManager.setItems(serializableMedia);
+    if (!this.noteId || !this.mediaManager || !this.noteData) return;
+    // Capture IDs immediately — destroy() nulls this.noteId mid-async and would corrupt paths
+    const noteId = this.noteId;
+    const noteData = this.noteData;
+    this.mediaChanged = true;
+    const items = this.mediaManager.getItems();
+    // Strip non-serializable properties (renderable, loading, error) before sending to worker
+    // These are runtime-only properties used for rendering, not persisted data
+    const serializableMedia = items.map(
+      ({
+        renderable: _renderable,
+        renderableScale: _renderableScale,
+        loading: _loading,
+        error: _error,
+        ...rest
+      }) => rest,
+    );
+    noteData.media = serializableMedia;
+    this.mediaManager.setItems(serializableMedia);
+
+    if (_IS_NEXTCLOUD) {
+      // Upload any blobs that are only in the in-memory cache to WebDAV
+      const notebookId = noteData.notebookId ?? null;
+      for (const item of serializableMedia) {
+        if (!item.fileId) continue;
+        const blob = await getFile(item.fileId);
+        if (blob) {
+          await saveMediaForNote(blob, item.fileId, noteId, notebookId).catch((e) =>
+            console.error("[NoteCanvas] WebDAV media upload failed:", item.fileId, e),
+          );
+        }
+      }
+      // Also upload PDF source blob if present
+      if (noteData.pdfSource) {
+        const pdfBlob = await getFile(noteData.pdfSource);
+        if (pdfBlob) {
+          await saveMediaForNote(pdfBlob, noteData.pdfSource, noteId, notebookId).catch((e) =>
+            console.error("[NoteCanvas] WebDAV PDF upload failed:", e),
+          );
+        }
+      }
+      await updateNote(noteId, {
+        media: serializableMedia,
+        deletedMedia: noteData.deletedMedia,
+        pdfSource: noteData.pdfSource,
+      }).catch((e) => console.error("[NoteCanvas] WebDAV media save failed:", e));
+    } else {
       // Use StrokeManager (which uses StorageWorker) to save media updates
       // This prevents race conditions between stroke saving and media saving
       this.strokeManager.saveMedia({
         media: serializableMedia,
-        deletedMedia: this.noteData.deletedMedia,
-        pdfSource: this.noteData.pdfSource,
+        deletedMedia: noteData.deletedMedia,
+        pdfSource: noteData.pdfSource,
       });
     }
   }
@@ -4278,11 +4355,12 @@ export class NoteCanvas {
    * @private
    */
   _saveThumbnail() {
-    if (!this.noteId || !this.renderer || !this.noteData || !this.strokeManager?.worker) return;
+    if (!this.noteId || !this.renderer || !this.noteData) return;
+    if (!_IS_NEXTCLOUD && !this.strokeManager?.worker) return;
 
     // Capture all required state SYNCHRONOUSLY before any async work
     const noteId = this.noteId;
-    const worker = this.strokeManager.worker;
+    const worker = this.strokeManager?.worker ?? null;
 
     // 1. Create offscreen canvas and render strokes/media SYNCHRONOUSLY
     // (must happen before destroy() nullifies the renderer)
@@ -4432,12 +4510,19 @@ export class NoteCanvas {
         this.noteData.thumbnail = thumbnail;
       }
 
-      // Post to worker - this must happen before CLOSE is sent
-      worker.postMessage({
-        type: "SAVE_THUMBNAIL",
-        noteId: noteId,
-        thumbnail,
-      });
+      if (_IS_NEXTCLOUD) {
+        // No worker in NC build — save thumbnail directly via updateNote
+        await updateNote(noteId, { thumbnail }).catch((e) =>
+          console.error("[NoteCanvas] WebDAV thumbnail save failed:", e),
+        );
+      } else {
+        // Post to worker - this must happen before CLOSE is sent
+        worker.postMessage({
+          type: "SAVE_THUMBNAIL",
+          noteId: noteId,
+          thumbnail,
+        });
+      }
     } catch (error) {
       console.error("[NoteCanvas] Failed to save thumbnail:", error);
     }
@@ -4528,9 +4613,11 @@ export class NoteCanvas {
     // Text content must be flushed before the thumbnail save so the DB reflects the
     // latest hasContent flag, and before recognition which reads DB content.
     // Strokes must be flushed for the same reasons.
+    this._pendingTextSave = null;
     if (this.textEditorLayer) {
       this.textEditorLayer.forceSave();
     }
+    const pendingTextSave = this._pendingTextSave || null;
     let pendingStrokeSave = null;
     if (this.strokeManager) {
       pendingStrokeSave = this.strokeManager.forceSave() || null;
@@ -4705,6 +4792,7 @@ export class NoteCanvas {
     const pending = [pendingThumbnail];
     if (pendingRecognition) pending.push(pendingRecognition);
     if (pendingStrokeSave) pending.push(pendingStrokeSave);
+    if (pendingTextSave) pending.push(pendingTextSave);
     return Promise.all(pending).then(() => ({ mediaChanged: hadMediaChanges }));
   }
 }

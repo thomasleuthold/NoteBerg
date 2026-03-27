@@ -8,7 +8,7 @@
  */
 
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
-import { generateId, updateNote } from "../../modules/storage.js";
+import { generateId, updateNote } from "../../modules/storage.js"; // updateNote aliases to webdav in NC build
 
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
@@ -140,6 +140,12 @@ export class StrokeManager {
    * Save pen presets via the worker
    */
   savePresets(presets) {
+    if (IS_NEXTCLOUD) {
+      updateNote(this.noteId, { penPresets: presets }).catch((e) =>
+        console.error("[StrokeManager] WebDAV presets save failed:", e),
+      );
+      return;
+    }
     let key = null;
     if (isAppUnlocked()) {
       try {
@@ -148,7 +154,6 @@ export class StrokeManager {
         console.warn("[StrokeManager] Could not get encryption key:", e);
       }
     }
-
     this.worker?.postMessage({
       type: "SAVE_PRESETS",
       noteId: this.noteId,

@@ -17,6 +17,7 @@
 
 import {
   getAllRequiredFolders,
+  getGlobalNotebookTombstonePath,
   getMediaPath,
   getNoteMediaFolder,
   getNotebookFolder,
@@ -27,6 +28,25 @@ import {
   getQuickNotesTombstonePath,
   ROOT_FOLDER,
 } from "./storagePaths.js";
+import {
+  addMediaTombstone,
+  addNotebookTombstone,
+  addNoteTombstone,
+  cleanupOldTombstones,
+  createEmptyTombstone,
+} from "./tombstones.js";
+
+// ─── Tombstone helpers ─────────────────────────────────────────────────────────
+
+async function _readTombstone(path) {
+  const data = await davGet(path);
+  return data || createEmptyTombstone();
+}
+
+async function _writeTombstone(path, tombstone) {
+  cleanupOldTombstones(tombstone);
+  await davPut(path, tombstone);
+}
 
 // ─── WebDAV helpers ────────────────────────────────────────────────────────────
 
@@ -42,7 +62,12 @@ async function davGet(path) {
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`DAV GET ${path} failed: ${res.status}`);
-  return res.json();
+  try {
+    return await res.json();
+  } catch (e) {
+    console.error(`[WebDAV] JSON parse failed for ${path}:`, e);
+    return null;
+  }
 }
 
 async function davPut(path, data) {
@@ -97,6 +122,7 @@ async function davGetBinary(path) {
 }
 
 async function davMkcol(path) {
+  if (_knownFolders.has(path)) return; // already confirmed to exist
   const res = await fetch(`${getWebDAVBase()}${path}`, {
     method: "MKCOL",
     headers: {
@@ -107,6 +133,7 @@ async function davMkcol(path) {
   });
   // 405 = already exists, that's fine
   if (!res.ok && res.status !== 405) throw new Error(`DAV MKCOL ${path} failed: ${res.status}`);
+  _knownFolders.add(path);
 }
 
 /** PROPFIND a directory, returns array of child filenames (not the dir itself) */
@@ -148,12 +175,24 @@ export const DB_VERSION = 4;
 let _initialized = false;
 // Simple in-memory settings store (replaces IndexedDB settings for NC build)
 const _settings = {};
+// Track folders confirmed to exist so we skip redundant MKCOL requests
+const _knownFolders = new Set();
+
+const _INIT_KEY = "noteberg_webdav_initialized";
 
 export async function initStorage() {
   if (_initialized) return;
-  // Ensure required folders exist
-  for (const folder of getAllRequiredFolders()) {
-    await davMkcol(folder);
+  // Skip MKCOL requests if we've already confirmed folders exist in a previous session
+  if (!localStorage.getItem(_INIT_KEY)) {
+    for (const folder of getAllRequiredFolders()) {
+      await davMkcol(folder);
+    }
+    localStorage.setItem(_INIT_KEY, "1");
+  } else {
+    // Pre-populate cache so davMkcol skips these folders if called again this session
+    for (const folder of getAllRequiredFolders()) {
+      _knownFolders.add(folder);
+    }
   }
   _initialized = true;
   console.log("Storage initialized (WebDAV)");
@@ -235,7 +274,12 @@ export async function deleteNotebook(id) {
   const updated = { ...notebook, deleted: true, modified: Date.now() };
   await davPut(getNotebookPath(id), updated);
 
-  // Soft-delete all notes in this notebook
+  // Write global notebook tombstone so other devices know this notebook was deleted
+  const globalTombstone = await _readTombstone(getGlobalNotebookTombstonePath());
+  addNotebookTombstone(globalTombstone, id);
+  await _writeTombstone(getGlobalNotebookTombstonePath(), globalTombstone);
+
+  // Soft-delete all notes in this notebook (each deleteNote writes its own tombstone)
   const notes = await getNotesByNotebook(id);
   for (const note of notes) {
     await deleteNote(note.id);
@@ -260,6 +304,10 @@ export async function restoreNotebook(id) {
 }
 
 export async function permanentlyDeleteNotebook(id) {
+  // Write global notebook tombstone before deleting the folder
+  const globalTombstone = await _readTombstone(getGlobalNotebookTombstonePath());
+  addNotebookTombstone(globalTombstone, id);
+  await _writeTombstone(getGlobalNotebookTombstonePath(), globalTombstone);
   await davDelete(getNotebookFolder(id));
 }
 
@@ -312,12 +360,57 @@ export async function getNote(id) {
   const cached = _notePathCache.get(id);
   if (cached !== undefined) {
     const note = await davGet(getNotePath(id, cached));
-    if (note) { note.tasks = note.tasks || []; return note; }
+    if (note) {
+      note.tasks = note.tasks || [];
+      await _cacheFileLocations(note);
+      return note;
+    }
   }
   // Scan all notebooks
   const note = await _findNote(id);
-  if (note) note.tasks = note.tasks || [];
+  if (note) {
+    note.tasks = note.tasks || [];
+    await _cacheFileLocations(note);
+  }
   return note;
+}
+
+async function _cacheFileLocations(note) {
+  const notebookId = note.notebookId ?? null;
+  const fileIds = [
+    ...(note.media || []).map((m) => m.fileId),
+    note.pdfSource,
+    ...(note.recordings || []).map((r) => r.fileId),
+  ].filter(Boolean);
+
+  if (fileIds.length === 0) return;
+
+  // Check if all fileIds already have ext resolved — skip folder listing if so
+  const needsResolution = fileIds.some((fid) => !_fileLocationCache.get(fid)?.ext);
+  if (!needsResolution) return;
+
+  // List the media folder once to resolve all extensions in one request
+  const mediaFolder = getNoteMediaFolder(note.id, notebookId);
+  const files = await davList(mediaFolder).catch(() => []);
+
+  for (const fileId of fileIds) {
+    if (_fileLocationCache.get(fileId)?.ext) continue; // already resolved
+
+    const match = files.find((p) => {
+      const name = p.replace(/\/$/, "").split("/").pop();
+      return name === fileId || name.startsWith(`${fileId}.`);
+    });
+
+    if (match) {
+      const name = match.replace(/\/$/, "").split("/").pop();
+      const dotIdx = name.lastIndexOf(".");
+      const ext = dotIdx > 0 ? name.slice(dotIdx) : "";
+      _fileLocationCache.set(fileId, { noteId: note.id, notebookId, ext });
+    } else {
+      // File not on server yet (e.g. just created, not yet uploaded)
+      _fileLocationCache.set(fileId, { noteId: note.id, notebookId, ext: null });
+    }
+  }
 }
 
 export async function getNoteIndex(id) {
@@ -379,19 +472,35 @@ export async function getQuickNotes() {
   return notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
 }
 
-export async function updateNote(id, updates) {
-  const existing = await getNote(id);
-  if (!existing) throw new Error("Note not found");
-  const updated = {
-    ...existing,
-    ...updates,
-    modified: Date.now(),
-    version: (existing.version || 0) + 1,
-  };
-  await _putNote(updated);
-  console.log("Note updated:", id);
-  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id } }));
-  return updated;
+// Per-note write queue — prevents concurrent PUTs to the same file (WebDAV 423 Locked)
+const _writeQueues = new Map(); // noteId → Promise
+
+function _enqueueWrite(id, fn) {
+  const prev = _writeQueues.get(id) ?? Promise.resolve();
+  // Always run fn after the previous write settles (success or failure)
+  const next = prev.then(() => fn(), () => fn());
+  _writeQueues.set(id, next);
+  next.finally(() => {
+    if (_writeQueues.get(id) === next) _writeQueues.delete(id);
+  });
+  return next;
+}
+
+export function updateNote(id, updates) {
+  return _enqueueWrite(id, async () => {
+    const existing = await getNote(id);
+    if (!existing) throw new Error("Note not found");
+    const updated = {
+      ...existing,
+      ...updates,
+      modified: Date.now(),
+      version: (existing.version || 0) + 1,
+    };
+    await _putNote(updated);
+    console.log("Note updated:", id);
+    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id } }));
+    return updated;
+  });
 }
 
 export async function saveNote(note) {
@@ -404,6 +513,15 @@ export async function deleteNote(id) {
   if (!note) throw new Error("Note not found");
   const updated = { ...note, deleted: true, modified: Date.now() };
   await _putNote(updated);
+
+  // Write tombstone so other devices know this note was deleted
+  const tombstonePath = note.notebookId
+    ? getNotebookTombstonePath(note.notebookId)
+    : getQuickNotesTombstonePath();
+  const tombstone = await _readTombstone(tombstonePath);
+  addNoteTombstone(tombstone, id);
+  await _writeTombstone(tombstonePath, tombstone);
+
   console.log("Note deleted:", id);
   return updated;
 }
@@ -411,9 +529,20 @@ export async function deleteNote(id) {
 export async function permanentlyDeleteNote(id) {
   const note = await getNote(id);
   if (!note) return;
+
+  // Write tombstone for media files before deleting them
+  const tombstonePath = note.notebookId
+    ? getNotebookTombstonePath(note.notebookId)
+    : getQuickNotesTombstonePath();
+  const tombstone = await _readTombstone(tombstonePath);
+  addNoteTombstone(tombstone, id);
+  for (const item of note.media || []) {
+    if (item.fileId) addMediaTombstone(tombstone, id, item.fileId);
+  }
+  await _writeTombstone(tombstonePath, tombstone);
+
   const path = getNotePath(id, note.notebookId);
   await davDelete(path);
-  // Also delete media folder
   await davDelete(getNoteMediaFolder(id, note.notebookId));
   _notePathCache.delete(id);
 }
@@ -482,8 +611,58 @@ export async function permanentlyDeleteNotesInNotebook(notebookId) {
 
 // ─── Media / files ────────────────────────────────────────────────────────────
 
-// fileId → { notebookId, noteId, filename } cache
+const MIME_TO_EXT = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "image/svg+xml": ".svg",
+  "application/pdf": ".pdf",
+  "audio/webm": ".webm",
+  "audio/webm;codecs=opus": ".webm",
+  "audio/ogg": ".ogg",
+  "audio/mp4": ".m4a",
+};
+
+function _extFromMime(type) {
+  return MIME_TO_EXT[type] || ".bin";
+}
+
+// Mirror sync's lookup: find first MIME type matching the extension
+function _mimeFromExt(ext) {
+  return Object.keys(MIME_TO_EXT).find((key) => MIME_TO_EXT[key] === ext) || "application/octet-stream";
+}
+
+// Detect MIME type from magic bytes when the blob has no useful type
+async function _sniffMime(blob) {
+  const buf = await blob.slice(0, 12).arrayBuffer();
+  const b = new Uint8Array(buf);
+  if (b[0] === 0xFF && b[1] === 0xD8) return "image/jpeg";
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return "image/png";
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return "image/gif";
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "application/pdf";
+  // WebM magic: 0x1A 0x45 0xDF 0xA3
+  if (b[0] === 0x1A && b[1] === 0x45 && b[2] === 0xDF && b[3] === 0xA3) return "audio/webm";
+  return null;
+}
+
+async function _ensureMimeType(blob, ext) {
+  const usefulType = blob.type && blob.type !== "application/octet-stream";
+  if (usefulType) return blob;
+  // Try extension first (mirrors sync's approach), then magic bytes as fallback
+  if (ext) {
+    const mime = _mimeFromExt(ext);
+    if (mime !== "application/octet-stream") return new Blob([blob], { type: mime });
+  }
+  const sniffed = await _sniffMime(blob);
+  if (sniffed) return new Blob([blob], { type: sniffed });
+  return blob;
+}
+
+// fileId → blob (in-memory cache for freshly uploaded files)
 const _fileCache = new Map();
+// fileId → { noteId, notebookId, ext } (persists for lifetime of page so getFile can fetch WebDAV)
+const _fileLocationCache = new Map();
 
 export async function saveFile(blob, id = null) {
   // Files are stored per-note — caller passes noteId and notebookId via context.
@@ -494,24 +673,108 @@ export async function saveFile(blob, id = null) {
   return fileId;
 }
 
-export async function saveMediaForNote(blob, filename, noteId, notebookId) {
+export async function saveMediaForNote(blob, fileId, noteId, notebookId) {
+  const ext = _extFromMime(blob.type);
+  const filename = `${fileId}${ext}`;
   const folder = getNoteMediaFolder(noteId, notebookId);
   await davMkcol(folder);
   await davPutBinary(getMediaPath(noteId, notebookId, filename), blob);
+  // Record location so getFile() can fetch from WebDAV after a page reload
+  _fileLocationCache.set(fileId, { noteId, notebookId, ext });
+  _fileCache.set(fileId, blob);
 }
 
 export async function getFile(id) {
-  // Return from in-memory cache if available (freshly uploaded)
+  // Return from in-memory cache if available (freshly uploaded or already fetched)
   if (_fileCache.has(id)) return _fileCache.get(id);
+
+  // Try to fetch from WebDAV using the recorded location (known ext)
+  const loc = _fileLocationCache.get(id);
+  if (loc?.ext) {
+    const filename = `${id}${loc.ext}`;
+    const raw = await davGetBinary(getMediaPath(loc.noteId, loc.notebookId, filename)).catch(() => null);
+    if (raw) {
+      const blob = await _ensureMimeType(raw, loc.ext);
+      _fileCache.set(id, blob);
+      return blob;
+    }
+  }
+
+  // Location not known in this session — scan the note's media folder to find the file by prefix.
+  // This happens after a page reload. First try to find the note via _notePathCache / scan.
+  const allNotes = await getAllNotes();
+  for (const note of allNotes) {
+    const notebookId = note.notebookId ?? null;
+    const fileIds = [
+      ...(note.media || []).map((m) => m.fileId),
+      note.pdfSource,
+      ...(note.recordings || []).map((r) => r.fileId),
+    ].filter(Boolean);
+
+    if (!fileIds.includes(id)) continue;
+
+    // List the media folder to find the actual filename (with extension)
+    const mediaFolder = getNoteMediaFolder(note.id, notebookId);
+    const files = await davList(mediaFolder).catch(() => []);
+    const match = files.find((p) => {
+      const name = p.replace(/\/$/, "").split("/").pop();
+      return name === id || name.startsWith(`${id}.`);
+    });
+
+    if (match) {
+      const raw = await davGetBinary(match).catch(() => null);
+      if (raw) {
+        const name = match.replace(/\/$/, "").split("/").pop();
+        const dotIdx = name.lastIndexOf(".");
+        const ext = dotIdx > 0 ? name.slice(dotIdx) : "";
+        // Ensure blob has correct MIME type (Nextcloud serves extensionless files as octet-stream)
+        const blob = await _ensureMimeType(raw, ext);
+        _fileLocationCache.set(id, { noteId: note.id, notebookId, ext });
+        _fileCache.set(id, blob);
+        return blob;
+      }
+    }
+  }
+
   return null;
 }
 
 export async function checkFileExists(id) {
-  return _fileCache.has(id);
+  if (_fileCache.has(id)) return true;
+  const loc = _fileLocationCache.get(id);
+  return loc?.ext != null; // only true if ext was resolved (file confirmed on server)
 }
 
 export async function deleteFile(id) {
   _fileCache.delete(id);
+  _fileLocationCache.delete(id);
+}
+
+/**
+ * Returns a direct WebDAV URL for a file, or null if the location is not known.
+ * Used by NC build to set <audio src> directly (avoids blob: URL which is blocked by NC CSP media-src).
+ */
+export function getFileUrl(id) {
+  const loc = _fileLocationCache.get(id);
+  if (!loc?.ext) return null;
+  return `${getWebDAVBase()}${getMediaPath(loc.noteId, loc.notebookId, `${id}${loc.ext}`)}`;
+}
+
+// Pending upload promises: fileId → Promise — lets callers await upload completion
+const _pendingUploads = new Map();
+
+export function registerPendingUpload(fileId, promise) {
+  _pendingUploads.set(fileId, promise.finally(() => _pendingUploads.delete(fileId)));
+}
+
+/**
+ * Waits for any in-flight upload for this fileId to complete, then returns the WebDAV URL.
+ * Returns null if no URL can be determined.
+ */
+export async function waitForFileUrl(id) {
+  const pending = _pendingUploads.get(id);
+  if (pending) await pending.catch(() => {});
+  return getFileUrl(id);
 }
 
 // ─── Storage stats / admin ────────────────────────────────────────────────────

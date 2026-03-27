@@ -1,5 +1,22 @@
 <?php
 \OCP\Util::addStyle('noteberg', 'noteberg-styles');
+
+// Detect Nextcloud dark mode server-side via OCP public API.
+$isDark = false;
+try {
+    $userId = \OCP\Server::get(\OCP\IUserSession::class)->getUser()?->getUID();
+    if ($userId) {
+        $config = \OCP\Server::get(\OCP\IConfig::class);
+        $accessibilityTheme = $config->getUserValue($userId, 'accessibility', 'theme', '');
+        $isDark = ($accessibilityTheme === 'dark' || $accessibilityTheme === 'highcontrast');
+        if (!$isDark) {
+            $isDark = $config->getUserValue($userId, 'accessibility', 'darkmode', '0') === '1';
+        }
+    }
+} catch (\Exception $e) {
+    // Ignore — default to light
+}
+$initialTheme = $isDark ? 'dark' : 'light';
 ?>
 <style>
   /* Make NoteBerg fill the Nextcloud content area */
@@ -73,8 +90,17 @@
     min-height: 0;
     overflow: hidden;
   }
+
+  /* NC inputs.css sets width:130px and padding:12px on div[contenteditable] —
+     this collapses the Trumbowyg editor to a tiny strip */
+  #app div[contenteditable] {
+    width: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+  }
 </style>
-<div id="app">
+<div id="app" data-nc-theme="<?php p($initialTheme); ?>">
   <!-- Top Toolbar -->
   <header id="toolbar" class="toolbar">
     <div class="toolbar-left">

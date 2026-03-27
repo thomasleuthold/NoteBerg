@@ -8,7 +8,9 @@
  * Depends on RecordingManager for all state; this class is pure UI.
  */
 
-import { getFile } from "../../modules/storage.js";
+import { getFile, getFileUrl, waitForFileUrl } from "../../modules/storage.js";
+
+const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 import { getIcon } from "../../utils/icons.js";
 import { showConfirmDialog } from "../modals.js";
 
@@ -102,7 +104,7 @@ export class SoundDialog {
     this._audioEl.preload = "none";
     this._audioEl.style.display = "none"; // hidden when outside dialog
     this._audioEl.addEventListener("timeupdate", () => {
-      if (this._selectedId) {
+      if (this._selectedId && this._audioEl) {
         this._playbackPositions.set(this._selectedId, this._audioEl.currentTime);
       }
     });
@@ -190,6 +192,7 @@ export class SoundDialog {
     const savedPos = this._playbackPositions.get(rec.id) ?? 0;
 
     const applySource = (url) => {
+      if (!this._audioEl) return;
       if (this._audioEl.src !== url) {
         this._audioEl.src = url;
       }
@@ -198,17 +201,30 @@ export class SoundDialog {
 
     if (this._blobUrls.has(rec.fileId)) {
       applySource(this._blobUrls.get(rec.fileId));
-    } else {
-      getFile(rec.fileId)
-        .then((blob) => {
-          if (!blob) return;
-          const url = URL.createObjectURL(blob);
+      return;
+    }
+
+    // In NC build, use the direct WebDAV URL to avoid blob: CSP restriction (media-src 'self')
+    if (_IS_NEXTCLOUD) {
+      waitForFileUrl(rec.fileId)
+        .then((url) => {
+          if (!url || !this._audioEl) return;
           this._blobUrls.set(rec.fileId, url);
-          // Only apply if this recording is still selected
           if (this._selectedId === rec.id) applySource(url);
         })
-        .catch((err) => console.error("[SoundDialog] Failed to load recording:", err));
+        .catch((err) => console.error("[SoundDialog] Failed to resolve recording URL:", err));
+      return;
     }
+
+    getFile(rec.fileId)
+      .then((blob) => {
+        if (!blob || !this._audioEl) return;
+        const url = URL.createObjectURL(blob);
+        this._blobUrls.set(rec.fileId, url);
+        // Only apply if this recording is still selected
+        if (this._selectedId === rec.id) applySource(url);
+      })
+      .catch((err) => console.error("[SoundDialog] Failed to load recording:", err));
   }
 
   // ── State change handler ───────────────────────────────────────────────────
