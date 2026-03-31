@@ -15,7 +15,7 @@ import { getMarkerPalette, getThemePalette } from "../../utils/noteRenderer.js";
  * @returns {string} SVG markup
  */
 function getPenIconWithColor(tipColor, size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
     <path d="m15 5 4 4"/>
     <line x1="3" y1="24" x2="21" y2="24" stroke="${tipColor}" stroke-width="2" stroke-linecap="round"/>
@@ -29,7 +29,7 @@ function getPenIconWithColor(tipColor, size = 24) {
  * @returns {string} SVG markup
  */
 function getMarkerIconWithColor(tipColor, size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m9 11-6 6v3h9l3-3"/>
     <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
     <line x1="5" y1="22" x2="22" y2="22" stroke="${tipColor}" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
@@ -42,7 +42,7 @@ function getMarkerIconWithColor(tipColor, size = 24) {
  * @returns {string} SVG markup
  */
 function getMoreIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="1"/>
     <circle cx="12" cy="5" r="1"/>
     <circle cx="12" cy="19" r="1"/>
@@ -55,7 +55,7 @@ function getMoreIcon(size = 24) {
  * @returns {string} SVG markup
  */
 function getLassoIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22a5 5 0 0 1-2-4"/><path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1"/><path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22a5 5 0 0 1-2-4"/><path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1"/><path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
 }
 
 /**
@@ -64,7 +64,7 @@ function getLassoIcon(size = 24) {
  * @returns {string} SVG markup
  */
 function getUndoIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>`;
 }
 
 /**
@@ -73,7 +73,7 @@ function getUndoIcon(size = 24) {
  * @returns {string} SVG markup
  */
 function getRedoIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>`;
 }
 
 /**
@@ -82,7 +82,7 @@ function getRedoIcon(size = 24) {
  * @returns {string} SVG markup
  */
 function getTextIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`;
 }
 
 /**
@@ -94,7 +94,7 @@ function getPartEraserIcon(size = 24) {
   // Eraser shape (same as stroke eraser) overlapping a diagonal stroke.
   // The stroke is visible on both sides of the eraser but absent underneath it,
   // conveying that only the part under the eraser is removed.
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.9-9.9c1-1 2.5-1 3.4 0l4.4 4.4c1 1 1 2.5 0 3.4L10.5 21z"/>
     <path d="m22 21-8 0"/>
     <path d="m1 21 4 0"/>
@@ -108,7 +108,7 @@ function getPartEraserIcon(size = 24) {
  * @returns {string}
  */
 function getEraserSizeIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="7"/>
     <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
   </svg>`;
@@ -120,7 +120,7 @@ function getEraserSizeIcon(size = 24) {
  * @returns {string}
  */
 function getHighlighterOnlyIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m9 11-6 6v3h9l3-3"/>
     <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
   </svg>`;
@@ -261,7 +261,7 @@ export class NoteToolbar {
 
     this.insertBtn = createBtn(
       "insert",
-      `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
       t("toolbar.actions.insert"),
     );
     this.insertBtn.onclick = (e) => this._handleInsertClick(e);
@@ -508,8 +508,8 @@ export class NoteToolbar {
     const expandBtn = document.createElement("button");
     expandBtn.className = "note-canvas-toolbar__expand-btn";
     expandBtn.innerHTML = this.isExpanded
-      ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>` // Left arrow (collapse)
-      : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>`; // Right arrow (expand)
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>` // Left arrow (collapse)
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>`; // Right arrow (expand)
     expandBtn.title = this.isExpanded
       ? t("toolbar.penDialog.collapse")
       : t("toolbar.penDialog.expand");
@@ -572,7 +572,7 @@ export class NoteToolbar {
       const saveBtn = document.createElement("button");
       saveBtn.className = "note-canvas-toolbar__save-preset-btn";
       saveBtn.title = t("toolbar.penDialog.savePreset");
-      saveBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>`;
+      saveBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>`;
 
       saveBtn.onclick = (e) => {
         e.stopPropagation();
@@ -755,7 +755,7 @@ export class NoteToolbar {
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
         <button class="note-canvas-toolbar__option-btn" data-action="insert-space">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="note-canvas-toolbar__option-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="note-canvas-toolbar__option-icon">
             <path d="M12 8v8m-4-4 4 4 4-4"/>
             <path d="M4 4h16"/>
             <path d="M4 20h16"/>

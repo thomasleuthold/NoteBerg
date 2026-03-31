@@ -56,11 +56,21 @@ $initialTheme = $isDark ? 'dark' : 'light';
     line-height: 1.6;
   }
 
-  /* NC resets button cursor to default — restore pointer */
+  /* NC may override card positioning — ensure absolute-positioned buttons are anchored correctly */
+  #app .note-card,
+  #app .notebook-card {
+    overflow: visible !important;
+    position: relative !important;
+  }
+
+  /* NC adds padding/min-height/min-width to all buttons */
   #app button {
+    padding: 0 !important;
+    min-height: 0 !important;
+    min-width: 0 !important;
     cursor: pointer !important;
-    font-family: var(--font-family, inherit);
-    font-size: inherit;
+    font-family: var(--font-family, inherit) !important;
+    font-size: inherit !important;
   }
 
   /* NC overrides ::-webkit-scrollbar width to 12px */
@@ -74,6 +84,13 @@ $initialTheme = $isDark ? 'dark' : 'light';
     background-image: none !important;
     padding-inline-end: 0 !important;
     height: auto !important;
+  }
+
+  /* Restore list indentation inside the text editor (NC zeroes ol/ul padding) */
+  #app .trumbowyg-editor ol,
+  #app .trumbowyg-editor ul {
+    padding-left: 2em !important;
+    margin: 0.25em 0 !important;
   }
 
   /* Ensure our toolbar renders correctly */
@@ -92,12 +109,14 @@ $initialTheme = $isDark ? 'dark' : 'light';
   }
 
   /* NC inputs.css sets width:130px and padding:12px on div[contenteditable] —
-     this collapses the Trumbowyg editor to a tiny strip */
+     reset width/border/margin for all, but keep padding only for non-editor elements. */
   #app div[contenteditable] {
     width: auto !important;
-    padding: 0 !important;
     margin: 0 !important;
     border: none !important;
+  }
+  #app div[contenteditable]:not(.trumbowyg-editor) {
+    padding: 0 !important;
   }
 </style>
 <div id="app" data-nc-theme="<?php p($initialTheme); ?>">

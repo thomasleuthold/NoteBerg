@@ -100,6 +100,14 @@
   box-sizing: border-box;
 }
 
+/* Global SVG default size — ensures icons without width/height attributes are visible.
+   Toolbar and other contexts override this with their own rules. */
+svg {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
 html {
   height: 100dvh;
   -webkit-text-size-adjust: 100%;
@@ -175,7 +183,7 @@ body {
   min-width: 0; /* Allow flex items to shrink below content size */
 }
 
-.breadcrumb-item {
+:is(body, #app) .breadcrumb-item {
   display: flex;
   align-items: center;
   padding: var(--spacing-xs) var(--spacing-sm);
@@ -216,7 +224,7 @@ body {
   user-select: none;
 }
 
-.btn-icon {
+:is(body, #app) .btn-icon {
   width: 40px;
   height: 40px;
   display: flex;
@@ -626,7 +634,7 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-.btn-primary {
+:is(body, #app) .btn-primary {
   background-color: var(--color-primary);
   color: var(--text-inverse);
   padding: var(--spacing-sm) var(--spacing-md);
@@ -645,7 +653,7 @@ button:focus-visible {
   transform: scale(0.98);
 }
 
-.btn-secondary {
+:is(body, #app) .btn-secondary {
   background-color: var(--color-secondary);
   color: var(--text-inverse);
   padding: var(--spacing-sm) var(--spacing-md);
@@ -660,7 +668,7 @@ button:focus-visible {
   transform: scale(0.98);
 }
 
-.btn-danger {
+:is(body, #app) .btn-danger {
   background-color: var(--color-danger);
   color: var(--text-inverse);
   padding: var(--spacing-sm) var(--spacing-md);

@@ -7,6 +7,12 @@
  * - Modifiers: .note-canvas--modifier
  */
 
+:root {
+  --toolbar-btn-size: 29px;
+  --toolbar-icon-size: 19px;
+}
+
+
 /* ==========================================================================
    NoteCanvas Container
    ========================================================================== */
@@ -20,7 +26,7 @@
 
 .note-canvas__toolbar-container {
   flex: 0 0 auto;
-  z-index: 10;
+  z-index: 20;
 }
 
 .note-canvas__scroller-container {
@@ -108,17 +114,17 @@
 
 .note-canvas-toolbar {
   display: flex;
-  gap: 8px;
-  padding: 10px 20px;
+  gap: 6px;
+  padding: 8px 8px;
   width: 100%;
   background-color: var(--bg-primary);
   border-bottom: 1px solid var(--border-primary);
   align-items: center;
 }
 
-.note-canvas-toolbar__button {
-  width: 32px;
-  height: 32px;
+:is(body, #app) .note-canvas-toolbar__button {
+  width: var(--toolbar-btn-size);
+  height: var(--toolbar-btn-size);
   border-radius: 50%;
   border: 1px solid var(--border-primary, #e2e8f0);
   background-color: var(--bg-primary, #ffffff);
@@ -133,6 +139,11 @@
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: auto;
   outline: none;
+}
+
+.note-canvas-toolbar__button svg {
+  width: var(--toolbar-icon-size) !important;
+  height: var(--toolbar-icon-size) !important;
 }
 
 .note-canvas-toolbar__button:hover {
@@ -193,8 +204,8 @@
 
 .note-canvas__media-btn {
   position: absolute;
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   background: white;
   border: 1px solid var(--border-primary);
   border-radius: 50%;
@@ -398,7 +409,7 @@
   background: var(--bg-secondary, #f5f5f5);
   border-right: 1px solid var(--border-primary, #e2e8f0);
   align-items: center;
-  width: 42px;
+  width: calc(var(--toolbar-btn-size) + 10px);
   box-sizing: border-box;
 }
 
@@ -420,9 +431,9 @@
   min-width: 240px;
 }
 
-.note-canvas-toolbar__preset-btn {
-  width: 32px;
-  height: 32px;
+:is(body, #app) .note-canvas-toolbar__preset-btn {
+  width: var(--toolbar-btn-size);
+  height: var(--toolbar-btn-size);
   border-radius: 50%;
   border: 2px solid transparent;
   background: white;
@@ -444,7 +455,7 @@
   background-color: #eef2ff;
 }
 
-.note-canvas-toolbar__save-preset-btn {
+:is(body, #app) .note-canvas-toolbar__save-preset-btn {
   position: absolute;
   top: 0;
   left: 0;
@@ -468,7 +479,7 @@
   background-color: var(--bg-secondary);
 }
 
-.note-canvas-toolbar__expand-btn {
+:is(body, #app) .note-canvas-toolbar__expand-btn {
   width: 100%;
   border: none;
   background: none;
@@ -514,9 +525,9 @@
   gap: 8px;
 }
 
-.note-canvas-toolbar__width-btn {
-  width: 28px;
-  height: 28px;
+:is(body, #app) .note-canvas-toolbar__width-btn {
+  width: var(--toolbar-btn-size);
+  height: var(--toolbar-btn-size);
   border-radius: 4px;
   border: 1px solid var(--border-primary);
   background: var(--bg-secondary);
@@ -582,9 +593,9 @@
   gap: 8px;
 }
 
-.note-canvas-toolbar__color-swatch {
-  width: 32px;
-  height: 32px;
+:is(body, #app) .note-canvas-toolbar__color-swatch {
+  width: var(--toolbar-btn-size);
+  height: var(--toolbar-btn-size);
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
@@ -642,13 +653,13 @@
   padding: 4px 5px;
   gap: 6px;
   background: var(--bg-secondary, #f5f5f5);
-  width: 42px;
+  width: calc(var(--toolbar-btn-size) + 10px);
   box-sizing: border-box;
 }
 
-.note-canvas-toolbar__eraser-mode-btn {
-  width: 32px;
-  height: 32px;
+:is(body, #app) .note-canvas-toolbar__eraser-mode-btn {
+  width: var(--toolbar-btn-size);
+  height: var(--toolbar-btn-size);
   border-radius: 6px;
   border: 1px solid transparent;
   background: transparent;
@@ -662,6 +673,11 @@
     color 0.15s;
   padding: 0;
   flex-shrink: 0;
+}
+
+.note-canvas-toolbar__eraser-mode-btn svg {
+  width: var(--toolbar-icon-size) !important;
+  height: var(--toolbar-icon-size) !important;
 }
 
 .note-canvas-toolbar__eraser-mode-btn:hover {
@@ -778,7 +794,7 @@
   gap: 4px;
 }
 
-.note-canvas-toolbar__option-btn {
+:is(body, #app) .note-canvas-toolbar__option-btn {
   text-align: left;
   padding: 6px 8px;
   white-space: nowrap;
@@ -809,7 +825,7 @@
   margin: 12px 0;
 }
 
-.note-canvas-toolbar__delete-btn {
+:is(body, #app) .note-canvas-toolbar__delete-btn {
   width: 100%;
   padding: 8px;
   background: var(--color-danger);
@@ -1017,8 +1033,8 @@
   gap: 2px;
 }
 
-.note-navigator__btn,
-.note-navigator__toggle-btn {
+:is(body, #app) .note-navigator__btn,
+:is(body, #app) .note-navigator__toggle-btn {
   width: 40px;
   height: 40px;
   border: 1px solid var(--border-primary);
@@ -1038,7 +1054,7 @@
   background: var(--bg-hover, var(--bg-tertiary));
 }
 
-.note-navigator__subject-btn {
+:is(body, #app) .note-navigator__subject-btn {
   width: 40px;
   padding: 4px 0;
   border: 1px solid var(--border-primary);
@@ -1154,7 +1170,6 @@
 /* ===== Toolbar layout (replaces inline styles) ===== */
 .note-canvas-toolbar {
   position: relative;
-  z-index: 100;
   overflow: visible;
 }
 
@@ -1170,7 +1185,7 @@
 }
 
 /* ===== Dark theme pen dialog (replaces injected style tag) ===== */
-.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn {
+:is(body, #app) .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn {
   background-color: #333;
   border: 1px solid #555;
 }
@@ -1184,7 +1199,7 @@
   border-color: #999;
 }
 
-.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn {
+:is(body, #app) .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn {
   background-color: #333;
   border: 1px solid #555;
   color: #fff;
@@ -1233,7 +1248,7 @@
    Sound Dialog
    ========================================================================== */
 
-.sound-dialog__trigger-btn {
+:is(body, #app) .sound-dialog__trigger-btn {
   position: absolute;
   top: 12px;
   right: 64px; /* 16px (navigator right) + 40px (navigator width) + 8px gap */
@@ -1295,7 +1310,7 @@
   letter-spacing: 0.04em;
 }
 
-.sound-dialog__close-btn {
+:is(body, #app) .sound-dialog__close-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -1355,7 +1370,7 @@
   min-width: 36px;
 }
 
-.sound-dialog__new-btn {
+:is(body, #app) .sound-dialog__new-btn {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1426,7 +1441,7 @@
   text-overflow: ellipsis;
 }
 
-.sound-dialog__icon-btn {
+:is(body, #app) .sound-dialog__icon-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -1464,6 +1479,12 @@
   color: var(--text-secondary);
   margin: 0;
 }
+
+/* ==========================================================================
+   Nextcloud build overrides
+   Scoped to #app which only exists in the NC build — Tauri uses <body> directly.
+   ========================================================================== */
+
 
 .sound-dialog__error {
   padding: 8px 12px;
