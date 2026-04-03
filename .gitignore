@@ -58,6 +58,11 @@ Cargo.lock
 key.properties
 *.apk
 
+# Nextcloud app signing (private key + CSR — never commit)
+*.key
+*.csr
+*.crt
+
 # Build artifacts / binaries
 *.pdb
 /dist-backend/*.exe

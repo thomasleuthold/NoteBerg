@@ -14,7 +14,7 @@ import { getMarkerPalette, getThemePalette } from "../../utils/noteRenderer.js";
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getPenIconWithColor(tipColor, size = 24) {
+function getPenIconWithColor(tipColor, _size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
     <path d="m15 5 4 4"/>
@@ -28,7 +28,7 @@ function getPenIconWithColor(tipColor, size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getMarkerIconWithColor(tipColor, size = 24) {
+function getMarkerIconWithColor(tipColor, _size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m9 11-6 6v3h9l3-3"/>
     <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
@@ -41,7 +41,7 @@ function getMarkerIconWithColor(tipColor, size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getMoreIcon(size = 24) {
+function getMoreIcon(_size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="1"/>
     <circle cx="12" cy="5" r="1"/>
@@ -54,7 +54,7 @@ function getMoreIcon(size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getLassoIcon(size = 24) {
+function getLassoIcon(_size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22a5 5 0 0 1-2-4"/><path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1"/><path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
 }
 
@@ -63,7 +63,7 @@ function getLassoIcon(size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getUndoIcon(size = 24) {
+function getUndoIcon(_size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>`;
 }
 
@@ -72,7 +72,7 @@ function getUndoIcon(size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getRedoIcon(size = 24) {
+function getRedoIcon(_size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>`;
 }
 
@@ -81,7 +81,7 @@ function getRedoIcon(size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getTextIcon(size = 24) {
+function getTextIcon(_size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`;
 }
 
@@ -90,7 +90,7 @@ function getTextIcon(size = 24) {
  * @param {number} size
  * @returns {string}
  */
-function getPartEraserIcon(size = 24) {
+function getPartEraserIcon(_size = 24) {
   // Eraser shape (same as stroke eraser) overlapping a diagonal stroke.
   // The stroke is visible on both sides of the eraser but absent underneath it,
   // conveying that only the part under the eraser is removed.
@@ -107,7 +107,7 @@ function getPartEraserIcon(size = 24) {
  * @param {number} size
  * @returns {string}
  */
-function getEraserSizeIcon(size = 24) {
+function getEraserSizeIcon(_size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="7"/>
     <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
@@ -119,7 +119,7 @@ function getEraserSizeIcon(size = 24) {
  * @param {number} size
  * @returns {string}
  */
-function getHighlighterOnlyIcon(size = 24) {
+function getHighlighterOnlyIcon(_size = 24) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m9 11-6 6v3h9l3-3"/>
     <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>

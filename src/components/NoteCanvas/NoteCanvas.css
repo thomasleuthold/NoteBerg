@@ -12,7 +12,6 @@
   --toolbar-icon-size: 19px;
 }
 
-
 /* ==========================================================================
    NoteCanvas Container
    ========================================================================== */
@@ -142,8 +141,8 @@
 }
 
 .note-canvas-toolbar__button svg {
-  width: var(--toolbar-icon-size) !important;
-  height: var(--toolbar-icon-size) !important;
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size);
 }
 
 .note-canvas-toolbar__button:hover {
@@ -676,8 +675,8 @@
 }
 
 .note-canvas-toolbar__eraser-mode-btn svg {
-  width: var(--toolbar-icon-size) !important;
-  height: var(--toolbar-icon-size) !important;
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size);
 }
 
 .note-canvas-toolbar__eraser-mode-btn:hover {
@@ -1484,7 +1483,6 @@
    Nextcloud build overrides
    Scoped to #app which only exists in the NC build — Tauri uses <body> directly.
    ========================================================================== */
-
 
 .sound-dialog__error {
   padding: 8px 12px;

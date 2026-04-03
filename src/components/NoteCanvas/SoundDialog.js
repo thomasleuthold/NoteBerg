@@ -11,6 +11,7 @@
 import { getFile, waitForFileUrl } from "../../modules/storage.js";
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+const _IS_NATIVE = typeof window.__TAURI_INTERNALS__ !== "undefined";
 
 import { getIcon } from "../../utils/icons.js";
 import { showConfirmDialog } from "../modals.js";
@@ -336,31 +337,41 @@ export class SoundDialog {
 
       this._dialogEl.appendChild(strip);
     } else {
-      // New recording button
-      const newBtn = document.createElement("button");
-      newBtn.className = "sound-dialog__new-btn";
-      newBtn.innerHTML = `${getIcon("mic", 16)}<span>New recording</span>`;
-      newBtn.addEventListener("click", async (e) => {
+      // New recording button (native only)
+      if (_IS_NATIVE) {
+        const newBtn = document.createElement("button");
+        newBtn.className = "sound-dialog__new-btn";
+        newBtn.innerHTML = `${getIcon("mic", 16)}<span>New recording</span>`;
+        newBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (this._audioEl) {
+            this._savePlaybackPosition();
+            this._audioEl.pause();
+          }
+          const playerWrap = this._dialogEl.querySelector(".sound-dialog__player");
+          if (playerWrap) playerWrap.style.display = "none";
+          this._selectedId = null;
+          for (const r of this._dialogEl.querySelectorAll(".sound-dialog__row--selected")) {
+            r.classList.remove("sound-dialog__row--selected");
+          }
+          try {
+            await this.rm.startRecording();
+          } catch (err) {
+            this._showError(err);
+          }
+        });
+        this._dialogEl.appendChild(newBtn);
+      }
+
+      // Import audio file button (works everywhere)
+      const importBtn = document.createElement("button");
+      importBtn.className = "sound-dialog__new-btn";
+      importBtn.innerHTML = `${getIcon("upload", 16)}<span>Import audio file</span>`;
+      importBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        // Stop any playing audio
-        if (this._audioEl) {
-          this._savePlaybackPosition();
-          this._audioEl.pause();
-        }
-        // Hide player
-        const playerWrap = this._dialogEl.querySelector(".sound-dialog__player");
-        if (playerWrap) playerWrap.style.display = "none";
-        this._selectedId = null;
-        for (const r of this._dialogEl.querySelectorAll(".sound-dialog__row--selected")) {
-          r.classList.remove("sound-dialog__row--selected");
-        }
-        try {
-          await this.rm.startRecording();
-        } catch (err) {
-          this._showError(err);
-        }
+        this._importAudioFile();
       });
-      this._dialogEl.appendChild(newBtn);
+      this._dialogEl.appendChild(importBtn);
 
       // Shared audio player (hidden until a recording is selected)
       const playerWrap = document.createElement("div");
@@ -452,6 +463,44 @@ export class SoundDialog {
     });
 
     return row;
+  }
+
+  _importAudioFile() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "audio/*";
+    input.style.display = "none";
+    document.body.appendChild(input);
+
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+
+      // Read duration via a temporary audio element
+      const duration = await new Promise((resolve) => {
+        const audio = document.createElement("audio");
+        audio.preload = "metadata";
+        const url = URL.createObjectURL(file);
+        audio.src = url;
+        audio.addEventListener("loadedmetadata", () => {
+          URL.revokeObjectURL(url);
+          resolve(Number.isFinite(audio.duration) ? Math.round(audio.duration) : 0);
+        });
+        audio.addEventListener("error", () => {
+          URL.revokeObjectURL(url);
+          resolve(0);
+        });
+      });
+
+      try {
+        await this.rm.importFile(file, duration);
+      } catch (err) {
+        console.error("[SoundDialog] Import failed:", err);
+      }
+    });
+
+    input.click();
   }
 
   _updateButtonState() {

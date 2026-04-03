@@ -54,7 +54,10 @@ function _getBlockElements(trumbowyg) {
     if (el.nodeType === Node.TEXT_NODE) el = el.parentElement;
     while (el && el !== editor) {
       const s = window.getComputedStyle(el);
-      if (s.display === "block" || s.display === "list-item") { blocks.add(el); break; }
+      if (s.display === "block" || s.display === "list-item") {
+        blocks.add(el);
+        break;
+      }
       el = el.parentElement;
     }
   }

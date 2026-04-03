@@ -2,6 +2,254 @@ use std::sync::Mutex;
 #[cfg(target_os = "windows")]
 use std::sync::OnceLock;
 
+// ── Windows native audio recording ───────────────────────────────────────────
+//
+// Uses cpal for cross-platform WASAPI capture and hound for WAV encoding.
+// WAV files have correct duration headers so playback time display works.
+// State is held in a global Mutex so the stateless Tauri commands can access it.
+
+#[cfg(target_os = "windows")]
+mod win_audio {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::sync::{Arc, Mutex};
+    use std::path::PathBuf;
+
+    pub struct RecordingState {
+        pub stream: Option<cpal::Stream>,
+        /// Writer shared with the stream callback; take ownership after dropping stream.
+        pub writer: Arc<Mutex<Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>>>,
+        pub path: Option<PathBuf>,
+        pub paused: Arc<std::sync::atomic::AtomicBool>,
+        pub amplitude: Arc<Mutex<f32>>,
+        pub proc_state: Arc<Mutex<AudioProcessState>>,
+    }
+
+    // Safety: cpal::Stream is not Send, but we only access it from the Tauri
+    // command thread under the Mutex lock and never send it across threads.
+    unsafe impl Send for RecordingState {}
+
+    /// Persistent state for the two-stage audio processing chain.
+    pub struct AudioProcessState {
+        comp_detector: f32, // peak level detector for compressor (dB)
+        comp_gain_db: f32,  // smoothed gain reduction from compressor (dB, <= 0)
+        lim_detector: f32,  // peak level detector for limiter (dB)
+        lim_gain_db: f32,   // smoothed gain reduction from limiter (dB, <= 0)
+    }
+
+    impl AudioProcessState {
+        pub fn new() -> Self {
+            Self { comp_detector: -100.0, comp_gain_db: 0.0, lim_detector: -100.0, lim_gain_db: 0.0 }
+        }
+    }
+
+    /// Port of the browser Web Audio chain:
+    ///   DynamicsCompressor(threshold=-18, knee=12, ratio=3, attack=0.05, release=0.3)
+    ///   → Gain(1.1)
+    ///   → DynamicsCompressor/limiter(threshold=-1, knee=0, ratio=20, attack=0.001, release=0.1)
+    ///
+    /// Follows the WebKit/Chromium DynamicsCompressor spec:
+    ///   per-sample peak detector (attack/release) → gain computer (soft-knee curve) → smoothed gain
+    ///
+    /// Processes samples in-place. Returns output peak for the amplitude meter.
+    pub fn process_audio(samples: &mut [f32], st: &mut AudioProcessState, sample_rate: u32) -> f32 {
+        let sr = sample_rate as f32;
+
+        // Compressor: threshold=-18 dB, knee=12 dB, ratio=3, attack=50ms, release=300ms
+        let comp_threshold: f32 = -18.0;
+        let comp_knee: f32      =  12.0;
+        let comp_ratio: f32     =   3.0;
+        let comp_att  = (-1.0_f32 / (0.05 * sr)).exp();
+        let comp_rel  = (-1.0_f32 / (0.3  * sr)).exp();
+
+        // Limiter: threshold=-1 dB, knee=0, ratio=20, attack=1ms, release=100ms
+        let lim_threshold: f32 = -1.0;
+        let lim_ratio: f32     = 20.0;
+        let lim_att  = (-1.0_f32 / (0.001 * sr)).exp();
+        let lim_rel  = (-1.0_f32 / (0.1   * sr)).exp();
+
+        let makeup: f32 = 1.1;
+
+        let mut peak = 0f32;
+        for s in samples.iter_mut() {
+            let x = *s;
+
+            // ── Compressor ────────────────────────────────────────────────────
+            let x_db = lin_to_db(x.abs());
+            // Peak detector
+            st.comp_detector = if x_db > st.comp_detector {
+                comp_att * st.comp_detector + (1.0 - comp_att) * x_db
+            } else {
+                comp_rel * st.comp_detector + (1.0 - comp_rel) * x_db
+            };
+            // Gain computer → smooth gain reduction
+            let comp_gc = gain_computer(st.comp_detector, comp_threshold, comp_knee, comp_ratio);
+            st.comp_gain_db = if comp_gc < st.comp_gain_db {
+                comp_att * st.comp_gain_db + (1.0 - comp_att) * comp_gc
+            } else {
+                comp_rel * st.comp_gain_db + (1.0 - comp_rel) * comp_gc
+            };
+            let y = x * db_to_lin(st.comp_gain_db) * makeup;
+
+            // ── Limiter ───────────────────────────────────────────────────────
+            let y_db = lin_to_db(y.abs());
+            st.lim_detector = if y_db > st.lim_detector {
+                lim_att * st.lim_detector + (1.0 - lim_att) * y_db
+            } else {
+                lim_rel * st.lim_detector + (1.0 - lim_rel) * y_db
+            };
+            let lim_gc = gain_computer(st.lim_detector, lim_threshold, 0.0, lim_ratio);
+            st.lim_gain_db = if lim_gc < st.lim_gain_db {
+                lim_att * st.lim_gain_db + (1.0 - lim_att) * lim_gc
+            } else {
+                lim_rel * st.lim_gain_db + (1.0 - lim_rel) * lim_gc
+            };
+            let out = (y * db_to_lin(st.lim_gain_db)).clamp(-1.0, 1.0);
+
+            *s = out;
+            if out.abs() > peak { peak = out.abs(); }
+        }
+        peak
+    }
+
+    /// Gain computer: returns gain reduction in dB (always <= 0).
+    /// Soft-knee curve per the WebAudio spec.
+    #[inline]
+    fn gain_computer(level_db: f32, threshold: f32, knee: f32, ratio: f32) -> f32 {
+        let half_knee = knee / 2.0;
+        if knee > 0.0 && level_db > threshold - half_knee && level_db < threshold + half_knee {
+            // Soft-knee region: quadratic interpolation
+            let x = level_db - threshold + half_knee;
+            (1.0 / ratio - 1.0) / (2.0 * knee) * x * x
+        } else if level_db >= threshold + half_knee {
+            // Above knee: full ratio
+            (level_db - threshold) * (1.0 / ratio - 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    #[inline]
+    fn lin_to_db(x: f32) -> f32 {
+        if x < 1e-6 { -120.0 } else { 20.0 * x.log10() }
+    }
+
+    #[inline]
+    fn db_to_lin(db: f32) -> f32 {
+        10f32.powf(db / 20.0)
+    }
+
+    pub fn start() -> Result<RecordingState, String> {
+        let host = cpal::default_host();
+        let device = host.default_input_device()
+            .ok_or_else(|| "No audio input device found".to_string())?;
+        let config = device.default_input_config()
+            .map_err(|e| format!("Audio config error: {e}"))?;
+
+        let sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+
+        let tmp_path = std::env::temp_dir().join(format!("noteberg_rec_{}.wav", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()));
+
+        let wav_spec = hound::WavSpec {
+            channels,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let writer = hound::WavWriter::create(&tmp_path, wav_spec)
+            .map_err(|e| format!("Failed to create WAV file: {e}"))?;
+        let writer = Arc::new(Mutex::new(Some(writer)));
+        let writer_clone = Arc::clone(&writer);
+        let paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let paused_clone = Arc::clone(&paused);
+        let amplitude_shared = Arc::new(Mutex::new(0f32));
+        let amplitude_clone = Arc::clone(&amplitude_shared);
+        let compressor = Arc::new(Mutex::new(AudioProcessState::new()));
+
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => {
+                let compressor_c = Arc::clone(&compressor);
+                let writer_c = Arc::clone(&writer_clone);
+                let amplitude_c = Arc::clone(&amplitude_clone);
+                let paused_c = Arc::clone(&paused_clone);
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[f32], _| {
+                        if paused_c.load(std::sync::atomic::Ordering::Relaxed) { return; }
+                        let mut buf = data.to_vec();
+                        let peak = process_audio(&mut buf, &mut compressor_c.lock().unwrap(), sample_rate);
+                        *amplitude_c.lock().unwrap() = peak;
+                        if let Ok(mut guard) = writer_c.lock() {
+                            if let Some(w) = guard.as_mut() {
+                                for s in buf { let _ = w.write_sample((s * i16::MAX as f32) as i16); }
+                            }
+                        }
+                    },
+                    |e| eprintln!("[WinAudio] stream error: {e}"),
+                    None,
+                ).map_err(|e| format!("Stream build error: {e}"))?
+            }
+            cpal::SampleFormat::I16 => {
+                let compressor_c = Arc::clone(&compressor);
+                let writer_c = Arc::clone(&writer_clone);
+                let amplitude_c = Arc::clone(&amplitude_clone);
+                let paused_c = Arc::clone(&paused_clone);
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[i16], _| {
+                        if paused_c.load(std::sync::atomic::Ordering::Relaxed) { return; }
+                        let mut buf: Vec<f32> = data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
+                        let peak = process_audio(&mut buf, &mut compressor_c.lock().unwrap(), sample_rate);
+                        *amplitude_c.lock().unwrap() = peak;
+                        if let Ok(mut guard) = writer_c.lock() {
+                            if let Some(w) = guard.as_mut() {
+                                for s in buf { let _ = w.write_sample((s * i16::MAX as f32) as i16); }
+                            }
+                        }
+                    },
+                    |e| eprintln!("[WinAudio] stream error: {e}"),
+                    None,
+                ).map_err(|e| format!("Stream build error: {e}"))?
+            }
+            _ => {
+                // Unknown format: write raw without enhancement
+                let writer_c = Arc::clone(&writer_clone);
+                let paused_c = Arc::clone(&paused_clone);
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[u8], _| {
+                        if paused_c.load(std::sync::atomic::Ordering::Relaxed) { return; }
+                        if let Ok(mut guard) = writer_c.lock() {
+                            if let Some(w) = guard.as_mut() {
+                                for chunk in data.chunks(2) {
+                                    if chunk.len() == 2 {
+                                        let s = i16::from_le_bytes([chunk[0], chunk[1]]);
+                                        let _ = w.write_sample(s);
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    |e| eprintln!("[WinAudio] stream error: {e}"),
+                    None,
+                ).map_err(|e| format!("Stream build error: {e}"))?
+            }
+        };
+
+        stream.play().map_err(|e| format!("Stream play error: {e}"))?;
+
+        Ok(RecordingState {
+            stream: Some(stream),
+            writer,
+            path: Some(tmp_path),
+            paused,
+            amplitude: amplitude_shared,
+            proc_state: compressor,
+        })
+    }
+}
+
 /// State holding the sidecar recognition URL (empty if not available)
 struct RecognitionState {
     url: String,
@@ -83,7 +331,16 @@ fn audio_recorder_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
-/// Start native audio recording (Android only).
+// ── Global recording state (Windows) ─────────────────────────────────────────
+#[cfg(target_os = "windows")]
+static WIN_RECORDING: OnceLock<Mutex<Option<win_audio::RecordingState>>> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+fn win_recording() -> &'static Mutex<Option<win_audio::RecordingState>> {
+    WIN_RECORDING.get_or_init(|| Mutex::new(None))
+}
+
+/// Start native audio recording.
 #[tauri::command]
 #[cfg(target_os = "android")]
 async fn native_audio_start(app: tauri::AppHandle) -> Result<(), String> {
@@ -94,10 +351,17 @@ async fn native_audio_start(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("native_audio_start: {}", e))
 }
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "windows")]
+async fn native_audio_start() -> Result<(), String> {
+    let state = win_audio::start()?;
+    *win_recording().lock().unwrap() = Some(state);
+    Ok(())
+}
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
 async fn native_audio_start() -> Result<(), String> { Ok(()) }
 
-/// Stop native audio recording and return base64-encoded audio data (Android only).
+/// Stop native audio recording and return { path, mimeType }.
 #[tauri::command]
 #[cfg(target_os = "android")]
 async fn native_audio_stop(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -108,11 +372,24 @@ async fn native_audio_stop(app: tauri::AppHandle) -> Result<serde_json::Value, S
         .map_err(|e| format!("native_audio_stop: {}", e))
 }
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "windows")]
+async fn native_audio_stop() -> Result<serde_json::Value, String> {
+    let mut guard = win_recording().lock().unwrap();
+    let state = guard.take().ok_or("Not recording")?;
+    // Drop stream first to stop capture, then finalize writer
+    drop(state.stream);
+    let path = state.path.ok_or("No recording path")?;
+    if let Some(w) = state.writer.lock().unwrap().take() {
+        w.finalize().map_err(|e| format!("WAV finalize: {e}"))?;
+    }
+    let path_str = path.to_string_lossy().to_string();
+    Ok(serde_json::json!({ "path": path_str, "mimeType": "audio/wav" }))
+}
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
 async fn native_audio_stop() -> Result<serde_json::Value, String> { Err("not supported".into()) }
 
-/// Read a native recording file into base64 on the Rust (native) heap and delete it.
-/// Using Rust avoids Android JVM heap OOM for large files.
+/// Read a native recording file into base64 on the Rust heap and delete it.
 #[tauri::command]
 async fn native_audio_read_and_delete(path: String) -> Result<String, String> {
     let bytes = std::fs::read(&path)
@@ -122,7 +399,7 @@ async fn native_audio_read_and_delete(path: String) -> Result<String, String> {
     Ok(general_purpose::STANDARD_NO_PAD.encode(&bytes))
 }
 
-/// Get current recording amplitude 0.0–1.0 (Android only).
+/// Get current recording amplitude 0.0–1.0.
 #[tauri::command]
 #[cfg(target_os = "android")]
 async fn native_audio_get_amplitude(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -133,12 +410,21 @@ async fn native_audio_get_amplitude(app: tauri::AppHandle) -> Result<serde_json:
         .map_err(|e| format!("native_audio_get_amplitude: {}", e))
 }
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "windows")]
+async fn native_audio_get_amplitude() -> Result<serde_json::Value, String> {
+    let guard = win_recording().lock().unwrap();
+    let amplitude = guard.as_ref()
+        .map(|s| *s.amplitude.lock().unwrap())
+        .unwrap_or(0.0);
+    Ok(serde_json::json!({ "amplitude": amplitude }))
+}
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
 async fn native_audio_get_amplitude() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "amplitude": 0.0 }))
 }
 
-/// Pause native audio recording (Android only).
+/// Pause native audio recording.
 #[tauri::command]
 #[cfg(target_os = "android")]
 async fn native_audio_pause(app: tauri::AppHandle) -> Result<(), String> {
@@ -149,10 +435,19 @@ async fn native_audio_pause(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("native_audio_pause: {}", e))
 }
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "windows")]
+async fn native_audio_pause() -> Result<(), String> {
+    let guard = win_recording().lock().unwrap();
+    if let Some(s) = guard.as_ref() {
+        s.paused.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+}
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
 async fn native_audio_pause() -> Result<(), String> { Ok(()) }
 
-/// Resume native audio recording (Android only).
+/// Resume native audio recording.
 #[tauri::command]
 #[cfg(target_os = "android")]
 async fn native_audio_resume(app: tauri::AppHandle) -> Result<(), String> {
@@ -163,10 +458,19 @@ async fn native_audio_resume(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("native_audio_resume: {}", e))
 }
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "windows")]
+async fn native_audio_resume() -> Result<(), String> {
+    let guard = win_recording().lock().unwrap();
+    if let Some(s) = guard.as_ref() {
+        s.paused.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+}
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
 async fn native_audio_resume() -> Result<(), String> { Ok(()) }
 
-/// Cancel native audio recording (Android only).
+/// Cancel native audio recording (discard result).
 #[tauri::command]
 #[cfg(target_os = "android")]
 async fn native_audio_cancel(app: tauri::AppHandle) -> Result<(), String> {
@@ -177,7 +481,18 @@ async fn native_audio_cancel(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("native_audio_cancel: {}", e))
 }
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "windows")]
+async fn native_audio_cancel() -> Result<(), String> {
+    let mut guard = win_recording().lock().unwrap();
+    if let Some(state) = guard.take() {
+        drop(state.stream);
+        // Delete the temp file
+        if let Some(path) = state.path { let _ = std::fs::remove_file(path); }
+    }
+    Ok(())
+}
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
 async fn native_audio_cancel() -> Result<(), String> { Ok(()) }
 
 

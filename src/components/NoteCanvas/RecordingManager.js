@@ -16,9 +16,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { generateId, saveFile } from "../../modules/storage.js";
 
-/** True when running inside Tauri on Android */
-const IS_ANDROID =
-  typeof window.__TAURI_INTERNALS__ !== "undefined" && /android/i.test(navigator.userAgent);
+/** True when running inside any Tauri environment (desktop or mobile) */
+const IS_NATIVE = typeof window.__TAURI_INTERNALS__ !== "undefined";
 
 export class RecordingManager {
   /**
@@ -112,7 +111,7 @@ export class RecordingManager {
     this._pausedDuration = 0;
     this._pauseStart = null;
 
-    if (IS_ANDROID) {
+    if (IS_NATIVE) {
       try {
         await invoke("native_audio_start");
       } catch (err) {
@@ -280,6 +279,12 @@ export class RecordingManager {
     }
     this._mediaRecorder.stop();
     this._releaseStream();
+  }
+
+  /** Import an external audio file as a new recording. */
+  async importFile(file, duration) {
+    const id = generateId();
+    await this._saveCompletedRecording(id, file, Math.round(duration ?? 0));
   }
 
   /** Soft-delete a finished recording. */
