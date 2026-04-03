@@ -8,7 +8,9 @@
  */
 
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
-import { generateId } from "../../modules/storage.js";
+import { generateId, updateNote } from "../../modules/storage.js"; // updateNote aliases to webdav in NC build
+
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 export class StrokeManager {
   constructor(noteId, initialStrokes = [], initialDeletedStrokes = []) {
@@ -18,11 +20,13 @@ export class StrokeManager {
     this.currentStroke = null;
     this.isDirty = false;
 
-    // Initialize Web Worker
-    this.worker = new Worker(new URL("./StorageWorker.js", import.meta.url), { type: "module" });
-    this.worker.onerror = (e) => {
-      console.error("[StrokeManager] Worker error:", e.message, e);
-    };
+    // Initialize Web Worker (disabled in Nextcloud build — storage layer replaced in Step 5)
+    if (!IS_NEXTCLOUD) {
+      this.worker = new Worker(new URL("./StorageWorker.js", import.meta.url), { type: "module" });
+      this.worker.onerror = (e) => {
+        console.error("[StrokeManager] Worker error:", e.message, e);
+      };
+    }
   }
 
   startStroke(props) {
@@ -79,6 +83,12 @@ export class StrokeManager {
   _save() {
     if (!this.isDirty) return;
 
+    // In Nextcloud build the worker is disabled. Mark dirty only — actual write happens
+    // in forceSave()/destroy() to avoid blocking the main thread during drawing.
+    if (IS_NEXTCLOUD) {
+      return;
+    }
+
     let key = null;
     if (isAppUnlocked()) {
       try {
@@ -92,7 +102,7 @@ export class StrokeManager {
     const activeStrokes = this.strokes.filter((s) => !s._deleted);
 
     // Offload to worker
-    this.worker.postMessage({
+    this.worker?.postMessage({
       type: "SAVE_STROKES",
       noteId: this.noteId,
       strokes: activeStrokes,
@@ -116,7 +126,7 @@ export class StrokeManager {
       }
     }
 
-    this.worker.postMessage({
+    this.worker?.postMessage({
       type: "SAVE_MEDIA",
       noteId: this.noteId,
       media,
@@ -130,6 +140,12 @@ export class StrokeManager {
    * Save pen presets via the worker
    */
   savePresets(presets) {
+    if (IS_NEXTCLOUD) {
+      updateNote(this.noteId, { penPresets: presets }).catch((e) =>
+        console.error("[StrokeManager] WebDAV presets save failed:", e),
+      );
+      return;
+    }
     let key = null;
     if (isAppUnlocked()) {
       try {
@@ -138,8 +154,7 @@ export class StrokeManager {
         console.warn("[StrokeManager] Could not get encryption key:", e);
       }
     }
-
-    this.worker.postMessage({
+    this.worker?.postMessage({
       type: "SAVE_PRESETS",
       noteId: this.noteId,
       presets,
@@ -174,7 +189,40 @@ export class StrokeManager {
     });
   }
 
+  /**
+   * Save recordings via the worker
+   */
+  saveRecordings({ recordings, deletedRecordings }) {
+    if (!this.worker) return;
+
+    let key = null;
+    if (isAppUnlocked()) {
+      try {
+        key = getEncryptionKey();
+      } catch (e) {
+        console.warn("[StrokeManager] Could not get encryption key:", e);
+      }
+    }
+
+    this.worker.postMessage({
+      type: "SAVE_RECORDINGS",
+      noteId: this.noteId,
+      recordings,
+      deletedRecordings,
+      key,
+    });
+  }
+
   forceSave() {
+    if (IS_NEXTCLOUD) {
+      if (!this.isDirty) return;
+      const activeStrokes = this.strokes.filter((s) => !s._deleted);
+      this.isDirty = false;
+      return updateNote(this.noteId, {
+        strokes: activeStrokes,
+        deletedStrokes: this.deletedStrokes,
+      }).catch((e) => console.error("[StrokeManager] WebDAV force save failed:", e));
+    }
     this._save();
   }
 

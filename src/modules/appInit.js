@@ -6,12 +6,16 @@
 import { autoUnlockFromKeyring, isAppUnlocked, isMasterPasswordSet } from "./masterPassword.js";
 import { fixCorruptedNotes, getSetting } from "./storage.js";
 
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+
 /**
  * Initialize the app and handle master password unlock
  * Master password is automatically retrieved from OS keyring - no user prompt needed
  * @returns {Promise<boolean>} True if app is ready to use
  */
 export async function initializeApp() {
+  if (IS_NEXTCLOUD) return true; // No encryption, no master password in Nextcloud build
+
   const startTime = performance.now();
   console.log("[AppInit] Starting app initialization...");
 
@@ -61,7 +65,17 @@ export async function initializeApp() {
           console.error(
             "[AppInit] Failed to auto-unlock from keyring - master password may be missing or corrupted",
           );
-          // Don't block app startup - encryption just won't work until user fixes it in Settings
+          // Keyring password is missing or wrong — prompt the user to enter it manually.
+          // showAppUnlock will re-save the verified password to the keyring on success.
+          const { showAppUnlock } = await import("../components/masterPasswordModals.js");
+          await new Promise((resolve) => {
+            showAppUnlock({
+              onSuccess: () => {
+                console.log("[AppInit] Manual unlock succeeded");
+                resolve();
+              },
+            });
+          });
         }
       }
     } else {

@@ -16,10 +16,16 @@ import {
   deleteFile,
   deleteNote,
   generateId,
+  getFile,
   getNote,
+  registerPendingUpload,
   saveFile,
+  saveMediaForNote,
   updateNote,
 } from "../../modules/storage.js";
+
+const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import {
@@ -41,6 +47,7 @@ import {
   CropImageCommand,
   DeleteMediaCommand,
   DrawStrokeCommand,
+  EraseStrokePartsCommand,
   EraseStrokesCommand,
   InsertMediaCommand,
   MarkTaskCommand,
@@ -54,6 +61,8 @@ import { HistoryManager } from "./HistoryManager.js";
 import { NoteNavigator } from "./NoteNavigator.js";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
+import { RecordingManager } from "./RecordingManager.js";
+import { SoundDialog } from "./SoundDialog.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
 import { detectLineIndentation, detectStrokeLines } from "./strokeLineDetection.js";
@@ -168,6 +177,8 @@ export class NoteCanvas {
     this.pdfTextLayerManager = null;
     this.toolbar = null;
     this.contentHeight = 0;
+    this.recordingManager = null;
+    this.soundDialog = null;
 
     // State
     this.noteId = null;
@@ -229,6 +240,12 @@ export class NoteCanvas {
 
     // Eraser batching for undo (multiple strokes erased in one gesture = one undo)
     this._eraserBatch = null;
+
+    // Eraser settings
+    this.eraserMode = "stroke"; // 'stroke' | 'part'
+    this.eraserSize = 20; // diameter in screen pixels
+    this.eraserHighlighterOnly = false;
+    this._partEraserOps = null; // Array of ops accumulated during a part-erase gesture
 
     // Bind methods
     this._onScroll = this._onScroll.bind(this);
@@ -623,6 +640,15 @@ export class NoteCanvas {
         },
         onUndo: () => this.historyManager?.undo(),
         onRedo: () => this.historyManager?.redo(),
+        onEraserSettingsChange: ({ eraserMode, eraserSize, eraserHighlighterOnly }) => {
+          if (eraserMode !== undefined) {
+            this.eraserMode = eraserMode;
+            this.toolbar.updateEraserIcon(eraserMode);
+          }
+          if (eraserSize !== undefined) this.eraserSize = eraserSize;
+          if (eraserHighlighterOnly !== undefined)
+            this.eraserHighlighterOnly = eraserHighlighterOnly;
+        },
       },
     );
     this.toolbar.updateMode(this.mode);
@@ -640,6 +666,7 @@ export class NoteCanvas {
     this.isInitialized = true;
     this._renderPdfControls();
     await this._initNavigator(taskId);
+    this._initSoundDialog();
 
     // Expose for debugging
     window.__noteCanvas = this;
@@ -676,13 +703,21 @@ export class NoteCanvas {
         try {
           const processed = await processImageFile(file);
 
-          // Convert DataURL to Blob for storage
+          // Convert DataURL to Blob for storage.
+          // NC CSP blocks fetch() on data: URLs, so use direct base64 decode there.
           let blob;
-          try {
-            const res = await fetch(processed.dataUrl);
-            blob = await res.blob();
-          } catch (fetchErr) {
-            console.warn("[NoteCanvas] fetch(dataUrl) failed, using fallback conversion", fetchErr);
+          if (!_IS_NEXTCLOUD) {
+            try {
+              const res = await fetch(processed.dataUrl);
+              blob = await res.blob();
+            } catch (fetchErr) {
+              console.warn(
+                "[NoteCanvas] fetch(dataUrl) failed, using fallback conversion",
+                fetchErr,
+              );
+            }
+          }
+          if (!blob) {
             const arr = processed.dataUrl.split(",");
             const mime = arr[0].match(/:(.*?);/)[1];
             const bstr = atob(arr[1]);
@@ -729,6 +764,7 @@ export class NoteCanvas {
    * Insert a PDF into the note
    */
   async insertPdf() {
+    if (!this.noteData) return;
     // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
     const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
     if (this.noteData.pdfSource || hasPdfPages) {
@@ -1297,6 +1333,67 @@ export class NoteCanvas {
   }
 
   /**
+   * Initialize sound recording dialog.
+   * @private
+   */
+  _initSoundDialog() {
+    const scrollerContainer = this.containerElement.querySelector(
+      ".note-canvas__scroller-container",
+    );
+    if (!scrollerContainer) return;
+
+    this.recordingManager = new RecordingManager({
+      onChange: () => {},
+      onSave: ({ recordings, deletedRecordings }) => {
+        this._saveRecordingChanges(recordings, deletedRecordings);
+      },
+    });
+
+    this.recordingManager.setRecordings(this.noteData.recordings ?? []);
+
+    this.soundDialog = new SoundDialog(scrollerContainer, this.recordingManager);
+  }
+
+  /**
+   * Persist recording changes via the StorageWorker.
+   * @private
+   */
+  _saveRecordingChanges(recordings, deletedRecordings) {
+    if (!this.noteId) return;
+    this.noteData.recordings = recordings;
+    this.noteData.deletedRecordings = deletedRecordings;
+    this.mediaChanged = true;
+
+    if (_IS_NEXTCLOUD) {
+      const notebookId = this.noteData.notebookId ?? null;
+      // Upload any new recording blobs then save metadata
+      const uploads = recordings
+        .filter((r) => r.fileId)
+        .map((r) => {
+          const uploadPromise = getFile(r.fileId)
+            .then((blob) => {
+              if (blob) return saveMediaForNote(blob, r.fileId, this.noteId, notebookId);
+            })
+            .catch((e) =>
+              console.error("[NoteCanvas] WebDAV recording upload failed:", r.fileId, e),
+            );
+          // Register so SoundDialog can await upload completion before setting audio src
+          registerPendingUpload(r.fileId, uploadPromise);
+          return uploadPromise;
+        });
+      Promise.all(uploads).then(() =>
+        updateNote(this.noteId, { recordings, deletedRecordings }).catch((e) =>
+          console.error("[NoteCanvas] WebDAV recordings save failed:", e),
+        ),
+      );
+      return;
+    }
+
+    if (!this.strokeManager) return;
+    this.strokeManager.saveRecordings({ recordings, deletedRecordings });
+  }
+
+  /**
    * Flash a highlight on a specific task region
    * @private
    */
@@ -1567,8 +1664,14 @@ export class NoteCanvas {
     this.noteData.content = html;
     this.textChanged = true;
 
-    // Save via worker (reuse StrokeManager's worker for sequential message processing)
-    if (this.strokeManager?.worker) {
+    if (import.meta.env.VITE_PLATFORM === "nextcloud") {
+      // In NC build the worker is disabled — save content directly to WebDAV.
+      // Text is debounced by TextEditorLayer before calling here, so no extra debounce needed.
+      this._pendingTextSave = updateNote(this.noteId, { content: html }).catch((e) =>
+        console.error("[NoteCanvas] WebDAV text save failed:", e),
+      );
+    } else if (this.strokeManager?.worker) {
+      // Save via worker (reuse StrokeManager's worker for sequential message processing)
       let key = null;
       if (isAppUnlocked()) {
         try {
@@ -1944,7 +2047,11 @@ export class NoteCanvas {
     if (this.mode === "eraser" || this.mode === "lasso") {
       if (this.mode === "eraser") {
         // Commit eraser batch to history (multiple strokes = one undo)
-        this._commitEraserBatch();
+        if (this.eraserMode === "stroke") {
+          this._commitEraserBatch();
+        } else {
+          this._commitPartEraserBatch();
+        }
       } else if (this.mode === "lasso") {
         this._handleLassoEnd();
       }
@@ -2722,6 +2829,12 @@ export class NoteCanvas {
    * @private
    */
   _saveTasks() {
+    if (_IS_NEXTCLOUD) {
+      updateNote(this.noteId, { tasks: this.noteData.tasks }).catch((e) =>
+        console.error("[NoteCanvas] WebDAV tasks save failed:", e),
+      );
+      return;
+    }
     if (this.strokeManager?.worker) {
       let key = null;
       if (isAppUnlocked()) {
@@ -2915,28 +3028,59 @@ export class NoteCanvas {
    * @private
    */
   async _saveMediaChanges() {
-    if (this.noteId && this.mediaManager) {
-      this.mediaChanged = true;
-      const items = this.mediaManager.getItems();
-      // Strip non-serializable properties (renderable, loading, error) before sending to worker
-      // These are runtime-only properties used for rendering, not persisted data
-      const serializableMedia = items.map(
-        ({
-          renderable: _renderable,
-          renderableScale: _renderableScale,
-          loading: _loading,
-          error: _error,
-          ...rest
-        }) => rest,
-      );
-      this.noteData.media = serializableMedia;
-      this.mediaManager.setItems(serializableMedia);
+    if (!this.noteId || !this.mediaManager || !this.noteData) return;
+    // Capture IDs immediately — destroy() nulls this.noteId mid-async and would corrupt paths
+    const noteId = this.noteId;
+    const noteData = this.noteData;
+    this.mediaChanged = true;
+    const items = this.mediaManager.getItems();
+    // Strip non-serializable properties (renderable, loading, error) before sending to worker
+    // These are runtime-only properties used for rendering, not persisted data
+    const serializableMedia = items.map(
+      ({
+        renderable: _renderable,
+        renderableScale: _renderableScale,
+        loading: _loading,
+        error: _error,
+        ...rest
+      }) => rest,
+    );
+    noteData.media = serializableMedia;
+    this.mediaManager.setItems(serializableMedia);
+
+    if (_IS_NEXTCLOUD) {
+      // Upload any blobs that are only in the in-memory cache to WebDAV
+      const notebookId = noteData.notebookId ?? null;
+      for (const item of serializableMedia) {
+        if (!item.fileId) continue;
+        const blob = await getFile(item.fileId);
+        if (blob) {
+          await saveMediaForNote(blob, item.fileId, noteId, notebookId).catch((e) =>
+            console.error("[NoteCanvas] WebDAV media upload failed:", item.fileId, e),
+          );
+        }
+      }
+      // Also upload PDF source blob if present
+      if (noteData.pdfSource) {
+        const pdfBlob = await getFile(noteData.pdfSource);
+        if (pdfBlob) {
+          await saveMediaForNote(pdfBlob, noteData.pdfSource, noteId, notebookId).catch((e) =>
+            console.error("[NoteCanvas] WebDAV PDF upload failed:", e),
+          );
+        }
+      }
+      await updateNote(noteId, {
+        media: serializableMedia,
+        deletedMedia: noteData.deletedMedia,
+        pdfSource: noteData.pdfSource,
+      }).catch((e) => console.error("[NoteCanvas] WebDAV media save failed:", e));
+    } else {
       // Use StrokeManager (which uses StorageWorker) to save media updates
       // This prevents race conditions between stroke saving and media saving
       this.strokeManager.saveMedia({
         media: serializableMedia,
-        deletedMedia: this.noteData.deletedMedia,
-        pdfSource: this.noteData.pdfSource,
+        deletedMedia: noteData.deletedMedia,
+        pdfSource: noteData.pdfSource,
       });
     }
   }
@@ -3259,8 +3403,8 @@ export class NoteCanvas {
     const rect = this.scroller.getViewportElement().getBoundingClientRect();
     const screenX = clientX - rect.left;
     const screenY = clientY - rect.top;
-    const eraserRadius = 10; // Screen pixels
-    this.renderer.drawEraserCursor(screenX, screenY, eraserRadius);
+    const eraserRadius = this.eraserSize / 2; // Screen pixels (eraserSize is diameter)
+    this.renderer.drawEraserCursor(screenX, screenY, eraserRadius, this.eraserMode);
 
     // 2. Erase strokes
     // Convert screen radius to content radius for hit testing
@@ -3269,32 +3413,125 @@ export class NoteCanvas {
 
     // Query potential hits
     const candidates = this.spatialIndex.query(contentY - queryPadding, contentY + queryPadding);
-    const newlyErased = [];
 
-    for (const index of candidates) {
-      const stroke = this.noteData.strokes[index];
-      if (stroke._deleted) continue;
+    if (this.eraserMode === "stroke") {
+      const newlyErased = [];
 
-      if (this._strokeIntersectsCircle(stroke, contentX, contentY, contentRadius)) {
-        stroke._deleted = true;
-        newlyErased.push({ index, id: stroke.id });
-        if (stroke.id) {
-          this.noteData.deletedStrokes.push(stroke.id);
+      for (const index of candidates) {
+        const stroke = this.noteData.strokes[index];
+        if (stroke._deleted) continue;
+        if (this.eraserHighlighterOnly && stroke.type !== "marker") continue;
+
+        if (this._strokeIntersectsCircle(stroke, contentX, contentY, contentRadius)) {
+          stroke._deleted = true;
+          newlyErased.push({ index, id: stroke.id });
+          if (stroke.id) {
+            this.noteData.deletedStrokes.push(stroke.id);
+          }
         }
       }
-    }
 
-    if (newlyErased.length > 0) {
-      // Add to eraser batch for undo (multiple strokes in one gesture = one undo)
-      if (!this._eraserBatch) {
-        this._eraserBatch = [];
+      if (newlyErased.length > 0) {
+        // Add to eraser batch for undo (multiple strokes in one gesture = one undo)
+        if (!this._eraserBatch) {
+          this._eraserBatch = [];
+        }
+        this._eraserBatch.push(...newlyErased);
+
+        this.renderer.forceRedraw();
+        this.strokeManager.markDirty();
+        this.strokeManager.forceSave();
+        this.strokesChanged = true;
       }
-      this._eraserBatch.push(...newlyErased);
+    } else {
+      // Part eraser: split strokes in real-time
+      if (!this._partEraserOps) {
+        this._partEraserOps = [];
+      }
 
-      this.renderer.forceRedraw();
-      this.strokeManager.markDirty();
-      this.strokeManager.forceSave(); // Save changes
-      this.strokesChanged = true;
+      let anyChanged = false;
+
+      for (const index of candidates) {
+        const stroke = this.noteData.strokes[index];
+        if (stroke._deleted) continue;
+        if (this.eraserHighlighterOnly && stroke.type !== "marker") continue;
+
+        // Effective erase radius accounts for the stroke's own half-width so
+        // wide markers are hit even when the eraser only overlaps their ink,
+        // not their center-line.
+        const halfWidth = (stroke.width || 2) / 2;
+        const effectiveR = contentRadius + halfWidth;
+        const effectiveRSq = effectiveR * effectiveR;
+
+        // Find which point indices are within the effective eraser radius.
+        // Test segment-circle intersection: for each segment [i, i+1], if the
+        // closest point on the segment to the eraser center is within effectiveR,
+        // mark both endpoints as removed.
+        const removedSet = new Set();
+        const n = stroke.x.length;
+        for (let i = 0; i < n; i++) {
+          // Test the point itself
+          const dx = stroke.x[i] - contentX;
+          const dy = stroke.y[i] - contentY;
+          if (dx * dx + dy * dy <= effectiveRSq) {
+            removedSet.add(i);
+          }
+          // Test segment to next point
+          if (i < n - 1) {
+            const ax = stroke.x[i],
+              ay = stroke.y[i];
+            const bx = stroke.x[i + 1],
+              by = stroke.y[i + 1];
+            const abx = bx - ax,
+              aby = by - ay;
+            const acx = contentX - ax,
+              acy = contentY - ay;
+            const ab2 = abx * abx + aby * aby;
+            if (ab2 > 0) {
+              const t = Math.max(0, Math.min(1, (acx * abx + acy * aby) / ab2));
+              const closestX = ax + t * abx - contentX;
+              const closestY = ay + t * aby - contentY;
+              if (closestX * closestX + closestY * closestY <= effectiveRSq) {
+                removedSet.add(i);
+                removedSet.add(i + 1);
+              }
+            }
+          }
+        }
+        if (removedSet.size === 0) continue;
+
+        // Split and replace in real-time
+        const subStrokes = this._splitStrokeByRemovedPoints(stroke, removedSet);
+
+        // Soft-delete original
+        stroke._deleted = true;
+        if (stroke.id && !this.noteData.deletedStrokes.includes(stroke.id)) {
+          this.noteData.deletedStrokes.push(stroke.id);
+        }
+
+        // Push sub-strokes into noteData.strokes and spatial index
+        const subStrokeEntries = subStrokes.map((s) => {
+          const subIndex = this.noteData.strokes.length;
+          this.noteData.strokes.push(s);
+          this.spatialIndex.insert(s, subIndex);
+          return { stroke: s, index: subIndex };
+        });
+
+        this._partEraserOps.push({
+          originalIndex: index,
+          originalId: stroke.id,
+          subStrokes: subStrokeEntries,
+        });
+
+        anyChanged = true;
+      }
+
+      if (anyChanged) {
+        this.renderer.forceRedraw();
+        this.strokeManager.markDirty();
+        this.strokeManager.forceSave();
+        this.strokesChanged = true;
+      }
     }
   }
 
@@ -3309,6 +3546,60 @@ export class NoteCanvas {
       this._cleanupOrphanedTasks();
     }
     this._eraserBatch = null;
+  }
+
+  _commitPartEraserBatch() {
+    if (this._partEraserOps && this._partEraserOps.length > 0) {
+      const cmd = new EraseStrokePartsCommand(this._partEraserOps);
+      this.historyManager?.push(cmd);
+      this._cleanupOrphanedTasks();
+    }
+    this._partEraserOps = null;
+  }
+
+  /**
+   * Split a stroke into sub-strokes by removing a set of point indices.
+   * Returns contiguous segments of remaining points (each with at least 2 points).
+   * @param {object} stroke
+   * @param {Set<number>} removedSet
+   * @returns {object[]}
+   */
+  _splitStrokeByRemovedPoints(stroke, removedSet) {
+    const totalPoints = stroke.x.length;
+    const subStrokes = [];
+    let segmentStart = null;
+
+    for (let i = 0; i <= totalPoints; i++) {
+      const isRemoved = i === totalPoints || removedSet.has(i);
+
+      if (!isRemoved && segmentStart === null) {
+        segmentStart = i;
+      } else if (isRemoved && segmentStart !== null) {
+        const length = i - segmentStart;
+        if (length >= 2) {
+          const subStroke = {
+            id: generateId(),
+            x: stroke.x.slice(segmentStart, i),
+            y: stroke.y.slice(segmentStart, i),
+            pressure: stroke.pressure.slice(segmentStart, i),
+            time: stroke.time.slice(segmentStart, i),
+            colorIndex: stroke.colorIndex,
+            width: stroke.width,
+            pointerType: stroke.pointerType,
+            type: stroke.type,
+          };
+          // Marker sub-strokes share a groupId so the renderer can draw them
+          // as one path, preserving flat alpha (no alpha stacking at joins).
+          if (stroke.type === "marker") {
+            subStroke.groupId = stroke.groupId || stroke.id;
+          }
+          subStrokes.push(subStroke);
+        }
+        segmentStart = null;
+      }
+    }
+
+    return subStrokes;
   }
 
   _strokeIntersectsCircle(stroke, cx, cy, r) {
@@ -4072,11 +4363,12 @@ export class NoteCanvas {
    * @private
    */
   _saveThumbnail() {
-    if (!this.noteId || !this.renderer || !this.noteData || !this.strokeManager?.worker) return;
+    if (!this.noteId || !this.renderer || !this.noteData) return;
+    if (!_IS_NEXTCLOUD && !this.strokeManager?.worker) return;
 
     // Capture all required state SYNCHRONOUSLY before any async work
     const noteId = this.noteId;
-    const worker = this.strokeManager.worker;
+    const worker = this.strokeManager?.worker ?? null;
 
     // 1. Create offscreen canvas and render strokes/media SYNCHRONOUSLY
     // (must happen before destroy() nullifies the renderer)
@@ -4226,12 +4518,19 @@ export class NoteCanvas {
         this.noteData.thumbnail = thumbnail;
       }
 
-      // Post to worker - this must happen before CLOSE is sent
-      worker.postMessage({
-        type: "SAVE_THUMBNAIL",
-        noteId: noteId,
-        thumbnail,
-      });
+      if (_IS_NEXTCLOUD) {
+        // No worker in NC build — save thumbnail directly via updateNote
+        await updateNote(noteId, { thumbnail }).catch((e) =>
+          console.error("[NoteCanvas] WebDAV thumbnail save failed:", e),
+        );
+      } else {
+        // Post to worker - this must happen before CLOSE is sent
+        worker.postMessage({
+          type: "SAVE_THUMBNAIL",
+          noteId: noteId,
+          thumbnail,
+        });
+      }
     } catch (error) {
       console.error("[NoteCanvas] Failed to save thumbnail:", error);
     }
@@ -4322,11 +4621,14 @@ export class NoteCanvas {
     // Text content must be flushed before the thumbnail save so the DB reflects the
     // latest hasContent flag, and before recognition which reads DB content.
     // Strokes must be flushed for the same reasons.
+    this._pendingTextSave = null;
     if (this.textEditorLayer) {
       this.textEditorLayer.forceSave();
     }
+    const pendingTextSave = this._pendingTextSave || null;
+    let pendingStrokeSave = null;
     if (this.strokeManager) {
-      this.strokeManager.forceSave();
+      pendingStrokeSave = this.strokeManager.forceSave() || null;
     }
 
     // Step 2: Trigger handwriting recognition if strokes changed.
@@ -4446,6 +4748,16 @@ export class NoteCanvas {
       this.navigator = null;
     }
 
+    if (this.soundDialog) {
+      this.soundDialog.destroy();
+      this.soundDialog = null;
+    }
+
+    if (this.recordingManager) {
+      this.recordingManager.destroy();
+      this.recordingManager = null;
+    }
+
     // Destroy strokeManager after thumbnail save completes.
     // forceSave() was already called at the top of destroy() to flush pending strokes.
     // Here we only send CLOSE so the worker shuts down after processing its queue
@@ -4484,11 +4796,11 @@ export class NoteCanvas {
       pendingThumbnail = Promise.resolve();
     }
 
-    // Wait for both thumbnail save and recognition to complete before sync
-    return pendingRecognition
-      ? Promise.all([pendingThumbnail, pendingRecognition]).then(() => ({
-          mediaChanged: hadMediaChanges,
-        }))
-      : pendingThumbnail.then(() => ({ mediaChanged: hadMediaChanges }));
+    // Wait for thumbnail save, recognition, and (in NC) stroke save to complete before sync
+    const pending = [pendingThumbnail];
+    if (pendingRecognition) pending.push(pendingRecognition);
+    if (pendingStrokeSave) pending.push(pendingStrokeSave);
+    if (pendingTextSave) pending.push(pendingTextSave);
+    return Promise.all(pending).then(() => ({ mediaChanged: hadMediaChanges }));
   }
 }

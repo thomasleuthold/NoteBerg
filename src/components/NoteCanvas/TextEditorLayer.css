@@ -46,7 +46,7 @@
 /* The contenteditable editor area */
 .note-canvas__text-editor-layer .trumbowyg-editor {
   background: transparent;
-  padding: 20px 20px 20px 60px;
+  padding: 15px 20px 20px 46px;
   min-height: 100px;
   font-family: var(--font-family);
   font-size: 16px;

@@ -14,12 +14,15 @@
  *   synced, lastSyncedEtag, deleted, purged, previousNotebookId,
  *   encrypted, background, formatVersion, tags,
  *   hasStrokes, hasContent,
- *   media  — array of { id, name, type, size, deleted } (no blobs, no positions)
+ *   media       — array of { id, name, type, size, deleted } (no blobs, no positions)
+ *   recordings  — array of { id, name, duration, deleted } (no fileId)
  *
  * "noteContent" payload fields (content fields encrypted when note.encrypted):
  *   id, content, strokes, deletedStrokes,
  *   media  — full objects incl. fileId, x, y, width, height, rotation, …
  *   deletedMedia, tasks, recognition, penPresets, pdfSource,
+ *   recordings       — full objects incl. fileId, duration, name, created, deleted
+ *   deletedRecordings — array of fileIds to purge from "files" store
  *   thumbnail  — base64 JPEG string (360×500, encrypted with the rest when local encryption on)
  */
 
@@ -53,6 +56,7 @@ const INDEX_FIELDS = new Set([
   "hasRecognition",
   "hasThumbnail",
   "media", // metadata-only snapshot — see splitNote()
+  "recordings", // metadata-only snapshot — see splitNote()
 ]);
 
 // ─── Schema helpers ───────────────────────────────────────────────────────────
@@ -73,6 +77,13 @@ function splitNote(note) {
         : [];
       // Content: full objects (fileId, positions, etc.)
       content.media = value ?? [];
+    } else if (key === "recordings") {
+      // Index: metadata only (no fileId)
+      index.recordings = Array.isArray(value)
+        ? value.map(({ id, name, duration, deleted }) => ({ id, name, duration, deleted }))
+        : [];
+      // Content: full objects (fileId, etc.)
+      content.recordings = value ?? [];
     } else if (INDEX_FIELDS.has(key)) {
       index[key] = value;
     } else {
@@ -98,8 +109,13 @@ function splitNote(note) {
  */
 function mergeNote(index, content) {
   if (!index) return null;
-  // Use full media from content (has positions/fileIds); index media is metadata-only
-  return { ...index, ...(content ?? {}), media: content?.media ?? index.media ?? [] };
+  // Use full recordings/media from content (have fileIds); index copies are metadata-only
+  return {
+    ...index,
+    ...(content ?? {}),
+    media: content?.media ?? index.media ?? [],
+    recordings: content?.recordings ?? index.recordings ?? [],
+  };
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -346,6 +362,8 @@ export async function createNote({ title, notebookId = null }) {
     pdfSource: null,
     recognition: null,
     deletedStrokes: [],
+    recordings: [],
+    deletedRecordings: [],
   };
 
   await _saveNoteSplit(note);
@@ -671,6 +689,18 @@ export async function deleteFile(id) {
   await db.delete("files", id);
 }
 
+// No-op in Tauri build — blobs are stored in IndexedDB via saveFile/getFile.
+// In NC build this is replaced by storage.webdav.js which uploads to WebDAV.
+export async function saveMediaForNote(_blob, _filename, _noteId, _notebookId) {}
+// NC-only: returns a direct URL for a file. Always null in Tauri build.
+export function getFileUrl(_id) {
+  return null;
+}
+export function registerPendingUpload(_fileId, _promise) {}
+export async function waitForFileUrl(_id) {
+  return null;
+}
+
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
 export async function getSetting(key) {
@@ -943,6 +973,28 @@ async function decryptNoteIfNeeded(note) {
       decryptedMedia = Array.isArray(once) ? once : [];
     }
 
+    let decryptedRecordings = [];
+    if (
+      note.recordings &&
+      typeof note.recordings === "object" &&
+      note.recordings.data &&
+      note.recordings.iv
+    ) {
+      try {
+        const once = await decryptObject(note.recordings, key);
+        decryptedRecordings = Array.isArray(once) ? once : [];
+      } catch (_e) {
+        // Encrypted with a different device's key (cross-device sync artifact) — treat as empty
+        console.warn(
+          "[Storage] Could not decrypt recordings blob — dropping recordings for note",
+          note.id,
+        );
+        decryptedRecordings = [];
+      }
+    } else if (Array.isArray(note.recordings)) {
+      decryptedRecordings = note.recordings;
+    }
+
     let decryptedTasks = [];
     if (note.tasks && typeof note.tasks === "object" && note.tasks.data && note.tasks.iv) {
       decryptedTasks = await decryptObject(note.tasks, key);
@@ -969,6 +1021,7 @@ async function decryptNoteIfNeeded(note) {
       content: await decryptObject(note.content, key),
       strokes: await decryptObject(note.strokes, key),
       media: decryptedMedia,
+      recordings: decryptedRecordings,
       tasks: decryptedTasks,
       recognition: decryptedRecognition,
       thumbnail: decryptedThumbnail,

@@ -14,19 +14,17 @@ import { initModals } from "./components/modals.js";
 import { initNoteCanvasComponent } from "./components/NoteCanvas/index.js";
 import { initOverview } from "./components/overviewMode.js";
 import { initRecycleBin } from "./components/recycleBinMode.js";
-import { initSettings } from "./components/settingsMode.js";
 import { initI18n } from "./i18n/index.js";
 import { initializeApp, setupAppLockListener } from "./modules/appInit.js";
-import { initAutoSync } from "./modules/autoSync.js";
 import { initBreadcrumb } from "./modules/breadcrumb.js";
 import { initFooter } from "./modules/footer.js";
-import { migrateCredentials } from "./modules/nextcloudSync.js";
 import { initRouter, navigateTo } from "./modules/router.js";
 import { initStorage } from "./modules/storage.js";
-// Import modules
 import { initTheme } from "./modules/theme.js";
 import { getIcon } from "./utils/icons.js";
 import { initLogger } from "./utils/logger.js";
+
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 // Application state
 const app = {
@@ -62,54 +60,58 @@ async function init() {
   await initTheme();
   console.log(`Theme initialized in ${Math.round(performance.now() - themeStart)}ms`);
 
-  // MASTER PASSWORD: Initialize and unlock app (shows modal if needed)
-  // This MUST happen before any data access
-  try {
-    const appInitStart = performance.now();
-    await initializeApp();
-    console.log(`App initialization took ${Math.round(performance.now() - appInitStart)}ms`);
-    setupAppLockListener();
-  } catch (error) {
-    console.error("Failed to initialize master password system:", error);
-    // Show error to user
-    document.body.innerHTML = `
-      <div style="display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px;">
-        <div style="text-align: center; max-width: 500px;">
-          <h1 style="color: #dc2626; margin-bottom: 16px;">Initialization Error</h1>
-          <p style="color: #6b7280; margin-bottom: 24px;">
-            Failed to initialize the encryption system. Please refresh the page and try again.
-          </p>
-          <p style="font-family: monospace; font-size: 12px; color: #9ca3af; background: #f3f4f6; padding: 12px; border-radius: 8px;">
-            ${error.message}
-          </p>
-          <button onclick="location.reload()" style="margin-top: 24px; padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">
-            Reload App
-          </button>
+  // MASTER PASSWORD: Initialize and unlock app (Tauri only)
+  if (!IS_NEXTCLOUD) {
+    try {
+      const appInitStart = performance.now();
+      await initializeApp();
+      console.log(`App initialization took ${Math.round(performance.now() - appInitStart)}ms`);
+      setupAppLockListener();
+    } catch (error) {
+      console.error("Failed to initialize master password system:", error);
+      document.body.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px;">
+          <div style="text-align: center; max-width: 500px;">
+            <h1 style="color: #dc2626; margin-bottom: 16px;">Initialization Error</h1>
+            <p style="color: #6b7280; margin-bottom: 24px;">
+              Failed to initialize the encryption system. Please refresh the page and try again.
+            </p>
+            <p style="font-family: monospace; font-size: 12px; color: #9ca3af; background: #f3f4f6; padding: 12px; border-radius: 8px;">
+              ${error.message}
+            </p>
+            <button onclick="location.reload()" style="margin-top: 24px; padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">
+              Reload App
+            </button>
+          </div>
         </div>
-      </div>
-    `;
-    return;
-  }
+      `;
+      return;
+    }
 
-  // Migrate credentials from localStorage to secure storage (one-time migration)
-  // Note: This is the Phase 1 migration, not master password migration
-  const migrateStart = performance.now();
-  await migrateCredentials();
-  console.log(`Credential migration took ${Math.round(performance.now() - migrateStart)}ms`);
+    // Migrate credentials from localStorage to secure storage (one-time migration)
+    const migrateStart = performance.now();
+    const { migrateCredentials } = await import("./modules/nextcloudSync.js");
+    await migrateCredentials();
+    console.log(`Credential migration took ${Math.round(performance.now() - migrateStart)}ms`);
+  }
 
   // Initialize router
   const componentsStart = performance.now();
   initRouter();
 
   // Initialize components
-  initSettings();
+  if (!IS_NEXTCLOUD) {
+    const { initSettings } = await import("./components/settingsMode.js");
+    initSettings();
+    const { initAutoSync } = await import("./modules/autoSync.js");
+    initAutoSync();
+  }
   initOverview();
   initModals();
   initRecycleBin();
   initNoteCanvasComponent();
   initBreadcrumb();
   initFooter();
-  initAutoSync();
   console.log(`Components initialized in ${Math.round(performance.now() - componentsStart)}ms`);
 
   // Set up event listeners
@@ -138,12 +140,13 @@ function setupEventListeners() {
     });
   }
 
-  // Settings button
-  const settingsBtn = document.getElementById("nav-settings");
-  if (settingsBtn) {
-    // Inject settings icon
-    settingsBtn.innerHTML = getIcon("settings", 24);
-    settingsBtn.addEventListener("click", () => navigateTo("settings"));
+  // Settings button (Tauri only — no settings panel in Nextcloud build)
+  if (!IS_NEXTCLOUD) {
+    const settingsBtn = document.getElementById("nav-settings");
+    if (settingsBtn) {
+      settingsBtn.innerHTML = getIcon("settings", 24);
+      settingsBtn.addEventListener("click", () => navigateTo("settings"));
+    }
   }
 
   // Prevent global browser zoom (Ctrl+Wheel and Pinch-to-Zoom on trackpad)

@@ -6,12 +6,13 @@
  *   "noteContent" — heavy payload   (strokes, content, media, tasks, recognition, …)
  *
  * Each message handler writes ONLY to the store(s) it needs:
- *   SAVE_STROKES   → noteContent (strokes) + notes (modified/version/synced/hasStrokes)
- *   SAVE_MEDIA     → noteContent (media)   + notes (modified/version/synced)
- *   SAVE_PRESETS   → noteContent (penPresets) + notes (modified/version/synced)
- *   SAVE_THUMBNAIL → noteContent (thumbnail base64) only — does NOT touch notes index
- *   SAVE_TASKS     → noteContent (tasks)   + notes (modified/version/synced)
- *   SAVE_CONTENT   → noteContent (content) + notes (modified/version/synced/hasContent)
+ *   SAVE_STROKES     → noteContent (strokes) + notes (modified/version/synced/hasStrokes)
+ *   SAVE_MEDIA       → noteContent (media)   + notes (modified/version/synced)
+ *   SAVE_PRESETS     → noteContent (penPresets) + notes (modified/version/synced)
+ *   SAVE_THUMBNAIL   → noteContent (thumbnail base64) only — does NOT touch notes index
+ *   SAVE_TASKS       → noteContent (tasks)   + notes (modified/version/synced)
+ *   SAVE_CONTENT     → noteContent (content) + notes (modified/version/synced/hasContent)
+ *   SAVE_RECORDINGS  → noteContent (recordings/deletedRecordings) + notes (modified/version/synced)
  */
 
 import { openDB } from "idb";
@@ -39,8 +40,19 @@ self.onmessage = (e) => {
 };
 
 async function processMessage(e) {
-  const { type, noteId, strokes, deletedStrokes, media, deletedMedia, pdfSource, presets, key } =
-    e.data;
+  const {
+    type,
+    noteId,
+    strokes,
+    deletedStrokes,
+    media,
+    deletedMedia,
+    pdfSource,
+    presets,
+    recordings,
+    deletedRecordings,
+    key,
+  } = e.data;
 
   if (type === "SAVE_STROKES") {
     const db = await getDB();
@@ -244,6 +256,57 @@ async function processMessage(e) {
       index.version = (index.version || 0) + 1;
       index.synced = false;
       index.hasContent = typeof newContent === "string" ? newContent.trim().length > 0 : false;
+
+      await Promise.all([notesStore.put(index), contentStore.put(content)]);
+    }
+
+    await tx.done;
+  }
+
+  if (type === "SAVE_RECORDINGS") {
+    const db = await getDB();
+
+    const noteIndex = await db.get("notes", noteId);
+    if (!noteIndex) return;
+
+    let recordingsData = recordings;
+    if (noteIndex.encrypted && recordings) {
+      if (key) {
+        recordingsData = await encryptObject(recordings, key);
+      } else {
+        console.error("[StorageWorker] Cannot save encrypted recordings: Key missing");
+        return;
+      }
+    }
+
+    const tx = db.transaction(["notes", "noteContent"], "readwrite");
+    const notesStore = tx.objectStore("notes");
+    const contentStore = tx.objectStore("noteContent");
+
+    const [index, existingContent] = await Promise.all([
+      notesStore.get(noteId),
+      contentStore.get(noteId),
+    ]);
+    const content = existingContent ?? { id: noteId };
+
+    if (index) {
+      const now = Date.now();
+      if (recordings !== undefined) content.recordings = recordingsData;
+      if (deletedRecordings !== undefined) content.deletedRecordings = deletedRecordings;
+
+      // Update index recordings metadata snapshot (no fileIds)
+      if (recordings !== undefined && Array.isArray(recordings)) {
+        index.recordings = recordings.map(({ id, name, duration, deleted }) => ({
+          id,
+          name,
+          duration,
+          deleted,
+        }));
+      }
+
+      index.modified = now;
+      index.version = (index.version || 0) + 1;
+      index.synced = false;
 
       await Promise.all([notesStore.put(index), contentStore.put(content)]);
     }

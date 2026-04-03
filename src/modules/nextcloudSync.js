@@ -77,6 +77,10 @@ const MIME_TYPES = {
   "image/webp": ".webp",
   "image/svg+xml": ".svg",
   "application/pdf": ".pdf",
+  "audio/webm": ".webm",
+  "audio/webm;codecs=opus": ".webm",
+  "audio/ogg": ".ogg",
+  "audio/mp4": ".m4a",
 };
 
 function getExtensionFromMime(mimeType) {
@@ -119,6 +123,9 @@ async function decryptNoteLocally(note) {
     content: isBlob(note.content) ? await decryptObject(note.content, key) : note.content,
     strokes: isBlob(note.strokes) ? await decryptObject(note.strokes, key) : note.strokes,
     media: isBlob(note.media) ? await decryptObject(note.media, key) : note.media,
+    recordings: isBlob(note.recordings)
+      ? await decryptObject(note.recordings, key)
+      : (note.recordings ?? []),
     tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
     recognition: isBlob(note.recognition)
       ? await decryptObject(note.recognition, key)
@@ -160,10 +167,11 @@ async function encryptNoteForNextcloud(note) {
   try {
     const encryptionKey = getEncryptionKey();
 
-    // Encrypt content, strokes, media and thumbnail for Nextcloud storage
+    // Encrypt content, strokes, media, recordings and thumbnail for Nextcloud storage
     const encryptedContent = await encryptObject(decryptedNote.content || "", encryptionKey);
     const encryptedStrokes = await encryptObject(decryptedNote.strokes || [], encryptionKey);
     const encryptedMedia = await encryptObject(decryptedNote.media || [], encryptionKey);
+    const encryptedRecordings = await encryptObject(decryptedNote.recordings || [], encryptionKey);
     const encryptedThumbnail = decryptedNote.thumbnail
       ? await encryptObject(decryptedNote.thumbnail, encryptionKey)
       : null;
@@ -173,6 +181,7 @@ async function encryptNoteForNextcloud(note) {
       content: encryptedContent,
       strokes: encryptedStrokes,
       media: encryptedMedia,
+      recordings: encryptedRecordings,
       thumbnail: encryptedThumbnail,
       nextcloudEncrypted: true, // Mark as Nextcloud-encrypted
     };
@@ -207,11 +216,23 @@ async function decryptNoteFromNextcloud(note) {
       const decryptedContent = await decryptObject(note.content, encryptionKey);
       const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
 
-      // Only decrypt media if it exists and has the encrypted structure
-      // (notes encrypted before media support won't have this field)
+      // Only decrypt media/recordings if they exist and have the encrypted structure
+      // (notes encrypted before these fields were added won't have them)
       let decryptedMedia = [];
       if (note.media && typeof note.media === "object" && note.media.data && note.media.iv) {
         decryptedMedia = await decryptObject(note.media, encryptionKey);
+      }
+
+      let decryptedRecordings = [];
+      if (
+        note.recordings &&
+        typeof note.recordings === "object" &&
+        note.recordings.data &&
+        note.recordings.iv
+      ) {
+        decryptedRecordings = await decryptObject(note.recordings, encryptionKey);
+      } else if (Array.isArray(note.recordings)) {
+        decryptedRecordings = note.recordings;
       }
 
       let decryptedThumbnail = null;
@@ -231,12 +252,72 @@ async function decryptNoteFromNextcloud(note) {
         content: decryptedContent,
         strokes: decryptedStrokes,
         media: decryptedMedia,
+        recordings: decryptedRecordings,
         thumbnail: decryptedThumbnail,
         nextcloudEncrypted: undefined, // Remove Nextcloud encryption flag
       };
     } catch (error) {
       console.error("[NextcloudSync] Failed to decrypt note from Nextcloud:", error);
       throw new Error("Failed to decrypt note from Nextcloud");
+    }
+  }
+
+  // Step 2: If the note has local encryption from another client (encrypted: true),
+  // decrypt it now so saveNote can re-encrypt it with this client's local key.
+  // This handles the case where a note was saved encrypted by another client and
+  // uploaded to Nextcloud without Nextcloud-level encryption.
+  if (decryptedNote.encrypted) {
+    try {
+      decryptedNote = await decryptNoteLocally(decryptedNote);
+    } catch (err) {
+      console.error(
+        `[NextcloudSync] Could not decrypt locally-encrypted note ${decryptedNote.id} — wrong key or corrupted:`,
+        err,
+      );
+      // Leave as-is; saveNote will store it with encrypted:true and it will fail on read.
+      // This is better than silently discarding the note.
+    }
+  }
+
+  // Step 3: Sanitize any stray locally-encrypted blobs that survived the upload path.
+  // This can happen when recordings/media were encrypted by another client's local key
+  // and uploaded without being decrypted first (e.g. the Android local-encryption bug).
+  // The `encrypted` flag is absent from the Nextcloud JSON, so step 2 never fires.
+  // We attempt to decrypt with our own key and fall back to [] on failure (wrong key).
+  const isEncryptedBlob = (v) =>
+    v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
+
+  if (isEncryptedBlob(decryptedNote.recordings) || isEncryptedBlob(decryptedNote.media)) {
+    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+    const { decryptObject } = await import("./encryption.js");
+
+    if (isAppUnlocked()) {
+      const key = getEncryptionKey();
+
+      if (isEncryptedBlob(decryptedNote.recordings)) {
+        try {
+          const dec = await decryptObject(decryptedNote.recordings, key);
+          decryptedNote = { ...decryptedNote, recordings: Array.isArray(dec) ? dec : [] };
+        } catch (_e) {
+          // Wrong key (from another device) — drop the recordings rather than breaking the note
+          console.warn(
+            `[NextcloudSync] Could not decrypt recordings blob for note ${decryptedNote.id} — dropping recordings`,
+          );
+          decryptedNote = { ...decryptedNote, recordings: [] };
+        }
+      }
+
+      if (isEncryptedBlob(decryptedNote.media)) {
+        try {
+          const dec = await decryptObject(decryptedNote.media, key);
+          decryptedNote = { ...decryptedNote, media: Array.isArray(dec) ? dec : [] };
+        } catch (_e) {
+          console.warn(
+            `[NextcloudSync] Could not decrypt media blob for note ${decryptedNote.id} — dropping media`,
+          );
+          decryptedNote = { ...decryptedNote, media: [] };
+        }
+      }
     }
   }
 
@@ -332,7 +413,19 @@ export async function testConnection(serverUrl) {
 
   try {
     const response = await _fetch(`${serverUrl}/status.php`);
-    const data = await response.json();
+    if (!response.ok) {
+      return { success: false, error: `Server returned HTTP ${response.status}` };
+    }
+    let data;
+    try {
+      data = await response.json();
+    } catch (jsonErr) {
+      console.error("[NextcloudSync] testConnection: invalid JSON from status.php", jsonErr);
+      return {
+        success: false,
+        error: "Server did not return valid JSON — not a Nextcloud server?",
+      };
+    }
 
     if (data.installed && data.version) {
       return {
@@ -344,7 +437,8 @@ export async function testConnection(serverUrl) {
 
     return { success: false, error: "Not a valid Nextcloud server" };
   } catch (error) {
-    return { success: false, error: error.message };
+    console.error("[NextcloudSync] testConnection failed:", error);
+    return { success: false, error: error?.message || String(error) };
   }
 }
 
@@ -687,7 +781,8 @@ async function syncNoteMedia(note) {
   // media files were already uploaded when the note was last synced unencrypted,
   // and the encrypted payload references them by fileId inside the blob.
   if (note.media !== undefined && !Array.isArray(note.media)) return;
-  if ((!note.media || note.media.length === 0) && !note.pdfSource) return;
+  const hasRecordings = Array.isArray(note.recordings) && note.recordings.length > 0;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
@@ -707,10 +802,15 @@ async function syncNoteMedia(note) {
   const uploadTasks = [];
   const processedIds = new Set(); // Track processed IDs to avoid duplicates (e.g. multiple PDF pages)
 
-  // Collect all file IDs (media items + pdfSource)
+  // Collect all file IDs (media items + pdfSource + recordings)
   const itemsToSync = [...(note.media || [])];
   if (note.pdfSource) {
     itemsToSync.push({ fileId: note.pdfSource, id: "pdf-source" });
+  }
+  for (const rec of note.recordings || []) {
+    if (!rec.deleted && rec.fileId) {
+      itemsToSync.push({ fileId: rec.fileId, id: rec.id });
+    }
   }
 
   for (const item of itemsToSync) {
@@ -784,6 +884,11 @@ async function cleanupOrphanedMedia(note) {
   if (note.pdfSource) {
     validFileIds.add(note.pdfSource);
   }
+  if (Array.isArray(note.recordings)) {
+    for (const rec of note.recordings) {
+      if (!rec.deleted && rec.fileId) validFileIds.add(rec.fileId);
+    }
+  }
 
   // Find orphaned files (files on server not referenced in note.media)
   const orphanedFiles = remoteFiles.filter((file) => {
@@ -815,16 +920,22 @@ async function cleanupOrphanedMedia(note) {
  */
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
   if (note.media !== undefined && !Array.isArray(note.media)) return;
-  if ((!note.media || note.media.length === 0) && !note.pdfSource) return;
+  const hasRecordings = Array.isArray(note.recordings) && note.recordings.some((r) => !r.deleted);
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
   const processedIds = new Set();
 
-  // Collect all file IDs (media items + pdfSource)
+  // Collect all file IDs (media items + pdfSource + recordings)
   const itemsToDownload = [...(note.media || [])];
   if (note.pdfSource) {
     itemsToDownload.push({ fileId: note.pdfSource });
+  }
+  for (const rec of note.recordings || []) {
+    if (!rec.deleted && rec.fileId) {
+      itemsToDownload.push({ fileId: rec.fileId });
+    }
   }
 
   for (const item of itemsToDownload) {
@@ -1737,6 +1848,26 @@ export function attemptMerge(local, remote) {
   addMedia(localIsNewer ? remoteMedia : localMedia); // Add older first
   addMedia(localIsNewer ? localMedia : remoteMedia); // Add newer second (wins)
 
+  // Merge recordings by ID (same pattern as media)
+  const localRecordings = local.recordings || [];
+  const remoteRecordings = remote.recordings || [];
+  const localDeletedRecordings = local.deletedRecordings || [];
+  const remoteDeletedRecordings = remote.deletedRecordings || [];
+
+  const allDeletedRecordings = new Set([...localDeletedRecordings, ...remoteDeletedRecordings]);
+  const recordingsMap = new Map();
+
+  const addRecordings = (items) => {
+    for (const item of items) {
+      if (item.id && !allDeletedRecordings.has(item.fileId)) {
+        recordingsMap.set(item.id, item);
+      }
+    }
+  };
+
+  addRecordings(localIsNewer ? remoteRecordings : localRecordings);
+  addRecordings(localIsNewer ? localRecordings : remoteRecordings);
+
   // Merge tasks by ID, newer modified timestamp wins for individual tasks
   const localTasks = local.tasks || [];
   const remoteTasks = remote.tasks || [];
@@ -1768,6 +1899,8 @@ export function attemptMerge(local, remote) {
     deletedStrokes: mergedStrokeData.deletedStrokes,
     media: Array.from(mediaMap.values()),
     deletedMedia: Array.from(allDeletedMedia),
+    recordings: Array.from(recordingsMap.values()),
+    deletedRecordings: Array.from(allDeletedRecordings),
     tags: mergedTags,
     tasks: Array.from(taskMap.values()),
     deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted

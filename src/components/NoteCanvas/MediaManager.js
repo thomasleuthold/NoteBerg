@@ -44,9 +44,9 @@ export class MediaManager {
    */
   setItems(items) {
     this.mediaItems = items || [];
-    // Trigger load for any items that have fileId
+    // Trigger load for image items only — pdf-page items are rendered via pdfManager, not as <img>
     for (const item of this.mediaItems) {
-      if (item.fileId) {
+      if (item.fileId && item.type === "image") {
         this._loadImage(item.fileId);
       }
     }
@@ -57,8 +57,8 @@ export class MediaManager {
    */
   addItem(item) {
     this.mediaItems.push(item);
-    // Trigger load immediately if it has a fileId
-    if (item.fileId) {
+    // Trigger load immediately for image items only
+    if (item.fileId && item.type === "image") {
       this._loadImage(item.fileId);
     }
   }

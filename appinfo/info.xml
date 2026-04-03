@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	  xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+	<id>noteberg</id>
+	<name>NoteBerg</name>
+	<summary>Handwritten and typed notes with Nextcloud sync</summary>
+	<description><![CDATA[NoteBerg is a note-taking app combining handwriting, rich text, and Nextcloud sync.
+
+## Features
+
+### Handwriting & Drawing
+- Handwriting input with active stylus and pressure sensitivity
+- Pen tool with customizable colors, marker/highlighter tool
+- Lasso selection — move, resize, rotate, copy selected strokes
+- Eraser tool, unlimited undo/redo
+- Mark handwritten notes as tasks
+
+### Text Editing
+- Rich text editor (WYSIWYG) with formatting, tables, colors, and font sizes
+- Automatic mode switching between drawing and text editing
+- Task checkboxes inline with notes
+
+### Media & Import/Export
+- PDF import — annotate PDFs with pen and text
+- Image insertion with cropping and perspective correction
+- PDF export with automatic A4 pagination
+
+### Organization
+- Notebooks for hierarchical organization
+- Note overview with thumbnail previews
+- Full-text search across handwriting and typed text
+- Markers tab — browse task markers across all notes
+- Recycle bin with soft delete and permanent deletion
+
+### Sync & Storage
+- Offline-first — all data stored locally in IndexedDB
+- Nextcloud sync via WebDAV with conflict resolution
+
+### UI
+- Dark mode / light mode with system preference detection
+- Background patterns — ruled lines and grid
+- Internationalization — English, German]]></description>
+	<version>0.5.27</version>
+	<licence>MIT</licence>
+	<author mail="thomas_leuthold@hotmail.com">Thomas Leuthold</author>
+	<namespace>NoteBerg</namespace>
+	<category>office</category>
+	<category>organization</category>
+	<bugs>https://github.com/thomasleuthold/NoteBerg/issues</bugs>
+	<dependencies>
+		<nextcloud min-version="29" max-version="32"/>
+	</dependencies>
+	<navigations>
+		<navigation>
+			<id>noteberg</id>
+			<name>NoteBerg</name>
+			<route>noteberg.page.index</route>
+			<icon>app.svg</icon>
+			<type>link</type>
+		</navigation>
+	</navigations>
+</info>
