@@ -79,27 +79,42 @@ npm run tauri dev
 See [ANDROID_BUILD_WINDOWS.md](documentation/ANDROID_BUILD_WINDOWS.md) for detailed setup.
 
 ```bash
-npm run tauri android build
+npm run tauri android dev
+```
+
+### Nextcloud
+
+Install from the [Nextcloud App Store](https://apps.nextcloud.com/apps/noteberg) or run locally with the dev container (requires Podman):
+
+```bash
+npm install
+just nc-up                  # Start Nextcloud dev container at http://localhost:8080
+npm run dev:nextcloud       # Start Vite in watch mode
 ```
 
 ## Development
 
 ```bash
-# Desktop development
-npm run dev              # Frontend only
-npm run tauri dev        # Full Tauri app
+# Desktop
+npm run dev                  # Frontend only (Vite)
+npm run tauri dev            # Full Tauri app
 
-# Android development
+# Android
 npm run tauri android dev
 
-# Build
-npm run build            # Frontend
-npm run tauri build      # Desktop app
-npm run tauri android build  # Android APK
+# Nextcloud
+npm run dev:nextcloud        # Frontend watch mode (NC build)
+just nc-up                   # Nextcloud dev container at http://localhost:8080
 
-# Linting / formatting (Biome)
-npm run lint
-npm run format
+# Build
+npm run tauri build          # Desktop app
+npm run tauri android build  # Android APK
+just build-nc                # Nextcloud app package (requires nc-up + noteberg.crt)
+
+# Linting / formatting / testing (Biome)
+just fct                     # Format, check, and test in one step
+npm run lint                 # Lint only
+npm run format               # Format only
 ```
 
 ## Project Structure
