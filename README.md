@@ -157,7 +157,6 @@ NoteBerg stands on the shoulders of many excellent open-source projects. A since
 |---|---|
 | [Tauri](https://tauri.app/) | Cross-platform desktop/mobile app framework |
 | [Vite](https://vitejs.dev/) | Frontend build tool |
-| [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) | Bundle app into a single HTML file |
 | [idb](https://github.com/jakearchibald/idb) | IndexedDB wrapper |
 | [i18next](https://www.i18next.com/) | Internationalization |
 | [jQuery](https://jquery.com/) | DOM utilities (required by Trumbowyg) |
@@ -167,15 +166,15 @@ NoteBerg stands on the shoulders of many excellent open-source projects. A since
 | [html2canvas](https://html2canvas.hertzen.com/) | Note thumbnail generation |
 | [perspective-transform](https://github.com/fhguilherme/perspective-transform) | Image perspective correction |
 | [Feather Icons](https://feathericons.com/) | UI icon set |
+| [cpal](https://github.com/RustAudio/cpal) | Cross-platform audio capture (Windows WASAPI) |
+| [hound](https://github.com/ruuda/hound) | WAV audio encoding |
+| [keyring](https://github.com/hwchen/keyring-rs) | OS keychain access (Windows, macOS, Linux) |
 | [Biome](https://biomejs.dev/) | Linting and formatting |
-| [ESLint](https://eslint.org/) | JavaScript linting |
-| [Prettier](https://prettier.io/) | Code formatting |
 | [Vitest](https://vitest.dev/) | Unit testing framework |
 | [Testing Library](https://testing-library.com/) | DOM testing utilities |
 | [jsdom](https://github.com/jsdom/jsdom) | DOM environment for tests |
 | [Express](https://expressjs.com/) | Dev proxy server |
 | [cors](https://github.com/expressjs/cors) | CORS middleware for dev proxy |
-| [node-fetch](https://github.com/node-fetch/node-fetch) | Fetch API for dev tooling |
 
 And a special thanks to the [Nextcloud](https://nextcloud.com/) project for providing an open, self-hostable sync platform that makes apps like this possible without depending on proprietary cloud infrastructure.
 
