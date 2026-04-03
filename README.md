@@ -1,8 +1,8 @@
 # NoteBerg
 
-> **Beta software** — NoteBerg is an experimental, personal note-taking app built almost entirely through **vibe coding** (AI-assisted development). It is not production-ready. Expect rough edges, breaking changes, and missing features.
+> **Beta software** — NoteBerg is a personal note-taking app developed with AI assistance. It is not production-ready. Expect rough edges, breaking changes, and missing features.
 
-A cross-platform note-taking app with handwriting support, text editing, and Nextcloud sync — built as an experiment in how far AI-assisted development can take a real-world desktop application.
+A cross-platform note-taking app with handwriting support, text editing, and Nextcloud sync.
 
 ## Features
 
@@ -53,17 +53,17 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 - 🌐 Background patterns — ruled lines and grid
 - 🔡 Internationalization — English, German
 
-## Security Warning
+## Security
 
-> ⚠️ **This app is in beta and has known security limitations. Do not use it to store highly sensitive data.**
+> ⚠️ **This app is in beta and has not undergone a security audit. Do not use it to store highly sensitive data.**
 
-Current security state:
+Current security implementation:
 
-- **Master password** is stored in `localStorage`, encrypted with AES-256-GCM — but the encryption key is **hardcoded in the source code**. Anyone with access to the app bundle can decrypt it. The OS keyring (Windows Credential Manager, macOS Keychain) is **not used** at the moment.
-- **Nextcloud credentials** (server URL, username, app password) are stored the same way — `localStorage` with the same hardcoded encryption key.
-- Neither the master password nor Nextcloud credentials have proper OS-level protection. The "encryption" is obfuscation only.
-- The app was built largely via **vibe coding (AI-assisted development)** and has not undergone a security audit.
-- Use a dedicated Nextcloud app password (not your main account password) for sync — you can revoke it independently if needed.
+- **Nextcloud credentials** (server URL, username, app password) are stored using the native OS keychain — Windows Credential Manager on desktop, Android Keystore on Android. They are never stored in plaintext.
+- **Master password** (optional) protects local note data with PBKDF2 (100,000 iterations) + AES-256-GCM encryption. The master password itself is stored in the OS keychain.
+- **End-to-end encryption** for Nextcloud sync is optionally available — note data is encrypted before leaving the device.
+- The app was built largely via **AI-assisted development** and has evolved through many iterations including testing, but has not undergone a formal security audit. Bugs in the encryption or key management code may exist.
+- Nextcloud sync uses Login Flow v2, which always generates a dedicated app password — your main Nextcloud password is never entered into or stored by the app.
 
 ## Quick Start
 
