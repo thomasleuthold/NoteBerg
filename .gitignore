@@ -63,6 +63,10 @@ key.properties
 *.csr
 *.crt
 
+# NC build temp dir and release packages
+build-nc-tmp/
+builds/
+
 # Build artifacts / binaries
 *.pdb
 /dist-backend/*.exe
