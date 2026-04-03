@@ -6,7 +6,10 @@
       "Bash(xargs:*)",
       "Bash(git -C /c/work/code/oneJournal log --oneline --all)",
       "Bash(git -C /c/work/code/oneJournal log --oneline -20)",
-      "Bash(git -C /c/work/code/oneJournal show --name-only bf62d76)"
+      "Bash(git -C /c/work/code/oneJournal show --name-only bf62d76)",
+      "WebFetch(domain:nextcloudappstore.readthedocs.io)",
+      "WebSearch",
+      "WebFetch(domain:docs.nextcloud.com)"
     ],
     "additionalDirectories": [
       "C:\\work\\code\\oneJournal\\img"

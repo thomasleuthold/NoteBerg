@@ -101,6 +101,45 @@ package-backend:
     dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
     Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"
 
+# Build and package the Nextcloud app release
+# Requires: noteberg.key + noteberg.crt in repo root (from NC certificate process)
+# Output: builds/noteberg-<version>.tar.gz + builds/noteberg-<version>.tar.gz.sig
+build-nc:
+    # 1. Build JS/CSS for Nextcloud
+    npm run build:nextcloud
+
+    # 2. Assemble app into a clean temp directory
+    if (Test-Path "build-nc-tmp") { Remove-Item -Recurse -Force "build-nc-tmp" }
+    New-Item -ItemType Directory -Force -Path "build-nc-tmp\noteberg" | Out-Null
+    Copy-Item -Recurse "appinfo"   "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "lib"       "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "templates" "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "img"       "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "js"        "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "css"       "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "assets"    "build-nc-tmp\noteberg\" -ErrorAction SilentlyContinue
+
+    # 3. Code-sign via occ in the Nextcloud dev container (must be running: just nc-up)
+    Write-Host "Code-signing app via occ in Nextcloud container..."
+    podman exec noteberg-nc bash -c "php /var/www/html/occ integrity:sign-app --privateKey=/var/www/html/apps-extra/noteberg/noteberg.key --certificate=/var/www/html/apps-extra/noteberg/noteberg.crt --path=/var/www/html/apps-extra/noteberg/build-nc-tmp/noteberg"
+
+    # 4. Package into tar.gz
+    New-Item -ItemType Directory -Force -Path "builds" | Out-Null
+    $tarball = "builds\noteberg-{{version}}.tar.gz"
+    tar -czf $tarball -C "build-nc-tmp" "noteberg"
+    Write-Host "Created $tarball"
+
+    # 5. Sign the archive (for store upload)
+    $sig = (openssl dgst -sha512 -sign noteberg.key $tarball | openssl base64) -join ""
+    $sig | Out-File -NoNewline -Encoding ascii "builds\noteberg-{{version}}.tar.gz.sig"
+    Write-Host "Archive signature written to builds\noteberg-{{version}}.tar.gz.sig"
+
+    # 6. Cleanup temp dir
+    Remove-Item -Recurse -Force "build-nc-tmp"
+    Write-Host "Done! Upload $tarball to the NC App Store."
+    Write-Host "Archive signature (for store):"
+    Get-Content "builds\noteberg-{{version}}.tar.gz.sig"
+
 # Nextcloud dev environment (requires Podman)
 # Run 'npm run dev:nextcloud' separately for watch mode rebuilds
 nc-up:
