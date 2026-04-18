@@ -7,6 +7,11 @@
  */
 import jQuery from "jquery/slim";
 
-window.jQuery = window.$ = jQuery;
+window.jQuery = jQuery;
+// NC defines window.$ as a getter-only property — only assign if writable
+const descriptor = Object.getOwnPropertyDescriptor(window, "$");
+if (!descriptor || descriptor.writable || descriptor.set) {
+  window.$ = jQuery;
+}
 
 export default jQuery;

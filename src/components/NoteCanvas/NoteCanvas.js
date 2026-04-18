@@ -1538,10 +1538,16 @@ export class NoteCanvas {
    * @private
    */
   async _onDataChange(e) {
-    const { noteId } = e.detail || {};
+    const { noteId, source } = e.detail || {};
 
     // Is this change for the currently open note?
     if (!noteId || noteId !== this.noteId) {
+      return;
+    }
+
+    // Local saves (own writes) must not trigger applyLiveUpdate — that would
+    // reload from storage and clear the undo history after every keystroke/stroke.
+    if (source === "local") {
       return;
     }
 

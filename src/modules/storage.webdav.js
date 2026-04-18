@@ -70,8 +70,21 @@ async function davGet(path) {
   }
 }
 
+async function davPutWithRetry(path, options, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(`${getWebDAVBase()}${path}`, options);
+    if (res.ok) return;
+    // 423 Locked — Nextcloud file lock, wait and retry
+    if (res.status === 423 && i < retries - 1) {
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+      continue;
+    }
+    throw new Error(`DAV PUT ${path} failed: ${res.status}`);
+  }
+}
+
 async function davPut(path, data) {
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+  await davPutWithRetry(path, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -81,11 +94,10 @@ async function davPut(path, data) {
     credentials: "same-origin",
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`DAV PUT ${path} failed: ${res.status}`);
 }
 
 async function davPutBinary(path, blob) {
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+  await davPutWithRetry(path, {
     method: "PUT",
     headers: {
       "Content-Type": blob.type || "application/octet-stream",
@@ -95,7 +107,6 @@ async function davPutBinary(path, blob) {
     credentials: "same-origin",
     body: blob,
   });
-  if (!res.ok) throw new Error(`DAV PUT binary ${path} failed: ${res.status}`);
 }
 
 async function davDelete(path) {
@@ -119,6 +130,19 @@ async function davGetBinary(path) {
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`DAV GET binary ${path} failed: ${res.status}`);
   return res.blob();
+}
+
+async function davExists(path) {
+  const res = await fetch(`${getWebDAVBase()}${path}`, {
+    method: "PROPFIND",
+    headers: {
+      Depth: "0",
+      "OCS-APIREQUEST": "true",
+      requesttoken: window.OC?.requestToken || "",
+    },
+    credentials: "same-origin",
+  });
+  return res.ok || res.status === 207;
 }
 
 async function davMkcol(path) {
@@ -182,7 +206,13 @@ const _INIT_KEY = "noteberg_webdav_initialized";
 
 export async function initStorage() {
   if (_initialized) return;
-  // Skip MKCOL requests if we've already confirmed folders exist in a previous session
+  // Always verify root folder exists before trusting the localStorage flag.
+  // The flag is an optimisation to skip MKCOL on every load, but if the folder
+  // was deleted (uninstall, manual cleanup) we must recreate it.
+  const rootExists = await davExists(ROOT_FOLDER);
+  if (!rootExists) {
+    localStorage.removeItem(_INIT_KEY);
+  }
   if (!localStorage.getItem(_INIT_KEY)) {
     for (const folder of getAllRequiredFolders()) {
       await davMkcol(folder);
@@ -523,14 +553,14 @@ export function updateNote(id, updates) {
     };
     await _putNote(updated);
     console.log("Note updated:", id);
-    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id } }));
+    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }));
     return updated;
   });
 }
 
 export async function saveNote(note) {
   await _putNote(note);
-  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: note.id } }));
+  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: note.id, source: "local" } }));
 }
 
 export async function deleteNote(id) {
