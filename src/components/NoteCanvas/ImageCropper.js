@@ -3,6 +3,7 @@
  */
 
 import { t } from "../../i18n/index.js";
+import PerspT from "perspective-transform";
 
 export class ImageCropper {
   constructor() {
@@ -270,14 +271,9 @@ export class ImageCropper {
 
     const dstCorners = [0, 0, outputWidth, 0, outputWidth, outputHeight, 0, outputHeight];
 
-    if (!window.PerspT) {
-      console.error("[ImageCropper] Perspective transform library not loaded.");
-      return this._applySimpleCrop(imgRect); // Fallback to simple crop
-    }
-
     let perspT;
     try {
-      perspT = window.PerspT(srcCorners, dstCorners);
+      perspT = PerspT(srcCorners, dstCorners);
     } catch (e) {
       console.error("[ImageCropper] Failed to create perspective transform:", e);
       return this._applySimpleCrop(imgRect); // Fallback to simple crop

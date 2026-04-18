@@ -4,6 +4,10 @@
 
 // Import styles
 import "./styles/main.css";
+// Inter font only for Tauri builds — NC uses its own font stack and rejects bundled variable fonts
+if (import.meta.env.VITE_PLATFORM !== "nextcloud") {
+  await import("./styles/fonts.css");
+}
 import "./styles/themes/light.css";
 import "./styles/themes/dark.css";
 import "./styles/layout.css";
