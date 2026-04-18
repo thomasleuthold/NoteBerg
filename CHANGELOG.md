@@ -8,7 +8,7 @@
 - **Nextcloud**: Undo/redo history cleared after every local save — local WebDAV writes no longer trigger a live update reload; only external sync changes do
 - **Nextcloud**: WebDAV folder structure not recreated after uninstall/reinstall — app now verifies root folder exists on startup instead of trusting a cached flag
 - **Nextcloud**: File lock (HTTP 423) causing infinite save loop — PUT requests now retry with backoff on 423 responses
-- **Nextcloud**: Perspective transform not working — library now bundled via ES module import instead of relying on a missing global script tag
+- **Nextcloud**: Perspective transform not working — UMD library's `)(this)` root detection fails in ES module strict mode; patched at build time to use `)(globalThis)` instead
 - **Nextcloud**: Archive signature corrupted by Windows line endings — signing now runs inside the Linux container with `openssl base64 -A`
 
 ## [0.5.27] - 2026-04-18

@@ -2,6 +2,24 @@ import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// perspective-transform is UMD: top-level IIFEs use `this` as root/global.
+// In ES module strict mode `this` is undefined — patch `)(this)` → `)(globalThis)` at transform time.
+function patchUmdThisPlugin() {
+  return {
+    name: 'patch-umd-this',
+    transform(code, id) {
+      if (id.includes('perspective-transform')) {
+        return {
+          code: code
+            .replaceAll(')(this)', ')(globalThis)')
+            .replace('this.numeric = numeric;', '// this.numeric patched out (strict mode)'),
+          map: null,
+        };
+      }
+    },
+  };
+}
+
 function getAppVersion() {
   try {
     // Try tauri.conf.json first (source of truth for MSI/bundle)
@@ -29,6 +47,7 @@ const ncBase = process.env.VITE_NC_BASE || '/apps-extra/noteberg/';
 const base = platform === 'nextcloud' ? ncBase : '/';
 
 export default defineConfig({
+  plugins: [patchUmdThisPlugin()],
   base,
   resolve: {
     alias: platform === 'nextcloud' ? [
