@@ -258,7 +258,17 @@ async function renderSearchTab(container) {
 async function renderMarkersTab(container) {
   // Collect tasks from all notes — need full content (tasks, strokes, recognition)
   const noteIndexes = await getAllNotes();
-  const notesWithTasks = noteIndexes.filter((n) => n.hasStrokes || n.hasContent);
+  // In Tauri build, getAllNotes() returns index entries with hasStrokes/hasContent flags.
+  // In NC build, it returns full notes directly — those flags are never set, so fall back
+  // to checking tasks/strokes/content directly.
+  const notesWithTasks = noteIndexes.filter(
+    (n) =>
+      n.hasStrokes ||
+      n.hasContent ||
+      (n.tasks && n.tasks.length > 0) ||
+      (n.strokes && n.strokes.length > 0) ||
+      n.content,
+  );
   const fullNotes = await Promise.all(notesWithTasks.map((n) => getNote(n.id)));
   const allNotes = fullNotes.filter(Boolean);
   const allTasks = [];

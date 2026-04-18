@@ -27,6 +27,7 @@ build-w:
 
 build-a:
     if (Test-Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\") { Remove-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\*" -Force -Recurse -ErrorAction SilentlyContinue }
+    just patch-android
     npm run tauri android build -- --apk true
     New-Item -ItemType Directory -Force -Path builds | Out-Null
     # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\NoteBerg_{{version}}_android_universal.apk" -Force
@@ -34,9 +35,14 @@ build-a:
 
 build-aab:
     if (Test-Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\") { Remove-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\*" -Force -Recurse -ErrorAction SilentlyContinue }
+    just patch-android
     npm run tauri android build -- --aab true
     New-Item -ItemType Directory -Force -Path builds | Out-Null
     Copy-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\NoteBerg_{{version}}_android.aab" -Force
+
+# Patch auto-generated Android files that cannot be modified in source
+patch-android:
+    $f = "src-tauri\gen\android\app\src\main\java\eu\noteberg\app\generated\RustWebChromeClient.kt"; $content = Get-Content $f -Raw; $patched = $content -replace '(?m)^\s*permissionList\.add\(Manifest\.permission\.MODIFY_AUDIO_SETTINGS\)\r?\n', ''; Set-Content $f $patched -NoNewline; Write-Host "patch-android: done"
 
 build-all:
     just build-w
@@ -94,6 +100,48 @@ package-sidecar:
 package-backend:
     dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
     Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"
+
+# Build and package the Nextcloud app release
+# Requires: noteberg.key + noteberg.crt in repo root (from NC certificate process)
+# Output: builds/noteberg-<version>.tar.gz + builds/noteberg-<version>.tar.gz.sig
+build-nc:
+    # 1. Build JS/CSS for Nextcloud (NC version read from appinfo/info.xml, may differ from package.json)
+    npm run build:nextcloud
+
+    # 2. Assemble app into a clean temp directory
+    $ncver = (Select-Xml -Path appinfo/info.xml -XPath "//version").Node.InnerText
+    if (Test-Path "build-nc-tmp") { Remove-Item -Recurse -Force "build-nc-tmp" }
+    New-Item -ItemType Directory -Force -Path "build-nc-tmp\noteberg" | Out-Null
+    Copy-Item -Recurse "appinfo"   "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "lib"       "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "templates" "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "img"       "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "js"        "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "css"       "build-nc-tmp\noteberg\"
+    Copy-Item -Recurse "assets"    "build-nc-tmp\noteberg\" -ErrorAction SilentlyContinue
+
+    # 3. Code-sign via occ in the Nextcloud dev container (must be running: just nc-up)
+    Write-Host "Code-signing app via occ in Nextcloud container..."
+    podman exec noteberg-nc bash -c "php /var/www/html/occ integrity:sign-app --privateKey=/var/www/html/apps-extra/noteberg/noteberg.key --certificate=/var/www/html/apps-extra/noteberg/noteberg.crt --path=/var/www/html/apps-extra/noteberg/build-nc-tmp/noteberg"
+
+    # 4+5. Package tar.gz and sign (version read from info.xml inside script)
+    powershell -File scripts/package-nc-release.ps1
+
+    # 6. Cleanup temp dir
+    Remove-Item -Recurse -Force "build-nc-tmp"
+
+# Nextcloud dev environment (requires Podman)
+# Run 'npm run dev:nextcloud' separately for watch mode rebuilds
+nc-up:
+    podman run --rm --name noteberg-nc -d -p 8080:80 -v "${PWD}:/var/www/html/apps-extra/noteberg" ghcr.io/juliusknorr/nextcloud-dev-php84:latest
+    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1
+    netsh interface portproxy add v4tov4 listenport=8080 listenaddress=127.0.0.1 connectport=8080 connectaddress=$wslIp 2>&1 | Out-Null
+    Write-Host "NoteBerg Nextcloud running at http://localhost:8080 (WSL IP: $wslIp)"
+    Write-Host "Run 'npm run dev:nextcloud' in a separate terminal for watch mode"
+
+nc-down:
+    podman stop noteberg-nc
+    netsh interface portproxy delete v4tov4 listenport=8080 listenaddress=127.0.0.1 2>&1 | Out-Null
 
 # Push to GitHub (default: main branch)
 push-gh branch="main":

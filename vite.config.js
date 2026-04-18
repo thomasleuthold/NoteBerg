@@ -22,16 +22,43 @@ function getAppVersion() {
   }
 }
 
+const platform = process.env.VITE_PLATFORM || 'tauri';
+// Dev container uses /apps-extra/; production Nextcloud uses /apps/
+// Override with: VITE_NC_BASE=/apps/noteberg/ npm run build:nextcloud
+const ncBase = process.env.VITE_NC_BASE || '/apps-extra/noteberg/';
+const base = platform === 'nextcloud' ? ncBase : '/';
+
 export default defineConfig({
+  base,
+  resolve: {
+    alias: platform === 'nextcloud' ? [
+      // Redirect all storage.js imports to the WebDAV backend for NC build
+      {
+        find: /.*\/storage\.js$/,
+        replacement: resolve(process.cwd(), 'src/modules/storage.webdav.js'),
+      },
+    ] : [],
+  },
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(getAppVersion()),
+    'import.meta.env.VITE_PLATFORM': JSON.stringify(platform),
   },
   build: {
     target: 'esnext',
-    outDir: 'dist',
+    outDir: platform === 'nextcloud' ? '.' : 'dist',
+    emptyOutDir: platform !== 'nextcloud', // never wipe the repo root
     // Tauri uses Chromium, so we can use modern features
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
+    rollupOptions: platform === 'nextcloud' ? {
+      input: resolve(process.cwd(), 'src/main.js'),
+      output: {
+        entryFileNames: 'js/noteberg-main.js',
+        chunkFileNames: 'js/[name].js',
+        assetFileNames: (info) =>
+          info.name?.endsWith('.css') ? 'css/noteberg-styles.css' : 'assets/[name][extname]',
+      },
+    } : {},
   },
   server: {
     port: 3000,

@@ -58,9 +58,24 @@ Cargo.lock
 key.properties
 *.apk
 
+# Nextcloud app signing (private key + CSR — never commit)
+*.key
+*.csr
+*.crt
+
+# NC build temp dir and release packages
+build-nc-tmp/
+builds/
+
 # Build artifacts / binaries
 *.pdb
 /dist-backend/*.exe
 /src-recognition-backend/bin
 /src-recognition-backend/obj
 /coverage
+
+# Nextcloud build output (vite → repo root)
+/assets/
+/css/
+/js/
+/fonts/

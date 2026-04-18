@@ -17,7 +17,8 @@ import "trumbowyg/dist/ui/trumbowyg.css";
 import "trumbowyg/dist/plugins/colors/trumbowyg.colors.js";
 import "trumbowyg/dist/plugins/colors/ui/trumbowyg.colors.css";
 import "trumbowyg/dist/plugins/fontsize/trumbowyg.fontsize.js";
-import "trumbowyg/dist/plugins/indent/trumbowyg.indent.js";
+// Note: trumbowyg.indent.js uses execCommand('indent') which is removed in
+// modern Chromium. We register a custom indent/outdent plugin below instead.
 import "trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js";
 import "trumbowyg/dist/plugins/table/trumbowyg.table.js";
 import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
@@ -27,6 +28,72 @@ import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
 import { SelectionFloatingBar } from "./SelectionFloatingBar.js";
 import { TextTaskManager } from "./TextTaskManager.js";
+
+// Custom indent/outdent plugin — uses margin-left instead of the deprecated
+// execCommand('indent') which is removed in modern Chromium.
+const INDENT_STEP = 8; // px per indent level (in content-space, zoom-independent)
+
+function _getBlockElements(trumbowyg) {
+  trumbowyg.saveRange();
+  const range = trumbowyg.range;
+  if (!range) return [];
+  const editor = trumbowyg.$ed[0];
+  const blocks = new Set();
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_ELEMENT);
+  let node = walker.nextNode();
+  while (node) {
+    const style = window.getComputedStyle(node);
+    if (style.display === "block" || style.display === "list-item") {
+      if (range.intersectsNode(node)) blocks.add(node);
+    }
+    node = walker.nextNode();
+  }
+  // Fall back to the paragraph/div containing the collapsed cursor
+  if (blocks.size === 0) {
+    let el = range.startContainer;
+    if (el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+    while (el && el !== editor) {
+      const s = window.getComputedStyle(el);
+      if (s.display === "block" || s.display === "list-item") {
+        blocks.add(el);
+        break;
+      }
+      el = el.parentElement;
+    }
+  }
+  return [...blocks];
+}
+
+jQuery.extend(true, jQuery.trumbowyg, {
+  plugins: {
+    indentCustom: {
+      init: (trumbowyg) => {
+        trumbowyg.addBtnDef("indent", {
+          fn: () => {
+            for (const el of _getBlockElements(trumbowyg)) {
+              const cur = Number.parseInt(el.style.marginLeft || "0", 10);
+              el.style.marginLeft = `${cur + INDENT_STEP}px`;
+            }
+            trumbowyg.$ta.trigger("tbwchange");
+          },
+          title: "Indent",
+          ico: "indent",
+        });
+        trumbowyg.addBtnDef("outdent", {
+          fn: () => {
+            for (const el of _getBlockElements(trumbowyg)) {
+              const cur = Number.parseInt(el.style.marginLeft || "0", 10);
+              el.style.marginLeft = `${Math.max(0, cur - INDENT_STEP)}px`;
+            }
+            trumbowyg.$ta.trigger("tbwchange");
+          },
+          title: "Outdent",
+          ico: "outdent",
+        });
+      },
+    },
+  },
+});
 
 // Define Mark as Task plugin for Trumbowyg
 jQuery.extend(true, jQuery.trumbowyg, {
@@ -147,7 +214,7 @@ export class TextEditorLayer {
     this.$editor = jQuery(this.editorDiv);
 
     // Configure SVG icons path
-    jQuery.trumbowyg.svgPath = "/trumbowyg-icons.svg";
+    jQuery.trumbowyg.svgPath = `${import.meta.env.BASE_URL}trumbowyg-icons.svg`;
 
     this.$editor.trumbowyg({
       btns: [

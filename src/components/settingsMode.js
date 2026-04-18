@@ -414,24 +414,11 @@ export async function renderSettings(container) {
     const enabled = encryptLocalToggle.checked;
 
     if (enabled) {
-      // Check if master password is configured AND actually stored in keyring
       const { isMasterPasswordSet } = await import("../modules/masterPassword.js");
-      const { getSecureCredential } = await import("../modules/secureStorage.js");
-
       const masterPasswordSet = await isMasterPasswordSet();
-      const masterPasswordInKeyring = await getSecureCredential("master_password");
 
-      console.log(
-        "[Settings] Local encryption toggle enabled, master password set:",
-        masterPasswordSet,
-        "in keyring:",
-        !!masterPasswordInKeyring,
-        "keyring value:",
-        masterPasswordInKeyring,
-      );
-
-      if (!masterPasswordSet || !masterPasswordInKeyring) {
-        // Need to set up master password first
+      if (!masterPasswordSet) {
+        // No master password at all — set up fresh
         console.log("[Settings] Showing master password setup modal...");
         const { showMasterPasswordSetup } = await import("./masterPasswordModals.js");
 
@@ -478,20 +465,10 @@ export async function renderSettings(container) {
     if (enabled) {
       // Check if master password is configured AND actually stored in keyring
       const { isMasterPasswordSet } = await import("../modules/masterPassword.js");
-      const { getSecureCredential } = await import("../modules/secureStorage.js");
-
       const masterPasswordSet = await isMasterPasswordSet();
-      const masterPasswordInKeyring = await getSecureCredential("master_password");
 
-      console.log(
-        "[Settings] Nextcloud encryption toggle enabled, master password set:",
-        masterPasswordSet,
-        "in keyring:",
-        !!masterPasswordInKeyring,
-      );
-
-      if (!masterPasswordSet || !masterPasswordInKeyring) {
-        // Need to set up master password first
+      if (!masterPasswordSet) {
+        // No master password at all — set up fresh
         console.log("[Settings] Showing master password setup modal...");
         const { showMasterPasswordSetup } = await import("./masterPasswordModals.js");
 

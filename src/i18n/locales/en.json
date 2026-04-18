@@ -409,6 +409,12 @@
     },
     "tasks": {
       "selectStrokes": "Click to select task strokes"
+    },
+    "eraser": {
+      "strokeEraser": "Stroke Eraser",
+      "partEraser": "Part Eraser",
+      "highlighterOnly": "Only Erase Highlighters",
+      "size": "Size"
     }
   },
   "licenses": {

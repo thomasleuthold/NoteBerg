@@ -6,14 +6,75 @@
 const THEMES = ["light", "dark"];
 const DEFAULT_THEME = "light";
 const THEME_STORAGE_KEY = "theme";
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 let currentTheme = DEFAULT_THEME;
 
 /**
- * Initialize theme system
- * Detects system preference and loads saved theme
+ * Initialize theme system.
+ * In Nextcloud: follows Nextcloud's own dark/light class on <body>.
+ * In Tauri: detects system preference and loads saved theme.
  */
+/**
+ * Detect whether Nextcloud is currently in dark mode.
+ * Tries multiple signals across NC versions:
+ *  1. .theme--dark class on <body>           (NC ≤ 25)
+ *  2. prefers-color-scheme media query       (NC 25+ follows system by default)
+ *  3. Luminance of --background-color CSS var (works regardless of class names)
+ */
+function _detectNextcloudDark() {
+  // 1. Server-side authoritative value injected by PHP into #app data-nc-theme
+  const appEl = document.getElementById("app");
+  if (appEl) {
+    const ncTheme = appEl.getAttribute("data-nc-theme");
+    if (ncTheme === "dark") return true;
+    if (ncTheme === "light") return false;
+  }
+
+  // 2. Explicit class set by NC accessibility app JS after page load
+  if (document.body.classList.contains("theme--dark")) return true;
+  if (document.body.classList.contains("theme--light")) return false;
+
+  // 3. No reliable signal — default to light
+  return false;
+}
+
 export async function initTheme() {
+  if (IS_NEXTCLOUD) {
+    currentTheme = _detectNextcloudDark() ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", currentTheme);
+
+    // Follow Nextcloud theme changes: watch body and html for class/attribute changes
+    const _onNcThemeChange = () => {
+      const next = _detectNextcloudDark() ? "dark" : "light";
+      if (next !== currentTheme) {
+        currentTheme = next;
+        document.documentElement.setAttribute("data-theme", currentTheme);
+        window.dispatchEvent(new CustomEvent("themechange", { detail: { theme: currentTheme } }));
+      }
+    };
+    new MutationObserver(_onNcThemeChange).observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
+    new MutationObserver(_onNcThemeChange).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style", "data-theme-dark"],
+    });
+
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      const next = _detectNextcloudDark() ? "dark" : "light";
+      if (next !== currentTheme) {
+        currentTheme = next;
+        document.documentElement.setAttribute("data-theme", currentTheme);
+        window.dispatchEvent(new CustomEvent("themechange", { detail: { theme: currentTheme } }));
+      }
+    });
+
+    console.log(`Theme initialized (Nextcloud): ${currentTheme}`);
+    return;
+  }
+
   // Try to load saved theme from localStorage
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
 

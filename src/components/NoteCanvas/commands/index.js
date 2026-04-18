@@ -5,6 +5,7 @@
 export { CropImageCommand } from "./CropImageCommand.js";
 export { DeleteMediaCommand } from "./DeleteMediaCommand.js";
 export { DrawStrokeCommand } from "./DrawStrokeCommand.js";
+export { EraseStrokePartsCommand } from "./EraseStrokePartsCommand.js";
 export { EraseStrokesCommand } from "./EraseStrokesCommand.js";
 export { InsertMediaCommand } from "./InsertMediaCommand.js";
 export { MarkTaskCommand } from "./MarkTaskCommand.js";

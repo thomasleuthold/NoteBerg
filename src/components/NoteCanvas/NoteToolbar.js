@@ -14,8 +14,8 @@ import { getMarkerPalette, getThemePalette } from "../../utils/noteRenderer.js";
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getPenIconWithColor(tipColor, size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+function getPenIconWithColor(tipColor, _size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
     <path d="m15 5 4 4"/>
     <line x1="3" y1="24" x2="21" y2="24" stroke="${tipColor}" stroke-width="2" stroke-linecap="round"/>
@@ -28,8 +28,8 @@ function getPenIconWithColor(tipColor, size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getMarkerIconWithColor(tipColor, size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+function getMarkerIconWithColor(tipColor, _size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m9 11-6 6v3h9l3-3"/>
     <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
     <line x1="5" y1="22" x2="22" y2="22" stroke="${tipColor}" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
@@ -41,8 +41,8 @@ function getMarkerIconWithColor(tipColor, size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getMoreIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+function getMoreIcon(_size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="1"/>
     <circle cx="12" cy="5" r="1"/>
     <circle cx="12" cy="19" r="1"/>
@@ -54,8 +54,8 @@ function getMoreIcon(size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getLassoIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22a5 5 0 0 1-2-4"/><path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1"/><path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
+function getLassoIcon(_size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 22a5 5 0 0 1-2-4"/><path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1"/><path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
 }
 
 /**
@@ -63,8 +63,8 @@ function getLassoIcon(size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getUndoIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>`;
+function getUndoIcon(_size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>`;
 }
 
 /**
@@ -72,8 +72,8 @@ function getUndoIcon(size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getRedoIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>`;
+function getRedoIcon(_size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>`;
 }
 
 /**
@@ -81,8 +81,49 @@ function getRedoIcon(size = 24) {
  * @param {number} size - Icon size
  * @returns {string} SVG markup
  */
-function getTextIcon(size = 24) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`;
+function getTextIcon(_size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`;
+}
+
+/**
+ * Generate part eraser icon SVG (eraser shape with a stroke passing through it, gap inside)
+ * @param {number} size
+ * @returns {string}
+ */
+function getPartEraserIcon(_size = 24) {
+  // Eraser shape (same as stroke eraser) overlapping a diagonal stroke.
+  // The stroke is visible on both sides of the eraser but absent underneath it,
+  // conveying that only the part under the eraser is removed.
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.9-9.9c1-1 2.5-1 3.4 0l4.4 4.4c1 1 1 2.5 0 3.4L10.5 21z"/>
+    <path d="m22 21-8 0"/>
+    <path d="m1 21 4 0"/>
+    <path d="m18 11-4-4"/>
+  </svg>`;
+}
+
+/**
+ * Generate eraser size icon SVG
+ * @param {number} size
+ * @returns {string}
+ */
+function getEraserSizeIcon(_size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="7"/>
+    <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
+  </svg>`;
+}
+
+/**
+ * Generate highlighter-only icon SVG (marker with filter lines)
+ * @param {number} size
+ * @returns {string}
+ */
+function getHighlighterOnlyIcon(_size = 24) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m9 11-6 6v3h9l3-3"/>
+    <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>
+  </svg>`;
 }
 
 export class NoteToolbar {
@@ -95,6 +136,7 @@ export class NoteToolbar {
    * @param {Function} options.onAction - Callback (action) => void
    * @param {Function} options.onUndo - Callback for undo action
    * @param {Function} options.onRedo - Callback for redo action
+   * @param {Function} options.onEraserSettingsChange - Callback ({ eraserMode, eraserSize, eraserHighlighterOnly }) => void
    */
   constructor(container, onModeChange, options = {}) {
     this.container = container;
@@ -104,10 +146,14 @@ export class NoteToolbar {
     this.onAction = options.onAction || (() => {});
     this.onUndo = options.onUndo || (() => {});
     this.onRedo = options.onRedo || (() => {});
+    this.onEraserSettingsChange = options.onEraserSettingsChange || (() => {});
     this.element = null;
     this.panBtn = null;
     this.drawBtn = null;
     this.eraserBtn = null;
+    this.eraserBtnContainer = null;
+    this.eraserDialog = null;
+    this.eraserSizeDialog = null;
     this.lassoBtn = null;
     this.undoBtn = null;
     this.redoBtn = null;
@@ -118,6 +164,11 @@ export class NoteToolbar {
     this.optionsDialog = null;
     this.optionsBtnContainer = null;
     this.currentMode = "pan";
+
+    // Eraser settings state
+    this.eraserMode = "stroke"; // 'stroke' | 'part'
+    this.eraserSize = 20;
+    this.eraserHighlighterOnly = false;
 
     // Presets state
     this.penPresets = options.penPresets;
@@ -180,8 +231,15 @@ export class NoteToolbar {
     // Create pen settings dialog
     this._createPenSettingsDialog();
 
+    // Eraser button container (for positioning dialog)
+    this.eraserBtnContainer = document.createElement("div");
+    this.eraserBtnContainer.className = "note-canvas-toolbar__button-container";
+
     this.eraserBtn = createBtn("eraser", eraserIcon, t("toolbar.modes.eraser"));
-    this.eraserBtn.onclick = () => this.onModeChange("eraser");
+    this.eraserBtn.onclick = (e) => this._handleEraserClick(e);
+
+    this.eraserBtnContainer.appendChild(this.eraserBtn);
+    this._createEraserDialog();
 
     this.lassoBtn = createBtn("lasso", lassoIcon, t("toolbar.modes.lasso"));
     this.lassoBtn.onclick = () => this.onModeChange("lasso");
@@ -203,7 +261,7 @@ export class NoteToolbar {
 
     this.insertBtn = createBtn(
       "insert",
-      `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
       t("toolbar.actions.insert"),
     );
     this.insertBtn.onclick = (e) => this._handleInsertClick(e);
@@ -219,12 +277,196 @@ export class NoteToolbar {
     this.element.appendChild(this.panBtn);
     this.element.appendChild(this.textBtn);
     this.element.appendChild(this.drawBtnContainer);
-    this.element.appendChild(this.eraserBtn);
+    this.element.appendChild(this.eraserBtnContainer);
     this.element.appendChild(this.lassoBtn);
     this.element.appendChild(this.undoBtn);
     this.element.appendChild(this.redoBtn);
     this.element.appendChild(this.optionsBtnContainer);
     this.container.appendChild(this.element);
+  }
+
+  /**
+   * Handle eraser button click — switch to eraser mode (dialog opens automatically)
+   * @private
+   */
+  _handleEraserClick(e) {
+    e.stopPropagation();
+    if (this.currentMode !== "eraser") {
+      this.onModeChange("eraser");
+    }
+  }
+
+  /**
+   * Create the eraser settings dialog (narrow column, like pen presets)
+   * @private
+   */
+  _createEraserDialog() {
+    this.eraserDialog = document.createElement("div");
+    this.eraserDialog.className = "note-canvas-toolbar__eraser-dialog";
+    this.eraserDialog.addEventListener("click", (e) => e.stopPropagation());
+    this._renderEraserDialogContent();
+    this.element.appendChild(this.eraserDialog);
+    this._createEraserSizeDialog();
+  }
+
+  /**
+   * Render the eraser dialog column content
+   * @private
+   */
+  _renderEraserDialogContent() {
+    this.eraserDialog.innerHTML = "";
+
+    const col = document.createElement("div");
+    col.className = "note-canvas-toolbar__eraser-dialog-col";
+
+    const createEraserBtn = (icon, title, isActive, onClick) => {
+      const btn = document.createElement("button");
+      btn.className = "note-canvas-toolbar__eraser-mode-btn";
+      btn.title = title;
+      btn.innerHTML = icon;
+      if (isActive) btn.classList.add("note-canvas-toolbar__eraser-mode-btn--active");
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onClick();
+      });
+      return btn;
+    };
+
+    const sep = () => {
+      const el = document.createElement("div");
+      el.className = "note-canvas-toolbar__eraser-dialog-separator";
+      return el;
+    };
+
+    // Stroke eraser button
+    col.appendChild(
+      createEraserBtn(
+        getIcon("eraser", 20),
+        t("toolbar.eraser.strokeEraser"),
+        this.eraserMode === "stroke",
+        () => {
+          this.eraserMode = "stroke";
+          this._renderEraserDialogContent();
+          this.onEraserSettingsChange({ eraserMode: "stroke" });
+        },
+      ),
+    );
+
+    // Part eraser button
+    col.appendChild(
+      createEraserBtn(
+        getPartEraserIcon(20),
+        t("toolbar.eraser.partEraser"),
+        this.eraserMode === "part",
+        () => {
+          this.eraserMode = "part";
+          this._renderEraserDialogContent();
+          this.onEraserSettingsChange({ eraserMode: "part" });
+        },
+      ),
+    );
+
+    col.appendChild(sep());
+
+    // Highlighter-only toggle
+    const hlBtn = createEraserBtn(
+      getHighlighterOnlyIcon(20),
+      t("toolbar.eraser.highlighterOnly"),
+      this.eraserHighlighterOnly,
+      () => {
+        this.eraserHighlighterOnly = !this.eraserHighlighterOnly;
+        hlBtn.classList.toggle(
+          "note-canvas-toolbar__eraser-mode-btn--active",
+          this.eraserHighlighterOnly,
+        );
+        this.onEraserSettingsChange({ eraserHighlighterOnly: this.eraserHighlighterOnly });
+      },
+    );
+    col.appendChild(hlBtn);
+
+    col.appendChild(sep());
+
+    // Size button (opens size flyout)
+    col.appendChild(
+      createEraserBtn(getEraserSizeIcon(20), t("toolbar.eraser.size"), false, () =>
+        this._toggleEraserSizeDialog(),
+      ),
+    );
+
+    this.eraserDialog.appendChild(col);
+  }
+
+  /**
+   * Create the eraser size flyout dialog
+   * @private
+   */
+  _createEraserSizeDialog() {
+    this.eraserSizeDialog = document.createElement("div");
+    this.eraserSizeDialog.className = "note-canvas-toolbar__eraser-size-dialog";
+    this.eraserSizeDialog.addEventListener("click", (e) => e.stopPropagation());
+
+    const label = document.createElement("label");
+    label.className = "note-canvas-toolbar__eraser-size-label";
+    label.textContent = t("toolbar.eraser.size");
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "note-canvas-toolbar__eraser-size-slider";
+    slider.min = 10;
+    slider.max = 100;
+    slider.step = 5;
+    slider.value = this.eraserSize;
+    slider.addEventListener("input", (e) => {
+      e.stopPropagation();
+      this.eraserSize = parseInt(e.target.value, 10);
+      this.onEraserSettingsChange({ eraserSize: this.eraserSize });
+    });
+
+    this.eraserSizeDialog.appendChild(label);
+    this.eraserSizeDialog.appendChild(slider);
+    this.element.appendChild(this.eraserSizeDialog);
+  }
+
+  _openEraserDialog() {
+    if (getTheme() === "dark") {
+      this.eraserDialog.classList.add("theme-dark");
+    } else {
+      this.eraserDialog.classList.remove("theme-dark");
+    }
+    this.eraserDialog.classList.add("note-canvas-toolbar__eraser-dialog--open");
+  }
+
+  _closeEraserDialog() {
+    this.eraserDialog?.classList.remove("note-canvas-toolbar__eraser-dialog--open");
+    this._closeEraserSizeDialog();
+  }
+
+  _openEraserSizeDialog() {
+    this.eraserSizeDialog?.classList.add("note-canvas-toolbar__eraser-size-dialog--open");
+  }
+
+  _closeEraserSizeDialog() {
+    this.eraserSizeDialog?.classList.remove("note-canvas-toolbar__eraser-size-dialog--open");
+  }
+
+  _toggleEraserSizeDialog() {
+    if (
+      this.eraserSizeDialog?.classList.contains("note-canvas-toolbar__eraser-size-dialog--open")
+    ) {
+      this._closeEraserSizeDialog();
+    } else {
+      this._openEraserSizeDialog();
+    }
+  }
+
+  /**
+   * Update the main eraser toolbar button icon to reflect current erase mode
+   * @param {'stroke'|'part'} eraserMode
+   */
+  updateEraserIcon(eraserMode) {
+    if (!this.eraserBtn) return;
+    this.eraserBtn.innerHTML =
+      eraserMode === "part" ? getPartEraserIcon(24) : getIcon("eraser", 24);
   }
 
   /**
@@ -266,8 +508,8 @@ export class NoteToolbar {
     const expandBtn = document.createElement("button");
     expandBtn.className = "note-canvas-toolbar__expand-btn";
     expandBtn.innerHTML = this.isExpanded
-      ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>` // Left arrow (collapse)
-      : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>`; // Right arrow (expand)
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>` // Left arrow (collapse)
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>`; // Right arrow (expand)
     expandBtn.title = this.isExpanded
       ? t("toolbar.penDialog.collapse")
       : t("toolbar.penDialog.expand");
@@ -330,7 +572,7 @@ export class NoteToolbar {
       const saveBtn = document.createElement("button");
       saveBtn.className = "note-canvas-toolbar__save-preset-btn";
       saveBtn.title = t("toolbar.penDialog.savePreset");
-      saveBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>`;
+      saveBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>`;
 
       saveBtn.onclick = (e) => {
         e.stopPropagation();
@@ -513,7 +755,7 @@ export class NoteToolbar {
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
         <button class="note-canvas-toolbar__option-btn" data-action="insert-space">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="note-canvas-toolbar__option-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="note-canvas-toolbar__option-icon">
             <path d="M12 8v8m-4-4 4 4 4-4"/>
             <path d="M4 4h16"/>
             <path d="M4 20h16"/>
@@ -990,9 +1232,15 @@ export class NoteToolbar {
     setActive(this.eraserBtn, mode === "eraser");
     setActive(this.lassoBtn, mode === "lasso");
 
-    // Close pen dialog when switching away from draw mode
+    // Open/close pen dialog based on draw mode
     if (mode !== "draw") {
       this._closePenDialog();
+    }
+    // Open/close eraser dialog based on eraser mode
+    if (mode === "eraser") {
+      this._openEraserDialog();
+    } else {
+      this._closeEraserDialog();
     }
   }
 
@@ -1032,6 +1280,9 @@ export class NoteToolbar {
     this.drawBtn = null;
     this.drawBtnContainer = null;
     this.eraserBtn = null;
+    this.eraserBtnContainer = null;
+    this.eraserDialog = null;
+    this.eraserSizeDialog = null;
     this.lassoBtn = null;
     this.undoBtn = null;
     this.redoBtn = null;
