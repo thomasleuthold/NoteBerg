@@ -9,7 +9,17 @@
       "Bash(git -C /c/work/code/oneJournal show --name-only bf62d76)",
       "WebFetch(domain:nextcloudappstore.readthedocs.io)",
       "WebSearch",
-      "WebFetch(domain:docs.nextcloud.com)"
+      "WebFetch(domain:docs.nextcloud.com)",
+      "Bash(podman machine *)",
+      "Bash(wsl --list --verbose)",
+      "Bash(podman container *)",
+      "Bash(podman logs *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/)",
+      "Bash(just nc-up *)",
+      "Bash(wsl -d podman-machine-default -- ip addr show eth0)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://172.20.225.104:8080/)",
+      "Bash(wsl -d podman-machine-default -- bash -c \"curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/\")",
+      "Bash(wsl -d podman-machine-default -- bash -c \"ss -tlnp | grep 8080\")"
     ],
     "additionalDirectories": [
       "C:\\work\\code\\oneJournal\\img"
