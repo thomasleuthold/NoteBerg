@@ -105,10 +105,11 @@ package-backend:
 # Requires: noteberg.key + noteberg.crt in repo root (from NC certificate process)
 # Output: builds/noteberg-<version>.tar.gz + builds/noteberg-<version>.tar.gz.sig
 build-nc:
-    # 1. Build JS/CSS for Nextcloud
+    # 1. Build JS/CSS for Nextcloud (NC version read from appinfo/info.xml, may differ from package.json)
     npm run build:nextcloud
 
     # 2. Assemble app into a clean temp directory
+    $ncver = (Select-Xml -Path appinfo/info.xml -XPath "//version").Node.InnerText
     if (Test-Path "build-nc-tmp") { Remove-Item -Recurse -Force "build-nc-tmp" }
     New-Item -ItemType Directory -Force -Path "build-nc-tmp\noteberg" | Out-Null
     Copy-Item -Recurse "appinfo"   "build-nc-tmp\noteberg\"
@@ -123,32 +124,24 @@ build-nc:
     Write-Host "Code-signing app via occ in Nextcloud container..."
     podman exec noteberg-nc bash -c "php /var/www/html/occ integrity:sign-app --privateKey=/var/www/html/apps-extra/noteberg/noteberg.key --certificate=/var/www/html/apps-extra/noteberg/noteberg.crt --path=/var/www/html/apps-extra/noteberg/build-nc-tmp/noteberg"
 
-    # 4. Package into tar.gz
-    New-Item -ItemType Directory -Force -Path "builds" | Out-Null
-    $tarball = "builds\noteberg-{{version}}.tar.gz"
-    tar -czf $tarball -C "build-nc-tmp" "noteberg"
-    Write-Host "Created $tarball"
-
-    # 5. Sign the archive (for store upload)
-    $sig = (openssl dgst -sha512 -sign noteberg.key $tarball | openssl base64) -join ""
-    $sig | Out-File -NoNewline -Encoding ascii "builds\noteberg-{{version}}.tar.gz.sig"
-    Write-Host "Archive signature written to builds\noteberg-{{version}}.tar.gz.sig"
+    # 4+5. Package tar.gz and sign (version read from info.xml inside script)
+    powershell -File scripts/package-nc-release.ps1
 
     # 6. Cleanup temp dir
     Remove-Item -Recurse -Force "build-nc-tmp"
-    Write-Host "Done! Upload $tarball to the NC App Store."
-    Write-Host "Archive signature (for store):"
-    Get-Content "builds\noteberg-{{version}}.tar.gz.sig"
 
 # Nextcloud dev environment (requires Podman)
 # Run 'npm run dev:nextcloud' separately for watch mode rebuilds
 nc-up:
     podman run --rm --name noteberg-nc -d -p 8080:80 -v "${PWD}:/var/www/html/apps-extra/noteberg" ghcr.io/juliusknorr/nextcloud-dev-php84:latest
-    Write-Host "NoteBerg Nextcloud running at http://localhost:8080"
+    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1
+    netsh interface portproxy add v4tov4 listenport=8080 listenaddress=127.0.0.1 connectport=8080 connectaddress=$wslIp 2>&1 | Out-Null
+    Write-Host "NoteBerg Nextcloud running at http://localhost:8080 (WSL IP: $wslIp)"
     Write-Host "Run 'npm run dev:nextcloud' in a separate terminal for watch mode"
 
 nc-down:
     podman stop noteberg-nc
+    netsh interface portproxy delete v4tov4 listenport=8080 listenaddress=127.0.0.1 2>&1 | Out-Null
 
 # Push to GitHub (default: main branch)
 push-gh branch="main":
