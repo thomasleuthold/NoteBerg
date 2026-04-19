@@ -2,8 +2,8 @@
  * ImageCropper - Handles image cropping and perspective correction
  */
 
-import { t } from "../../i18n/index.js";
 import PerspT from "perspective-transform";
+import { t } from "../../i18n/index.js";
 
 export class ImageCropper {
   constructor() {

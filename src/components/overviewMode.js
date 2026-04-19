@@ -728,17 +728,15 @@ function renderPreviewNoteCard(note) {
 
   return `
     <div class="note-card preview-card" data-note-id="${note.id}">
+      <button class="card-options-btn btn-icon" data-note-id="${note.id}" title="${t("overview.noteOptions.title")}">
+        ${getIcon("moreVertical", 16)}
+      </button>
       <div class="note-card-header">
         <div class="note-card-title">${escapeHtml(note.title || t("common.untitled"))}</div>
         <div class="note-card-date">${formatDate(note.modified)}</div>
       </div>
       <div class="note-card-preview">
         ${previewContent}
-      </div>
-      <div class="note-card-actions">
-         <button class="card-options-btn btn-icon" data-note-id="${note.id}" title="${t("overview.noteOptions.title")}">
-            ${getIcon("moreVertical", 16)}
-         </button>
       </div>
     </div>
   `;

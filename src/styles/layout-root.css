@@ -1,0 +1,11 @@
+/* Root layout — Tauri/Android only. NC owns html/body and manages their height itself. */
+html {
+  height: 100dvh;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  height: 100dvh;
+  overflow: hidden;
+}

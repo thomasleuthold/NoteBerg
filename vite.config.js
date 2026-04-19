@@ -2,23 +2,37 @@ import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// perspective-transform is UMD: top-level IIFEs use `this` as root/global.
-// In ES module strict mode `this` is undefined — patch `)(this)` → `)(globalThis)` at transform time.
-function patchUmdThisPlugin() {
+// For NC build: evaluate perspective-transform in Node at build time, emit a clean ES module.
+// NC's CSP has no unsafe-eval — we cannot use new Function() at browser runtime.
+// This plugin intercepts our shim file and replaces it with a statically-inlined version.
+function patchPerspectiveTransformPlugin() {
+  const distPath = resolve(process.cwd(), 'node_modules/perspective-transform/dist/perspective-transform.js');
+  const distSrc = readFileSync(distPath, 'utf-8');
+  // Patch the UMD source: replace `this` references in IIFE calls and remove this.numeric
+  const patchedSrc = distSrc
+    .replace(/\}?\(this([,)])/g, (_, sep) => `}(globalThis${sep}`)
+    .replace('this.numeric = numeric;', '');
+  // Wrap in explicit CJS-like scope so globalThis.numeric flows correctly
+  const shimCode = `
+const _root = {};
+const _mod = { exports: {} };
+(function(root, module, exports) {
+${patchedSrc}
+})(_root, _mod, _mod.exports);
+export default _mod.exports;
+`;
   return {
-    name: 'patch-umd-this',
-    transform(code, id) {
-      if (id.includes('perspective-transform')) {
-        return {
-          code: code
-            .replaceAll(')(this)', ')(globalThis)')
-            .replace('this.numeric = numeric;', '// this.numeric patched out (strict mode)'),
-          map: null,
-        };
+    name: 'patch-perspective-transform-nc',
+    enforce: 'pre',
+    transform(_code, id) {
+if (id.includes('perspective-transform-nc-inline')) {
+        return { code: shimCode, map: null };
       }
     },
   };
 }
+
+
 
 function getAppVersion() {
   try {
@@ -47,16 +61,27 @@ const ncBase = process.env.VITE_NC_BASE || '/apps-extra/noteberg/';
 const base = platform === 'nextcloud' ? ncBase : '/';
 
 export default defineConfig({
-  plugins: [patchUmdThisPlugin()],
+  plugins: platform === 'nextcloud' ? [patchPerspectiveTransformPlugin()] : [],
   base,
   resolve: {
-    alias: platform === 'nextcloud' ? [
-      // Redirect all storage.js imports to the WebDAV backend for NC build
+    alias: [
+      // ES module shim for UMD perspective-transform (uses `this` as global, undefined in strict mode).
+      // NC build: static inline shim (no new Function — blocked by NC CSP).
+      // Tauri/dev: ?raw + new Function shim (unsafe-eval is allowed in Tauri CSP).
       {
-        find: /.*\/storage\.js$/,
-        replacement: resolve(process.cwd(), 'src/modules/storage.webdav.js'),
+        find: 'perspective-transform',
+        replacement: resolve(process.cwd(), platform === 'nextcloud'
+          ? 'src/shims/perspective-transform-nc-inline.js'
+          : 'src/shims/perspective-transform.js'),
       },
-    ] : [],
+      ...(platform === 'nextcloud' ? [
+        // Redirect all storage.js imports to the WebDAV backend for NC build
+        {
+          find: /.*\/storage\.js$/,
+          replacement: resolve(process.cwd(), 'src/modules/storage.webdav.js'),
+        },
+      ] : []),
+    ],
   },
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(getAppVersion()),

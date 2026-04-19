@@ -4,8 +4,9 @@
 
 // Import styles
 import "./styles/main.css";
-// Inter font only for Tauri builds — NC uses its own font stack and rejects bundled variable fonts
+// Tauri/Android only: set html/body height and overflow — NC manages these itself
 if (import.meta.env.VITE_PLATFORM !== "nextcloud") {
+  await import("./styles/layout-root.css");
   await import("./styles/fonts.css");
 }
 import "./styles/themes/light.css";

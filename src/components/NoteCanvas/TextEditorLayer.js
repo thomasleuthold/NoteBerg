@@ -214,7 +214,7 @@ export class TextEditorLayer {
     this.$editor = jQuery(this.editorDiv);
 
     // Configure SVG icons path
-    jQuery.trumbowyg.svgPath = `${import.meta.env.BASE_URL}trumbowyg-icons.svg`;
+    jQuery.trumbowyg.svgPath = `${import.meta.env.BASE_URL}img/trumbowyg-icons.svg`;
 
     this.$editor.trumbowyg({
       btns: [
@@ -234,6 +234,18 @@ export class TextEditorLayer {
       semantic: false,
       tagsToRemove: ["script", "link"],
     });
+
+    // Trumbowyg inserts its SVG sprite as body.childNodes[0], breaking NC's flex body layout
+    // (#header must be first). Relocate it to after #header (or to body end as fallback).
+    const sprite = document.getElementById("trumbowyg-icons");
+    if (sprite) {
+      const header = document.getElementById("header");
+      if (header?.parentNode) {
+        header.parentNode.insertBefore(sprite, header.nextSibling);
+      } else {
+        document.body.appendChild(sprite);
+      }
+    }
 
     // Attach instance to Trumbowyg object for plugin access
     const trumbowyg = this.$editor.data("trumbowyg");

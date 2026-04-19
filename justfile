@@ -143,6 +143,37 @@ nc-down:
     podman stop noteberg-nc
     netsh interface portproxy delete v4tov4 listenport=8080 listenaddress=127.0.0.1 2>&1 | Out-Null
 
+# Spin up a clean NC instance and install NoteBerg from the App Store (alpha channel)
+# Tests the published package as a real user would — no volume mount, no cache tricks
+# Runs on port 8081 so it doesn't conflict with the dev container on 8080
+nc-test:
+    podman stop noteberg-nc-test 2>&1 | Out-Null; $true
+    podman run --rm --name noteberg-nc-test -d -p 8081:80 ghcr.io/juliusknorr/nextcloud-dev-php84:latest
+    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1
+    netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null
+    netsh interface portproxy add v4tov4 listenport=8081 listenaddress=127.0.0.1 connectport=8081 connectaddress=$wslIp 2>&1 | Out-Null
+    Write-Host "Waiting for Nextcloud to initialize..."
+    Start-Sleep -Seconds 15
+    podman exec noteberg-nc-test bash -c "php /var/www/html/occ config:system:set updater.release.channel --value=beta"
+    podman exec noteberg-nc-test bash -c "php /var/www/html/occ config:app:delete core lastupdatedat"
+    podman exec noteberg-nc-test bash -c "php /var/www/html/occ app:install --allow-unstable noteberg"
+    Write-Host "NoteBerg installed from App Store. Open http://localhost:8081 (admin/admin) to test."
+    Write-Host "Run 'just nc-test-down' when done."
+
+nc-test-down:
+    podman stop noteberg-nc-test
+    netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null
+
+# Rebuild and push local JS/CSS/templates into the running test container for rapid CSS iteration
+# Requires: just nc-test container running
+nc-test-push:
+    $env:VITE_NC_BASE = "/apps-writable/noteberg/"; npm run build:nextcloud
+    podman cp js/noteberg-main.js noteberg-nc-test:/var/www/html/apps-writable/noteberg/js/noteberg-main.js
+    podman cp css/noteberg-styles.css noteberg-nc-test:/var/www/html/apps-writable/noteberg/css/noteberg-styles.css
+    podman cp templates/index.php noteberg-nc-test:/var/www/html/apps-writable/noteberg/templates/index.php
+    podman cp img noteberg-nc-test:/var/www/html/apps-writable/noteberg/
+    Write-Host "Assets pushed — hard reload the browser (Ctrl+Shift+R)."
+
 # Push to GitHub (default: main branch)
 push-gh branch="main":
     git push github {{branch}}
