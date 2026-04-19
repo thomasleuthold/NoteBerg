@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.5.28] - unreleased
+## [0.5.28] - 2026-04-19
 
 ### Fixed
 - **Nextcloud**: App crash on load due to jQuery `$` conflicting with Nextcloud's getter-only `window.$`
