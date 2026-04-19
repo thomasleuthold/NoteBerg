@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.29-alpha.1] - 2026-04-19
+
+### Fixed
+- **All platforms**: Perspective transform broken — UMD library's `}(this, ...)` pattern fails in ES module strict mode; replaced with an explicit-scope wrapper shim that works in both Tauri (runtime) and Nextcloud (build-time, no `unsafe-eval`)
+- **Nextcloud**: Text toolbar icons missing — Trumbowyg SVG sprite was inserted as `body.firstChild`, breaking Nextcloud's flex header layout; sprite is now relocated after `#header` post-init
+- **Nextcloud**: Note options button displaced to bottom-right corner — button moved out of `.note-card-actions` container so it anchors to the card's top-right corner
+- **Nextcloud**: App footer (version number) hidden — not needed in Nextcloud context
+
 ## [0.5.28-alpha.4] - 2026-04-19
 
 ### Fixed
