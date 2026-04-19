@@ -2,23 +2,7 @@ import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// perspective-transform is UMD: top-level IIFEs use `this` as root/global.
-// In ES module strict mode `this` is undefined — patch `)(this)` → `)(globalThis)` at transform time.
-function patchUmdThisPlugin() {
-  return {
-    name: 'patch-umd-this',
-    transform(code, id) {
-      if (id.includes('perspective-transform')) {
-        return {
-          code: code
-            .replaceAll(')(this)', ')(globalThis)')
-            .replace('this.numeric = numeric;', '// this.numeric patched out (strict mode)'),
-          map: null,
-        };
-      }
-    },
-  };
-}
+
 
 function getAppVersion() {
   try {
@@ -47,16 +31,23 @@ const ncBase = process.env.VITE_NC_BASE || '/apps-extra/noteberg/';
 const base = platform === 'nextcloud' ? ncBase : '/';
 
 export default defineConfig({
-  plugins: [patchUmdThisPlugin()],
+  plugins: [],
   base,
   resolve: {
-    alias: platform === 'nextcloud' ? [
-      // Redirect all storage.js imports to the WebDAV backend for NC build
+    alias: [
+      // ES module shim for UMD perspective-transform (uses `this` as global, undefined in strict mode)
       {
-        find: /.*\/storage\.js$/,
-        replacement: resolve(process.cwd(), 'src/modules/storage.webdav.js'),
+        find: 'perspective-transform',
+        replacement: resolve(process.cwd(), 'src/shims/perspective-transform.js'),
       },
-    ] : [],
+      ...(platform === 'nextcloud' ? [
+        // Redirect all storage.js imports to the WebDAV backend for NC build
+        {
+          find: /.*\/storage\.js$/,
+          replacement: resolve(process.cwd(), 'src/modules/storage.webdav.js'),
+        },
+      ] : []),
+    ],
   },
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(getAppVersion()),

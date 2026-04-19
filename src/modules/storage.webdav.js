@@ -553,14 +553,18 @@ export function updateNote(id, updates) {
     };
     await _putNote(updated);
     console.log("Note updated:", id);
-    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }));
+    window.dispatchEvent(
+      new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }),
+    );
     return updated;
   });
 }
 
 export async function saveNote(note) {
   await _putNote(note);
-  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: note.id, source: "local" } }));
+  window.dispatchEvent(
+    new CustomEvent("datachange", { detail: { noteId: note.id, source: "local" } }),
+  );
 }
 
 export async function deleteNote(id) {

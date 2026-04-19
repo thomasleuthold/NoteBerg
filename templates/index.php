@@ -19,24 +19,31 @@ try {
 $initialTheme = $isDark ? 'dark' : 'light';
 ?>
 <style>
-  /* Make NoteBerg fill the Nextcloud content area */
+  /* NC sets #content { position:fixed; margin-top:var(--header-height);
+     height:var(--body-height) } — don't override any of these, just remove padding
+     and make our #app fill the space NC gives us */
   #content.app-noteberg {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    padding: 0;
-    overflow: hidden;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
   }
   #content.app-noteberg #app {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
   /* Prevent our CSS from fighting Nextcloud's body/html layout */
-  body, html {
-    height: 100% !important;
-    overflow: hidden !important;
+
+  /* Hide NC's app navigation sidebar — NoteBerg has its own navigation */
+  #app-navigation-vue, #app-navigation {
+    display: none !important;
+  }
+  /* Expand app-content to fill the full width without the navigation sidebar */
+  #app-content {
+    margin-left: 0 !important;
+    padding-left: 0 !important;
   }
 
   /* ── Override Nextcloud CSS conflicts ────────────────────────────────────── */
@@ -117,6 +124,27 @@ $initialTheme = $isDark ? 'dark' : 'light';
   }
   #app div[contenteditable]:not(.trumbowyg-editor) {
     padding: 0 !important;
+  }
+
+  /* NC inputs.css sets width:130px and padding:12px on div[contenteditable] —
+     already handled above. */
+
+  /* NC guest.scss sets display:block + line-height:21px on all buttons,
+     breaking the vertical Trumbowyg toolbar layout */
+  #app .note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    line-height: 1 !important;
+    height: auto !important;
+    width: 100% !important;
+  }
+
+  /* NC guest.scss zeroes margin/padding on all elements including button-groups,
+     breaking spacing in the vertical toolbar */
+  #app .note-canvas__trumbowyg-toolbar .trumbowyg-button-group {
+    display: flex !important;
+    flex-direction: column !important;
   }
 </style>
 <div id="app" data-nc-theme="<?php p($initialTheme); ?>">

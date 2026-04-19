@@ -1,6 +1,9 @@
 import { fireEvent } from "@testing-library/dom";
+import * as PerspTModule from "perspective-transform";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImageCropper } from "./ImageCropper.js";
+
+vi.mock("perspective-transform");
 
 describe("ImageCropper", () => {
   let cropper;
@@ -109,8 +112,8 @@ describe("ImageCropper", () => {
   });
 
   it("applies perspective crop", async () => {
-    // Mock PerspT library globally
-    window.PerspT = vi.fn().mockReturnValue({
+    // Mock PerspT module (imported directly, not via window)
+    PerspTModule.default.mockReturnValue({
       transformInverse: vi.fn().mockReturnValue([0, 0]),
     });
 
@@ -144,10 +147,7 @@ describe("ImageCropper", () => {
 
     const result = await promise;
     expect(result).toBeInstanceOf(Blob);
-    expect(window.PerspT).toHaveBeenCalled();
-
-    // Cleanup
-    delete window.PerspT;
+    expect(PerspTModule.default).toHaveBeenCalled();
   });
 
   it("handles crop area dragging", () => {

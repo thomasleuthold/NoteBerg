@@ -1,4 +1,3 @@
-
 /* CSS Variables for theming */
 :root {
   /* Colors */
@@ -78,16 +77,14 @@
   box-sizing: border-box;
 }
 
-/* Global SVG default size — ensures icons without width/height attributes are visible.
-   Toolbar and other contexts override this with their own rules. */
-svg {
+/* SVG default size scoped to our app — avoids overriding NC's header/logo SVGs */
+#app svg {
   width: 24px;
   height: 24px;
   flex-shrink: 0;
 }
 
 html {
-  height: 100dvh;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
@@ -99,8 +96,6 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  height: 100dvh;
-  overflow: hidden;
 }
 
 /* App container */
