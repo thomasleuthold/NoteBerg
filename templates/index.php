@@ -70,7 +70,7 @@ $initialTheme = $isDark ? 'dark' : 'light';
     position: relative !important;
   }
 
-  /* NC adds padding/min-height/min-width to all buttons */
+/* NC adds padding/min-height/min-width to all buttons */
   #app button {
     padding: 0 !important;
     min-height: 0 !important;
@@ -113,6 +113,11 @@ $initialTheme = $isDark ? 'dark' : 'light';
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  /* Footer only shows app version — not needed in NC (NC has its own footer) */
+  #app .footer {
+    display: none !important;
   }
 
   /* NC inputs.css sets width:130px and padding:12px on div[contenteditable] —

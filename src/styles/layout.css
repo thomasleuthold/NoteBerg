@@ -634,16 +634,7 @@
   background: var(--bg-primary);
 }
 
-.preview-card .note-card-actions {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  padding: 8px;
-  z-index: 20;
-}
-
-.preview-card .card-delete-btn,
-.preview-card .card-options-btn {
+.preview-card .card-delete-btn {
   position: static;
   padding: 4px;
   opacity: 1;
