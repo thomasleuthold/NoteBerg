@@ -7,9 +7,13 @@
  */
 import jQuery from "jquery/slim";
 
-window.jQuery = jQuery;
-// NC defines window.$ as a getter-only property — use try/catch so the assignment
-// survives tree-shaking and gracefully skips if $ is not writable
+// NC may define window.jQuery and/or window.$ as getter-only properties.
+// Use try/catch so assignments survive esbuild tree-shaking and skip gracefully if not writable.
+try {
+  window.jQuery = jQuery;
+} catch (_) {
+  // getter-only — skip
+}
 try {
   window.$ = jQuery;
 } catch (_) {
