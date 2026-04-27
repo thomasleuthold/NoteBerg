@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.29-alpha.4] - 2026-04-20
+
+### Fixed
+- **Nextcloud**: App crash on load — `window.jQuery` is also a getter-only property in some NC versions; assignment now wrapped in try/catch like `window.$`
+- **Nextcloud**: Text editor toolbar missing on subdirectory NC installs — Trumbowyg registered on NC's jQuery instead of ours because `window.jQuery` assignment was silently failing; now uses `Object.defineProperty` to redefine as writable first
+- **Nextcloud**: WebDAV requests failing on subdirectory installs (e.g. `/nextcloud/`) — base URL now includes `OC.webroot` prefix
+
 ## [0.5.29-alpha.1] - 2026-04-19
 
 ### Fixed

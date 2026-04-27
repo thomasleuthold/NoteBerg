@@ -1142,11 +1142,19 @@ export class CanvasRenderer {
           this._schedulePdfQueueCheck();
         })
         .catch((err) => {
-          console.error(`[CanvasRenderer] Failed to render PDF page ${item.id}:`, err);
           item.loading = false;
-          item.error = true;
           this.activePdfLoads--;
-          // Debounced redraw will show error state and pick up queued pages
+          // "PDF file not found" means the file hasn't synced yet — retry after a delay
+          // rather than permanently marking as error.
+          if (err?.message?.includes("PDF file not found")) {
+            setTimeout(() => {
+              item.error = false;
+              this._schedulePdfQueueCheck();
+            }, 5000);
+          } else {
+            console.error(`[CanvasRenderer] Failed to render PDF page ${item.id}:`, err);
+            item.error = true;
+          }
           this._schedulePdfQueueCheck();
         });
     }

@@ -52,12 +52,16 @@ async function _writeTombstone(path, tombstone) {
 
 function getWebDAVBase() {
   const uid = window.OC?.currentUser || window.OC?.getCurrentUser?.()?.uid || "admin";
-  return `/remote.php/dav/files/${uid}`;
+  const webroot = window.OC?.webroot || "";
+  return `${webroot}/remote.php/dav/files/${uid}`;
 }
 
 async function davGet(path) {
   const res = await fetch(`${getWebDAVBase()}${path}`, {
-    headers: { "OCS-APIREQUEST": "true" },
+    headers: {
+      "OCS-APIREQUEST": "true",
+      requesttoken: window.OC?.requestToken || "",
+    },
     credentials: "same-origin",
   });
   if (res.status === 404) return null;
@@ -79,6 +83,8 @@ async function davPutWithRetry(path, options, retries = 3) {
       await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
       continue;
     }
+    const body = await res.text().catch(() => "");
+    console.error(`[WebDAV] PUT ${path} failed ${res.status}:`, body);
     throw new Error(`DAV PUT ${path} failed: ${res.status}`);
   }
 }
@@ -124,7 +130,10 @@ async function davDelete(path) {
 
 async function davGetBinary(path) {
   const res = await fetch(`${getWebDAVBase()}${path}`, {
-    headers: { "OCS-APIREQUEST": "true" },
+    headers: {
+      "OCS-APIREQUEST": "true",
+      requesttoken: window.OC?.requestToken || "",
+    },
     credentials: "same-origin",
   });
   if (res.status === 404) return null;
@@ -156,7 +165,10 @@ async function davMkcol(path) {
     credentials: "same-origin",
   });
   // 405 = already exists, that's fine
-  if (!res.ok && res.status !== 405) throw new Error(`DAV MKCOL ${path} failed: ${res.status}`);
+  if (!res.ok && res.status !== 405) {
+    console.error(`[WebDAV] MKCOL ${path} failed: ${res.status} — folder not created`);
+    throw new Error(`DAV MKCOL ${path} failed: ${res.status}`);
+  }
   _knownFolders.add(path);
 }
 
@@ -503,6 +515,16 @@ export async function getAllNotes() {
     .sort((a, b) => b.modified - a.modified);
 }
 
+async function _getAllNotesIncludingDeleted() {
+  const [quickNotes, ...notebookNotes] = await Promise.all([
+    _getNotesInFolder(`${ROOT_FOLDER}/quickNotes`, null),
+    ...(await getAllNotebooks()).map((nb) =>
+      _getNotesInFolder(getNotebookNotesFolder(nb.id), nb.id),
+    ),
+  ]);
+  return [...quickNotes, ...notebookNotes.flat()].sort((a, b) => b.modified - a.modified);
+}
+
 async function _getNotesInFolder(folder, notebookId) {
   const paths = await davList(folder);
   const noteFiles = paths.filter((p) => p.endsWith(".json") && !p.includes("_tombstones"));
@@ -607,7 +629,7 @@ export async function permanentlyDeleteNote(id) {
 }
 
 export async function getDeletedNotes() {
-  const all = await getAllNotes();
+  const all = await _getAllNotesIncludingDeleted();
   return all.filter((n) => n.deleted);
 }
 

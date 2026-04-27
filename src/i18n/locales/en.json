@@ -442,7 +442,11 @@
       "deleteConfirmMsg": "Are you sure you want to remove the PDF document? This will remove all pages.",
       "exportError": "PDF Export Failed",
       "exportProgressTitle": "Exporting PDF",
-      "exportProgressPage": "Exporting page {{current}} of {{total}} ..."
+      "exportProgressPage": "Exporting page {{current}} of {{total}} ...",
+      "importProgressTitle": "Importing PDF",
+      "importProgressUpload": "Saving PDF file ...",
+      "importProgressPage": "Reading page {{current}} of {{total}} ...",
+      "importProgressSaving": "Uploading file {{current}} of {{total}} ..."
     },
     "textSelection": {
       "cut": "Cut",

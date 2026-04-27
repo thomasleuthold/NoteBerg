@@ -1,10 +1,10 @@
 import * as pdfjsLib from "pdfjs-dist";
-// Import worker as a URL to be handled by Vite
-import pdfjsWorker from "pdfjs-dist/build/pdf.worker.mjs?url";
+// Use an inline Worker (blob URL) so no HTTP request is made for the worker script.
+// A URL-based workerSrc (?url) gets intercepted by SSO proxies (e.g. Yunohost).
+import PdfjsWorker from "pdfjs-dist/build/pdf.worker.mjs?worker";
 import { generateId, getFile, saveFile } from "./storage.js";
 
-// Configure the worker source
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+pdfjsLib.GlobalWorkerOptions.workerPort = new PdfjsWorker();
 
 /**
  * Imports a PDF file, saves it to storage, and extracts page metadata.
@@ -24,15 +24,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
  *   totalHeight: number
  * }>}
  */
-export async function importPdf(file) {
+export async function importPdf(file, onProgress) {
   // 1. Save the raw file to IndexedDB
   const fileId = await saveFile(file);
+  onProgress?.("upload", 1, 1);
 
   // 2. Load the PDF to get dimensions
-  // We need to read the file as ArrayBuffer for pdf.js
   const arrayBuffer = await file.arrayBuffer();
-
-  // Load the document
   const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
   const pdfDocument = await loadingTask.promise;
 
@@ -42,21 +40,21 @@ export async function importPdf(file) {
   // 3. Iterate through pages to build the vertical stack
   for (let i = 1; i <= pdfDocument.numPages; i++) {
     const page = await pdfDocument.getPage(i);
-    const viewport = page.getViewport({ scale: 1.0 }); // Get dimensions at 100% scale
+    const viewport = page.getViewport({ scale: 1.0 });
 
     pages.push({
       id: generateId(),
       type: "pdf-page",
-      fileId: fileId, // Use fileId for consistency with images
-      pageIndex: i, // pdf.js uses 1-based indexing
+      fileId: fileId,
+      pageIndex: i,
       width: viewport.width,
       height: viewport.height,
       x: 0,
       y: currentY,
     });
 
-    // Stack pages vertically with zero gap (visual separator will be drawn by renderer)
     currentY += viewport.height;
+    onProgress?.("pages", i, pdfDocument.numPages);
   }
 
   return {
@@ -90,6 +88,8 @@ async function getPdfDocument(fileId) {
   })();
 
   documentCache.set(fileId, loadingTaskPromise);
+  // Remove failed entries so callers can retry (e.g. after sync completes)
+  loadingTaskPromise.catch(() => documentCache.delete(fileId));
   return loadingTaskPromise;
 }
 

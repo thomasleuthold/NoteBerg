@@ -106,7 +106,7 @@ package-backend:
 # Output: builds/noteberg-<version>.tar.gz + builds/noteberg-<version>.tar.gz.sig
 build-nc:
     # 1. Build JS/CSS for Nextcloud (NC version read from appinfo/info.xml, may differ from package.json)
-    npm run build:nextcloud
+    $env:VITE_NC_BASE = "/apps/noteberg/"; npm run build:nextcloud
 
     # 2. Assemble app into a clean temp directory
     $ncver = (Select-Xml -Path appinfo/info.xml -XPath "//version").Node.InnerText
@@ -146,11 +146,13 @@ nc-down:
 # Spin up a clean NC instance and install NoteBerg from the App Store (alpha channel)
 # Tests the published package as a real user would — no volume mount, no cache tricks
 # Runs on port 8081 so it doesn't conflict with the dev container on 8080
-nc-test:
+# Test against a clean NC instance from the App Store.
+# php=84 (default, NC 34+) or php=81 (NC 33)
+nc-test php="84":
     podman stop noteberg-nc-test 2>&1 | Out-Null; $true
-    podman run --rm --name noteberg-nc-test -d -p 8081:80 ghcr.io/juliusknorr/nextcloud-dev-php84:latest
+    podman run --rm --name noteberg-nc-test -d -p 8081:80 ghcr.io/juliusknorr/nextcloud-dev-php{{php}}:latest
     $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1
-    netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null
+    netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
     netsh interface portproxy add v4tov4 listenport=8081 listenaddress=127.0.0.1 connectport=8081 connectaddress=$wslIp 2>&1 | Out-Null
     Write-Host "Waiting for Nextcloud to initialize..."
     Start-Sleep -Seconds 15
@@ -162,7 +164,40 @@ nc-test:
 
 nc-test-down:
     podman stop noteberg-nc-test
-    netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null
+    netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
+
+# Spin up a stock Nextcloud 33 (Apache) instance with NoteBerg volume-mounted for NC33 compatibility testing
+# Uses official nextcloud:33-apache image (self-contained, no occ pre-setup needed)
+# Runs on port 8082 — does NOT install from App Store; use just nc-test33-push to deploy local build
+# First run: complete the NC web installer at http://localhost:8082 (set admin/admin)
+nc-test33:
+    podman stop noteberg-nc-test33 2>&1 | Out-Null; $true
+    podman run --rm --name noteberg-nc-test33 -d -p 8082:80 -v "${PWD}:/var/www/html/custom_apps/noteberg" nextcloud:33-apache
+    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1
+    netsh interface portproxy delete v4tov4 listenport=8082 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
+    netsh interface portproxy add v4tov4 listenport=8082 listenaddress=127.0.0.1 connectport=8082 connectaddress=$wslIp 2>&1 | Out-Null
+    Write-Host "Waiting for Nextcloud to initialize..."
+    Start-Sleep -Seconds 20
+    podman exec noteberg-nc-test33 //bin/sh -c "php /var/www/html/occ app:enable noteberg 2>&1"
+    Write-Host "Nextcloud 33 running at http://localhost:8082 (admin/admin)"
+    Write-Host "Run 'just nc-test33-push' to deploy local build. Run 'just nc-test33-down' when done."
+
+nc-test33-down:
+    podman stop noteberg-nc-test33
+    netsh interface portproxy delete v4tov4 listenport=8082 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
+
+# Rebuild and push local JS/CSS/templates into the NC33 test container
+# Requires: just nc-test33 running and NoteBerg enabled
+nc-test33-push:
+    $env:VITE_NC_BASE = "/custom_apps/noteberg/"; npm run build:nextcloud
+    Write-Host "Built for nc-test33 (8082) — hard reload http://localhost:8082"
+
+# Rebuild JS/CSS for the dev container (8080, /apps-extra/noteberg/) — files land in repo root
+# and are served directly via the volume mount. Hard reload http://localhost:8080 after.
+# Requires: just nc-up running
+nc-dev-push:
+    $env:VITE_NC_BASE = "/apps-extra/noteberg/"; npm run build:nextcloud
+    Write-Host "Built for nc-up (8080) — hard reload http://localhost:8080"
 
 # Rebuild and push local JS/CSS/templates into the running test container for rapid CSS iteration
 # Requires: just nc-test container running
@@ -173,6 +208,13 @@ nc-test-push:
     podman cp templates/index.php noteberg-nc-test:/var/www/html/apps-writable/noteberg/templates/index.php
     podman cp img noteberg-nc-test:/var/www/html/apps-writable/noteberg/
     Write-Host "Assets pushed — hard reload the browser (Ctrl+Shift+R)."
+
+# Restart the Podman machine when it gets into a broken state
+podman-restart:
+    wsl --terminate podman-machine-default 2>&1 | Out-Null; $true
+    Start-Sleep -Seconds 2
+    podman machine start
+    Write-Host "Podman machine restarted."
 
 # Push to GitHub (default: main branch)
 push-gh branch="main":

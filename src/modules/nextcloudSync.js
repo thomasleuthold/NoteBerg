@@ -2134,6 +2134,38 @@ export async function fullSync(localNotebooks, localNotes) {
     notes: await syncNotes(notesToUpload),
   };
 
+  // Step 4b: Heal media for legacy notes that have pdf-page items but no pdfSource.
+  // These notes predate pdfSource tracking and were synced before media upload existed,
+  // so their PDF blobs were never uploaded. syncNoteMedia is idempotent (skips existing files).
+  // Note: localNotes stubs have metadata-only media (no fileId). We filter by type presence,
+  // then load the full note to get fileIds before calling syncNoteMedia.
+  const uploadedNoteIds = new Set(notesToUpload.map((n) => n.id));
+  const legacyPdfStubs = localNotes.filter(
+    (n) =>
+      !n.deleted &&
+      !n.purged &&
+      !uploadedNoteIds.has(n.id) &&
+      !n.pdfSource &&
+      Array.isArray(n.media) &&
+      n.media.some((m) => m.type === "pdf-page"),
+  );
+  if (legacyPdfStubs.length > 0) {
+    console.log(`[Sync] Healing media for ${legacyPdfStubs.length} legacy PDF note(s)`);
+    for (const stub of legacyPdfStubs) {
+      const fullNote = await getFullNote(stub);
+      const decryptedNote = await decryptNoteLocally(fullNote);
+      // Only proceed if the full note actually has pdf-page items with fileIds
+      const pdfPageItem = decryptedNote.media?.find((m) => m.type === "pdf-page" && m.fileId);
+      if (!pdfPageItem) continue;
+      await syncNoteMedia(decryptedNote);
+      // Patch pdfSource so this note is treated correctly going forward.
+      // Save without marking synced=false to avoid re-uploading the JSON.
+      if (!fullNote.pdfSource) {
+        await saveNote({ ...fullNote, pdfSource: pdfPageItem.fileId });
+      }
+    }
+  }
+
   console.log("Full sync completed:", {
     uploaded: {
       notebooks: uploadResults.notebooks.uploaded,

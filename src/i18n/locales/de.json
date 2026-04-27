@@ -442,7 +442,11 @@
       "deleteConfirmMsg": "Möchtest du das PDF-Dokument wirklich entfernen? Dabei werden alle Seiten gelöscht.",
       "exportError": "PDF-Export fehlgeschlagen",
       "exportProgressTitle": "PDF wird exportiert",
-      "exportProgressPage": "Seite {{current}} von {{total}} wird exportiert ..."
+      "exportProgressPage": "Seite {{current}} von {{total}} wird exportiert ...",
+      "importProgressTitle": "PDF wird importiert",
+      "importProgressUpload": "PDF-Datei wird gespeichert ...",
+      "importProgressPage": "Seite {{current}} von {{total}} wird gelesen ...",
+      "importProgressSaving": "Datei {{current}} von {{total}} wird hochgeladen ..."
     },
     "textSelection": {
       "cut": "Ausschneiden",

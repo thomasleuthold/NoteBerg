@@ -775,64 +775,72 @@ export class NoteCanvas {
       return;
     }
 
-    try {
-      const file = await this._pickPdfFile();
-      if (!file) return;
+    const progress = showProgressDialog(t("canvas.pdf.importProgressTitle"));
+    this._pendingPdfImport = (async () => {
+      try {
+        const file = await this._pickPdfFile();
+        if (!file) return;
 
-      // Import PDF (saves file and extracts pages)
-      const { pages, fileId } = await importPdf(file);
+        const { pages, fileId } = await importPdf(file, (phase, current, total) => {
+          if (phase === "upload") {
+            progress.update(1, 1, t("canvas.pdf.importProgressUpload"));
+          } else {
+            progress.update(current, total, t("canvas.pdf.importProgressPage", { current, total }));
+          }
+        });
 
-      if (pages.length > 0) {
-        // Determine insertion point (center of viewport)
-        const viewport = this.scroller.getViewportBounds();
-        const startY = viewport.top + 50;
-        // Use maxContentWidth to ensure it fills the canvas width (typically 1200px)
-        const targetWidth = this.maxContentWidth || 1200;
-        let currentY = startY;
+        if (pages.length > 0) {
+          const viewport = this.scroller.getViewportBounds();
+          const startY = viewport.top + 50;
+          const targetWidth = this.maxContentWidth || 1200;
+          let currentY = startY;
 
-        const insertedPages = [];
+          const insertedPages = [];
+          for (const page of pages) {
+            const scaleFactor = targetWidth / page.width;
+            const newItem = {
+              ...page,
+              width: targetWidth,
+              height: page.height * scaleFactor,
+              x: 0,
+              y: currentY,
+            };
+            currentY += newItem.height;
+            this.mediaManager.addItem(newItem);
+            insertedPages.push(newItem);
+          }
 
-        // Add pages to media items
-        for (const page of pages) {
-          // Scale page to fit content width while maintaining aspect ratio
-          const scaleFactor = targetWidth / page.width;
-          const newItem = {
-            ...page,
-            width: targetWidth,
-            height: page.height * scaleFactor,
-            x: 0,
-            y: currentY,
-          };
-          currentY += newItem.height;
-          this.mediaManager.addItem(newItem);
-          insertedPages.push(newItem);
+          if (!this.noteData.pdfSource) {
+            this.noteData.pdfSource = fileId;
+          }
+
+          await this._saveMediaChanges((current, total) => {
+            progress.update(
+              current,
+              total,
+              t("canvas.pdf.importProgressSaving", { current, total }),
+            );
+          });
+          this.renderer.showA4PageBreaks = false;
+          this.renderer.forceRedraw();
+          this._renderPdfControls();
+          this.historyManager?.push(new InsertMediaCommand(insertedPages, fileId));
+
+          const lastPage = pages[pages.length - 1];
+          const bottom = lastPage.y + lastPage.height;
+          if (bottom > this.contentHeight) {
+            this._expandCanvas(bottom - this.contentHeight + 500);
+          }
         }
-
-        // Store reference to the PDF document at the note level
-        if (!this.noteData.pdfSource) {
-          this.noteData.pdfSource = fileId;
-        }
-
-        // Save changes
-        await this._saveMediaChanges();
-        this.renderer.showA4PageBreaks = false;
-        this.renderer.forceRedraw();
-        this._renderPdfControls();
-
-        // Record undo command for PDF insert (all pages + pdfSource)
-        this.historyManager?.push(new InsertMediaCommand(insertedPages, fileId));
-
-        // Expand canvas if needed
-        const lastPage = pages[pages.length - 1];
-        const bottom = lastPage.y + lastPage.height;
-        if (bottom > this.contentHeight) {
-          this._expandCanvas(bottom - this.contentHeight + 500);
-        }
+      } catch (error) {
+        console.error("[NoteCanvas] Failed to insert PDF:", error);
+        alert(`Failed to import PDF: ${error.message}`);
+      } finally {
+        progress.close();
+        this._pendingPdfImport = null;
       }
-    } catch (error) {
-      console.error("[NoteCanvas] Failed to insert PDF:", error);
-      alert(`Failed to import PDF: ${error.message}`);
-    }
+    })();
+    await this._pendingPdfImport;
   }
 
   /**
@@ -3033,7 +3041,7 @@ export class NoteCanvas {
    * Save media changes to storage
    * @private
    */
-  async _saveMediaChanges() {
+  async _saveMediaChanges(onProgress) {
     if (!this.noteId || !this.mediaManager || !this.noteData) return;
     // Capture IDs immediately — destroy() nulls this.noteId mid-async and would corrupt paths
     const noteId = this.noteId;
@@ -3055,25 +3063,36 @@ export class NoteCanvas {
     this.mediaManager.setItems(serializableMedia);
 
     if (_IS_NEXTCLOUD) {
-      // Upload any blobs that are only in the in-memory cache to WebDAV
       const notebookId = noteData.notebookId ?? null;
-      for (const item of serializableMedia) {
-        if (!item.fileId) continue;
+      // Deduplicate by fileId — pdf-page items all share the same fileId (the PDF blob).
+      // pdfSource is the same file and is uploaded separately below, so skip it here too.
+      const uploadedIds = new Set();
+      if (noteData.pdfSource) uploadedIds.add(noteData.pdfSource);
+      const uniqueMediaItems = serializableMedia.filter((i) => {
+        if (!i.fileId || uploadedIds.has(i.fileId)) return false;
+        uploadedIds.add(i.fileId);
+        return true;
+      });
+      const hasPdfSource = !!noteData.pdfSource;
+      const totalUploads = uniqueMediaItems.length + (hasPdfSource ? 1 : 0) + 1;
+      let uploaded = 0;
+      for (const item of uniqueMediaItems) {
         const blob = await getFile(item.fileId);
         if (blob) {
           await saveMediaForNote(blob, item.fileId, noteId, notebookId).catch((e) =>
             console.error("[NoteCanvas] WebDAV media upload failed:", item.fileId, e),
           );
         }
+        onProgress?.(++uploaded, totalUploads);
       }
-      // Also upload PDF source blob if present
-      if (noteData.pdfSource) {
+      if (hasPdfSource) {
         const pdfBlob = await getFile(noteData.pdfSource);
         if (pdfBlob) {
           await saveMediaForNote(pdfBlob, noteData.pdfSource, noteId, notebookId).catch((e) =>
             console.error("[NoteCanvas] WebDAV PDF upload failed:", e),
           );
         }
+        onProgress?.(++uploaded, totalUploads);
       }
       await updateNote(noteId, {
         media: serializableMedia,
@@ -4802,11 +4821,12 @@ export class NoteCanvas {
       pendingThumbnail = Promise.resolve();
     }
 
-    // Wait for thumbnail save, recognition, and (in NC) stroke save to complete before sync
+    // Wait for thumbnail save, recognition, stroke save, and any in-progress PDF import
     const pending = [pendingThumbnail];
     if (pendingRecognition) pending.push(pendingRecognition);
     if (pendingStrokeSave) pending.push(pendingStrokeSave);
     if (pendingTextSave) pending.push(pendingTextSave);
+    if (this._pendingPdfImport) pending.push(this._pendingPdfImport);
     return Promise.all(pending).then(() => ({ mediaChanged: hadMediaChanges }));
   }
 }

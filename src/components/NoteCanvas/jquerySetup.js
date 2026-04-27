@@ -7,17 +7,23 @@
  */
 import jQuery from "jquery/slim";
 
-// NC may define window.jQuery and/or window.$ as getter-only properties.
-// Use try/catch so assignments survive esbuild tree-shaking and skip gracefully if not writable.
-try {
-  window.jQuery = jQuery;
-} catch (_) {
-  // getter-only — skip
+// NC33 defines window.jQuery and window.$ as getter-only properties.
+// Try to redefine them as writable so Trumbowyg (which reads window.jQuery to self-register)
+// finds OUR jQuery. Fall back to silent try/catch if non-configurable.
+for (const prop of ["jQuery", "$"]) {
+  try {
+    Object.defineProperty(window, prop, {
+      configurable: true,
+      writable: true,
+      value: jQuery,
+    });
+  } catch (_) {
+    try {
+      window[prop] = jQuery;
+    } catch (__) {}
+  }
 }
-try {
-  window.$ = jQuery;
-} catch (_) {
-  // getter-only — skip
-}
+// Neutralise noConflict so NC33's post-load cleanup can't overwrite window.jQuery back.
+jQuery.noConflict = () => jQuery;
 
 export default jQuery;

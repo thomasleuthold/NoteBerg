@@ -6,6 +6,7 @@
  * Integrates with HistoryManager for unified undo/redo across text and strokes.
  */
 
+import trumbowygIconsSvg from "../../../public/img/trumbowyg-icons.svg?raw";
 // jQuery must be on `window` before Trumbowyg is imported (separate module avoids hoisting issues)
 import jQuery from "./jquerySetup.js";
 
@@ -213,8 +214,22 @@ export class TextEditorLayer {
   init(htmlContent) {
     this.$editor = jQuery(this.editorDiv);
 
-    // Configure SVG icons path
-    jQuery.trumbowyg.svgPath = `${import.meta.env.BASE_URL}img/trumbowyg-icons.svg`;
+    // Inject SVG sprite inline so Trumbowyg skips its fetch() — avoids SSO proxy
+    // interception (Yunohost) and works regardless of BASE_URL or <base> tag.
+    // Trumbowyg skips the fetch when #trumbowyg-icons already exists in the DOM.
+    if (!document.getElementById("trumbowyg-icons")) {
+      const div = document.createElement("div");
+      div.id = "trumbowyg-icons";
+      div.style.cssText = "width:0;height:0;overflow:hidden;visibility:hidden";
+      div.innerHTML = trumbowygIconsSvg;
+      document.body.insertBefore(div, document.body.firstChild);
+    }
+    // Set svgPath to "" so Trumbowyg uses <use href="#icon"> against the inline sprite.
+    // Temporarily remove NC's <base> tag during init so baseHref resolves to "" not the
+    // page URL — otherwise <use href="#icon"> becomes <use href="[pageURL]#icon">.
+    jQuery.trumbowyg.svgPath = "";
+    const baseTag = document.querySelector("base");
+    if (baseTag) baseTag.remove();
 
     this.$editor.trumbowyg({
       btns: [
@@ -234,6 +249,9 @@ export class TextEditorLayer {
       semantic: false,
       tagsToRemove: ["script", "link"],
     });
+
+    // Restore <base> tag after Trumbowyg init (we removed it so baseHref resolves to "")
+    if (baseTag) document.head.appendChild(baseTag);
 
     // Trumbowyg inserts its SVG sprite as body.childNodes[0], breaking NC's flex body layout
     // (#header must be first). Relocate it to after #header (or to body end as fallback).

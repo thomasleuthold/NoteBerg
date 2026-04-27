@@ -73,6 +73,10 @@ vi.mock("../../modules/pdfManager.js", () => ({
 vi.mock("../modals.js", () => ({
   showAlertDialog: vi.fn(),
   showConfirmDialog: vi.fn(),
+  showProgressDialog: vi.fn(() => ({
+    update: vi.fn(),
+    close: vi.fn(),
+  })),
 }));
 
 vi.mock("../../modules/autoRecognition.js", () => ({

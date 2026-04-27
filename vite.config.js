@@ -5,6 +5,22 @@ import { resolve } from 'node:path';
 // For NC build: evaluate perspective-transform in Node at build time, emit a clean ES module.
 // NC's CSP has no unsafe-eval — we cannot use new Function() at browser runtime.
 // This plugin intercepts our shim file and replaces it with a statically-inlined version.
+// Trumbowyg uses bare `jQuery` global — in NC, window.jQuery is NC's instance, not ours.
+// This plugin prepends `var jQuery = __nbJQuery;` to all trumbowyg files at build time,
+// making the bare `jQuery` reference resolve to our bundled instance instead of window.jQuery.
+// __nbJQuery is injected by the alias below pointing to src/shims/jquery-export.js.
+function injectJQueryForTrumbowygPlugin() {
+  return {
+    name: 'inject-jquery-for-trumbowyg',
+    enforce: 'pre',
+    transform(code, id) {
+      if (id.includes('node_modules/trumbowyg') && id.endsWith('.js')) {
+        return { code: `import __nbJQuery from "jquery/slim";\nvar jQuery = __nbJQuery;\n${code}`, map: null };
+      }
+    },
+  };
+}
+
 function patchPerspectiveTransformPlugin() {
   const distPath = resolve(process.cwd(), 'node_modules/perspective-transform/dist/perspective-transform.js');
   const distSrc = readFileSync(distPath, 'utf-8');
@@ -61,7 +77,10 @@ const ncBase = process.env.VITE_NC_BASE || '/apps-extra/noteberg/';
 const base = platform === 'nextcloud' ? ncBase : '/';
 
 export default defineConfig({
-  plugins: platform === 'nextcloud' ? [patchPerspectiveTransformPlugin()] : [],
+  plugins: [
+    injectJQueryForTrumbowygPlugin(),
+    ...(platform === 'nextcloud' ? [patchPerspectiveTransformPlugin()] : []),
+  ],
   base,
   resolve: {
     alias: [
