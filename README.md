@@ -14,6 +14,7 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 - 🔲 Eraser tool for stroke removal
 - ↩️ Unlimited undo/redo across all operations
 - ☑️ Mark handwritten notes as task
+- 🌐 Background patterns — ruled lines and grid
 
 ### Text Editing
 - 📝 Rich text editor (WYSIWYG) with formatting, tables, colors, and font sizes
@@ -44,13 +45,13 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 
 ### Security & Encryption
 - 🔐 Optional master password with PBKDF2 (100,000 iterations) + AES-256-GCM encryption
-- 🔒 Optional end-to-end encryption for Nextcloud sync
+- 🔒 Optional encryption for local data
 
 ### UI & Platform
 - 🌙 Dark mode / light mode with system preference detection
 - 🖥️ Desktop app — Windows, macOS, Linux not tested so far
 - 📱 Mobile app — Android, iOS not tested so far
-- 🌐 Background patterns — ruled lines and grid
+- 🌐 Nextcloud app — available in the [Nextcloud App Store](https://apps.nextcloud.com/apps/noteberg)
 - 🔡 Internationalization — English, German
 
 ## Security
@@ -61,7 +62,6 @@ Current security implementation:
 
 - **Nextcloud credentials** (server URL, username, app password) are stored using the native OS keychain — Windows Credential Manager on desktop, Android Keystore on Android. They are never stored in plaintext.
 - **Master password** (optional) protects local note data with PBKDF2 (100,000 iterations) + AES-256-GCM encryption. The master password itself is stored in the OS keychain.
-- **End-to-end encryption** for Nextcloud sync is optionally available — note data is encrypted before leaving the device.
 - The app was built largely via **AI-assisted development** and has evolved through many iterations including testing, but has not undergone a formal security audit. Bugs in the encryption or key management code may exist.
 - Nextcloud sync uses Login Flow v2, which always generates a dedicated app password — your main Nextcloud password is never entered into or stored by the app.
 

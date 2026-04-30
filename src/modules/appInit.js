@@ -23,15 +23,10 @@ export async function initializeApp() {
     // Check if encryption is actually ENABLED (not just configured)
     const settingsStart = performance.now();
     const encryptLocalData = await getSetting("encrypt_local_data");
-    const encryptNextcloudData = await getSetting("encrypt_nextcloud_data");
-    const encryptionEnabled = encryptLocalData === true || encryptNextcloudData === true;
+    const encryptionEnabled = encryptLocalData === true;
     console.log(`[AppInit] Settings check took ${Math.round(performance.now() - settingsStart)}ms`);
 
-    console.log("[AppInit] Encryption status:", {
-      encryptLocalData,
-      encryptNextcloudData,
-      encryptionEnabled,
-    });
+    console.log("[AppInit] Encryption status:", { encryptLocalData, encryptionEnabled });
 
     // Auto-unlock from keyring if encryption is enabled
     if (encryptionEnabled) {

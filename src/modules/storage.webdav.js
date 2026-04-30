@@ -890,9 +890,6 @@ export async function setStorageVersion() {}
 export async function isLocalEncryptionEnabled() {
   return false;
 }
-export async function isNextcloudEncryptionEnabled() {
-  return false;
-}
 export async function fixCorruptedNotes() {
   return { fixed: 0 };
 }

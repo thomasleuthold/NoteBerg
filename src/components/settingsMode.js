@@ -34,7 +34,6 @@ export async function renderSettings(container) {
 
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? false; // Default: disabled
-  const encryptNextcloudData = (await getSetting("encrypt_nextcloud_data")) ?? false; // Default: disabled
   // Migrate old recognition_url setting to recognition_fallback_url
   const legacyRecognitionUrl = await getSetting("recognition_url");
   if (legacyRecognitionUrl) {
@@ -124,24 +123,6 @@ export async function renderSettings(container) {
               type="checkbox"
               id="encrypt-local-toggle"
               ${encryptLocalData ? "checked" : ""}
-            />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-
-        <div class="setting-item">
-          <div class="setting-label">
-            <span class="setting-name">${t("settings.security.encryptNextcloud")}</span>
-            <span class="setting-description">
-              ${authenticated ? t("settings.security.encryptNextcloudDesc_connected") : t("settings.security.encryptNextcloudDesc_disconnected")}
-            </span>
-          </div>
-          <label class="toggle-switch${!authenticated ? " toggle-switch--disabled" : ""}">
-            <input
-              type="checkbox"
-              id="encrypt-nextcloud-toggle"
-              ${encryptNextcloudData ? "checked" : ""}
-              ${!authenticated ? "disabled" : ""}
             />
             <span class="toggle-slider"></span>
           </label>
@@ -408,7 +389,6 @@ export async function renderSettings(container) {
 
   // Encryption toggles event listeners
   const encryptLocalToggle = container.querySelector("#encrypt-local-toggle");
-  const encryptNextcloudToggle = container.querySelector("#encrypt-nextcloud-toggle");
 
   encryptLocalToggle?.addEventListener("change", async () => {
     const enabled = encryptLocalToggle.checked;
@@ -455,49 +435,6 @@ export async function renderSettings(container) {
     const statusMsg = enabled
       ? t("settings.encryption.enabledLocalMsg")
       : t("settings.encryption.disabledLocalMsg");
-
-    await showAlertDialog(t("settings.encryption.updatedTitle"), statusMsg);
-  });
-
-  encryptNextcloudToggle?.addEventListener("change", async () => {
-    const enabled = encryptNextcloudToggle.checked;
-
-    if (enabled) {
-      // Check if master password is configured AND actually stored in keyring
-      const { isMasterPasswordSet } = await import("../modules/masterPassword.js");
-      const masterPasswordSet = await isMasterPasswordSet();
-
-      if (!masterPasswordSet) {
-        // No master password at all — set up fresh
-        console.log("[Settings] Showing master password setup modal...");
-        const { showMasterPasswordSetup } = await import("./masterPasswordModals.js");
-
-        showMasterPasswordSetup({
-          isMigration: false,
-          onSuccess: async () => {
-            console.log("[Settings] Master password setup complete for Nextcloud encryption");
-            await setSetting("encrypt_nextcloud_data", true);
-            await showAlertDialog(
-              t("settings.encryption.enabledNextcloudTitle"),
-              t("settings.encryption.enabledNextcloudMsg"),
-            );
-          },
-          onCancel: () => {
-            console.log("[Settings] Master password setup canceled, reverting toggle");
-            encryptNextcloudToggle.checked = false;
-          },
-        });
-
-        return;
-      }
-    }
-
-    await setSetting("encrypt_nextcloud_data", enabled);
-
-    // Show confirmation message
-    const statusMsg = enabled
-      ? t("settings.encryption.enabledNextcloudMsg")
-      : t("settings.encryption.disabledNextcloudMsg");
 
     await showAlertDialog(t("settings.encryption.updatedTitle"), statusMsg);
   });

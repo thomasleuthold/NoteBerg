@@ -785,10 +785,6 @@ export async function isLocalEncryptionEnabled() {
   return (await getSetting("encrypt_local_data")) ?? false;
 }
 
-export async function isNextcloudEncryptionEnabled() {
-  return (await getSetting("encrypt_nextcloud_data")) ?? false;
-}
-
 export async function fixCorruptedNotes() {
   console.log("[Storage] Scanning for corrupted notes...");
   const allContent = await db.getAll("noteContent");

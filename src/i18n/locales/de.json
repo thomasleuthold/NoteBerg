@@ -125,10 +125,7 @@
     },
     "security": {
       "encryptLocal": "Lokale Daten verschlüsseln",
-      "encryptLocalDesc": "Notizen, die lokal auf diesem Gerät gespeichert sind, verschlüsseln",
-      "encryptNextcloud": "Daten auf Nextcloud verschlüsseln",
-      "encryptNextcloudDesc_connected": "Notizen vor dem Hochladen auf Nextcloud verschlüsseln (Ende-zu-Ende-Verschlüsselung)",
-      "encryptNextcloudDesc_disconnected": "Nextcloud-Sync nicht konfiguriert"
+      "encryptLocalDesc": "Notizen, die lokal auf diesem Gerät gespeichert sind, verschlüsseln"
     },
     "nextcloud": {
       "connectLabel": "Mit Nextcloud verbinden",
@@ -240,9 +237,6 @@
       "enabledLocalTitle": "Verschlüsselung aktiviert",
       "enabledLocalMsg": "✓ Master-Passwort erstellt und lokale Datenverschlüsselung aktiviert. Neue Notizen werden verschlüsselt.",
       "disabledLocalMsg": "Lokale Datenverschlüsselung deaktiviert. Bereits verschlüsselte Notizen bleiben verschlüsselt.",
-      "enabledNextcloudTitle": "Verschlüsselung aktiviert",
-      "enabledNextcloudMsg": "✓ Master-Passwort erstellt und Nextcloud-Verschlüsselung aktiviert. Notizen werden vor dem Hochladen verschlüsselt.<br><br><strong>Wichtig:</strong> Verschlüsselte Notizen können nicht in Nextclouds Web-Oberfläche oder anderen Clients gelesen werden.",
-      "disabledNextcloudMsg": "Nextcloud-Verschlüsselung deaktiviert. Notizen werden unverschlüsselt synchronisiert.",
       "updatedTitle": "Verschlüsselungseinstellung aktualisiert"
     }
   },

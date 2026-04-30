@@ -19,7 +19,6 @@ import {
   clearNoteMoveFlag,
   getFile,
   getRawNote,
-  isNextcloudEncryptionEnabled,
   permanentlyDeleteNote,
   permanentlyDeleteNotebook,
   permanentlyDeleteNotesInNotebook,
@@ -138,131 +137,14 @@ async function decryptNoteLocally(note) {
 }
 
 /**
- * Encrypt note data for Nextcloud upload if encryption is enabled
- * Handles conversion between local encryption and Nextcloud encryption formats
- * @param {Object} note - Note object (may be locally encrypted)
- * @returns {Promise<Object>} - Note object (in Nextcloud format)
- */
-async function encryptNoteForNextcloud(note) {
-  const shouldEncryptForNextcloud = await isNextcloudEncryptionEnabled();
-
-  // If the note has locally-encrypted content blobs, decrypt them first so the
-  // Nextcloud file always contains readable JSON regardless of local encryption setting.
-  const decryptedNote = await decryptNoteLocally(note);
-
-  // Encrypt for Nextcloud if enabled
-  if (!shouldEncryptForNextcloud) {
-    // Nextcloud encryption disabled - return decrypted note
-    return decryptedNote;
-  }
-
-  // Nextcloud encryption enabled - encrypt the decrypted note
-  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
-  const { encryptObject } = await import("./encryption.js");
-
-  if (!isAppUnlocked()) {
-    throw new Error("Cannot encrypt note for Nextcloud - app is locked");
-  }
-
-  try {
-    const encryptionKey = getEncryptionKey();
-
-    // Encrypt content, strokes, media, recordings and thumbnail for Nextcloud storage
-    const encryptedContent = await encryptObject(decryptedNote.content || "", encryptionKey);
-    const encryptedStrokes = await encryptObject(decryptedNote.strokes || [], encryptionKey);
-    const encryptedMedia = await encryptObject(decryptedNote.media || [], encryptionKey);
-    const encryptedRecordings = await encryptObject(decryptedNote.recordings || [], encryptionKey);
-    const encryptedThumbnail = decryptedNote.thumbnail
-      ? await encryptObject(decryptedNote.thumbnail, encryptionKey)
-      : null;
-
-    return {
-      ...decryptedNote,
-      content: encryptedContent,
-      strokes: encryptedStrokes,
-      media: encryptedMedia,
-      recordings: encryptedRecordings,
-      thumbnail: encryptedThumbnail,
-      nextcloudEncrypted: true, // Mark as Nextcloud-encrypted
-    };
-  } catch (error) {
-    console.error("[NextcloudSync] Failed to encrypt note for Nextcloud:", error);
-    throw new Error(`Encryption failed: ${error.message}`);
-  }
-}
-
-/**
  * Decrypt note data from Nextcloud and prepare it for local storage
  * @param {Object} note - Note object (possibly encrypted for Nextcloud)
  * @returns {Promise<Object>} - Note prepared for local storage (encrypted if local encryption enabled)
  */
 async function decryptNoteFromNextcloud(note) {
-  // Step 1: Decrypt from Nextcloud format if needed
   let decryptedNote = note;
 
-  if (note?.nextcloudEncrypted) {
-    // Import encryption modules
-    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
-    const { decryptObject } = await import("./encryption.js");
-
-    if (!isAppUnlocked()) {
-      throw new Error("Cannot decrypt note - app is locked");
-    }
-
-    try {
-      const encryptionKey = getEncryptionKey();
-
-      // Decrypt content, strokes, and media from Nextcloud encryption
-      const decryptedContent = await decryptObject(note.content, encryptionKey);
-      const decryptedStrokes = await decryptObject(note.strokes, encryptionKey);
-
-      // Only decrypt media/recordings if they exist and have the encrypted structure
-      // (notes encrypted before these fields were added won't have them)
-      let decryptedMedia = [];
-      if (note.media && typeof note.media === "object" && note.media.data && note.media.iv) {
-        decryptedMedia = await decryptObject(note.media, encryptionKey);
-      }
-
-      let decryptedRecordings = [];
-      if (
-        note.recordings &&
-        typeof note.recordings === "object" &&
-        note.recordings.data &&
-        note.recordings.iv
-      ) {
-        decryptedRecordings = await decryptObject(note.recordings, encryptionKey);
-      } else if (Array.isArray(note.recordings)) {
-        decryptedRecordings = note.recordings;
-      }
-
-      let decryptedThumbnail = null;
-      if (
-        note.thumbnail &&
-        typeof note.thumbnail === "object" &&
-        note.thumbnail.data &&
-        note.thumbnail.iv
-      ) {
-        decryptedThumbnail = await decryptObject(note.thumbnail, encryptionKey);
-      } else {
-        decryptedThumbnail = note.thumbnail ?? null;
-      }
-
-      decryptedNote = {
-        ...note,
-        content: decryptedContent,
-        strokes: decryptedStrokes,
-        media: decryptedMedia,
-        recordings: decryptedRecordings,
-        thumbnail: decryptedThumbnail,
-        nextcloudEncrypted: undefined, // Remove Nextcloud encryption flag
-      };
-    } catch (error) {
-      console.error("[NextcloudSync] Failed to decrypt note from Nextcloud:", error);
-      throw new Error("Failed to decrypt note from Nextcloud");
-    }
-  }
-
-  // Step 2: If the note has local encryption from another client (encrypted: true),
+  // Step 1: If the note has local encryption from another client (encrypted: true),
   // decrypt it now so saveNote can re-encrypt it with this client's local key.
   // This handles the case where a note was saved encrypted by another client and
   // uploaded to Nextcloud without Nextcloud-level encryption.
@@ -1482,8 +1364,8 @@ export async function syncNotes(notes) {
       // Clean up orphaned media files (deleted from note but still on server)
       await cleanupOrphanedMedia(decryptedNote);
 
-      // Encrypt note for Nextcloud if encryption is enabled
-      const encryptedNote = await encryptNoteForNextcloud(syncedNote);
+      // Decrypt local encryption before upload so Nextcloud always contains readable JSON
+      const encryptedNote = await decryptNoteLocally(syncedNote);
 
       // Strip internal sync tracking fields before uploading
       const noteForUpload = { ...encryptedNote };

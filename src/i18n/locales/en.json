@@ -125,10 +125,7 @@
     },
     "security": {
       "encryptLocal": "Encrypt Local Data",
-      "encryptLocalDesc": "Encrypt notes stored locally on this device",
-      "encryptNextcloud": "Encrypt Data on Nextcloud",
-      "encryptNextcloudDesc_connected": "Encrypt notes before uploading to Nextcloud (end-to-end encryption)",
-      "encryptNextcloudDesc_disconnected": "Nextcloud sync not configured"
+      "encryptLocalDesc": "Encrypt notes stored locally on this device"
     },
     "nextcloud": {
       "connectLabel": "Connect to Nextcloud",
@@ -240,9 +237,6 @@
       "enabledLocalTitle": "Encryption Enabled",
       "enabledLocalMsg": "✓ Master password created and local data encryption enabled. New notes will be encrypted.",
       "disabledLocalMsg": "Local data encryption disabled. Existing encrypted notes remain encrypted.",
-      "enabledNextcloudTitle": "Encryption Enabled",
-      "enabledNextcloudMsg": "✓ Master password created and Nextcloud encryption enabled. Notes will be encrypted before uploading.<br><br><strong>Important:</strong> Encrypted notes cannot be read in Nextcloud's web interface or other clients.",
-      "disabledNextcloudMsg": "Nextcloud encryption disabled. Notes will be synced as plain text.",
       "updatedTitle": "Encryption Setting Updated"
     }
   },

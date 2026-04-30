@@ -66,7 +66,6 @@ vi.mock("./storage.js", async (importOriginal) => {
     permanentlyDeleteNotesInNotebook: vi.fn(),
     getSetting: vi.fn(() => Promise.resolve(null)),
     getStorageVersion: vi.fn(() => Promise.resolve(1)),
-    isNextcloudEncryptionEnabled: vi.fn(() => Promise.resolve(false)),
     isLocalEncryptionEnabled: vi.fn(() => Promise.resolve(false)),
     initStorage: vi.fn(() => Promise.resolve()),
     updateNote: vi.fn(() => Promise.resolve()),
@@ -791,14 +790,12 @@ describe("Nextcloud Sync Module", () => {
       }));
       vi.doMock("./encryption.js", () => ({
         decryptObject: vi.fn(async (blob) => {
-          // Return the plain media array when the media blob is decrypted
           if (blob === note.media) return plainMediaArray;
           if (blob === note.content) return "";
           if (blob === note.strokes) return [];
           if (blob === note.tasks) return [];
           return null;
         }),
-        encryptObject: vi.fn(async (_v) => ({ data: "re-encrypted", iv: "iv" })),
       }));
 
       const result = await syncNotes([note]);
