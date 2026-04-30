@@ -1,10 +1,14 @@
 import * as pdfjsLib from "pdfjs-dist";
-// Use an inline Worker (blob URL) so no HTTP request is made for the worker script.
-// A URL-based workerSrc (?url) gets intercepted by SSO proxies (e.g. Yunohost).
-import PdfjsWorker from "pdfjs-dist/build/pdf.worker.mjs?worker";
+// Inline the worker source as a string and create a blob URL so no HTTP request
+// is ever made for the worker script. ?url gets intercepted by SSO proxies
+// (e.g. Yunohost). ?worker from node_modules still emits a separate asset file
+// with an HTTP URL — only ?raw truly inlines the content at build time.
+import pdfjsWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?raw";
 import { generateId, getFile, saveFile } from "./storage.js";
 
-pdfjsLib.GlobalWorkerOptions.workerPort = new PdfjsWorker();
+const _workerBlob = new Blob([pdfjsWorkerSrc], { type: "text/javascript" });
+const _workerBlobUrl = URL.createObjectURL(_workerBlob);
+pdfjsLib.GlobalWorkerOptions.workerSrc = _workerBlobUrl;
 
 /**
  * Imports a PDF file, saves it to storage, and extracts page metadata.

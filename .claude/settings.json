@@ -19,7 +19,12 @@
       "Bash(wsl -d podman-machine-default -- ip addr show eth0)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://172.20.225.104:8080/)",
       "Bash(wsl -d podman-machine-default -- bash -c \"curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/\")",
-      "Bash(wsl -d podman-machine-default -- bash -c \"ss -tlnp | grep 8080\")"
+      "Bash(wsl -d podman-machine-default -- bash -c \"ss -tlnp | grep 8080\")",
+      "Bash(tar -xzf noteberg-0.5.30-alpha.3.tar.gz --wildcards \"*/noteberg-main.js\" -O)",
+      "Bash(tar -xzf noteberg-0.5.30-alpha.2.tar.gz --wildcards \"*/noteberg-main.js\" -O)",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(node -e ' *)"
     ],
     "additionalDirectories": [
       "C:\\work\\code\\oneJournal\\img"
