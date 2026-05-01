@@ -1,14 +1,13 @@
 import * as pdfjsLib from "pdfjs-dist";
-// Inline the worker source as a string and create a blob URL so no HTTP request
-// is ever made for the worker script. ?url gets intercepted by SSO proxies
-// (e.g. Yunohost). ?worker from node_modules still emits a separate asset file
-// with an HTTP URL — only ?raw truly inlines the content at build time.
+// Inline the worker source as a blob URL so no HTTP request is made.
+// ?url gets intercepted by SSO proxies (e.g. Yunohost); ?worker emits a separate
+// asset that Vite wraps in a blob-of-blob which breaks Tauri's script-src CSP.
+// ?raw inlines everything at build time; the Tauri CSP allows blob: in script-src.
 import pdfjsWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?raw";
 import { generateId, getFile, saveFile } from "./storage.js";
 
 const _workerBlob = new Blob([pdfjsWorkerSrc], { type: "text/javascript" });
-const _workerBlobUrl = URL.createObjectURL(_workerBlob);
-pdfjsLib.GlobalWorkerOptions.workerSrc = _workerBlobUrl;
+pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(_workerBlob);
 
 /**
  * Imports a PDF file, saves it to storage, and extracts page metadata.

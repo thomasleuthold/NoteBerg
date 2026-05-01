@@ -24,7 +24,10 @@
       "Bash(tar -xzf noteberg-0.5.30-alpha.2.tar.gz --wildcards \"*/noteberg-main.js\" -O)",
       "Bash(cat)",
       "Read(//tmp/**)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(cat vite.config.js)",
+      "Bash(cat vite.config.ts)",
+      "Bash(python -c \"import sys,json; c=json.load\\(sys.stdin\\); print\\(json.dumps\\(c.get\\('app',{}\\).get\\('security',{}\\), indent=2\\)\\)\")"
     ],
     "additionalDirectories": [
       "C:\\work\\code\\oneJournal\\img"
