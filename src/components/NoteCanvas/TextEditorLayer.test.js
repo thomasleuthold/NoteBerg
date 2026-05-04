@@ -49,7 +49,9 @@ describe("TextEditorLayer", () => {
       disconnect: vi.fn(),
     };
     const _ro = mockResizeObserver;
-    global.ResizeObserver = vi.fn(function ResizeObserverMock() { return _ro; });
+    global.ResizeObserver = vi.fn(function ResizeObserverMock() {
+      return _ro;
+    });
 
     // Mock MutationObserver
     mockMutationObserver = {

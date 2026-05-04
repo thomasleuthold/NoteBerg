@@ -163,7 +163,9 @@ describe("NoteCanvas Class", () => {
       mediaManagerItems = media;
       Object.assign(this, {
         setOnImageLoaded: vi.fn(),
-        setItems: vi.fn((items) => { mediaManagerItems = items; }),
+        setItems: vi.fn((items) => {
+          mediaManagerItems = items;
+        }),
         getItems: vi.fn(() => mediaManagerItems),
         addItem: vi.fn((item) => mediaManagerItems.push(item)),
         removeItem: vi.fn((id) => {
@@ -195,7 +197,12 @@ describe("NoteCanvas Class", () => {
     const { VirtualScroller } = await import("./VirtualScroller.js");
     VirtualScroller.mockImplementation(function () {
       const viewportElement = document.createElement("div");
-      viewportElement.getBoundingClientRect = vi.fn(() => ({ left: 0, top: 0, width: 800, height: 600 }));
+      viewportElement.getBoundingClientRect = vi.fn(() => ({
+        left: 0,
+        top: 0,
+        width: 800,
+        height: 600,
+      }));
       Object.assign(this, {
         getViewportSize: () => ({ width: 800, height: 600 }),
         getViewportElement: () => viewportElement,
@@ -280,16 +287,29 @@ describe("NoteCanvas Class", () => {
     StrokeManager.mockImplementation(function (_noteId, strokes) {
       this.currentStroke = null;
       this.startStroke = vi.fn(function (props) {
-        this.currentStroke = { ...props, id: `s-${strokes.length}`, x: [props.x], y: [props.y], pressure: [props.pressure] };
+        this.currentStroke = {
+          ...props,
+          id: `s-${strokes.length}`,
+          x: [props.x],
+          y: [props.y],
+          pressure: [props.pressure],
+        };
         return this.currentStroke;
       });
       this.addPoints = vi.fn(function (points) {
-        points.forEach((p) => { this.currentStroke.x.push(p.x); this.currentStroke.y.push(p.y); });
+        points.forEach((p) => {
+          this.currentStroke.x.push(p.x);
+          this.currentStroke.y.push(p.y);
+        });
         return this.currentStroke;
       });
       this.endStroke = vi.fn(function () {
         const stroke = this.currentStroke;
-        if (stroke) { if (!stroke._keep) strokes.push(stroke); this.currentStroke = null; return stroke; }
+        if (stroke) {
+          if (!stroke._keep) strokes.push(stroke);
+          this.currentStroke = null;
+          return stroke;
+        }
         return null;
       });
       this.cancelCurrentStroke = vi.fn(function () {

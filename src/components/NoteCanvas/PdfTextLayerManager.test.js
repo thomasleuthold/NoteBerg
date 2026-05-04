@@ -8,7 +8,11 @@ vi.mock("pdfjs-dist", () => {
   class TextLayerMock {
     render = vi.fn().mockResolvedValue();
   }
-  return { TextLayer: vi.fn().mockImplementation(function () { return new TextLayerMock(); }) };
+  return {
+    TextLayer: vi.fn().mockImplementation(function () {
+      return new TextLayerMock();
+    }),
+  };
 });
 
 vi.mock("../../modules/pdfManager.js", () => ({
