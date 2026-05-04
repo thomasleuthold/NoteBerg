@@ -260,7 +260,7 @@ export class PdfTextLayerManager {
    */
   _updateLayerPosition(pageId) {
     const layer = this.activeLayers.get(pageId);
-    if (!layer || !layer.viewport) return;
+    if (!layer?.viewport) return;
 
     const { element, item, displayScale } = layer;
 

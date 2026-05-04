@@ -942,7 +942,7 @@ async function _encryptContent(content, index) {
  * Decrypt a merged note object's content fields if needed.
  */
 async function decryptNoteIfNeeded(note) {
-  if (!note || !note.encrypted) return note;
+  if (!note?.encrypted) return note;
 
   const encryptionEnabled = await isLocalEncryptionEnabled();
   if (!encryptionEnabled) {

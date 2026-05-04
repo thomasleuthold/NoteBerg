@@ -102,32 +102,34 @@ vi.mock("./MediaOverlay.js");
 vi.mock("./NoteToolbar.js");
 vi.mock("./StrokeManager.js");
 vi.mock("./HistoryManager.js");
-vi.mock("./PdfTextLayerManager.js", () => ({
-  PdfTextLayerManager: vi.fn().mockImplementation(() => ({
-    update: vi.fn(),
-    setMode: vi.fn(),
-    destroy: vi.fn(),
-    refresh: vi.fn(),
-    onPageRemoved: vi.fn(),
-    highlightSearchTerms: vi.fn(),
-    clearHighlights: vi.fn(),
-  })),
-}));
-vi.mock("./TextEditorLayer.js", () => ({
-  TextEditorLayer: vi.fn().mockImplementation(() => ({
-    init: vi.fn(),
-    update: vi.fn(),
-    setMode: vi.fn(),
-    setContentHeight: vi.fn(),
-    getContent: vi.fn(() => ""),
-    forceSave: vi.fn(),
-    destroy: vi.fn(),
-    highlightSearchTerms: vi.fn(),
-    clearHighlights: vi.fn(),
-    renderTaskCheckboxes: vi.fn(),
-    cleanupOrphanedTextTasks: vi.fn(),
-  })),
-}));
+vi.mock("./PdfTextLayerManager.js", () => {
+  class PdfTextLayerManagerMock {
+    update = vi.fn();
+    setMode = vi.fn();
+    destroy = vi.fn();
+    refresh = vi.fn();
+    onPageRemoved = vi.fn();
+    highlightSearchTerms = vi.fn();
+    clearHighlights = vi.fn();
+  }
+  return { PdfTextLayerManager: PdfTextLayerManagerMock };
+});
+vi.mock("./TextEditorLayer.js", () => {
+  class TextEditorLayerMock {
+    init = vi.fn();
+    update = vi.fn();
+    setMode = vi.fn();
+    setContentHeight = vi.fn();
+    getContent = vi.fn(() => "");
+    forceSave = vi.fn();
+    destroy = vi.fn();
+    highlightSearchTerms = vi.fn();
+    clearHighlights = vi.fn();
+    renderTaskCheckboxes = vi.fn();
+    cleanupOrphanedTextTasks = vi.fn();
+  }
+  return { TextEditorLayer: TextEditorLayerMock };
+});
 
 // Mock global window events
 window.scrollTo = vi.fn();
@@ -157,13 +159,11 @@ describe("NoteCanvas Class", () => {
 
     const { MediaManager } = await import("./MediaManager.js");
     let mediaManagerItems;
-    MediaManager.mockImplementation((_noteId, media) => {
+    MediaManager.mockImplementation(function (_noteId, media) {
       mediaManagerItems = media;
-      return {
+      Object.assign(this, {
         setOnImageLoaded: vi.fn(),
-        setItems: vi.fn((items) => {
-          mediaManagerItems = items;
-        }),
+        setItems: vi.fn((items) => { mediaManagerItems = items; }),
         getItems: vi.fn(() => mediaManagerItems),
         addItem: vi.fn((item) => mediaManagerItems.push(item)),
         removeItem: vi.fn((id) => {
@@ -189,19 +189,14 @@ describe("NoteCanvas Class", () => {
         hitTest: vi.fn(() => null),
         getImage: vi.fn(),
         destroy: vi.fn(),
-      };
+      });
     });
 
     const { VirtualScroller } = await import("./VirtualScroller.js");
-    VirtualScroller.mockImplementation(() => {
+    VirtualScroller.mockImplementation(function () {
       const viewportElement = document.createElement("div");
-      viewportElement.getBoundingClientRect = vi.fn(() => ({
-        left: 0,
-        top: 0,
-        width: 800,
-        height: 600,
-      }));
-      return {
+      viewportElement.getBoundingClientRect = vi.fn(() => ({ left: 0, top: 0, width: 800, height: 600 }));
+      Object.assign(this, {
         getViewportSize: () => ({ width: 800, height: 600 }),
         getViewportElement: () => viewportElement,
         setContentSize: vi.fn(),
@@ -211,43 +206,47 @@ describe("NoteCanvas Class", () => {
         setZoom: vi.fn(),
         scrollBy: vi.fn(),
         destroy: vi.fn(),
-        container: document.createElement("div"), // Mock container for reflow access
-      };
+        container: document.createElement("div"),
+      });
     });
 
     const { InputHandler } = await import("./InputHandler.js");
-    InputHandler.mockImplementation(() => ({
-      isDrawing: false,
-      getContentCoordinates: vi.fn(() => ({ x: 0, y: 0 })),
-      destroy: vi.fn(),
-    }));
+    InputHandler.mockImplementation(function () {
+      Object.assign(this, {
+        isDrawing: false,
+        getContentCoordinates: vi.fn(() => ({ x: 0, y: 0 })),
+        destroy: vi.fn(),
+      });
+    });
 
     const { CanvasRenderer } = await import("./CanvasRenderer.js");
-    CanvasRenderer.mockImplementation(() => ({
-      setData: vi.fn(),
-      setSpatialIndex: vi.fn(),
-      setMediaManager: vi.fn(),
-      setContentSize: vi.fn(),
-      resize: vi.fn(),
-      render: vi.fn(),
-      drawDirectStroke: vi.fn(),
-      drawEraserCursor: vi.fn(),
-      drawLassoTrail: vi.fn(),
-      clearOverlay: vi.fn(),
-      forceRedraw: vi.fn(),
-      setZoom: vi.fn(),
-      setSelectedStrokes: vi.fn(),
-      setSelectedMedia: vi.fn(),
-      setLineSeparators: vi.fn(),
-      selectionBounds: null,
-      selectedStrokeIndices: new Set(),
-      lineSeparators: [],
-      lineIndentLevels: [],
-      destroy: vi.fn(),
-    }));
+    CanvasRenderer.mockImplementation(function () {
+      Object.assign(this, {
+        setData: vi.fn(),
+        setSpatialIndex: vi.fn(),
+        setMediaManager: vi.fn(),
+        setContentSize: vi.fn(),
+        resize: vi.fn(),
+        render: vi.fn(),
+        drawDirectStroke: vi.fn(),
+        drawEraserCursor: vi.fn(),
+        drawLassoTrail: vi.fn(),
+        clearOverlay: vi.fn(),
+        forceRedraw: vi.fn(),
+        setZoom: vi.fn(),
+        setSelectedStrokes: vi.fn(),
+        setSelectedMedia: vi.fn(),
+        setLineSeparators: vi.fn(),
+        selectionBounds: null,
+        selectedStrokeIndices: new Set(),
+        lineSeparators: [],
+        lineIndentLevels: [],
+        destroy: vi.fn(),
+      });
+    });
 
     const { SpatialIndex } = await import("./SpatialIndex.js");
-    SpatialIndex.mockImplementation(() => {
+    SpatialIndex.mockImplementation(function () {
       const strokeBounds = new Map();
       return {
         strokeBounds,
@@ -278,53 +277,40 @@ describe("NoteCanvas Class", () => {
     });
 
     const { StrokeManager } = await import("./StrokeManager.js");
-    StrokeManager.mockImplementation((_noteId, strokes) => ({
-      currentStroke: null,
-      startStroke: vi.fn(function (props) {
-        this.currentStroke = {
-          ...props,
-          id: `s-${strokes.length}`,
-          x: [props.x],
-          y: [props.y],
-          pressure: [props.pressure],
-        };
+    StrokeManager.mockImplementation(function (_noteId, strokes) {
+      this.currentStroke = null;
+      this.startStroke = vi.fn(function (props) {
+        this.currentStroke = { ...props, id: `s-${strokes.length}`, x: [props.x], y: [props.y], pressure: [props.pressure] };
         return this.currentStroke;
-      }),
-      addPoints: vi.fn(function (points) {
-        points.forEach((p) => {
-          this.currentStroke.x.push(p.x);
-          this.currentStroke.y.push(p.y);
-        });
+      });
+      this.addPoints = vi.fn(function (points) {
+        points.forEach((p) => { this.currentStroke.x.push(p.x); this.currentStroke.y.push(p.y); });
         return this.currentStroke;
-      }),
-      endStroke: vi.fn(function () {
+      });
+      this.endStroke = vi.fn(function () {
         const stroke = this.currentStroke;
-        if (stroke) {
-          if (!stroke._keep) strokes.push(stroke);
-          this.currentStroke = null;
-          return stroke;
-        }
+        if (stroke) { if (!stroke._keep) strokes.push(stroke); this.currentStroke = null; return stroke; }
         return null;
-      }),
-      cancelCurrentStroke: vi.fn(function () {
+      });
+      this.cancelCurrentStroke = vi.fn(function () {
         if (this.currentStroke) this.currentStroke._keep = false;
         this.currentStroke = null;
-      }),
-      markDirty: vi.fn(),
-      saveMedia: vi.fn(),
-      forceSave: vi.fn(),
-      destroy: vi.fn(),
-    }));
+      });
+      this.markDirty = vi.fn();
+      this.saveMedia = vi.fn();
+      this.forceSave = vi.fn();
+      this.destroy = vi.fn();
+    });
 
     const { HistoryManager } = await import("./HistoryManager.js");
-    HistoryManager.mockImplementation(() => ({
-      push: vi.fn(),
-      undo: vi.fn(),
-      redo: vi.fn(),
-      setNoteCanvas: vi.fn(),
-      destroy: vi.fn(),
-      clear: vi.fn(),
-    }));
+    HistoryManager.mockImplementation(function () {
+      this.push = vi.fn();
+      this.undo = vi.fn();
+      this.redo = vi.fn();
+      this.setNoteCanvas = vi.fn();
+      this.destroy = vi.fn();
+      this.clear = vi.fn();
+    });
 
     noteCanvas = new NoteCanvas(container);
   });

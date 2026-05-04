@@ -4,11 +4,12 @@ import { loadPdfPage } from "../../modules/pdfManager.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
 
 // Mock dependencies
-vi.mock("pdfjs-dist", () => ({
-  TextLayer: vi.fn().mockImplementation(() => ({
-    render: vi.fn().mockResolvedValue(),
-  })),
-}));
+vi.mock("pdfjs-dist", () => {
+  class TextLayerMock {
+    render = vi.fn().mockResolvedValue();
+  }
+  return { TextLayer: vi.fn().mockImplementation(function () { return new TextLayerMock(); }) };
+});
 
 vi.mock("../../modules/pdfManager.js", () => ({
   loadPdfPage: vi.fn(),

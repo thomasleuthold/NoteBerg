@@ -100,7 +100,7 @@ async function captureWithGetUserMedia(facing = "environment") {
 
   try {
     // Check if getUserMedia is supported
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("getUserMedia not supported");
     }
 

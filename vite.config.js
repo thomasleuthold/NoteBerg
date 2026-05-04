@@ -111,7 +111,7 @@ export default defineConfig({
     outDir: platform === 'nextcloud' ? '.' : 'dist',
     emptyOutDir: platform !== 'nextcloud', // never wipe the repo root
     // Tauri uses Chromium, so we can use modern features
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+    minify: !process.env.TAURI_DEBUG ? 'oxc' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: platform === 'nextcloud' ? {
       input: resolve(process.cwd(), 'src/main.js'),

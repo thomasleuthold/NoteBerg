@@ -86,7 +86,7 @@ export function initNoteCanvasComponent() {
 
   // Listen for data changes to refresh if current note was updated externally
   window.addEventListener("datachange", async () => {
-    if (!noteCanvasInstance || !noteCanvasInstance.noteId) return;
+    if (!noteCanvasInstance?.noteId) return;
 
     const noteId = noteCanvasInstance.noteId;
     const container = noteCanvasInstance.containerElement;
