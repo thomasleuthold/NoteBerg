@@ -13,7 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.11", features = ["wry"] }
+tauri = { version = "=2.9.4", features = ["wry"] }
+tauri-runtime = "=2.9.2"
+tauri-runtime-wry = "=2.9.2"
+wry = "=0.53.5"
 tauri-plugin-http = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
