@@ -1753,6 +1753,10 @@ export function attemptMerge(local, remote) {
   // Merge tasks by ID, newer modified timestamp wins for individual tasks
   const localTasks = local.tasks || [];
   const remoteTasks = remote.tasks || [];
+  const allDeletedTaskIds = new Set([
+    ...(local.deletedTasks || []),
+    ...(remote.deletedTasks || []),
+  ]);
   const taskMap = new Map();
 
   // Add older first, then newer overwrites by ID
@@ -1767,6 +1771,8 @@ export function attemptMerge(local, remote) {
       taskMap.set(task.id, task);
     }
   }
+  // Remove tasks that were explicitly deleted on either side
+  for (const id of allDeletedTaskIds) taskMap.delete(id);
 
   // Construct the merged note.
   return {
@@ -1785,6 +1791,7 @@ export function attemptMerge(local, remote) {
     deletedRecordings: Array.from(allDeletedRecordings),
     tags: mergedTags,
     tasks: Array.from(taskMap.values()),
+    deletedTasks: Array.from(allDeletedTaskIds),
     deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
 
     formatVersion: newerNote.formatVersion, // Use format from newer note

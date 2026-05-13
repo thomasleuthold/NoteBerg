@@ -256,14 +256,12 @@
   z-index: 15;
 }
 
-:is(body, #app) .note-canvas__task-checkbox {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox {
   position: absolute;
   width: 22px;
   height: 22px;
   pointer-events: auto;
   cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
   border: 2px solid var(--color-primary, #3b82f6);
   border-radius: 4px;
   background: var(--bg-primary, white);
@@ -272,12 +270,12 @@
   box-sizing: border-box;
 }
 
-:is(body, #app) .note-canvas__task-checkbox:checked {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[aria-checked="true"] {
   background: var(--color-primary, #3b82f6);
   border-color: var(--color-primary, #3b82f6);
 }
 
-:is(body, #app) .note-canvas__task-checkbox:checked::after {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[aria-checked="true"]::after {
   content: "";
   display: block;
   width: 27%;
@@ -288,7 +286,7 @@
   margin: 10% auto 0;
 }
 
-:is(body, #app) .note-canvas__task-checkbox:hover {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox:hover {
   transform: scale(1.1);
 }
 
@@ -1229,19 +1227,28 @@
 }
 
 /* ===== Text task checkbox (replaces CHECKBOX_STYLE constant) ===== */
-.task-text-checkbox {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
+.note-canvas__text-editor-layer .task-text-checkbox {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  line-height: 1 !important;
   vertical-align: middle;
   margin-right: 6px;
   user-select: none;
   cursor: pointer;
   border: 1px solid currentColor;
   border-radius: 3px;
+  box-sizing: content-box !important;
+  flex-shrink: 0 !important;
 }
 
-.task-text-checkbox--checked {
+.note-canvas__text-editor-layer .task-text-checkbox--checked {
   background-color: var(--color-primary);
   border-color: var(--color-primary);
 }

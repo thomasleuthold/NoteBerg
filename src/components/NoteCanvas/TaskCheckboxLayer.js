@@ -71,12 +71,12 @@ export class TaskCheckboxLayer {
         entry = this._createTaskElements(task.id);
       }
 
-      entry.checkbox.checked = task.checked;
+      entry.checkbox.setAttribute("aria-checked", String(task.checked));
       entry.checkbox.style.left = `${screenX}px`;
       entry.checkbox.style.top = `${screenY}px`;
-      entry.checkbox.style.width = `${scaledSize}px`;
-      entry.checkbox.style.height = `${scaledSize}px`;
-      entry.checkbox.style.display = "block";
+      entry.checkbox.style.setProperty("width", `${scaledSize}px`, "important");
+      entry.checkbox.style.setProperty("height", `${scaledSize}px`, "important");
+      entry.checkbox.style.setProperty("display", "block", "important");
 
       entry.boundingBox.style.left = `${boxX}px`;
       entry.boundingBox.style.top = `${boxY}px`;
@@ -125,14 +125,17 @@ export class TaskCheckboxLayer {
    * @private
    */
   _createTaskElements(taskId) {
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
+    const checkbox = document.createElement("div");
     checkbox.className = "note-canvas__task-checkbox";
     checkbox.dataset.taskId = taskId;
+    checkbox.setAttribute("role", "checkbox");
+    checkbox.setAttribute("aria-checked", "false");
     checkbox.addEventListener("pointerdown", (e) => e.stopPropagation());
-    checkbox.addEventListener("change", (e) => {
+    checkbox.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.callbacks.onToggle(taskId, checkbox.checked);
+      const checked = checkbox.getAttribute("aria-checked") !== "true";
+      checkbox.setAttribute("aria-checked", String(checked));
+      this.callbacks.onToggle(taskId, checked);
     });
 
     const boundingBox = document.createElement("div");

@@ -341,6 +341,28 @@ export class NoteCanvas {
     // the DB version for these.
     inMemoryData.media = freshDataFromDB.media || [];
     inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
+    // Merge tasks like strokes: union of local+remote, deletedTasks wins
+    const localDeletedTaskIds = new Set([
+      ...(inMemoryData.deletedTasks || []),
+      ...(freshDataFromDB.deletedTasks || []),
+    ]);
+    const mergedTasksMap = new Map();
+    [...(inMemoryData.tasks || []), ...(freshDataFromDB.tasks || [])].forEach((t) => {
+      if (t.id) mergedTasksMap.set(t.id, t);
+    });
+    // Filter out deleted tasks and orphaned stroke tasks (strokes gone after merge)
+    const mergedActiveStrokeIds = new Set(finalStrokes.map((s) => s.id));
+    const mergedTasks = Array.from(mergedTasksMap.values()).filter((t) => {
+      if (localDeletedTaskIds.has(t.id)) return false;
+      if (t.type === "stroke") {
+        const alive = t.strokeIds.some((id) => mergedActiveStrokeIds.has(id));
+        if (!alive) localDeletedTaskIds.add(t.id);
+        return alive;
+      }
+      return true;
+    });
+    inMemoryData.tasks = mergedTasks;
+    inMemoryData.deletedTasks = Array.from(localDeletedTaskIds);
     inMemoryData.penPresets = freshDataFromDB.penPresets || inMemoryData.penPresets;
     inMemoryData.pdfSource = freshDataFromDB.pdfSource;
     inMemoryData.background = freshDataFromDB.background;
@@ -359,6 +381,9 @@ export class NoteCanvas {
     // Force redraw immediately to show updated state (we know we aren't drawing)
     this.renderer.forceRedraw();
     this._renderPdfControls();
+    this._saveTasks();
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
 
     // Clear history after sync (external changes invalidate undo commands)
     this.historyManager?.clear();
@@ -398,6 +423,9 @@ export class NoteCanvas {
     }
     if (!this.noteData.deletedMedia) {
       this.noteData.deletedMedia = [];
+    }
+    if (!this.noteData.deletedTasks) {
+      this.noteData.deletedTasks = [];
     }
 
     // Initialize pen presets
@@ -2428,11 +2456,7 @@ export class NoteCanvas {
    * @private
    */
   _updateSelectionOverlay() {
-    // Determine which bounds to use: renderer selection (lasso) or task selection (non-lasso)
-    let bounds = this.renderer?.selectionBounds;
-    if (!bounds && this.selectedTaskId && this.taskSelectionBounds) {
-      bounds = this.taskSelectionBounds;
-    }
+    const bounds = this.renderer?.selectionBounds;
 
     if (!this.selectionOverlay?.isVisible && !bounds) return;
     if (!bounds) {
@@ -2523,6 +2547,18 @@ export class NoteCanvas {
       created: now,
       modified: now,
     }));
+
+    // Remove any existing stroke tasks that share strokes with the new ones (dedup guard)
+    const newStrokeIdSets = tasks.map((t) => new Set(t.strokeIds));
+    const displaced = this.noteData.tasks.filter(
+      (existing) =>
+        existing.type === "stroke" &&
+        newStrokeIdSets.some((s) => existing.strokeIds.some((id) => s.has(id))),
+    );
+    for (const t of displaced) {
+      if (!this.noteData.deletedTasks.includes(t.id)) this.noteData.deletedTasks.push(t.id);
+    }
+    this.noteData.tasks = this.noteData.tasks.filter((t) => !displaced.includes(t));
 
     for (const task of tasks) this.noteData.tasks.push(task);
     this._saveTasks();
@@ -2788,21 +2824,18 @@ export class NoteCanvas {
 
     this.selectedTaskId = taskId;
 
-    if (this.mode === "lasso") {
-      // In lasso mode: Select strokes in renderer (allows manipulation)
-      this.renderer.setSelectedStrokes(selectedIndices, bounds);
-      this.taskSelectionBounds = null;
-    } else {
-      // In non-lasso mode: Just show overlay, no renderer selection (prevents manipulation)
-      this.renderer.setSelectedStrokes(new Set(), null);
-      this.taskSelectionBounds = bounds;
-    }
+    this.renderer.setSelectedStrokes(selectedIndices, bounds);
+    this.taskSelectionBounds = null;
     this.selectionOverlay.setTaskMode(true);
     this._updateSelectionOverlay();
   }
 
   _removeTaskFromSelectedStrokes() {
     if (!this.selectedTaskId) return;
+    // Record deletion so sync can't restore it
+    if (!this.noteData.deletedTasks.includes(this.selectedTaskId)) {
+      this.noteData.deletedTasks.push(this.selectedTaskId);
+    }
     // Remove task (just delete it, strokes remain)
     this.noteData.tasks = this.noteData.tasks.filter((t) => t.id !== this.selectedTaskId);
     this._saveTasks();
@@ -2844,7 +2877,7 @@ export class NoteCanvas {
    */
   _saveTasks() {
     if (_IS_NEXTCLOUD) {
-      updateNote(this.noteId, { tasks: this.noteData.tasks }).catch((e) =>
+      updateNote(this.noteId, { tasks: this.noteData.tasks, deletedTasks: this.noteData.deletedTasks }).catch((e) =>
         console.error("[NoteCanvas] WebDAV tasks save failed:", e),
       );
       return;
@@ -2862,6 +2895,7 @@ export class NoteCanvas {
         type: "SAVE_TASKS",
         noteId: this.noteId,
         tasks: this.noteData.tasks,
+        deletedTasks: this.noteData.deletedTasks,
         key,
       });
     }
@@ -2904,10 +2938,14 @@ export class NoteCanvas {
     );
 
     const before = this.noteData.tasks.length;
+    const deletedTasks = this.noteData.deletedTasks || [];
     this.noteData.tasks = this.noteData.tasks.filter((t) => {
       if (t.type !== "stroke") return true;
-      return t.strokeIds.some((id) => activeStrokeIds.has(id));
+      const orphaned = !t.strokeIds.some((id) => activeStrokeIds.has(id));
+      if (orphaned && !deletedTasks.includes(t.id)) deletedTasks.push(t.id);
+      return !orphaned;
     });
+    this.noteData.deletedTasks = deletedTasks;
 
     if (this.noteData.tasks.length !== before) {
       this._saveTasks();
@@ -3992,11 +4030,12 @@ export class NoteCanvas {
     // In text mode, let mouse events pass through to the text editor (no pan, no media hit)
     if (this.mode === "text" && e.pointerType === "mouse") return;
 
-    // Deselect task if clicking outside
+    // Deselect task if clicking outside task UI or selection overlay
     const isTaskInteraction =
       e.target.closest &&
       (e.target.closest(".note-canvas__task-bounding-box") ||
-        e.target.closest(".note-canvas__task-checkbox"));
+        e.target.closest(".note-canvas__task-checkbox") ||
+        e.target.closest(".note-canvas__selection-overlay"));
 
     if (this.selectedTaskId && !isTaskInteraction) {
       this.renderer.setSelectedStrokes(new Set(), null);

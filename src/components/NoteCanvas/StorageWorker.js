@@ -191,16 +191,18 @@ async function processMessage(e) {
   }
 
   if (type === "SAVE_TASKS") {
-    const { tasks } = e.data;
+    const { tasks, deletedTasks } = e.data;
     const db = await getDB();
 
     const noteIndex = await db.get("notes", noteId);
     if (!noteIndex) return;
 
     let tasksData = tasks;
+    let deletedTasksData = deletedTasks || [];
     if (noteIndex.encrypted) {
       if (key) {
         tasksData = await encryptObject(tasks, key);
+        deletedTasksData = await encryptObject(deletedTasksData, key);
       } else {
         console.error("[StorageWorker] Cannot save encrypted tasks: Key missing");
         return;
@@ -215,6 +217,7 @@ async function processMessage(e) {
 
     if (index && content) {
       content.tasks = tasksData;
+      content.deletedTasks = deletedTasksData;
 
       index.modified = Date.now();
       index.version = (index.version || 0) + 1;

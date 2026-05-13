@@ -78,8 +78,7 @@ describe("TaskCheckboxLayer", () => {
     layer.update(tasks, strokes, 1, 0, 0, 0);
 
     const checkbox = viewportElement.querySelector(".note-canvas__task-checkbox");
-    checkbox.checked = true;
-    checkbox.dispatchEvent(new Event("change"));
+    checkbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(callbacks.onToggle).toHaveBeenCalledWith("t1", true);
   });

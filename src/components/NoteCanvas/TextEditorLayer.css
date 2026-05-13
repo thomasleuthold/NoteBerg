@@ -58,6 +58,53 @@
   box-shadow: none;
 }
 
+/* Heading styles — explicit overrides needed because NC resets all heading sizes */
+.note-canvas__text-editor-layer .trumbowyg-editor h1 {
+  font-size: 2em;
+  font-weight: 700;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.note-canvas__text-editor-layer .trumbowyg-editor h2 {
+  font-size: 1.5em;
+  font-weight: 600;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.note-canvas__text-editor-layer .trumbowyg-editor h3 {
+  font-size: 1.25em;
+  font-weight: 600;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.note-canvas__text-editor-layer .trumbowyg-editor h4 {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+/* List styles — NC resets list-style to none; restore bullets/numbers explicitly */
+.note-canvas__text-editor-layer .trumbowyg-editor ul {
+  list-style-type: disc;
+  margin: 0.5em 0;
+  padding-left: 2em;
+}
+
+.note-canvas__text-editor-layer .trumbowyg-editor ol {
+  list-style-type: decimal;
+  margin: 0.5em 0;
+  padding-left: 2em;
+}
+
+.note-canvas__text-editor-layer .trumbowyg-editor li {
+  display: list-item;
+  margin: 0.25em 0;
+}
+
 /* Images pasted into the editor */
 .note-canvas__text-editor-layer .trumbowyg-editor img {
   max-width: 100%;
@@ -282,14 +329,22 @@
   position: relative;
 }
 
-.task-text-checkbox {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
+.note-canvas__text-editor-layer .task-text-checkbox {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  line-height: 1 !important;
   margin-right: 4px;
   vertical-align: middle;
   cursor: pointer;
-  accent-color: var(--color-primary, #3b82f6);
+  box-sizing: content-box !important;
+  flex-shrink: 0 !important;
 }
 
 .task-text--done {

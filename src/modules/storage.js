@@ -476,7 +476,7 @@ export async function updateNote(id, updates) {
   await _saveNoteSplit(updated);
   console.log("Note updated:", id);
   if (typeof window !== "undefined")
-    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id } }));
+    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }));
   return updated;
 }
 

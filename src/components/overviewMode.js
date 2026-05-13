@@ -284,11 +284,15 @@ async function renderMarkersTab(container) {
       }
     }
 
+    const deletedTaskIds = new Set(note.deletedTasks || []);
     for (const task of tasks) {
+      // Skip explicitly deleted tasks and ghost stroke tasks (all strokes gone)
+      if (deletedTaskIds.has(task.id)) continue;
       const taskStrokeIds = new Set(task.strokeIds || []);
       const taskStrokes = (note.strokes || []).filter(
         (s) => taskStrokeIds.has(s.id) && !s._deleted && !s.isDeleted,
       );
+      if (task.type === "stroke" && taskStrokes.length === 0) continue;
       allTasks.push({
         ...task,
         noteId: note.id,
