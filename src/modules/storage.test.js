@@ -4,7 +4,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clearNoteMoveFlag, copyNote, moveNote } from "./storage.js";
+import { clearNoteMoveFlag, copyNote, moveNote, updateNote, updateNotebook } from "./storage.js";
 
 // ── Multi-store in-memory DB mock ─────────────────────────────────────────────
 // Schema v4 has two note stores: "notes" (index) and "noteContent" (payload).
@@ -297,6 +297,118 @@ describe("copyNote", () => {
 
   it("throws when source note does not exist", async () => {
     await expect(copyNote("ghost", "nb-b")).rejects.toThrow("Note not found");
+  });
+});
+
+// ── updateNote ────────────────────────────────────────────────────────────────
+
+describe("updateNote", () => {
+  it("applies the updates and bumps version", async () => {
+    seedNote(makeNote({ title: "Old title", version: 2 }));
+
+    await updateNote("note-1", { title: "New title" });
+
+    const updated = stores.notes.get("note-1");
+    expect(updated.title).toBe("New title");
+    expect(updated.version).toBe(3);
+  });
+
+  it("marks note as unsynced", async () => {
+    seedNote(makeNote({ synced: true }));
+
+    await updateNote("note-1", { title: "Changed" });
+
+    expect(stores.notes.get("note-1").synced).toBe(false);
+  });
+
+  it("updates the modified timestamp", async () => {
+    const before = Date.now();
+    seedNote(makeNote({ modified: 0 }));
+
+    await updateNote("note-1", { title: "Changed" });
+
+    expect(stores.notes.get("note-1").modified).toBeGreaterThanOrEqual(before);
+  });
+
+  it("dispatches a datachange event", async () => {
+    seedNote(makeNote());
+    const events = [];
+    window.addEventListener("datachange", (e) => events.push(e));
+
+    await updateNote("note-1", { title: "Changed" });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detail.noteId).toBe("note-1");
+    window.removeEventListener("datachange", events[0]);
+  });
+
+  it("throws when note does not exist", async () => {
+    await expect(updateNote("ghost", { title: "X" })).rejects.toThrow("Note not found");
+  });
+});
+
+// ── updateNotebook ────────────────────────────────────────────────────────────
+
+function makeNotebook(overrides = {}) {
+  return {
+    id: "nb-1",
+    title: "Test Notebook",
+    description: "",
+    color: "#3b82f6",
+    version: 1,
+    synced: true,
+    modified: 1000,
+    ...overrides,
+  };
+}
+
+function seedNotebook(notebook) {
+  stores.notebooks.set(notebook.id, structuredClone(notebook));
+}
+
+describe("updateNotebook", () => {
+  it("applies updates and bumps version", async () => {
+    seedNotebook(makeNotebook({ title: "Old", version: 1 }));
+
+    await updateNotebook("nb-1", { title: "New", color: "#ef4444" });
+
+    const updated = stores.notebooks.get("nb-1");
+    expect(updated.title).toBe("New");
+    expect(updated.color).toBe("#ef4444");
+    expect(updated.version).toBe(2);
+  });
+
+  it("marks notebook as unsynced", async () => {
+    seedNotebook(makeNotebook({ synced: true }));
+
+    await updateNotebook("nb-1", { title: "Changed" });
+
+    expect(stores.notebooks.get("nb-1").synced).toBe(false);
+  });
+
+  it("updates the modified timestamp", async () => {
+    const before = Date.now();
+    seedNotebook(makeNotebook({ modified: 0 }));
+
+    await updateNotebook("nb-1", { title: "Changed" });
+
+    expect(stores.notebooks.get("nb-1").modified).toBeGreaterThanOrEqual(before);
+  });
+
+  it("dispatches a datachange event", async () => {
+    seedNotebook(makeNotebook());
+    const events = [];
+    window.addEventListener("datachange", (e) => events.push(e));
+
+    await updateNotebook("nb-1", { title: "Changed" });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detail.notebookId).toBe("nb-1");
+    window.removeEventListener("datachange", events[0]);
+  });
+
+  it("throws when notebook does not exist", async () => {
+    await expect(updateNotebook("ghost", { title: "X" })).rejects.toThrow("Notebook not found");
   });
 });
 

@@ -221,8 +221,12 @@ export async function showMasterPasswordSetup({ isMigration = false, onSuccess, 
 
   // Allow clicking outside to cancel (only if not a migration)
   if (!isMigration) {
+    let mousedownOnOverlay = false;
+    overlay.addEventListener("mousedown", (e) => {
+      mousedownOnOverlay = e.target === overlay;
+    });
     overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
+      if (e.target === overlay && mousedownOnOverlay) {
         console.log("[MasterPasswordModals] Master password setup canceled (clicked outside)");
         overlay.remove();
         if (onCancel) {
@@ -485,8 +489,12 @@ export function showConfirmDialog({
       resolve(false);
     });
 
+    let mousedownOnOverlay = false;
+    overlay.addEventListener("mousedown", (e) => {
+      mousedownOnOverlay = e.target === overlay;
+    });
     overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
+      if (e.target === overlay && mousedownOnOverlay) {
         closeModal();
         resolve(false);
       }

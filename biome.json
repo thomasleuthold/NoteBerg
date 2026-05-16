@@ -22,7 +22,8 @@
 				"noDescendingSpecificity": "off"
 			},
 			"complexity": {
-				"useArrowFunction": "off"
+				"useArrowFunction": "off",
+				"noImportantStyles": "off"
 			}
 		}
 	},

@@ -231,8 +231,12 @@ export function showLicensesDialog() {
   overlay.querySelector(".close-licenses-btn")?.addEventListener("click", closeDialog);
 
   // Close on overlay click
+  let mousedownOnOverlay = false;
+  overlay.addEventListener("mousedown", (e) => {
+    mousedownOnOverlay = e.target === overlay;
+  });
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) {
+    if (e.target === overlay && mousedownOnOverlay) {
       closeDialog();
     }
   });

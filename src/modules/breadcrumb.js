@@ -6,7 +6,7 @@
 import { t } from "../i18n/index.js";
 import { getIcon } from "../utils/icons.js";
 import { navigateTo } from "./router.js";
-import { getNote, getNotebook, updateNote, updateNotebook } from "./storage.js";
+import { getNote, getNotebook } from "./storage.js";
 
 /**
  * Update breadcrumb based on current navigation state
@@ -19,8 +19,6 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
   if (!breadcrumb) return;
 
   const homeIcon = getIcon("home", 24);
-  const editIcon = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`;
-  const checkIcon = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
   // Clear existing content
   breadcrumb.innerHTML = "";
@@ -63,22 +61,11 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
         notebookItem.className = isLast
           ? "breadcrumb-item breadcrumb-current"
           : "breadcrumb-item breadcrumb-notebook";
+        notebookItem.textContent = notebook.title;
 
         if (!isLast) {
-          // It's a link to the notebook
-          notebookItem.textContent = notebook.title;
           notebookItem.dataset.notebookId = actualNotebookId;
           notebookItem.onclick = () => navigateTo("overview", { notebookId: actualNotebookId });
-        } else {
-          // It's the current view (Notebook Overview) - Allow rename
-          setupEditableItem(notebookItem, notebook.title, editIcon, checkIcon, async (newName) => {
-            if (newName && newName !== notebook.title) {
-              await updateNotebook(notebook.id, { title: newName });
-              window.dispatchEvent(new CustomEvent("datachange"));
-              return true;
-            }
-            return false;
-          });
         }
 
         breadcrumb.appendChild(notebookItem);
@@ -94,21 +81,7 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
 
     const noteItem = document.createElement("div");
     noteItem.className = "breadcrumb-item breadcrumb-current";
-
-    setupEditableItem(
-      noteItem,
-      note.title || t("common.untitled"),
-      editIcon,
-      checkIcon,
-      async (newName) => {
-        if (newName && newName !== note.title) {
-          await updateNote(note.id, { title: newName });
-          window.dispatchEvent(new CustomEvent("datachange"));
-          return true;
-        }
-        return false;
-      },
-    );
+    noteItem.textContent = note.title || t("common.untitled");
 
     breadcrumb.appendChild(noteItem);
   }
@@ -119,59 +92,6 @@ function addSeparator(container) {
   sep.className = "breadcrumb-separator";
   sep.textContent = "→";
   container.appendChild(sep);
-}
-
-function setupEditableItem(container, text, editIcon, checkIcon, onSave) {
-  container.className += " breadcrumb-item--editable";
-
-  const label = document.createElement("span");
-  label.className = "breadcrumb-label";
-  label.textContent = text;
-  container.appendChild(label);
-
-  const btn = document.createElement("button");
-  btn.className = "breadcrumb-edit-btn";
-  btn.innerHTML = editIcon;
-  btn.title = t("breadcrumb.rename");
-
-  const startEdit = () => {
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = label.textContent;
-    input.className = "breadcrumb-edit-input";
-    input.style.width = `${Math.max(100, input.value.length * 10)}px`;
-
-    const save = async () => {
-      const newName = input.value.trim();
-      const success = await onSave(newName);
-      if (success) label.textContent = newName;
-      container.replaceChild(label, input);
-      btn.innerHTML = editIcon;
-      btn.title = t("breadcrumb.rename");
-      btn.onclick = startEdit;
-    };
-
-    container.replaceChild(input, label);
-    btn.innerHTML = checkIcon;
-    btn.title = t("breadcrumb.save");
-    btn.onclick = save;
-
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") save();
-      if (e.key === "Escape") {
-        container.replaceChild(label, input);
-        btn.innerHTML = editIcon;
-        btn.title = t("breadcrumb.rename");
-        btn.onclick = startEdit;
-      }
-    });
-
-    input.focus();
-    input.select();
-  };
-
-  btn.onclick = startEdit;
-  container.appendChild(btn);
 }
 
 /**

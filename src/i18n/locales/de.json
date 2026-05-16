@@ -66,6 +66,7 @@
     "notebook": {
       "noDescription": "Keine Beschreibung",
       "deleteTitle": "Notizbuch löschen",
+      "optionsTitle": "Notizbuch-Optionen",
       "newNote": "+ Neue Notiz",
       "noteCount_one": "{{count}} Notiz",
       "noteCount_other": "{{count}} Notizen"
@@ -78,7 +79,12 @@
     },
     "noteOptions": {
       "title": "Optionen",
+      "edit": "Bearbeiten",
       "moveCopy": "Verschieben / Kopieren",
+      "delete": "Löschen"
+    },
+    "notebookOptions": {
+      "edit": "Bearbeiten",
       "delete": "Löschen"
     },
     "moveCopy": {
@@ -264,6 +270,12 @@
       "titlePlaceholder": "Notiztitel eingeben",
       "hintQuick": "Diese wird als Schnellnotiz erstellt (nicht in einem Notizbuch).",
       "hintNotebook": "Diese Notiz wird in <strong>{{notebook}}</strong> erstellt."
+    },
+    "editNote": {
+      "title": "Notiz bearbeiten"
+    },
+    "editNotebook": {
+      "title": "Notizbuch bearbeiten"
     },
     "noteProperties": {
       "title": "Notizeigenschaften",

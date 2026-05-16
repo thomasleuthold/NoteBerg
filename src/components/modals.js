@@ -4,7 +4,7 @@
  */
 
 import { t } from "../i18n/index.js";
-import { createNote, createNotebook } from "../modules/storage.js";
+import { createNote, createNotebook, updateNote, updateNotebook } from "../modules/storage.js";
 
 /**
  * Show modal
@@ -12,7 +12,7 @@ import { createNote, createNotebook } from "../modules/storage.js";
  * @param {string} content - Modal content HTML
  * @param {Function} onConfirm - Callback when confirmed
  */
-function showModal(title, content, onConfirm) {
+function showModal(title, content, onConfirm, confirmLabel) {
   const existingModal = document.getElementById("modal-overlay");
   if (existingModal) {
     existingModal.remove();
@@ -30,7 +30,7 @@ function showModal(title, content, onConfirm) {
         </div>
         <div class="modal-footer">
           <button class="btn-secondary modal-cancel">${t("common.cancel")}</button>
-          <button class="btn-primary modal-confirm">${t("common.create")}</button>
+          <button class="btn-primary modal-confirm">${confirmLabel ?? t("common.create")}</button>
         </div>
       </div>
     </div>
@@ -62,8 +62,12 @@ function showModal(title, content, onConfirm) {
   // Cancel handlers
   cancelBtn.addEventListener("click", closeModal);
   closeBtn.addEventListener("click", closeModal);
+  let mousedownOnOverlay = false;
+  overlay.addEventListener("mousedown", (e) => {
+    mousedownOnOverlay = e.target === overlay;
+  });
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) closeModal();
+    if (e.target === overlay && mousedownOnOverlay) closeModal();
   });
 
   // ESC key handler
@@ -154,8 +158,12 @@ export function showConfirmDialog(title, message, confirmText, confirmClass = "b
     // Cancel handlers
     cancelBtn.addEventListener("click", () => closeModal(false));
     closeBtn.addEventListener("click", () => closeModal(false));
+    let mousedownOnOverlay = false;
+    overlay.addEventListener("mousedown", (e) => {
+      mousedownOnOverlay = e.target === overlay;
+    });
     overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeModal(false);
+      if (e.target === overlay && mousedownOnOverlay) closeModal(false);
     });
 
     // ESC key handler
@@ -217,8 +225,12 @@ export function showAlertDialog(title, message, buttonText) {
 
     confirmBtn.addEventListener("click", closeModal);
     closeBtn.addEventListener("click", closeModal);
+    let mousedownOnOverlay = false;
+    overlay.addEventListener("mousedown", (e) => {
+      mousedownOnOverlay = e.target === overlay;
+    });
     overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeModal();
+      if (e.target === overlay && mousedownOnOverlay) closeModal();
     });
 
     const handleEsc = (e) => {
@@ -310,6 +322,93 @@ export function showCreateNotebookModal() {
 }
 
 /**
+ * Show edit notebook modal (pre-filled with existing values)
+ * @param {Object} notebook - Notebook object to edit
+ */
+export function showEditNotebookModal(notebook) {
+  const colors = [
+    { name: "Blue", value: "#3b82f6" },
+    { name: "Green", value: "#10b981" },
+    { name: "Purple", value: "#8b5cf6" },
+    { name: "Red", value: "#ef4444" },
+    { name: "Orange", value: "#f59e0b" },
+    { name: "Pink", value: "#ec4899" },
+  ];
+
+  const colorOptions = colors
+    .map(
+      (color) => `
+    <label class="color-option">
+      <input type="radio" name="color" value="${color.value}" ${notebook.color === color.value ? "checked" : ""} />
+      <span class="color-swatch" style="background-color: ${color.value}"></span>
+      <span class="color-name">${t(`modals.createNotebook.colors.${color.name}`)}</span>
+    </label>
+  `,
+    )
+    .join("");
+
+  const escapedTitle = notebook.title.replace(/"/g, "&quot;");
+  const escapedDesc = (notebook.description || "").replace(/"/g, "&quot;");
+
+  const content = `
+    <div class="form-field">
+      <label for="notebook-title" class="form-label">${t("modals.createNotebook.titleLabel")}</label>
+      <input
+        type="text"
+        id="notebook-title"
+        class="form-input"
+        value="${escapedTitle}"
+        placeholder="${t("modals.createNotebook.titlePlaceholder")}"
+        required
+      />
+    </div>
+    <div class="form-field">
+      <label for="notebook-description" class="form-label">${t("modals.createNotebook.descLabel")}</label>
+      <textarea
+        id="notebook-description"
+        class="form-input"
+        placeholder="${t("modals.createNotebook.descPlaceholder")}"
+        rows="3"
+      >${escapedDesc}</textarea>
+    </div>
+    <div class="form-field">
+      <label class="form-label">${t("modals.createNotebook.colorLabel")}</label>
+      <div class="color-options">
+        ${colorOptions}
+      </div>
+    </div>
+  `;
+
+  showModal(
+    t("modals.editNotebook.title"),
+    content,
+    async () => {
+      const titleInput = document.getElementById("notebook-title");
+      const descriptionInput = document.getElementById("notebook-description");
+      const colorInput = document.querySelector('input[name="color"]:checked');
+
+      const title = titleInput.value.trim();
+      if (!title) {
+        throw new Error(t("modals.errors.titleRequired"));
+      }
+
+      await updateNotebook(notebook.id, {
+        title,
+        description: descriptionInput.value.trim(),
+        color: colorInput.value,
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("datachange", {
+          detail: { type: "notebook", action: "update", data: { id: notebook.id } },
+        }),
+      );
+    },
+    t("common.save"),
+  );
+}
+
+/**
  * Show create note modal
  * @param {string|null} notebookId - Optional notebook ID to create note in
  */
@@ -366,6 +465,50 @@ export async function showCreateNoteModal(notebookId = null) {
 }
 
 /**
+ * Show edit note modal (pre-filled with existing title)
+ * @param {Object} note - Note object to edit
+ */
+export function showEditNoteModal(note) {
+  const escapedTitle = (note.title || "").replace(/"/g, "&quot;");
+
+  const content = `
+    <div class="form-field">
+      <label for="note-title" class="form-label">${t("modals.createNote.titleLabel")}</label>
+      <input
+        type="text"
+        id="note-title"
+        class="form-input"
+        value="${escapedTitle}"
+        placeholder="${t("modals.createNote.titlePlaceholder")}"
+        required
+      />
+    </div>
+  `;
+
+  showModal(
+    t("modals.editNote.title"),
+    content,
+    async () => {
+      const titleInput = document.getElementById("note-title");
+
+      const title = titleInput.value.trim();
+      if (!title) {
+        throw new Error(t("modals.errors.titleRequired"));
+      }
+
+      await updateNote(note.id, { title });
+
+      window.dispatchEvent(
+        new CustomEvent("datachange", {
+          detail: { type: "note", action: "update", data: { id: note.id } },
+        }),
+      );
+    },
+    t("common.save"),
+  );
+}
+
+/**
  * Show note info modal with properties
  * @param {Object} note - Note object
  */
@@ -416,8 +559,12 @@ export function showNoteInfoModal(note) {
 
   closeBtn.addEventListener("click", closeModal);
   closeBtnFooter.addEventListener("click", closeModal);
+  let mousedownOnOverlay = false;
+  overlay.addEventListener("mousedown", (e) => {
+    mousedownOnOverlay = e.target === overlay;
+  });
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) closeModal();
+    if (e.target === overlay && mousedownOnOverlay) closeModal();
   });
 
   document.addEventListener("keydown", function handleEsc(e) {
@@ -495,8 +642,12 @@ export function showPasswordPrompt(title, message) {
     // Cancel handlers
     cancelBtn.addEventListener("click", () => closeModal(null));
     closeBtn.addEventListener("click", () => closeModal(null));
+    let mousedownOnOverlay = false;
+    overlay.addEventListener("mousedown", (e) => {
+      mousedownOnOverlay = e.target === overlay;
+    });
     overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeModal(null);
+      if (e.target === overlay && mousedownOnOverlay) closeModal(null);
     });
 
     // ESC key handler
@@ -684,8 +835,12 @@ export function showMoveCopyDialog(note, notebooks) {
 
     cancelBtn.addEventListener("click", () => closeModal(null));
     closeBtn.addEventListener("click", () => closeModal(null));
+    let mousedownOnOverlay = false;
+    overlay.addEventListener("mousedown", (e) => {
+      mousedownOnOverlay = e.target === overlay;
+    });
     overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeModal(null);
+      if (e.target === overlay && mousedownOnOverlay) closeModal(null);
     });
 
     const handleEsc = (e) => {

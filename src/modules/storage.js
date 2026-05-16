@@ -279,6 +279,10 @@ export async function updateNotebook(id, updates) {
 
   await db.put("notebooks", updated);
   console.log("Notebook updated:", id);
+  if (typeof window !== "undefined")
+    window.dispatchEvent(
+      new CustomEvent("datachange", { detail: { notebookId: id, source: "local" } }),
+    );
   return updated;
 }
 
@@ -476,7 +480,9 @@ export async function updateNote(id, updates) {
   await _saveNoteSplit(updated);
   console.log("Note updated:", id);
   if (typeof window !== "undefined")
-    window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }));
+    window.dispatchEvent(
+      new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }),
+    );
   return updated;
 }
 

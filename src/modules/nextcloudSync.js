@@ -1029,7 +1029,7 @@ function parseWebDAVResponse(rawXml, includeCollections = false) {
       href,
       isCollection,
       lastModified: lastModified ? new Date(lastModified).getTime() : null,
-      etag: etag?.replace(/"/g, ""),
+      etag: etag?.replace(/&quot;/g, "").replace(/"/g, ""),
     });
   }
 

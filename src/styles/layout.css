@@ -190,33 +190,6 @@
   color: var(--text-primary);
 }
 
-/* Card Delete Button */
-:is(body, #app) .card-delete-btn {
-  position: absolute;
-  top: var(--spacing-sm);
-  right: var(--spacing-sm);
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  opacity: 0.6;
-  transition: all var(--transition-fast);
-  z-index: 10;
-  color: var(--color-danger);
-}
-
-.card-delete-btn:hover {
-  background-color: var(--color-danger);
-  color: var(--text-inverse);
-  border-color: var(--color-danger);
-  box-shadow: var(--shadow-sm);
-}
-
 /* Card Options Button (three-dots) */
 :is(body, #app) .card-options-btn {
   position: absolute;
@@ -389,10 +362,6 @@
   box-shadow: var(--shadow-md);
 }
 
-.notebook-card:hover .card-delete-btn {
-  opacity: 1;
-}
-
 .notebook-card-header {
   display: flex;
   align-items: center;
@@ -479,10 +448,6 @@
   background-color: var(--bg-tertiary);
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
-}
-
-.note-card:hover .card-delete-btn {
-  opacity: 1;
 }
 
 /* Overview Search */
@@ -632,12 +597,6 @@
   color: var(--text-secondary);
   position: relative;
   background: var(--bg-primary);
-}
-
-.preview-card .card-delete-btn {
-  position: static;
-  padding: 4px;
-  opacity: 1;
 }
 
 .preview-no-content {

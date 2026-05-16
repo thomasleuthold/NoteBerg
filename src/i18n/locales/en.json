@@ -66,6 +66,7 @@
     "notebook": {
       "noDescription": "No description",
       "deleteTitle": "Delete notebook",
+      "optionsTitle": "Notebook options",
       "newNote": "+ New Note",
       "noteCount_one": "{{count}} note",
       "noteCount_other": "{{count}} notes"
@@ -78,7 +79,12 @@
     },
     "noteOptions": {
       "title": "Note options",
+      "edit": "Edit",
       "moveCopy": "Move / Copy",
+      "delete": "Delete"
+    },
+    "notebookOptions": {
+      "edit": "Edit",
       "delete": "Delete"
     },
     "moveCopy": {
@@ -264,6 +270,12 @@
       "titlePlaceholder": "Enter note title",
       "hintQuick": "This will be created as a quick note (not in any notebook).",
       "hintNotebook": "This note will be created in <strong>{{notebook}}</strong>."
+    },
+    "editNote": {
+      "title": "Edit Note"
+    },
+    "editNotebook": {
+      "title": "Edit Notebook"
     },
     "noteProperties": {
       "title": "Note Properties",

@@ -17,13 +17,13 @@ build:
     npm run build
 
 build-w:
-    if (Test-Path "src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi\") { Remove-Item -Path "src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi\*" -Force -Recurse -ErrorAction SilentlyContinue }
+    if (Test-Path "src-tauri\target\release\bundle\msi\") { Remove-Item -Path "src-tauri\target\release\bundle\msi\*" -Force -Recurse -ErrorAction SilentlyContinue }
     Get-Process -Name "NoteBerg.Recognition" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*src-tauri*" } | Stop-Process -Force -ErrorAction SilentlyContinue; $true
     just package-sidecar
     npm run tauri build
     New-Item -ItemType Directory -Force -Path dist | Out-Null
-    # Copy-Item -Path "src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi\*.msi" -Destination "builds\" -Force
-    Copy-Item -Path "src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi\*.msi" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\" -Force
+    # Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
+    Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\" -Force
 
 build-a:
     if (Test-Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\") { Remove-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\*" -Force -Recurse -ErrorAction SilentlyContinue }

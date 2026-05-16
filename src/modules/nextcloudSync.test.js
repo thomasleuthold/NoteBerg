@@ -404,6 +404,43 @@ describe("Nextcloud Sync Module", () => {
       expect(result.uploaded.notebooks.uploadedIds).toContain("nb2");
       expect(result.uploaded.notebooks.uploadedIds).not.toContain("nb1");
     });
+
+    it("should upload an existing notebook modified locally when remote is unchanged", async () => {
+      // Scenario: notebook was previously synced (has lastSyncedEtag), user edits title/description.
+      // Remote file has not changed — etag still matches lastSyncedEtag.
+      // Expected: notebook is queued for upload.
+      const nb = {
+        id: "nb-edit",
+        title: "Updated Title",
+        synced: false,
+        lastSyncedEtag: "etag-original",
+      };
+
+      // Remote folder structure exists with matching etag (nothing changed remotely)
+      mockServer.files.set("/NoteBerg/notebooks/nb-edit", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb-edit/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb-edit/_notebook.json", {
+        content: JSON.stringify({ id: "nb-edit", title: "Old Title", synced: true }),
+        etag: "etag-original", // Matches local lastSyncedEtag — no remote change
+        mtime: new Date(),
+      });
+
+      const result = await fullSync([nb], []);
+
+      expect(result.uploaded.notebooks.uploaded).toBe(1);
+      expect(result.uploaded.notebooks.uploadedIds).toContain("nb-edit");
+
+      // Verify the uploaded content has the new title
+      const uploaded = mockServer.files.get("/NoteBerg/notebooks/nb-edit/_notebook.json");
+      const uploadedContent = JSON.parse(uploaded.content);
+      expect(uploadedContent.title).toBe("Updated Title");
+    });
   });
 
   describe("Conflict Resolution", () => {
@@ -968,6 +1005,56 @@ describe("Nextcloud Sync Module", () => {
 
       // Should instruct to delete locally
       expect(result.notebooksToDelete).toContain(notebookId);
+    });
+  });
+
+  describe("PROPFIND ETag parsing", () => {
+    it("should strip &quot; HTML entities from PROPFIND etags so locally-modified notebooks upload", async () => {
+      // Scenario: Nextcloud PROPFIND returns etag as &quot;abc&quot; (HTML-entity-encoded).
+      // The local notebook was previously synced and has the bare etag "abc" stored.
+      // Without the fix, &quot;abc&quot; !== "abc" → isModifiedRemotely=true → conflict,
+      // and the local changes are never uploaded.
+      const BARE_ETAG = "64e5cc51eda6b41fca80e1a64b8612a6";
+
+      const nb = {
+        id: "nb-quot",
+        title: "Updated Title",
+        synced: false,
+        lastSyncedEtag: BARE_ETAG,
+      };
+
+      // Simulate Nextcloud returning the etag with &quot; HTML entities in PROPFIND.
+      // We do this by intercepting the PROPFIND response via the mock server, then
+      // replacing the mock's PROPFIND XML generation for this file.
+      mockServer.files.set("/NoteBerg/notebooks/nb-quot", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb-quot/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      // Store the etag with &quot; wrapping to simulate Nextcloud HTML-encoding
+      mockServer.files.set("/NoteBerg/notebooks/nb-quot/_notebook.json", {
+        content: JSON.stringify({
+          id: "nb-quot",
+          title: "Old Title",
+          synced: true,
+          lastSyncedEtag: BARE_ETAG,
+        }),
+        etag: `&quot;${BARE_ETAG}&quot;`, // HTML-entity-encoded, as Nextcloud sends in PROPFIND
+        mtime: new Date(),
+      });
+
+      const result = await fullSync([nb], []);
+
+      // After the fix: &quot; stripped → file.etag === BARE_ETAG === local.lastSyncedEtag
+      // → isModifiedRemotely=false, isModifiedLocally=true → upload
+      expect(result.uploaded.notebooks.uploaded).toBe(1);
+      expect(result.uploaded.notebooks.uploadedIds).toContain("nb-quot");
+
+      const uploaded = mockServer.files.get("/NoteBerg/notebooks/nb-quot/_notebook.json");
+      expect(JSON.parse(uploaded.content).title).toBe("Updated Title");
     });
   });
 

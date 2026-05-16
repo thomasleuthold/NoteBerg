@@ -12,12 +12,18 @@ import {
   deleteNotebook,
   getAllNotebooks,
   getAllNotes,
+  getDeletedNotebooks,
+  getDeletedNotes,
   getNote,
   getNotebook,
   getNotesByNotebook,
   getQuickNotes,
   getSetting,
   moveNote,
+  purgeNote,
+  purgeNotebook,
+  restoreNote,
+  restoreNotebook,
 } from "../modules/storage.js";
 // getAllNotes / getNotesByNotebook / getQuickNotes now return lightweight index entries
 // (no strokes, no content, no recognition). Use getNote(id) when full content is needed.
@@ -28,7 +34,12 @@ import {
   getThemePalette,
   renderNotePreview,
 } from "../utils/noteRenderer.js";
-import { showConfirmDialog, showMoveCopyDialog } from "./modals.js";
+import {
+  showConfirmDialog,
+  showEditNotebookModal,
+  showEditNoteModal,
+  showMoveCopyDialog,
+} from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
 import "./overviewMode.css";
 
@@ -87,7 +98,7 @@ export async function renderOverview(
             ${markersIcon} ${t("overview.tabs.markers")}
           </button>
 
-          <button class="tab-btn recycle-bin-tab" id="recycle-bin-btn">
+          <button class="tab-btn recycle-bin-tab ${currentActiveTab === "recyclebin" ? "active" : ""}" data-tab="recyclebin">
             ${trashIcon}
             ${t("overview.tabs.recycleBin")}
           </button>
@@ -351,6 +362,140 @@ async function renderMarkersTab(container) {
   }
 }
 
+async function renderRecycleBinTab(container) {
+  const deletedNotebooks = await getDeletedNotebooks();
+  const deletedNotes = await getDeletedNotes();
+  const totalItems = deletedNotebooks.length + deletedNotes.length;
+
+  const notebookIcon = getIcon("notebook", 24);
+  const noteIcon = getIcon("note", 24);
+  const restoreIcon = getIcon("restore", 16);
+  const trashIcon = getIcon("trash", 16);
+
+  const escHtml = (text) => {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  };
+
+  const fmtDate = (ts) => {
+    const date = new Date(ts);
+    const now = new Date();
+    const diffMins = Math.floor((now - date) / 60000);
+    const diffHours = Math.floor((now - date) / 3600000);
+    const diffDays = Math.floor((now - date) / 86400000);
+    if (diffMins < 1) return "just now";
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  };
+
+  const renderItem = (item, type, icon) => `
+    <div class="recycle-item" data-type="${type}" data-id="${item.id}">
+      <div class="recycle-item-icon">${icon}</div>
+      <div class="recycle-item-content">
+        <div class="recycle-item-title">${escHtml(item.title || t("common.untitled"))}</div>
+        <div class="recycle-item-meta">
+          <span class="recycle-item-type">${type === "notebook" ? "Notebook" : "Note"}</span>
+          <span class="recycle-item-date">Deleted ${fmtDate(item.modified)}</span>
+        </div>
+      </div>
+      <div class="recycle-item-actions">
+        <button class="btn-restore" data-type="${type}" data-id="${item.id}" title="Restore">
+          ${restoreIcon} Restore
+        </button>
+        <button class="btn-purge" data-type="${type}" data-id="${item.id}" title="Delete Permanently">
+          ${trashIcon} Purge
+        </button>
+      </div>
+    </div>
+  `;
+
+  if (totalItems === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon" style="margin-bottom: 1rem; color: var(--text-secondary);">
+          ${getIcon("trash", 64)}
+        </div>
+        <h3>Recycle Bin is Empty</h3>
+        <p>Deleted notebooks and notes will appear here.</p>
+      </div>
+    `;
+  } else {
+    const notebooksHtml =
+      deletedNotebooks.length > 0
+        ? deletedNotebooks.map((nb) => renderItem(nb, "notebook", notebookIcon)).join("")
+        : '<p class="empty-state">No deleted notebooks</p>';
+    const notesHtml =
+      deletedNotes.length > 0
+        ? deletedNotes.map((n) => renderItem(n, "note", noteIcon)).join("")
+        : '<p class="empty-state">No deleted notes</p>';
+
+    container.innerHTML = `
+      <div class="recycle-bin-container">
+        <div class="recycle-bin-section">
+          <h3>Notebooks (${deletedNotebooks.length})</h3>
+          <div class="recycle-items-list">${notebooksHtml}</div>
+        </div>
+        <div class="recycle-bin-section">
+          <h3>Notes (${deletedNotes.length})</h3>
+          <div class="recycle-items-list">${notesHtml}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Restore buttons
+  container.querySelectorAll(".btn-restore").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        if (btn.dataset.type === "notebook") {
+          await restoreNotebook(btn.dataset.id);
+        } else {
+          await restoreNote(btn.dataset.id);
+        }
+        window.dispatchEvent(new CustomEvent("datachange"));
+      } catch (error) {
+        console.error("Error restoring item:", error);
+      }
+    });
+  });
+
+  // Purge buttons
+  container.querySelectorAll(".btn-purge").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      let message =
+        "Are you sure you want to permanently delete this item? This will remove it from all synced devices and cannot be undone.";
+      if (btn.dataset.type === "notebook") {
+        const notes = await getDeletedNotes();
+        const count = notes.filter((n) => n.notebookId === btn.dataset.id).length;
+        if (count > 0) {
+          message = `Are you sure you want to permanently delete this notebook? This will also permanently delete ${count} note(s) inside it. This will remove it from all synced devices and cannot be undone.`;
+        }
+      }
+      const confirmed = await showConfirmDialog(
+        "Delete Permanently",
+        message,
+        "Delete",
+        "btn-danger",
+      );
+      if (confirmed) {
+        try {
+          if (btn.dataset.type === "note") {
+            await purgeNote(btn.dataset.id);
+          } else {
+            await purgeNotebook(btn.dataset.id);
+          }
+          window.dispatchEvent(new CustomEvent("datachange"));
+        } catch (error) {
+          console.error("Error purging item:", error);
+        }
+      }
+    });
+  });
+}
+
 async function renderActiveTab(container, notebookId) {
   container.innerHTML = `<div class="loading-state">${t("overview.loading")}</div>`;
 
@@ -365,6 +510,8 @@ async function renderActiveTab(container, notebookId) {
       await renderSearchTab(container);
     } else if (currentActiveTab === "markers") {
       await renderMarkersTab(container);
+    } else if (currentActiveTab === "recyclebin") {
+      await renderRecycleBinTab(container);
     }
   } catch (error) {
     console.error("Error rendering tab:", error);
@@ -388,14 +535,6 @@ function attachShellListeners(container, notebookId) {
       renderActiveTab(container.querySelector("#overview-tab-content"), notebookId);
     });
   });
-
-  const recycleBinBtn = container.querySelector("#recycle-bin-btn");
-  if (recycleBinBtn) {
-    recycleBinBtn.addEventListener("click", () => {
-      currentActiveTab = "notes";
-      navigateTo("recyclebin");
-    });
-  }
 }
 
 function attachNotesListListeners(container) {
@@ -418,25 +557,14 @@ function attachNotesListListeners(container) {
     });
   });
 
-  // Delete notebook button clicks
-  const notebookDeleteBtns = container.querySelectorAll(".notebook-card .card-delete-btn");
-  notebookDeleteBtns.forEach((btn) => {
+  // Notebook options button clicks
+  const notebookOptionsBtns = container.querySelectorAll(".notebook-card .card-options-btn");
+  notebookOptionsBtns.forEach((btn) => {
     btn.addEventListener("click", async (e) => {
-      e.stopPropagation(); // Prevent card click
+      e.stopPropagation();
       const notebookId = btn.dataset.notebookId;
       const notebook = await getNotebook(notebookId);
-
-      const confirmed = await showConfirmDialog(
-        t("overview.delete.notebookTitle"),
-        t("overview.delete.notebookMessage", { title: notebook.title }),
-        t("common.delete"),
-        "btn-danger",
-      );
-
-      if (confirmed) {
-        await deleteNotebook(notebookId);
-        window.dispatchEvent(new CustomEvent("datachange"));
-      }
+      showNotebookOptionsMenu(btn, notebook);
     });
   });
 
@@ -612,6 +740,7 @@ function showNoteOptionsMenu(anchor, note) {
   menu.id = "note-options-menu";
   menu.className = "note-options-menu";
   menu.innerHTML = `
+    <button class="note-options-menu__item" data-action="edit">${t("overview.noteOptions.edit")}</button>
     <button class="note-options-menu__item" data-action="movecopy">${t("overview.noteOptions.moveCopy")}</button>
     <hr class="note-options-menu__separator">
     <button class="note-options-menu__item note-options-menu__item--danger" data-action="delete">${t("overview.noteOptions.delete")}</button>
@@ -630,6 +759,11 @@ function showNoteOptionsMenu(anchor, note) {
   menu.style.left = `${left}px`;
 
   const closeMenu = () => menu.remove();
+
+  menu.querySelector("[data-action='edit']").addEventListener("click", () => {
+    closeMenu();
+    showEditNoteModal(note);
+  });
 
   menu.querySelector("[data-action='movecopy']").addEventListener("click", async () => {
     closeMenu();
@@ -665,6 +799,70 @@ function showNoteOptionsMenu(anchor, note) {
     }
   };
   // Use setTimeout so the current click doesn't immediately close the menu
+  setTimeout(() => {
+    document.addEventListener("mousedown", onOutside);
+    document.addEventListener("keydown", onKey);
+  }, 0);
+}
+
+function showNotebookOptionsMenu(anchor, notebook) {
+  const existing = document.getElementById("note-options-menu");
+  if (existing) existing.remove();
+
+  const menu = document.createElement("div");
+  menu.id = "note-options-menu";
+  menu.className = "note-options-menu";
+  menu.innerHTML = `
+    <button class="note-options-menu__item" data-action="edit">${t("overview.notebookOptions.edit")}</button>
+    <hr class="note-options-menu__separator">
+    <button class="note-options-menu__item note-options-menu__item--danger" data-action="delete">${t("overview.notebookOptions.delete")}</button>
+  `;
+
+  document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  let top = rect.bottom + 4;
+  let left = rect.right - menuRect.width;
+  if (left < 4) left = 4;
+  if (top + menuRect.height > window.innerHeight - 4) top = rect.top - menuRect.height - 4;
+  menu.style.top = `${top}px`;
+  menu.style.left = `${left}px`;
+
+  const closeMenu = () => menu.remove();
+
+  menu.querySelector("[data-action='edit']").addEventListener("click", () => {
+    closeMenu();
+    showEditNotebookModal(notebook);
+  });
+
+  menu.querySelector("[data-action='delete']").addEventListener("click", async () => {
+    closeMenu();
+    const confirmed = await showConfirmDialog(
+      t("overview.delete.notebookTitle"),
+      t("overview.delete.notebookMessage", { title: notebook.title }),
+      t("common.delete"),
+      "btn-danger",
+    );
+    if (confirmed) {
+      await deleteNotebook(notebook.id);
+      window.dispatchEvent(new CustomEvent("datachange"));
+    }
+  });
+
+  const onOutside = (e) => {
+    if (!menu.contains(e.target) && e.target !== anchor) {
+      closeMenu();
+      document.removeEventListener("mousedown", onOutside);
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      closeMenu();
+      document.removeEventListener("mousedown", onOutside);
+      document.removeEventListener("keydown", onKey);
+    }
+  };
   setTimeout(() => {
     document.addEventListener("mousedown", onOutside);
     document.addEventListener("keydown", onKey);

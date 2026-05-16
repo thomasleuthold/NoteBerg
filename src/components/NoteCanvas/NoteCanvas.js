@@ -2877,9 +2877,10 @@ export class NoteCanvas {
    */
   _saveTasks() {
     if (_IS_NEXTCLOUD) {
-      updateNote(this.noteId, { tasks: this.noteData.tasks, deletedTasks: this.noteData.deletedTasks }).catch((e) =>
-        console.error("[NoteCanvas] WebDAV tasks save failed:", e),
-      );
+      updateNote(this.noteId, {
+        tasks: this.noteData.tasks,
+        deletedTasks: this.noteData.deletedTasks,
+      }).catch((e) => console.error("[NoteCanvas] WebDAV tasks save failed:", e));
       return;
     }
     if (this.strokeManager?.worker) {
