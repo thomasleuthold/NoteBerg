@@ -89,18 +89,18 @@ export async function renderOverview(
       <div class="overview-container">
         <div class="overview-tabs">
           <button class="tab-btn ${currentActiveTab === "notes" ? "active" : ""}" data-tab="notes">
-            ${notebookIcon} ${t("overview.tabs.notes")}
+            ${notebookIcon} <span class="tab-label">${t("overview.tabs.notes")}</span>
           </button>
           <button class="tab-btn ${currentActiveTab === "search" ? "active" : ""}" data-tab="search">
-            ${searchIcon} ${t("overview.tabs.search")}
+            ${searchIcon} <span class="tab-label">${t("overview.tabs.search")}</span>
           </button>
           <button class="tab-btn ${currentActiveTab === "markers" ? "active" : ""}" data-tab="markers">
-            ${markersIcon} ${t("overview.tabs.markers")}
+            ${markersIcon} <span class="tab-label">${t("overview.tabs.markers")}</span>
           </button>
 
           <button class="tab-btn recycle-bin-tab ${currentActiveTab === "recyclebin" ? "active" : ""}" data-tab="recyclebin">
             ${trashIcon}
-            ${t("overview.tabs.recycleBin")}
+            <span class="tab-label">${t("overview.tabs.recycleBin")}</span>
           </button>
         </div>
 
