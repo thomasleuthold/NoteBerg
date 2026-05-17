@@ -1997,7 +1997,7 @@ export async function fullSync(localNotebooks, localNotes) {
       if (
         remote.modified &&
         local.modified &&
-        remote.modified <= local.modified + 2000 &&
+        remote.modified === local.modified &&
         !isModifiedLocally
       ) {
         console.log(

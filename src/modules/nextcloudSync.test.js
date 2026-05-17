@@ -405,6 +405,78 @@ describe("Nextcloud Sync Module", () => {
       expect(result.uploaded.notebooks.uploadedIds).not.toContain("nb1");
     });
 
+    it("should download note when remote.modified differs from local.modified (not etag oscillation)", async () => {
+      const noteId = "n-real-edit";
+      const notebookId = "nb1";
+      const T1 = 1_700_000_000_000;
+
+      const remoteNote = { id: noteId, notebookId, content: "Edited in NC", modified: T1 + 5000 };
+
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
+        content: JSON.stringify(remoteNote),
+        etag: "etag-E2",
+        mtime: new Date(T1 + 5000),
+      });
+
+      const localNote = {
+        id: noteId,
+        notebookId,
+        modified: T1,
+        synced: true,
+        lastSyncedEtag: "etag-E1",
+      };
+      const result = await fullSync([], [localNote]);
+
+      // Real NC edit: must be queued for download, NOT silently accepted as etag oscillation
+      expect(result.downloaded.notes.some((n) => n.id === noteId)).toBe(true);
+      expect(result.noteEtagsToUpdate.some((e) => e.id === noteId)).toBe(false);
+    });
+
+    it("should accept remote etag without download when remote.modified equals local.modified (etag oscillation)", async () => {
+      const noteId = "n-oscillation";
+      const notebookId = "nb1";
+      const T1 = 1_700_000_000_000;
+
+      // Same modified timestamp as local → etag oscillation, no real content change
+      const remoteNote = { id: noteId, notebookId, content: "Same content", modified: T1 };
+
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
+        content: JSON.stringify(remoteNote),
+        etag: "etag-E2", // Different ETag → isModifiedRemotely = true
+        mtime: new Date(T1),
+      });
+
+      const localNote = {
+        id: noteId,
+        notebookId,
+        modified: T1,
+        synced: true,
+        lastSyncedEtag: "etag-E1",
+      };
+      const result = await fullSync([], [localNote]);
+
+      // Oscillation: must NOT trigger a download, ETag accepted silently
+      expect(result.downloaded.notes.some((n) => n.id === noteId)).toBe(false);
+      expect(result.noteEtagsToUpdate.some((e) => e.id === noteId)).toBe(true);
+      expect(result.noteEtagsToUpdate.find((e) => e.id === noteId).etag).toBe("etag-E2");
+    });
+
     it("should upload an existing notebook modified locally when remote is unchanged", async () => {
       // Scenario: notebook was previously synced (has lastSyncedEtag), user edits title/description.
       // Remote file has not changed — etag still matches lastSyncedEtag.

@@ -279,8 +279,8 @@ export async function performSync({
         }
       } else if (
         currentLocalIndex &&
-        currentLocalIndex.version >= (noteToSave.version || 0) &&
-        currentLocalIndex.modified >= (noteToSave.modified || 0)
+        currentLocalIndex.version === (noteToSave.version || 0) &&
+        currentLocalIndex.modified === (noteToSave.modified || 0)
       ) {
         // Downloaded content is not newer than local — just update the etag silently.
         await updateNoteEtag(note.id, noteToSave.lastSyncedEtag);
