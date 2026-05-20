@@ -278,8 +278,11 @@ export class NoteCanvas {
     const currentStrokesCount = this.noteData.strokes?.length || 0;
     const freshStrokesCount = freshData.strokes?.length || 0;
 
-    // If local has MORE strokes than DB, we are ahead (unsaved changes). Do not reload.
-    if (currentStrokesCount > freshStrokesCount) {
+    // If local has MORE strokes than DB AND local is dirty (unsaved changes in progress),
+    // do not reload — we are ahead because the user is actively drawing.
+    // If freshData.synced === true, the DB reflects a downloaded server version and we must
+    // reload even if the count decreased (e.g. another device erased strokes).
+    if (currentStrokesCount > freshStrokesCount && freshData.synced === false) {
       return false;
     }
 

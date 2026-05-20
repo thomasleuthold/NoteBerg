@@ -571,7 +571,9 @@ async function uploadFile(path, content, mtime = null, etag = null) {
   });
 
   if (response.status === 412) {
-    console.warn(`[NextcloudSync] 412 Conflict detected for ${path}. Forcing overwrite.`);
+    console.warn(
+      `[NextcloudSync] 412 Conflict for ${path}. Remote changed since last sync. Forcing overwrite — NC changes will be lost if not merged prior.`,
+    );
 
     // Remove If-Match to force overwrite (Brute force resolution)
     if (headers["If-Match"]) {
@@ -938,6 +940,35 @@ export async function listFiles(path) {
 
   const text = await response.text();
   return parseWebDAVResponse(text, false); // false = don't include collections (folders)
+}
+
+/**
+ * Check whether the server has note changes that the local client hasn't seen yet.
+ * Uses a single Depth:1 PROPFIND against the notebook's notes folder — cheap, no content download.
+ * @param {string|null} notebookId - Notebook to check, or null for quick notes
+ * @param {Array<{id: string, lastSyncedEtag: string|null}>} localNotes - Local note index stubs
+ * @returns {Promise<boolean>} true if at least one remote note etag differs from local
+ */
+export async function hasRemoteChanges(notebookId, localNotes) {
+  if (!isAuthenticated()) return false;
+
+  try {
+    const folder = notebookId ? getNotebookNotesFolder(notebookId) : `${ROOT_FOLDER}/quickNotes`;
+
+    const remoteFiles = await listFiles(folder);
+    const localEtagMap = new Map(localNotes.map((n) => [n.id, n.lastSyncedEtag]));
+
+    for (const file of remoteFiles) {
+      if (!file.name.endsWith(".json")) continue;
+      const noteId = file.name.slice(0, -5);
+      // undefined !== etag catches new remote notes local doesn't know about
+      if (localEtagMap.get(noteId) !== file.etag) return true;
+    }
+    return false;
+  } catch (e) {
+    console.warn("[Sync] hasRemoteChanges check failed, assuming no changes:", e);
+    return false;
+  }
 }
 
 /**
@@ -1668,6 +1699,11 @@ export function attemptMerge(local, remote) {
   if (local.media !== undefined && !Array.isArray(local.media)) return null;
   if (remote.media !== undefined && !Array.isArray(remote.media)) return null;
 
+  // Guard against a stub local: index says strokes exist but the content record wasn't loaded
+  // (e.g. StorageWorker write still in-flight). Merging with strokes=undefined would treat
+  // the local as empty and silently discard its strokes into the merged result.
+  if (local.strokes === undefined && local.hasStrokes) return null;
+
   // Determine which note is newer based on modification time
   const localIsNewer = local.modified >= remote.modified;
   const newerNote = localIsNewer ? local : remote;
@@ -1961,6 +1997,10 @@ export async function fullSync(localNotebooks, localNotes) {
     // Since we don't store lastSyncedEtag in Nextcloud JSON, we compare with _currentFileEtag
     const isModifiedRemotely = local.lastSyncedEtag !== remote._currentFileEtag;
 
+    console.log(
+      `[Sync:classify] note=${local.id} isModifiedLocally=${isModifiedLocally} isModifiedRemotely=${isModifiedRemotely} localEtag=${local.lastSyncedEtag} remoteEtag=${remote._currentFileEtag} local.modified=${local.modified} remote.modified=${remote.modified} local.version=${local.version} remote.version=${remote.version}`,
+    );
+
     if (isModifiedLocally && isModifiedRemotely) {
       const fullLocal = await getFullNote(local);
 
@@ -1968,10 +2008,12 @@ export async function fullSync(localNotebooks, localNotes) {
       // Treat as "local wins": upload the local version using the remote etag as the
       // If-Match base so the PUT succeeds even though remote changed.
       if (local.encrypted) {
+        console.log(`[Sync:classify] note=${local.id} → encrypted local-wins upload`);
         notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
       } else {
         const merged = attemptMerge(fullLocal, remote);
         if (merged) {
+          console.log(`[Sync:classify] note=${local.id} → merge succeeded, will upload merged`);
           // Use the remote's current file ETag for the upload to succeed via If-Match
           const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
           notesToUpload.push(mergedWithRemoteBase);
@@ -1981,10 +2023,12 @@ export async function fullSync(localNotebooks, localNotes) {
           // falsely trigger the race-condition detector in the post-sync download phase.
           await saveNote({ ...merged, synced: false });
         } else {
+          console.log(`[Sync:classify] note=${local.id} → merge failed, adding to conflicts`);
           conflicts.notes.push({ local: fullLocal, remote });
         }
       }
     } else if (isModifiedLocally) {
+      console.log(`[Sync:classify] note=${local.id} → local only modified, will upload`);
       notesToUpload.push(await getFullNote(local));
     } else if (isModifiedRemotely) {
       // Check if the remote version is actually not newer than our local version.
@@ -2001,12 +2045,48 @@ export async function fullSync(localNotebooks, localNotes) {
         !isModifiedLocally
       ) {
         console.log(
-          `[Sync] Note ${local.id}: remote etag changed but remote is not newer (remote.modified=${remote.modified}, local.modified=${local.modified}). Accepting remote etag without download.`,
+          `[Sync:classify] note=${local.id} → etag oscillation detected (remote.modified === local.modified = ${local.modified}). Accepting etag without download.`,
         );
         noteEtagsToUpdate.push({ id: local.id, etag: remote._currentFileEtag });
+      } else if (
+        remote.version !== undefined &&
+        local.version !== undefined &&
+        remote.version < local.version
+      ) {
+        // Remote was edited from a stale base (remote.version < local.version).
+        // Even though local is clean (synced=true), a plain download would discard
+        // strokes that local uploaded in the interim. Merge instead.
+        console.log(
+          `[Sync:classify] note=${local.id} → stale-fork remote (remote.version=${remote.version} < local.version=${local.version}). Merging.`,
+        );
+        const fullLocal = await getFullNote(local);
+        if (local.encrypted) {
+          // Cannot merge encrypted notes — upload local with remote etag as base so
+          // the PUT succeeds; remote's edits will be lost (same as the encrypted path above).
+          notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
+        } else {
+          const merged = attemptMerge(fullLocal, remote);
+          if (merged) {
+            console.log(
+              `[Sync:classify] note=${local.id} → stale-fork merge succeeded, uploading merged`,
+            );
+            notesToUpload.push({ ...merged, lastSyncedEtag: remote._currentFileEtag });
+            await saveNote({ ...merged, synced: false });
+          } else {
+            console.log(
+              `[Sync:classify] note=${local.id} → stale-fork merge failed, adding to conflicts`,
+            );
+            conflicts.notes.push({ local: fullLocal, remote });
+          }
+        }
       } else {
+        console.log(
+          `[Sync:classify] note=${local.id} → remote modified (remote.modified=${remote.modified} vs local.modified=${local.modified}). Queuing download.`,
+        );
         notesToDownload.push(remote);
       }
+    } else {
+      console.log(`[Sync:classify] note=${local.id} → no changes, skipping`);
     }
   }
 

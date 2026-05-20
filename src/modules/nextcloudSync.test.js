@@ -477,6 +477,71 @@ describe("Nextcloud Sync Module", () => {
       expect(result.noteEtagsToUpdate.find((e) => e.id === noteId).etag).toBe("etag-E2");
     });
 
+    it("should merge and upload when remote is a stale fork (remote.version < local.version, local is clean)", async () => {
+      // Scenario: native uploaded v8 → v13 (clean, synced=true). NC edited from v8 base → v15
+      // (NC didn't see v9-v13). Local is clean but has more strokes than the remote fork.
+      // Expected: stale-fork path fires, merged note uploaded, NOT a plain download.
+      const noteId = "n-stale-fork";
+      const notebookId = "nb1";
+
+      const localStroke = { id: "s-native", x: [10], y: [10] };
+      const ncStroke = { id: "s-nc", x: [20], y: [20] };
+
+      const remoteNote = {
+        id: noteId,
+        notebookId,
+        strokes: [ncStroke],
+        deletedStrokes: [],
+        version: 15,
+        modified: 1_700_000_010_000,
+      };
+
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
+        content: JSON.stringify(remoteNote),
+        etag: "etag-nc",
+        mtime: new Date(1_700_000_010_000),
+      });
+
+      // Seed local full note (for getNote / getRawNote calls during merge)
+      const localFull = {
+        id: noteId,
+        notebookId,
+        strokes: [localStroke],
+        deletedStrokes: [],
+        version: 17,
+        modified: 1_700_000_020_000,
+        synced: true,
+        lastSyncedEtag: "etag-native-v13",
+      };
+      mockNoteStore.set(noteId, localFull);
+
+      const localIndex = { ...localFull };
+      const result = await fullSync([], [localIndex]);
+
+      // Must NOT be a plain download
+      expect(result.downloaded.notes.some((n) => n.id === noteId)).toBe(false);
+
+      // Must upload the merged result
+      expect(result.uploaded.notes.uploaded).toBe(1);
+
+      // saveNote must have been called with both strokes
+      expect(saveNote).toHaveBeenCalled();
+      const mergedArg = saveNote.mock.calls.find((c) => c[0]?.id === noteId)?.[0];
+      expect(mergedArg).toBeDefined();
+      expect(mergedArg.strokes.find((s) => s.id === "s-native")).toBeTruthy();
+      expect(mergedArg.strokes.find((s) => s.id === "s-nc")).toBeTruthy();
+
+      mockNoteStore.delete(noteId);
+    });
+
     it("should upload an existing notebook modified locally when remote is unchanged", async () => {
       // Scenario: notebook was previously synced (has lastSyncedEtag), user edits title/description.
       // Remote file has not changed — etag still matches lastSyncedEtag.
@@ -655,6 +720,44 @@ describe("Nextcloud Sync Module", () => {
 
       const merged = attemptMerge(local, remote);
       expect(merged.background).toBe("grid-large");
+    });
+
+    it("should return null when local is a stub (hasStrokes=true but strokes undefined)", () => {
+      // Scenario: StorageWorker write still in-flight — getRawNote returns the index record
+      // only (no noteContent), so strokes is undefined even though the note has strokes.
+      // Merging with this stub would treat local as empty and silently drop all local strokes.
+      const local = {
+        id: "n-stub",
+        modified: 2000,
+        hasStrokes: true, // index flag says strokes exist
+        strokes: undefined, // content record not loaded yet
+      };
+      const remote = {
+        id: "n-stub",
+        modified: 1000,
+        strokes: [{ id: "s-remote", x: [1], y: [1] }],
+      };
+
+      expect(attemptMerge(local, remote)).toBeNull();
+    });
+
+    it("should merge normally when local has no strokes and hasStrokes is false", () => {
+      // Genuine empty note — not a stub. Should merge fine.
+      const local = {
+        id: "n-empty",
+        modified: 2000,
+        hasStrokes: false,
+        strokes: [],
+      };
+      const remote = {
+        id: "n-empty",
+        modified: 1000,
+        strokes: [{ id: "s-remote", x: [1], y: [1] }],
+      };
+
+      const merged = attemptMerge(local, remote);
+      expect(merged).not.toBeNull();
+      expect(merged.strokes.find((s) => s.id === "s-remote")).toBeTruthy();
     });
   });
 

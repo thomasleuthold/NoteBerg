@@ -103,7 +103,9 @@ export function initNoteCanvasComponent() {
       return;
     }
 
-    if (container) {
+    if (noteCanvasInstance.isInitialized) {
+      await noteCanvasInstance.applyLiveUpdate();
+    } else if (container) {
       noteCanvasInstance.destroy();
       noteCanvasInstance = new NoteCanvas(container);
       await noteCanvasInstance.load(noteId);

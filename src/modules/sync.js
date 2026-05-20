@@ -223,6 +223,9 @@ export async function performSync({
     }
 
     // Save downloaded items
+    console.log(
+      `[Sync] fullSync returned: downloaded ${result.downloaded.notes.length} notes, ${result.downloaded.notebooks.length} notebooks; noteEtagsToUpdate=${result.noteEtagsToUpdate?.length ?? 0}; uploaded notes=${result.uploaded.notes.uploaded} notebooks=${result.uploaded.notebooks.uploaded}; conflicts notes=${result.conflicts?.notes?.length ?? 0}`,
+    );
     for (const notebook of result.downloaded.notebooks) {
       // Check for race condition: has local notebook changed since sync started?
       const currentLocalNotebook = await getNotebook(notebook.id);
@@ -261,20 +264,27 @@ export async function performSync({
       const currentLocalIndex = await getNoteIndex(note.id);
       const originalLocalNote = localNotesMap.get(note.id);
 
+      console.log(
+        `[Sync:save] note=${note.id} currentLocal.modified=${currentLocalIndex?.modified} originalLocal.modified=${originalLocalNote?.modified} noteToSave.modified=${noteToSave.modified} currentLocal.version=${currentLocalIndex?.version} noteToSave.version=${noteToSave.version}`,
+      );
+
       if (
         currentLocalIndex &&
         originalLocalNote &&
         currentLocalIndex.modified !== originalLocalNote.modified
       ) {
-        console.warn(`[Sync] Race condition detected for note ${note.id}. Merging changes.`);
+        console.warn(
+          `[Sync:save] note=${note.id} → RACE CONDITION (local modified during sync). Attempting merge.`,
+        );
         // Only load full content now that we know a merge is actually needed.
         const currentLocal = await getNote(note.id);
         const merged = currentLocal ? attemptMerge(currentLocal, noteToSave) : null;
         if (merged) {
+          console.log(`[Sync:save] note=${note.id} → race merge succeeded, saving merged`);
           await saveNote(merged);
         } else {
           console.warn(
-            `[Sync] Merge failed for note ${note.id} (content conflict). Keeping local version.`,
+            `[Sync:save] note=${note.id} → race merge failed (text conflict). Keeping local version.`,
           );
         }
       } else if (
@@ -283,8 +293,14 @@ export async function performSync({
         currentLocalIndex.modified === (noteToSave.modified || 0)
       ) {
         // Downloaded content is not newer than local — just update the etag silently.
+        console.log(
+          `[Sync:save] note=${note.id} → version+modified identical (${currentLocalIndex.version}/${currentLocalIndex.modified}). Skipping save, updating etag only.`,
+        );
         await updateNoteEtag(note.id, noteToSave.lastSyncedEtag);
       } else {
+        console.log(
+          `[Sync:save] note=${note.id} → saving downloaded note (version ${noteToSave.version}, modified ${noteToSave.modified})`,
+        );
         await saveNote(noteToSave);
       }
     }
