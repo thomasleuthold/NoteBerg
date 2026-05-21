@@ -460,10 +460,11 @@
       "paste": "Einfügen"
     },
     "crop": {
-      "simpleCrop": "Einfacher Zuschnitt",
+      "simpleCrop": "Zuschnitt",
       "perspective": "Perspektive",
       "apply": "Anwenden",
-      "cancel": "Abbrechen"
+      "cancel": "Abbrechen",
+      "normalizeLighting": "Beleuchtung normalisieren"
     }
   },
   "recycleBin": {

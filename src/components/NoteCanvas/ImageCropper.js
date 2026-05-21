@@ -99,6 +99,15 @@ export class ImageCropper {
     const controls = document.createElement("div");
     controls.className = "crop-controls";
 
+    const normalizeLabel = document.createElement("label");
+    normalizeLabel.className = "crop-normalize-label";
+    const normalizeCheckbox = document.createElement("input");
+    normalizeCheckbox.type = "checkbox";
+    normalizeCheckbox.className = "crop-normalize-checkbox";
+    normalizeCheckbox.id = "crop-normalize-checkbox";
+    normalizeLabel.appendChild(normalizeCheckbox);
+    normalizeLabel.appendChild(document.createTextNode(t("canvas.crop.normalizeLighting")));
+
     const applyBtn = document.createElement("button");
     applyBtn.textContent = t("canvas.crop.apply");
     applyBtn.className = "crop-btn crop-apply-btn";
@@ -109,6 +118,7 @@ export class ImageCropper {
     cancelBtn.className = "crop-btn crop-cancel-btn";
     cancelBtn.onclick = () => this._close(null);
 
+    controls.appendChild(normalizeLabel);
     controls.appendChild(cancelBtn);
     controls.appendChild(applyBtn);
 
@@ -181,18 +191,24 @@ export class ImageCropper {
   async _applyCrop() {
     const mode = this.overlay.dataset.cropMode;
     const imgRect = this.imageElement.getBoundingClientRect();
-    let blob = null;
+    const normalize = this.overlay.querySelector("#crop-normalize-checkbox").checked;
+    let canvas = null;
 
     if (mode === "perspective") {
-      blob = await this._applyPerspectiveCorrection(imgRect);
+      canvas = await this._applyPerspectiveCorrectionToCanvas(imgRect);
     } else {
-      blob = await this._applySimpleCrop(imgRect);
+      canvas = await this._applySimpleCropToCanvas(imgRect);
     }
 
+    if (normalize) {
+      this._normalizeLighting(canvas);
+    }
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
     this._close(blob);
   }
 
-  async _applySimpleCrop(imgRect) {
+  async _applySimpleCropToCanvas(imgRect) {
     const cropArea = this.overlay.querySelector("#crop-area");
     const cropRect = cropArea.getBoundingClientRect();
 
@@ -221,10 +237,10 @@ export class ImageCropper {
       cropHeight,
     );
 
-    return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    return canvas;
   }
 
-  async _applyPerspectiveCorrection(imgRect) {
+  async _applyPerspectiveCorrectionToCanvas(imgRect) {
     const perspectiveArea = this.overlay.querySelector("#perspective-area");
     const corners = {};
     perspectiveArea.querySelectorAll(".perspective-corner").forEach((corner) => {
@@ -276,7 +292,7 @@ export class ImageCropper {
       perspT = PerspT(srcCorners, dstCorners);
     } catch (e) {
       console.error("[ImageCropper] Failed to create perspective transform:", e);
-      return this._applySimpleCrop(imgRect); // Fallback to simple crop
+      return this._applySimpleCropToCanvas(imgRect); // Fallback to simple crop
     }
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(outputWidth);
@@ -312,7 +328,57 @@ export class ImageCropper {
     }
 
     ctx.putImageData(outputImageData, 0, 0);
-    return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    return canvas;
+  }
+
+  _normalizeLighting(canvas) {
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // Blur a downscaled copy to estimate the background illumination.
+    // Working at 1/4 resolution keeps it fast while preserving the slow gradient.
+    const scale = 0.25;
+    const bw = Math.max(1, Math.round(w * scale));
+    const bh = Math.max(1, Math.round(h * scale));
+
+    const blurCanvas = document.createElement("canvas");
+    blurCanvas.width = bw;
+    blurCanvas.height = bh;
+    const blurCtx = blurCanvas.getContext("2d");
+
+    // Draw downscaled
+    blurCtx.drawImage(canvas, 0, 0, bw, bh);
+
+    // Apply a strong blur to wash out all text, leaving only illumination gradient.
+    // blur radius relative to the downscaled size — ~15% of the shorter side works well.
+    const blurRadius = Math.round(Math.min(bw, bh) * 0.15);
+    blurCtx.filter = `blur(${blurRadius}px)`;
+    blurCtx.drawImage(blurCanvas, 0, 0);
+    blurCtx.filter = "none";
+
+    // Read both images at full resolution by scaling the blurred map back up
+    const bgCanvas = document.createElement("canvas");
+    bgCanvas.width = w;
+    bgCanvas.height = h;
+    const bgCtx = bgCanvas.getContext("2d");
+    bgCtx.drawImage(blurCanvas, 0, 0, w, h);
+
+    const srcData = ctx.getImageData(0, 0, w, h);
+    const bgData = bgCtx.getImageData(0, 0, w, h);
+    const pixels = srcData.data;
+    const bg = bgData.data;
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      // Use max-channel background brightness to avoid colour casts
+      const bgBright = Math.max(bg[i], bg[i + 1], bg[i + 2], 1);
+      pixels[i] = Math.min(255, (pixels[i] / bgBright) * 255);
+      pixels[i + 1] = Math.min(255, (pixels[i + 1] / bgBright) * 255);
+      pixels[i + 2] = Math.min(255, (pixels[i + 2] / bgBright) * 255);
+      // alpha unchanged
+    }
+
+    ctx.putImageData(srcData, 0, 0);
   }
 
   _initCropAreaDrag(cropArea, img) {

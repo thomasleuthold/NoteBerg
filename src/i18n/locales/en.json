@@ -463,7 +463,8 @@
       "simpleCrop": "Simple Crop",
       "perspective": "Perspective",
       "apply": "Apply",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "normalizeLighting": "Normalize lighting"
     }
   },
   "recycleBin": {
