@@ -1520,7 +1520,10 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
           // in which case fullSync logic handles it (local modified + remote unchanged = upload local).
         });
 
-        if (local.media && local.media.length > 0) {
+        if (
+          (local.media && local.media.length > 0) ||
+          (Array.isArray(local.recordings) && local.recordings.some((r) => !r.deleted && r.fileId))
+        ) {
           mediaCheckQueue.push(local);
         }
       }
@@ -1777,7 +1780,7 @@ export function attemptMerge(local, remote) {
 
   const addRecordings = (items) => {
     for (const item of items) {
-      if (item.id && !allDeletedRecordings.has(item.fileId)) {
+      if (item.id && !item.deleted && !allDeletedRecordings.has(item.fileId)) {
         recordingsMap.set(item.id, item);
       }
     }
