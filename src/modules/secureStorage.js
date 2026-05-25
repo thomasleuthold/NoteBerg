@@ -17,7 +17,11 @@
  * old hardcoded key are transparently migrated to the OS keychain and removed.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+let _invoke = null;
+async function _getInvoke() {
+  if (!_invoke) ({ invoke: _invoke } = await import("@tauri-apps/api/core"));
+  return _invoke;
+}
 
 const MANAGED_KEYS = ["master_password", "nextcloud_credentials"];
 
@@ -38,17 +42,17 @@ function _isAndroid() {
 let _androidMigrationDone = false;
 
 async function _androidSave(key, value) {
-  await invoke("save_credential", { key, value });
+  await (await _getInvoke())("save_credential", { key, value });
 }
 
 async function _androidGet(key) {
-  const result = await invoke("get_credential", { key });
+  const result = await (await _getInvoke())("get_credential", { key });
   // Rust returns Result<Option<String>> → Tauri serializes as string | null directly
   return result ?? null;
 }
 
 async function _androidDelete(key) {
-  await invoke("delete_credential", { key });
+  await (await _getInvoke())("delete_credential", { key });
 }
 
 async function _androidMigrateFromLocalStorage() {
@@ -92,14 +96,14 @@ async function _androidMigrateFromLocalStorage() {
 async function _desktopMigrateFromLocalStorage() {
   let migrated = 0;
   for (const key of MANAGED_KEYS) {
-    const existing = await invoke("get_credential", { key }).catch(() => null);
+    const existing = await (await _getInvoke())("get_credential", { key }).catch(() => null);
     if (existing) continue;
     const oldEncrypted = localStorage.getItem(`secure_${key}`);
     if (!oldEncrypted) continue;
     try {
       const plaintext = await _legacyDecrypt(oldEncrypted);
       if (plaintext) {
-        await invoke("save_credential", { key, value: plaintext });
+        await (await _getInvoke())("save_credential", { key, value: plaintext });
         migrated++;
         console.info(`[SecureStorage] Migrated '${key}' to OS keychain`);
       }
@@ -129,7 +133,7 @@ export async function saveSecureCredential(key, value) {
     return _androidSave(key, value);
   }
   await _ensureDesktopMigration();
-  await invoke("save_credential", { key, value });
+  await (await _getInvoke())("save_credential", { key, value });
 }
 
 export async function getSecureCredential(key) {
@@ -140,7 +144,7 @@ export async function getSecureCredential(key) {
   }
   try {
     await _ensureDesktopMigration();
-    return await invoke("get_credential", { key });
+    return await (await _getInvoke())("get_credential", { key });
   } catch (err) {
     console.error("[SecureStorage] Keychain read failed:", err);
     return null;
@@ -151,7 +155,7 @@ export async function deleteSecureCredential(key) {
   if (!_isTauriEnvironment()) return _legacyDelete(key);
   if (_isAndroid()) return _androidDelete(key);
   await _ensureDesktopMigration();
-  await invoke("delete_credential", { key });
+  await (await _getInvoke())("delete_credential", { key });
 }
 
 // ── Legacy fallback (browser / dev mode) + migration decryption ──────────────

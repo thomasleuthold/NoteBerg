@@ -13,8 +13,18 @@
  *   rm.destroy();
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { generateId, saveFile } from "../../modules/storage.js";
+
+let _invoke = null;
+async function _getInvoke() {
+  if (!_invoke) ({ invoke: _invoke } = await import("@tauri-apps/api/core"));
+  return _invoke;
+}
+function _fireAndForget(cmd, args) {
+  _getInvoke().then((inv) => inv(cmd, args)).catch((err) =>
+    console.error(`[RecordingManager] ${cmd} error:`, err),
+  );
+}
 
 /** True when running inside any Tauri environment (desktop or mobile) */
 const IS_NATIVE = typeof window.__TAURI_INTERNALS__ !== "undefined";
@@ -113,7 +123,7 @@ export class RecordingManager {
 
     if (IS_NATIVE) {
       try {
-        await invoke("native_audio_start");
+        await (await _getInvoke())("native_audio_start");
       } catch (err) {
         this._recordingId = null;
         this._recordingStartTime = null;
@@ -229,9 +239,7 @@ export class RecordingManager {
       this._nativePaused = true;
       this._stopAmplitudePoll();
       this._nativeAmplitude = 0;
-      invoke("native_audio_pause").catch((err) =>
-        console.error("[RecordingManager] Native pause error:", err),
-      );
+      _fireAndForget("native_audio_pause");
     } else {
       this._mediaRecorder.pause();
     }
@@ -248,9 +256,7 @@ export class RecordingManager {
     if (this._nativeRecording) {
       this._nativePaused = false;
       this._startAmplitudePoll();
-      invoke("native_audio_resume").catch((err) =>
-        console.error("[RecordingManager] Native resume error:", err),
-      );
+      _fireAndForget("native_audio_resume");
     } else {
       this._mediaRecorder.resume();
     }
@@ -264,7 +270,8 @@ export class RecordingManager {
       this._nativeRecording = false;
       this._nativePaused = false;
       this._stopAmplitudePoll();
-      invoke("native_audio_stop")
+      _getInvoke()
+        .then((inv) => inv("native_audio_stop"))
         .then((result) => {
           this._handleNativeStopped(result);
         })
@@ -305,7 +312,7 @@ export class RecordingManager {
       this._nativeRecording = false;
       this._nativePaused = false;
       this._stopAmplitudePoll();
-      invoke("native_audio_cancel").catch(() => {});
+      _getInvoke().then((inv) => inv("native_audio_cancel")).catch(() => {});
     }
     if (this._mediaRecorder && this._mediaRecorder.state !== "inactive") {
       this._mediaRecorder.ondataavailable = null;
@@ -335,7 +342,7 @@ export class RecordingManager {
     // Read file on Rust's native heap (avoids Android JVM heap OOM for large files)
     let blob;
     try {
-      const base64 = await invoke("native_audio_read_and_delete", { path: result.path });
+      const base64 = await (await _getInvoke())("native_audio_read_and_delete", { path: result.path });
       const mimeType = result.mimeType ?? "audio/mp4";
       const byteChars = atob(base64);
       const byteArr = new Uint8Array(byteChars.length);
@@ -421,7 +428,7 @@ export class RecordingManager {
     this._stopAmplitudePoll();
     this._amplitudePollInterval = setInterval(async () => {
       try {
-        const result = await invoke("native_audio_get_amplitude");
+        const result = await (await _getInvoke())("native_audio_get_amplitude");
         this._nativeAmplitude = result?.amplitude ?? 0;
       } catch (_e) {
         // ignore — recording may have just stopped

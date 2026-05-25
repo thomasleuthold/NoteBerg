@@ -14,6 +14,8 @@ import {
   deleteSecureCredential,
   saveSecureCredential,
 } from "./secureStorage.js";
+import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
+import { decryptObject } from "./encryption.js";
 import {
   checkFileExists,
   clearNoteMoveFlag,
@@ -106,9 +108,6 @@ async function runInBatches(items, batchSize, fn) {
 async function decryptNoteLocally(note) {
   if (!note.encrypted) return note;
 
-  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
-  const { decryptObject } = await import("./encryption.js");
-
   if (!isAppUnlocked()) {
     throw new Error("Cannot upload encrypted note - app is locked");
   }
@@ -170,9 +169,6 @@ async function decryptNoteFromNextcloud(note) {
     v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
 
   if (isEncryptedBlob(decryptedNote.recordings) || isEncryptedBlob(decryptedNote.media)) {
-    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
-    const { decryptObject } = await import("./encryption.js");
-
     if (isAppUnlocked()) {
       const key = getEncryptionKey();
 

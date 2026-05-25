@@ -7,6 +7,7 @@
 
 import { decryptData, deriveKeyFromPassword, encryptData, generateSalt } from "./encryption.js";
 import { getSetting, setSetting } from "./storage.js";
+import { getSecureCredential, saveSecureCredential } from "./secureStorage.js";
 
 // In-memory state (cleared on lock)
 let encryptionKey = null;
@@ -95,7 +96,6 @@ export async function setupMasterPassword(password, hint = "", enableBiometric =
     console.log("[MasterPassword] Master password configured successfully");
 
     // ALWAYS store master password in keyring for automatic unlock
-    const { saveSecureCredential } = await import("./secureStorage.js");
     await saveSecureCredential("master_password", password);
     console.log("[MasterPassword] Master password stored in keyring");
 
@@ -229,7 +229,6 @@ export async function autoUnlockFromKeyring() {
 
   try {
     // Get the stored master password from keyring
-    const { getSecureCredential } = await import("./secureStorage.js");
     const masterPassword = await getSecureCredential("master_password");
 
     if (!masterPassword) {
