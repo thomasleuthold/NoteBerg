@@ -23,19 +23,23 @@ let currentTheme = DEFAULT_THEME;
  *  3. Luminance of --background-color CSS var (works regardless of class names)
  */
 function _detectNextcloudDark() {
-  // 1. Server-side authoritative value injected by PHP into #app data-nc-theme
   const appEl = document.getElementById("app");
-  if (appEl) {
-    const ncTheme = appEl.getAttribute("data-nc-theme");
-    if (ncTheme === "dark") return true;
-    if (ncTheme === "light") return false;
-  }
+  const ncTheme = appEl?.getAttribute("data-nc-theme");
 
-  // 2. Explicit class set by NC accessibility app JS after page load
+  // 1. NC 29+ sets data-theme-dark on <body> at runtime — most reliable signal
+  if (document.body.hasAttribute("data-theme-dark")) return true;
+  if (document.body.hasAttribute("data-theme-dark-highcontrast")) return true;
+  if (document.body.hasAttribute("data-theme-light")) return false;
+
+  // 2. Server-side value from PHP (fallback — may be stale if NC applies theme after load)
+  if (ncTheme === "dark") return true;
+  if (ncTheme === "light") return false;
+
+  // 3. NC ≤28 accessibility app sets theme--dark / theme--light class on <body>
   if (document.body.classList.contains("theme--dark")) return true;
   if (document.body.classList.contains("theme--light")) return false;
 
-  // 3. No reliable signal — default to light
+  // 4. No reliable signal — default to light
   return false;
 }
 
@@ -55,7 +59,13 @@ export async function initTheme() {
     };
     new MutationObserver(_onNcThemeChange).observe(document.body, {
       attributes: true,
-      attributeFilter: ["class", "style"],
+      attributeFilter: [
+        "class",
+        "style",
+        "data-theme-dark",
+        "data-theme-dark-highcontrast",
+        "data-theme-light",
+      ],
     });
     new MutationObserver(_onNcThemeChange).observe(document.documentElement, {
       attributes: true,

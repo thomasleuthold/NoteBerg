@@ -284,34 +284,43 @@ async function renderMarkersTab(container) {
   const allNotes = fullNotes.filter(Boolean);
   const allTasks = [];
   for (const note of allNotes) {
-    const tasks = note.tasks || [];
+    try {
+      const tasks = Array.isArray(note.tasks) ? note.tasks : [];
 
-    let recognition = note.recognition;
-    if (typeof recognition === "string") {
-      try {
-        recognition = JSON.parse(recognition);
-      } catch (_e) {
+      let recognition = note.recognition;
+      if (typeof recognition === "string") {
+        try {
+          recognition = JSON.parse(recognition);
+        } catch (_e) {
+          recognition = null;
+        }
+      }
+      if (recognition !== null && !Array.isArray(recognition?.words)) {
         recognition = null;
       }
-    }
 
-    const deletedTaskIds = new Set(note.deletedTasks || []);
-    for (const task of tasks) {
-      // Skip explicitly deleted tasks and ghost stroke tasks (all strokes gone)
-      if (deletedTaskIds.has(task.id)) continue;
-      const taskStrokeIds = new Set(task.strokeIds || []);
-      const taskStrokes = (note.strokes || []).filter(
-        (s) => taskStrokeIds.has(s.id) && !s._deleted && !s.isDeleted,
-      );
-      if (task.type === "stroke" && taskStrokes.length === 0) continue;
-      allTasks.push({
-        ...task,
-        noteId: note.id,
-        noteTitle: note.title || t("common.untitled"),
-        noteContent: note.content || "",
-        recognition,
-        strokes: taskStrokes,
-      });
+      const rawDeletedTasks = Array.isArray(note.deletedTasks) ? note.deletedTasks : [];
+      const deletedTaskIds = new Set(rawDeletedTasks);
+      const noteStrokes = Array.isArray(note.strokes) ? note.strokes : [];
+      for (const task of tasks) {
+        // Skip explicitly deleted tasks and ghost stroke tasks (all strokes gone)
+        if (deletedTaskIds.has(task.id)) continue;
+        const taskStrokeIds = new Set(task.strokeIds || []);
+        const taskStrokes = noteStrokes.filter(
+          (s) => taskStrokeIds.has(s.id) && !s._deleted && !s.isDeleted,
+        );
+        if (task.type === "stroke" && taskStrokes.length === 0) continue;
+        allTasks.push({
+          ...task,
+          noteId: note.id,
+          noteTitle: note.title || t("common.untitled"),
+          noteContent: note.content || "",
+          recognition,
+          strokes: taskStrokes,
+        });
+      }
+    } catch (noteError) {
+      console.warn(`[markers] Skipping note ${note.id} due to error:`, noteError);
     }
   }
   const openTasks = allTasks.filter((t) => !t.checked);

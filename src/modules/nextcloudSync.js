@@ -9,13 +9,13 @@
 import { fetch as _tauriFetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { APP_NAME, APP_VERSION } from "../config.js";
+import { decryptObject } from "./encryption.js";
+import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
 import {
   getSecureCredential as _tauriGetSecureCredential,
   deleteSecureCredential,
   saveSecureCredential,
 } from "./secureStorage.js";
-import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
-import { decryptObject } from "./encryption.js";
 import {
   checkFileExists,
   clearNoteMoveFlag,

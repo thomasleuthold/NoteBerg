@@ -417,7 +417,7 @@ export async function getNote(id) {
   if (cached !== undefined) {
     const note = await davGet(getNotePath(id, cached));
     if (note) {
-      note.tasks = note.tasks || [];
+      note.tasks = Array.isArray(note.tasks) ? note.tasks : [];
       await _cacheFileLocations(note);
       return note;
     }
@@ -425,7 +425,7 @@ export async function getNote(id) {
   // Scan all notebooks
   const note = await _findNote(id);
   if (note) {
-    note.tasks = note.tasks || [];
+    note.tasks = Array.isArray(note.tasks) ? note.tasks : [];
     await _cacheFileLocations(note);
   }
   return note;

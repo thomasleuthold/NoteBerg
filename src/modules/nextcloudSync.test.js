@@ -5,6 +5,8 @@
 
 import { fetch } from "@tauri-apps/plugin-http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { decryptObject } from "./encryption.js";
+import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
 import {
   attemptMerge,
   cleanupLegacyFiles,
@@ -31,6 +33,17 @@ vi.mock("@tauri-apps/plugin-http", () => ({
 // Mock Tauri Opener
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
+}));
+
+// Mock masterPassword (static import in nextcloudSync.js)
+vi.mock("./masterPassword.js", () => ({
+  isAppUnlocked: vi.fn(() => false),
+  getEncryptionKey: vi.fn(() => null),
+}));
+
+// Mock encryption (static import in nextcloudSync.js)
+vi.mock("./encryption.js", () => ({
+  decryptObject: vi.fn(),
 }));
 
 // Mock Secure Storage
@@ -995,20 +1008,16 @@ describe("Nextcloud Sync Module", () => {
         mtime: new Date(),
       });
 
-      // Mock masterPassword and encryption so decryptNoteLocally can run
-      vi.doMock("./masterPassword.js", () => ({
-        isAppUnlocked: () => true,
-        getEncryptionKey: () => "test-key",
-      }));
-      vi.doMock("./encryption.js", () => ({
-        decryptObject: vi.fn(async (blob) => {
-          if (blob === note.media) return plainMediaArray;
-          if (blob === note.content) return "";
-          if (blob === note.strokes) return [];
-          if (blob === note.tasks) return [];
-          return null;
-        }),
-      }));
+      // Override masterPassword and encryption so decryptNoteLocally can run
+      vi.mocked(isAppUnlocked).mockReturnValue(true);
+      vi.mocked(getEncryptionKey).mockReturnValue("test-key");
+      vi.mocked(decryptObject).mockImplementation(async (blob) => {
+        if (blob === note.media) return plainMediaArray;
+        if (blob === note.content) return "";
+        if (blob === note.strokes) return [];
+        if (blob === note.tasks) return [];
+        return null;
+      });
 
       const result = await syncNotes([note]);
       expect(result.uploaded).toBe(1);
@@ -1021,8 +1030,10 @@ describe("Nextcloud Sync Module", () => {
         mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}_media/${fileId}.bin`),
       ).toBe(true);
 
-      vi.doUnmock("./masterPassword.js");
-      vi.doUnmock("./encryption.js");
+      // Restore defaults
+      vi.mocked(isAppUnlocked).mockReturnValue(false);
+      vi.mocked(getEncryptionKey).mockReturnValue(null);
+      vi.mocked(decryptObject).mockReset();
     });
   });
 

@@ -21,9 +21,9 @@ async function _getInvoke() {
   return _invoke;
 }
 function _fireAndForget(cmd, args) {
-  _getInvoke().then((inv) => inv(cmd, args)).catch((err) =>
-    console.error(`[RecordingManager] ${cmd} error:`, err),
-  );
+  _getInvoke()
+    .then((inv) => inv(cmd, args))
+    .catch((err) => console.error(`[RecordingManager] ${cmd} error:`, err));
 }
 
 /** True when running inside any Tauri environment (desktop or mobile) */
@@ -312,7 +312,9 @@ export class RecordingManager {
       this._nativeRecording = false;
       this._nativePaused = false;
       this._stopAmplitudePoll();
-      _getInvoke().then((inv) => inv("native_audio_cancel")).catch(() => {});
+      _getInvoke()
+        .then((inv) => inv("native_audio_cancel"))
+        .catch(() => {});
     }
     if (this._mediaRecorder && this._mediaRecorder.state !== "inactive") {
       this._mediaRecorder.ondataavailable = null;
@@ -342,7 +344,9 @@ export class RecordingManager {
     // Read file on Rust's native heap (avoids Android JVM heap OOM for large files)
     let blob;
     try {
-      const base64 = await (await _getInvoke())("native_audio_read_and_delete", { path: result.path });
+      const base64 = await (await _getInvoke())("native_audio_read_and_delete", {
+        path: result.path,
+      });
       const mimeType = result.mimeType ?? "audio/mp4";
       const byteChars = atob(base64);
       const byteArr = new Uint8Array(byteChars.length);

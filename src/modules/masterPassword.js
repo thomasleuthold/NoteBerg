@@ -6,8 +6,8 @@
  */
 
 import { decryptData, deriveKeyFromPassword, encryptData, generateSalt } from "./encryption.js";
-import { getSetting, setSetting } from "./storage.js";
 import { getSecureCredential, saveSecureCredential } from "./secureStorage.js";
+import { getSetting, setSetting } from "./storage.js";
 
 // In-memory state (cleared on lock)
 let encryptionKey = null;
