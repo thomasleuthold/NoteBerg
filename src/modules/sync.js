@@ -61,6 +61,44 @@ export function getLastSyncResult() {
 export function resetSyncWorker() {}
 
 /**
+ * Remove stale pdf-page IDs from deletedMedia once the PDF is fully gone.
+ * pdf-page items accumulate in deletedMedia when a PDF is removed (500 entries
+ * for a 500-page PDF), but they have no independent binary — they share pdfSource.
+ * Once the note has no pdfSource and no active pdf-page items, those deletedMedia
+ * entries have served their merge-propagation purpose and can be dropped.
+ *
+ * Safe to drop only when we can prove ALL deletedMedia entries are pdf-page IDs:
+ * if the note never had any non-pdf-page media, every deletedMedia entry must be
+ * a pdf-page ID (since that's the only type that was ever deleted). If the note
+ * also had real images, we cannot distinguish their deleted IDs from pdf-page IDs
+ * and must leave deletedMedia untouched.
+ *
+ * Mutates the note object in place.
+ */
+function purgePdfPageDeletedMedia(note) {
+  if (!Array.isArray(note.deletedMedia) || note.deletedMedia.length === 0) return;
+  if (note.pdfSource) return;
+  if (!Array.isArray(note.media)) return;
+
+  const hasActivePdfPage = note.media.some((m) => m.type === "pdf-page" && !m.deleted);
+  if (hasActivePdfPage) return;
+
+  // Only purge when the note has never contained non-pdf-page media.
+  // note.media includes both active and soft-deleted items, so this covers
+  // notes that had images alongside the PDF.
+  const hasEverHadRealMedia = note.media.some((m) => m.type !== "pdf-page");
+  if (hasEverHadRealMedia) return;
+
+  const dropped = note.deletedMedia.length;
+  note.deletedMedia = [];
+  if (dropped > 0) {
+    console.log(
+      `[Sync] Purged ${dropped} stale pdf-page deletedMedia entries from note ${note.id}`,
+    );
+  }
+}
+
+/**
  * Perform a full sync
  * @param {Object} options - Sync options
  * @param {boolean} options.silent - If true, don't show UI notifications or prompt for conflicts
@@ -118,12 +156,15 @@ export async function performSync({
           console.log(
             `[Sync] Auto-resolving conflict for note ${conflict.local.id}: remote is newer (${new Date(remoteTime).toISOString()} > ${new Date(localTime).toISOString()})`,
           );
-          await saveNote({
+          const remoteToSave = {
             ...conflict.remote,
             lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
             synced: true,
-            _currentFileEtag: undefined, // Remove internal field
-          });
+            _currentFileEtag: undefined,
+            thumbnail: undefined, // local-only, never from NC
+          };
+          purgePdfPageDeletedMedia(remoteToSave);
+          await saveNote(remoteToSave);
         } else {
           // Local is newer or same timestamp, keep local version
           console.log(
@@ -163,15 +204,15 @@ export async function performSync({
         } else {
           // Use remote version - saveNote will handle local encryption
           // Also update with current file etag for proper future sync tracking
-          await saveNote(
-            {
-              ...conflict.remote,
-              lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
-              synced: true,
-              _currentFileEtag: undefined, // Remove internal field
-            },
-            // Allow saveNote to handle encryption since we are working with decrypted data
-          );
+          const remoteToSave = {
+            ...conflict.remote,
+            lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+            synced: true,
+            _currentFileEtag: undefined,
+            thumbnail: undefined, // local-only, never from NC
+          };
+          purgePdfPageDeletedMedia(remoteToSave);
+          await saveNote(remoteToSave);
         }
       }
       // Re-trigger sync to process resolutions
@@ -250,10 +291,12 @@ export async function performSync({
     }
 
     for (const note of result.downloaded.notes) {
-      // Note is decrypted (plain text) from Nextcloud
-      // Remove internal _currentFileEtag and update lastSyncedEtag for tracking
-      const { _currentFileEtag, ...noteToSave } = note;
+      // Note is decrypted (plain text) from Nextcloud.
+      // Strip _currentFileEtag (internal) and thumbnail (local-only, never stored in NC).
+      // Keeping a stale thumbnail from another device wastes memory and can OOM Android.
+      const { _currentFileEtag, thumbnail: _thumbnail, ...noteToSave } = note;
       noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
+      purgePdfPageDeletedMedia(noteToSave);
       // Mark as synced: the downloaded version IS the server's version, so it should not
       // be re-uploaded on the next sync cycle (prevents oscillation when Nextcloud etags
       // differ between syncs due to server-side processing or multiple clients).

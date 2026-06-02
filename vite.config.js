@@ -2,6 +2,51 @@ import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// Patch pdf.worker.mjs to inline jbig2_nowasm_fallback.js instead of loading
+// it via dynamic import(). NC and Android WebViews block dynamic module imports
+// that lack a CSP nonce / wasm-unsafe-eval, so we bake the fallback in.
+function inlinePdfjsJbig2FallbackPlugin() {
+  const workerPath = resolve(process.cwd(), 'node_modules/pdfjs-dist/build/pdf.worker.mjs');
+  const fallbackPath = resolve(process.cwd(), 'node_modules/pdfjs-dist/wasm/jbig2_nowasm_fallback.js');
+  return {
+    name: 'inline-pdfjs-jbig2-fallback',
+    enforce: 'pre',
+    load(id) {
+      // ?raw imports arrive here with the raw file ID + ?raw suffix.
+      // We intercept before Vite stringifies it so we can patch the source.
+      if (!id.includes('pdf.worker.mjs') || !id.endsWith('?raw')) return;
+      const workerSrc = readFileSync(workerPath, 'utf-8');
+      const fallbackSrc = readFileSync(fallbackPath, 'utf-8');
+      // Strip the ES module export — embed as a plain async function declaration.
+      const fallbackBody = fallbackSrc.replace(/^export default \w+;\s*$/m, '');
+      // Rename the exported function to avoid collision with pdf.js internals.
+      const fallbackBodyRenamed = fallbackBody.replace(
+        /^async function JBig2\b/m,
+        'async function __inlinedJBig2Fallback'
+      );
+      // Replace #getJsModule's dynamic import(path) with a call to the inlined fn.
+      const patched = workerSrc.replace(
+        /static async #getJsModule\(fallbackCallback\) \{[\s\S]*?fallbackCallback\(instance\);\s*\}/,
+        `static async #getJsModule(fallbackCallback) {
+    let instance = null;
+    try {
+      instance = await __inlinedJBig2Fallback();
+    } catch (e) {
+      warn(\`JBig2CCITTFaxImage#getJsModule (inlined): \${e}\`);
+    }
+    fallbackCallback(instance);
+  }`
+      );
+      if (patched === workerSrc) {
+        console.warn('[inline-pdfjs-jbig2-fallback] WARNING: #getJsModule pattern not found — patch not applied');
+      }
+      const patchedWorker = fallbackBodyRenamed + '\n' + patched;
+      // Return as ?raw: Vite expects `export default <string>`
+      return `export default ${JSON.stringify(patchedWorker)}`;
+    },
+  };
+}
+
 // For NC build: evaluate perspective-transform in Node at build time, emit a clean ES module.
 // NC's CSP has no unsafe-eval — we cannot use new Function() at browser runtime.
 // This plugin intercepts our shim file and replaces it with a statically-inlined version.
@@ -79,6 +124,7 @@ const base = platform === 'nextcloud' ? ncBase : '/';
 export default defineConfig({
   plugins: [
     injectJQueryForTrumbowygPlugin(),
+    inlinePdfjsJbig2FallbackPlugin(),
     ...(platform === 'nextcloud' ? [patchPerspectiveTransformPlugin()] : []),
   ],
   base,

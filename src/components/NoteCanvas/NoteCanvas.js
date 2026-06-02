@@ -806,12 +806,14 @@ export class NoteCanvas {
       return;
     }
 
-    const progress = showProgressDialog(t("canvas.pdf.importProgressTitle"));
     this._pendingPdfImport = (async () => {
+      const file = await this._pickPdfFile();
+      if (!file) {
+        this._pendingPdfImport = null;
+        return;
+      }
+      const progress = showProgressDialog(t("canvas.pdf.importProgressTitle"));
       try {
-        const file = await this._pickPdfFile();
-        if (!file) return;
-
         const { pages, fileId } = await importPdf(file, (phase, current, total) => {
           if (phase === "upload") {
             progress.update(1, 1, t("canvas.pdf.importProgressUpload"));
@@ -1020,13 +1022,19 @@ export class NoteCanvas {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "application/pdf";
-      input.onchange = (e) => {
-        if (e.target.files && e.target.files.length > 0) {
-          resolve(e.target.files[0]);
-        } else {
-          resolve(null);
-        }
+      let settled = false;
+      const done = (file) => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener("focus", onFocus);
+        resolve(file ?? null);
       };
+      // Fallback for platforms that fire neither cancel nor change on dismiss:
+      // resolve null on the next window focus after the picker closes.
+      const onFocus = () => setTimeout(() => done(null), 300);
+      window.addEventListener("focus", onFocus);
+      input.onchange = (e) => done(e.target.files?.[0]);
+      input.oncancel = () => done(null);
       input.click();
     });
   }

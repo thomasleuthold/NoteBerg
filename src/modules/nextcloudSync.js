@@ -88,6 +88,23 @@ function getExtensionFromMime(mimeType) {
   return MIME_TYPES[mimeType] || ".bin";
 }
 
+/**
+ * Build a Basic Auth header value that is safe for non-Latin1 credentials.
+ * `btoa()` throws on characters outside Latin1; this encodes via TextEncoder first.
+ */
+function basicAuth(loginName, appPassword) {
+  const raw = `${loginName}:${appPassword}`;
+  try {
+    return `Basic ${btoa(raw)}`;
+  } catch (_e) {
+    // Fallback: encode each code-point via percent-encoding then btoa
+    const bytes = new TextEncoder().encode(raw);
+    let latin1 = "";
+    for (const b of bytes) latin1 += String.fromCharCode(b);
+    return `Basic ${btoa(latin1)}`;
+  }
+}
+
 // Helper for batching promises
 async function runInBatches(items, batchSize, fn) {
   const results = [];
@@ -197,6 +214,14 @@ async function decryptNoteFromNextcloud(note) {
         }
       }
     }
+  }
+
+  // Strip thumbnail — it is local-only (generated per-device) and must never be
+  // propagated from NC to another device's storage. Keeping it wastes RAM and can
+  // OOM Android when the note is JSON-stringified during an IndexedDB write.
+  if (decryptedNote.thumbnail !== undefined) {
+    const { thumbnail: _t, ...withoutThumbnail } = decryptedNote;
+    decryptedNote = withoutThumbnail;
   }
 
   // Return plain text note (storage.js will handle local encryption on save)
@@ -511,7 +536,7 @@ async function createFolder(path) {
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
-  const authHeader = `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`;
+  const authHeader = basicAuth(creds.loginName, creds.appPassword);
 
   const response = await _fetch(webdavUrl, {
     method: "MKCOL",
@@ -544,7 +569,7 @@ async function uploadFile(path, content, mtime = null, etag = null) {
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
   const headers = {
-    Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+    Authorization: basicAuth(creds.loginName, creds.appPassword),
     "Content-Type": "application/json",
     "Cache-Control": "no-cache",
     Pragma: "no-cache",
@@ -626,7 +651,7 @@ async function downloadFile(path, asBinary = false) {
   const response = await _fetch(webdavUrl, {
     method: "GET",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
     },
@@ -666,7 +691,15 @@ async function syncNoteMedia(note) {
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
-  // Ensure media folder exists
+  // Ensure the full folder chain exists. createFolder(mediaFolder) gets a
+  // 409 Conflict if any parent is missing, so we create parents first.
+  // createFolder handles 405 (already exists) so these calls are always safe.
+  if (note.notebookId) {
+    await createFolder(getNotebookFolder(note.notebookId));
+    await createFolder(getNotebookNotesFolder(note.notebookId));
+  } else {
+    await createFolder(`${ROOT_FOLDER}/quickNotes`);
+  }
   await createFolder(mediaFolder);
 
   // Get list of existing files on server to avoid unnecessary uploads
@@ -678,17 +711,25 @@ async function syncNoteMedia(note) {
   }
   const remoteNames = new Set(remoteFiles.map((f) => f.name));
 
-  // Prepare upload tasks for items that need uploading
+  // Prepare upload tasks for items that need uploading.
+  // Deduplicate by fileId up front — pdf-page items all share the same fileId
+  // (the PDF binary), so we must not fetch/upload it 500 times.
   const uploadTasks = [];
-  const processedIds = new Set(); // Track processed IDs to avoid duplicates (e.g. multiple PDF pages)
-
-  // Collect all file IDs (media items + pdfSource + recordings)
-  const itemsToSync = [...(note.media || [])];
-  if (note.pdfSource) {
+  const seenIds = new Set();
+  const itemsToSync = [];
+  for (const item of note.media || []) {
+    if (item.fileId && !seenIds.has(item.fileId)) {
+      seenIds.add(item.fileId);
+      itemsToSync.push(item);
+    }
+  }
+  if (note.pdfSource && !seenIds.has(note.pdfSource)) {
+    seenIds.add(note.pdfSource);
     itemsToSync.push({ fileId: note.pdfSource, id: "pdf-source" });
   }
   for (const rec of note.recordings || []) {
-    if (!rec.deleted && rec.fileId) {
+    if (!rec.deleted && rec.fileId && !seenIds.has(rec.fileId)) {
+      seenIds.add(rec.fileId);
       itemsToSync.push({ fileId: rec.fileId, id: rec.id });
     }
   }
@@ -696,9 +737,6 @@ async function syncNoteMedia(note) {
   for (const item of itemsToSync) {
     const fileId = item.fileId;
     if (!fileId) continue;
-
-    if (processedIds.has(fileId)) continue;
-    processedIds.add(fileId);
 
     // Get file from local storage
     const blob = await getFile(fileId);
@@ -805,15 +843,25 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
-  const processedIds = new Set();
 
-  // Collect all file IDs (media items + pdfSource + recordings)
-  const itemsToDownload = [...(note.media || [])];
-  if (note.pdfSource) {
+  // Collect unique file IDs (media items + pdfSource + recordings).
+  // pdf-page items all share the same fileId (the PDF binary) — deduplicate
+  // up front so we never iterate 500 items to do a single checkFileExists.
+  const seenIds = new Set();
+  const itemsToDownload = [];
+  for (const item of note.media || []) {
+    if (item.fileId && !seenIds.has(item.fileId)) {
+      seenIds.add(item.fileId);
+      itemsToDownload.push(item);
+    }
+  }
+  if (note.pdfSource && !seenIds.has(note.pdfSource)) {
+    seenIds.add(note.pdfSource);
     itemsToDownload.push({ fileId: note.pdfSource });
   }
   for (const rec of note.recordings || []) {
-    if (!rec.deleted && rec.fileId) {
+    if (!rec.deleted && rec.fileId && !seenIds.has(rec.fileId)) {
+      seenIds.add(rec.fileId);
       itemsToDownload.push({ fileId: rec.fileId });
     }
   }
@@ -821,9 +869,6 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
   for (const item of itemsToDownload) {
     const fileId = item.fileId;
     if (!fileId) continue;
-
-    if (processedIds.has(fileId)) continue;
-    processedIds.add(fileId);
 
     // Check if file exists locally
     const existing = await checkFileExists(fileId);
@@ -873,7 +918,7 @@ async function fetchRemoteState() {
   const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
       Depth: "infinity", // Get everything recursively
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -919,7 +964,7 @@ export async function listFiles(path) {
   const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
       Depth: "1",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -979,7 +1024,7 @@ export async function listFolders(path) {
   const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
       Depth: "1",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -1075,7 +1120,7 @@ async function deleteFile(path) {
   const response = await _fetch(webdavUrl, {
     method: "DELETE",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
     },
   });
 
@@ -1394,13 +1439,16 @@ export async function syncNotes(notes) {
       // Decrypt local encryption before upload so Nextcloud always contains readable JSON
       const encryptedNote = await decryptNoteLocally(syncedNote);
 
-      // Strip internal sync tracking fields before uploading
+      // Strip internal sync tracking fields and local-only UI fields before uploading.
+      // thumbnail is local-only (generated per-device) — never upload it so NC always
+      // stores a stable JSON file that doesn't oscillate etags between devices.
       const noteForUpload = { ...encryptedNote };
       delete noteForUpload.lastSyncedEtag;
       delete noteForUpload.synced;
       delete noteForUpload.encrypted;
       delete noteForUpload._currentFileEtag;
       delete noteForUpload.previousNotebookId;
+      delete noteForUpload.thumbnail;
 
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
