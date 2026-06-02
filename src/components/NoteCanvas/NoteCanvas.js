@@ -9,6 +9,7 @@
 import { t } from "../../i18n/index.js";
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
+import { getRenderedMedia } from "../../modules/mediaManager.js";
 import { downloadPdfBytes, exportNoteToPdf } from "../../modules/pdfExport.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
@@ -4438,155 +4439,223 @@ export class NoteCanvas {
    * Stores promise on instance so destroy() can wait for completion
    * @private
    */
+  /**
+   * Pre-capture text layout while the editor is still visible in the DOM.
+   * Must be called before the router hides the notebook container, because
+   * getBoundingClientRect returns zeros on hidden elements.
+   * Stored in _cachedTextSnapshot for use by _saveThumbnail().
+   */
+  cacheTextSnapshot() {
+    const thumbWidth = 360;
+    const thumbHeight = 500;
+    const dpr = window.devicePixelRatio || 1;
+    this._cachedTextSnapshot = this._snapshotTextLayout(
+      this.textEditorLayer?._editorElement ?? null,
+      this.zoomScale,
+      thumbWidth,
+      thumbHeight,
+      dpr,
+    );
+  }
+
   _saveThumbnail() {
     if (!this.noteId || !this.renderer || !this.noteData) return;
     if (!_IS_NEXTCLOUD && !this.strokeManager?.worker) return;
 
-    // Capture all required state SYNCHRONOUSLY before any async work
     const noteId = this.noteId;
     const worker = this.strokeManager?.worker ?? null;
+    const renderer = this.renderer;
 
-    // 1. Create offscreen canvas and render strokes/media SYNCHRONOUSLY
-    // (must happen before destroy() nullifies the renderer)
     const thumbWidth = 360;
     const thumbHeight = 500;
     const dpr = window.devicePixelRatio || 1;
-    const canvas = document.createElement("canvas");
-    canvas.width = thumbWidth * dpr;
-    canvas.height = thumbHeight * dpr;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
 
-    ctx.scale(dpr, dpr);
-    const { bgColor } = this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
-
-    // 2. Capture text editor element reference before it's destroyed
-    const editorElement = this.textEditorLayer?._editorElement ?? null;
+    // Use the snapshot captured by cacheTextSnapshot() before the view was hidden.
+    // Fall back to a fresh snapshot in case _saveThumbnail is called in other contexts
+    // (e.g. after PDF delete) where the editor is still visible.
+    const textSnapshot =
+      this._cachedTextSnapshot ??
+      this._snapshotTextLayout(
+        this.textEditorLayer?._editorElement ?? null,
+        this.zoomScale,
+        thumbWidth,
+        thumbHeight,
+        dpr,
+      );
+    this._cachedTextSnapshot = null;
 
     // Store the promise so destroy() can wait for it
     this._pendingThumbnailSave = this._doSaveThumbnail(
-      canvas,
+      renderer,
       noteId,
       worker,
-      editorElement,
-      bgColor,
+      textSnapshot,
+      thumbWidth,
+      thumbHeight,
+      dpr,
     );
   }
 
   /**
-   * Render the HTML text editor content onto an existing canvas by drawing text directly.
-   * Parses the editor's DOM and draws each block element as wrapped text lines.
-   * This avoids SVG foreignObject (unreliable in Chromium blob URL context).
+   * Snapshot all text node layout positions from the live DOM synchronously.
+   * Must be called while the editor is still attached and visible — getBoundingClientRect
+   * returns zeros once the element is detached or hidden during teardown.
+   *
+   * Returns an array of draw calls: { text, font, color, tx, ty } already converted
+   * to thumbnail bitmap pixel coordinates so _drawTextSnapshot just calls fillText.
    * @private
    */
-  _drawTextOnCanvas(canvas, editorElement, bgColor = "#ffffff") {
+  _snapshotTextLayout(editorElement, editorZoom, thumbWidth, thumbHeight, dpr) {
+    if (!editorElement) {
+      console.log("[thumb] no editorElement");
+      return [];
+    }
+
+    const draws = [];
     try {
-      const ctx = canvas.getContext("2d");
-      const dpr = window.devicePixelRatio || 1;
-      const width = canvas.width / dpr;
-      const height = canvas.height / dpr;
+      const maxContentWidth = 1200;
+      const thumbScale = thumbWidth / maxContentWidth;
+      const contentHeight = thumbHeight / thumbScale;
 
-      // Choose text color that contrasts with the background
-      const isDarkBg = bgColor !== "#ffffff";
-      const textColor = isDarkBg ? "#e0e0e0" : "#111111";
+      const editorRect = editorElement.getBoundingClientRect();
+      if (editorRect.width === 0 && editorRect.height === 0) return [];
 
-      // Read font metrics from the live editor element
-      const computed = window.getComputedStyle(editorElement);
-      const baseFontSize = Math.round(parseFloat(computed.fontSize) || 16);
-      const fontFamily = computed.fontFamily || "sans-serif";
+      const walker = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
+      const range = document.createRange();
 
-      const PADDING = 16;
-      const MAX_WIDTH = width - PADDING * 2;
-      let y = PADDING;
+      while (walker.nextNode()) {
+        const textNode = walker.currentNode;
+        const text = textNode.textContent;
+        if (!text.trim()) continue;
 
-      // Collect block-level segments from the editor DOM
-      const blocks = [];
-      for (const child of editorElement.childNodes) {
-        if (child.nodeType === Node.TEXT_NODE) {
-          const text = child.textContent.trim();
-          if (text) blocks.push({ text, tag: "p", bold: false, italic: false, size: baseFontSize });
-          continue;
+        const el = textNode.parentElement;
+        if (!el) continue;
+        const cs = window.getComputedStyle(el);
+        if (cs.display === "none" || cs.visibility === "hidden") continue;
+
+        range.selectNode(textNode);
+        const rects = range.getClientRects();
+        if (!rects.length) continue;
+
+        // cs.fontSize is in screen pixels; convert to content-space then to thumbnail bitmap pixels
+        const screenFontSize = parseFloat(cs.fontSize) || 16;
+        const thumbFontSize = (screenFontSize / editorZoom) * thumbScale * dpr;
+        const font = `${cs.fontStyle} ${cs.fontWeight} ${thumbFontSize.toFixed(2)}px ${cs.fontFamily}`;
+        const color = cs.color;
+
+        for (const rect of rects) {
+          const contentX = (rect.left - editorRect.left) / editorZoom;
+          const contentY = (rect.top - editorRect.top) / editorZoom;
+          if (contentY > contentHeight) continue;
+
+          // ty: baseline ≈ top of line box + ~85% of line height
+          const tx = contentX * thumbScale * dpr;
+          const ty = (contentY + rect.height * 0.85) * thumbScale * dpr;
+
+          draws.push({ type: "text", text, font, color, tx, ty });
         }
-        if (!(child instanceof HTMLElement)) continue;
-        const tag = child.tagName.toLowerCase();
-        const text = child.textContent.replace(/\u200B/g, "").trim(); // strip zero-width spaces
-        if (!text) continue;
-
-        let bold = false;
-        let italic = false;
-        let size = baseFontSize;
-
-        if (tag === "h1") {
-          size = Math.round(baseFontSize * 1.7);
-          bold = true;
-        } else if (tag === "h2") {
-          size = Math.round(baseFontSize * 1.4);
-          bold = true;
-        } else if (tag === "h3") {
-          size = Math.round(baseFontSize * 1.15);
-          bold = true;
-        } else if (tag === "strong" || tag === "b") {
-          bold = true;
-        } else if (tag === "em" || tag === "i") {
-          italic = true;
-        }
-
-        // Check for inline bold/italic inside a block
-        if (!bold && child.querySelector("strong, b")) bold = true;
-        if (!italic && child.querySelector("em, i")) italic = true;
-
-        blocks.push({ text, tag, bold, italic, size });
       }
 
-      for (const block of blocks) {
-        if (y >= height - PADDING) break;
+      // Second pass: capture borders of table cells (td/th).
+      // CSS borders are not visible via text node walking — we read the computed
+      // border style and the element's bounding rect directly.
+      for (const cell of editorElement.querySelectorAll("td, th")) {
+        const cs = window.getComputedStyle(cell);
+        const rect = cell.getBoundingClientRect();
+        if (!rect.width && !rect.height) continue;
 
-        const fontStr = `${block.italic ? "italic " : ""}${block.bold ? "bold " : ""}${block.size}px ${fontFamily}`;
-        ctx.font = fontStr;
-        ctx.fillStyle = textColor;
+        const contentX = (rect.left - editorRect.left) / editorZoom;
+        const contentY = (rect.top - editorRect.top) / editorZoom;
+        if (contentY > contentHeight) continue;
 
-        const lineHeight = Math.round(block.size * 1.45);
-        const afterParagraph = Math.round(block.size * 0.55);
+        const bw = parseFloat(cs.borderTopWidth) || 0;
+        if (bw <= 0) continue;
 
-        // Word-wrap
-        const words = block.text.split(/\s+/);
-        let line = "";
-        for (const word of words) {
-          const test = line ? `${line} ${word}` : word;
-          if (ctx.measureText(test).width > MAX_WIDTH && line) {
-            ctx.fillText(line, PADDING, y + block.size);
-            y += lineHeight;
-            line = word;
-            if (y >= height - PADDING) break;
-          } else {
-            line = test;
-          }
-        }
-        if (line && y < height - PADDING) {
-          ctx.fillText(line, PADDING, y + block.size);
-          y += lineHeight;
-        }
+        // Use borderTopColor as the unified border color (all sides same in our CSS)
+        const borderColor = cs.borderTopColor;
+        const cellW = (rect.width / editorZoom) * thumbScale * dpr;
+        const cellH = (rect.height / editorZoom) * thumbScale * dpr;
+        const cellX = contentX * thumbScale * dpr;
+        const cellY = contentY * thumbScale * dpr;
+        const lineWidth = Math.max(0.5, (bw / editorZoom) * thumbScale * dpr);
 
-        y += afterParagraph;
+        draws.push({
+          type: "rect",
+          x: cellX,
+          y: cellY,
+          w: cellW,
+          h: cellH,
+          color: borderColor,
+          lineWidth,
+        });
       }
     } catch (err) {
-      console.warn("[NoteCanvas] Text overlay for thumbnail failed:", err);
+      console.warn("[NoteCanvas] Text layout snapshot failed:", err);
+    }
+    return draws;
+  }
+
+  /**
+   * Draw a pre-captured text snapshot onto the thumbnail canvas.
+   * @private
+   */
+  _drawTextSnapshot(canvas, textSnapshot) {
+    if (!textSnapshot.length) return;
+    const ctx = canvas.getContext("2d");
+    for (const cmd of textSnapshot) {
+      if (cmd.type === "rect") {
+        ctx.strokeStyle = cmd.color;
+        ctx.lineWidth = cmd.lineWidth;
+        ctx.strokeRect(cmd.x, cmd.y, cmd.w, cmd.h);
+      } else {
+        ctx.font = cmd.font;
+        ctx.fillStyle = cmd.color;
+        ctx.fillText(cmd.text, cmd.tx, cmd.ty);
+      }
     }
   }
 
   /**
-   * Internal async implementation of thumbnail save
-   * All synchronous state is captured and passed as parameters
+   * Internal async implementation of thumbnail save.
+   * Ensures any first-page PDF has a rendered bitmap before the snapshot, then
+   * composites the text layer from a pre-captured layout snapshot.
    * @private
    */
-  async _doSaveThumbnail(canvas, noteId, worker, editorElement = null, bgColor = "#ffffff") {
+  async _doSaveThumbnail(renderer, noteId, worker, textSnapshot, thumbWidth, thumbHeight, dpr) {
     try {
-      // 3. Composite text editor content on top of the canvas snapshot
-      if (editorElement) {
-        this._drawTextOnCanvas(canvas, editorElement, bgColor);
+      // 1. Ensure the first PDF page has a renderable bitmap before the snapshot.
+      //    PDF pages are lazy-loaded; if the first page was scrolled out of the keep-zone
+      //    its ImageBitmap is null and renderSnapshot() silently skips it.
+      if (renderer.mediaManager) {
+        const scale = thumbWidth / renderer.maxContentWidth;
+        const contentHeight = thumbHeight / scale;
+        const items = renderer.mediaManager.getItems();
+        const firstPagePdf = items.find(
+          (item) => item.type === "pdf-page" && !item.renderable && item.y < contentHeight,
+        );
+        if (firstPagePdf) {
+          const renderable = await getRenderedMedia(firstPagePdf, 1.0).catch(() => null);
+          if (renderable && !firstPagePdf.renderable) {
+            firstPagePdf.renderable = renderable;
+            firstPagePdf.renderableScale = 1.0;
+          }
+        }
       }
 
-      // 4. Encode as base64 JPEG (synchronous)
+      // 2. Create offscreen canvas and render background + media + strokes
+      const canvas = document.createElement("canvas");
+      canvas.width = thumbWidth * dpr;
+      canvas.height = thumbHeight * dpr;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.scale(dpr, dpr);
+      renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
+
+      // 3. Composite text from the pre-captured layout snapshot
+      this._drawTextSnapshot(canvas, textSnapshot);
+
+      // 4. Encode as base64 JPEG
       const thumbnail = canvas.toDataURL("image/jpeg", 0.92);
 
       // 5. Update in-memory data if still valid

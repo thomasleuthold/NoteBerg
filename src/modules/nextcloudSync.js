@@ -26,6 +26,7 @@ import {
   permanentlyDeleteNotesInNotebook,
   saveFile,
   saveNote,
+  saveThumbnailLocally,
 } from "./storage.js";
 import {
   getAllRequiredFolders,
@@ -39,6 +40,7 @@ import {
   getNoteMediaFolder,
   getNotePath,
   getQuickNotesTombstonePath,
+  getThumbnailPath,
   parsePath,
   ROOT_FOLDER,
   STORAGE_VERSION,
@@ -836,9 +838,51 @@ async function cleanupOrphanedMedia(note) {
  * Download media files for a note
  * Ensures all binary files referenced in the note are downloaded to local storage.
  */
+async function downloadThumbnailIfMissing(note, remoteFiles = null) {
+  // Skip if already have a thumbnail locally
+  const localIndex = await getRawNote(note.id).catch(() => null);
+  if (localIndex?.thumbnail) return;
+
+  const thumbPath = getThumbnailPath(note.id, note.notebookId);
+  const thumbFilename = `${note.id}_thumb.jpg`;
+
+  // Use preloaded file listing if available, otherwise check directly
+  let exists = false;
+  if (remoteFiles) {
+    exists = remoteFiles.some((f) => f.name === thumbFilename);
+  } else {
+    try {
+      const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
+      const files = await listFiles(mediaFolder).catch(() => []);
+      exists = files.some((f) => f.name === thumbFilename);
+    } catch {
+      return;
+    }
+  }
+  if (!exists) return;
+
+  try {
+    const { content } = await downloadFile(thumbPath, true);
+    if (!content) return;
+    // content is an ArrayBuffer — convert to base64 data URL
+    const bytes = new Uint8Array(content);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const thumbnail = `data:image/jpeg;base64,${btoa(binary)}`;
+    await saveThumbnailLocally(note.id, thumbnail);
+    console.log(`[Sync] Downloaded thumbnail for note ${note.id}`);
+  } catch (e) {
+    console.warn(`[Sync] Thumbnail download failed for ${note.id}:`, e);
+  }
+}
+
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
   if (note.media !== undefined && !Array.isArray(note.media)) return;
   const hasRecordings = Array.isArray(note.recordings) && note.recordings.some((r) => !r.deleted);
+
+  // Always try to download thumbnail sidecar regardless of whether there is other media
+  await downloadThumbnailIfMissing(note, preloadedRemoteFiles);
+
   if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
@@ -1458,6 +1502,26 @@ export async function syncNotes(notes) {
       const uploadEtag = note.previousNotebookId !== undefined ? null : note.lastSyncedEtag;
       const etag = await uploadFile(path, content, syncedNote.modified, uploadEtag);
       console.log(`Successfully uploaded note ${note.id}`);
+
+      // Upload thumbnail as a sidecar file — independently of the note JSON so it
+      // never affects the note's etag and cannot cause oscillation.
+      const fullNote = await getRawNote(note.id);
+      if (fullNote?.thumbnail) {
+        try {
+          const thumbPath = getThumbnailPath(note.id, note.notebookId);
+          // thumbnail is a base64 data URL — extract the raw binary
+          const base64 = fullNote.thumbnail.split(",")[1];
+          if (base64) {
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            await uploadFile(thumbPath, new Blob([bytes], { type: "image/jpeg" }));
+          }
+        } catch (e) {
+          console.warn(`[Sync] Thumbnail upload failed for ${note.id}:`, e);
+        }
+      }
+
       return {
         success: true,
         id: note.id,

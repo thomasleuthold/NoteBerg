@@ -55,7 +55,15 @@ export function navigateTo(mode, params = {}) {
     }
   }
 
-  // Update UI
+  // Dispatch before-navigate event while the current view is still visible.
+  // Listeners can do synchronous DOM reads (e.g. getBoundingClientRect) here.
+  window.dispatchEvent(
+    new CustomEvent("beforenavigate", {
+      detail: { mode, params, previousMode },
+    }),
+  );
+
+  // Update UI (hides the previous view)
   updateView(mode, params);
 
   // Dispatch navigation event

@@ -72,6 +72,14 @@ export function getMediaPath(noteId, notebookId, filename) {
 }
 
 /**
+ * Get the path for a note's thumbnail sidecar file on Nextcloud.
+ * Stored in the media folder so it shares the same folder lifecycle as other media.
+ */
+export function getThumbnailPath(noteId, notebookId) {
+  return `${getNoteMediaFolder(noteId, notebookId)}/${noteId}_thumb.jpg`;
+}
+
+/**
  * Get the path for a notebook's tombstone file
  */
 export function getNotebookTombstonePath(notebookId) {

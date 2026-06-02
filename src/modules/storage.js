@@ -756,6 +756,21 @@ export async function updateNoteEtag(noteId, etag) {
   await db.put("notes", note);
 }
 
+/**
+ * Save a thumbnail received from sync into noteContent without touching
+ * modified/version/synced — same contract as StorageWorker SAVE_THUMBNAIL.
+ */
+export async function saveThumbnailLocally(noteId, thumbnail) {
+  const [note, content] = await Promise.all([
+    db.get("notes", noteId),
+    db.get("noteContent", noteId),
+  ]);
+  if (!note || !content) return;
+  content.thumbnail = thumbnail;
+  note.hasThumbnail = true;
+  await Promise.all([db.put("noteContent", content), db.put("notes", note)]);
+}
+
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
 export async function getStorageStats() {

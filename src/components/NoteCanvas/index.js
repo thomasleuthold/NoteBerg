@@ -68,6 +68,15 @@ export function initNoteCanvasComponent() {
     }
   });
 
+  // Snapshot text layout before the router hides the notebook container.
+  // getBoundingClientRect returns zeros once the container is hidden, so this
+  // must run while the view is still visible — before updateView() in the router.
+  window.addEventListener("beforenavigate", (e) => {
+    if (e.detail?.previousMode === "notebook" && noteCanvasInstance) {
+      noteCanvasInstance.cacheTextSnapshot();
+    }
+  });
+
   // Listen for navigation to clean up when leaving notebook mode
   window.addEventListener("navigate", async (e) => {
     if (e.detail?.previousMode === "notebook" && noteCanvasInstance) {
