@@ -33,6 +33,7 @@ import {
   getStrokeBounds,
   getThemePalette,
   renderNotePreview,
+  renderNoteSnapshot,
 } from "../utils/noteRenderer.js";
 import {
   showConfirmDialog,
@@ -921,15 +922,14 @@ function renderPreviewNoteCard(note) {
   const hasText =
     note.hasContent ?? (typeof note.content === "string" && note.content.trim().length > 0);
   const hasBackground = note.background && note.background !== "none";
+  const hasMedia = Array.isArray(note.media) ? note.media.some((m) => !m.deleted) : false;
 
   let previewContent = "";
 
-  if (hasDrawings || hasBackground || hasText || note.hasThumbnail) {
-    // Emit a canvas placeholder; renderNotePreviews() will fill it with the thumbnail
-    // (fast path) or lazy-load strokes/content for live rendering (fallback).
-    // Text content from index is not available here — the thumbnail covers it.
+  if (hasDrawings || hasBackground || hasText || hasMedia) {
     previewContent = `
       <div class="preview-scaler">
+        <div class="note-preview-spinner"></div>
         <canvas class="note-preview-canvas" data-note-id="${note.id}" data-full-size="true"></canvas>
       </div>
     `;
@@ -1182,46 +1182,18 @@ async function renderNotePreviews(container, notes) {
       }
     }
 
-    // Load full note content — thumbnail (base64) lives in noteContent, not the index.
     const fullNote = await getNote(noteId).catch(() => null);
     if (!fullNote) return;
 
-    // Fast path: use embedded base64 thumbnail as an <img> for best scaling quality
-    if (fullNote.thumbnail) {
-      const img = new Image();
-      let loaded = false;
-      await new Promise((resolve) => {
-        img.onload = () => {
-          loaded = true;
-          resolve();
-        };
-        img.onerror = () => resolve();
-        img.src = fullNote.thumbnail;
-      });
-      if (loaded) {
-        img.className = "note-preview-img";
-        // Replace the canvas (and its scaler) with the img directly in the preview container
-        const previewContainer = canvas.closest(".note-card-preview");
-        const scaler = canvas.closest(".preview-scaler");
-        if (previewContainer && scaler) {
-          previewContainer.replaceChild(img, scaler);
-        }
-        return;
-      }
+    if (isFullSize) {
+      await renderNoteSnapshot(canvas, fullNote);
+    } else {
+      renderNotePreview(canvas, fullNote, { padding: 10 });
     }
 
-    // Fallback: Live rendering (no thumbnail yet — note hasn't been opened since migration)
-    if (isFullSize) {
-      renderNotePreview(canvas, fullNote, {
-        padding: 20,
-        fullSize: true,
-      });
-    } else {
-      renderNotePreview(canvas, fullNote, {
-        padding: 10,
-        showTextIndicator: false,
-      });
-    }
+    // Hide spinner once rendering completes
+    const spinner = canvas.closest(".preview-scaler")?.querySelector(".note-preview-spinner");
+    if (spinner) spinner.remove();
   });
 
   await Promise.all(promises);

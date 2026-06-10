@@ -23,7 +23,6 @@
  *   deletedMedia, tasks, recognition, penPresets, pdfSource,
  *   recordings       — full objects incl. fileId, duration, name, created, deleted
  *   deletedRecordings — array of fileIds to purge from "files" store
- *   thumbnail  — base64 JPEG string (360×500, encrypted with the rest when local encryption on)
  */
 
 import { openDB } from "idb";
@@ -54,7 +53,6 @@ const INDEX_FIELDS = new Set([
   "hasStrokes",
   "hasContent",
   "hasRecognition",
-  "hasThumbnail",
   "media", // metadata-only snapshot — see splitNote()
   "recordings", // metadata-only snapshot — see splitNote()
 ]);
@@ -98,7 +96,6 @@ function splitNote(note) {
     note.recognition != null &&
     typeof note.recognition.fullText === "string" &&
     note.recognition.fullText.length > 0;
-  index.hasThumbnail = typeof note.thumbnail === "string" && note.thumbnail.length > 0;
 
   return { index, content };
 }
@@ -545,7 +542,6 @@ export async function copyNote(noteId, targetNotebookId) {
     notebookId: targetNotebookId ?? null,
     media: newMedia,
     pdfSource: newPdfSource,
-    thumbnail: null,
     previousNotebookId: undefined,
     deletedMedia: [],
     synced: false,
@@ -756,21 +752,6 @@ export async function updateNoteEtag(noteId, etag) {
   await db.put("notes", note);
 }
 
-/**
- * Save a thumbnail received from sync into noteContent without touching
- * modified/version/synced — same contract as StorageWorker SAVE_THUMBNAIL.
- */
-export async function saveThumbnailLocally(noteId, thumbnail) {
-  const [note, content] = await Promise.all([
-    db.get("notes", noteId),
-    db.get("noteContent", noteId),
-  ]);
-  if (!note || !content) return;
-  content.thumbnail = thumbnail;
-  note.hasThumbnail = true;
-  await Promise.all([db.put("noteContent", content), db.put("notes", note)]);
-}
-
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
 export async function getStorageStats() {
@@ -946,11 +927,6 @@ async function _encryptContent(content, index) {
         : content.recognition
           ? await encryptObject(content.recognition, key)
           : null,
-      thumbnail: isEncryptedBlob(content.thumbnail)
-        ? content.thumbnail
-        : content.thumbnail
-          ? await encryptObject(content.thumbnail, key)
-          : null,
       _encrypted: true,
     };
   } catch (error) {
@@ -1026,12 +1002,8 @@ async function decryptNoteIfNeeded(note) {
       decryptedRecognition = note.recognition;
     }
 
-    const isEncryptedBlob = (v) =>
+    const _isEncryptedBlob = (v) =>
       v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
-
-    const decryptedThumbnail = isEncryptedBlob(note.thumbnail)
-      ? await decryptObject(note.thumbnail, key)
-      : (note.thumbnail ?? null);
 
     return {
       ...note,
@@ -1041,7 +1013,6 @@ async function decryptNoteIfNeeded(note) {
       recordings: decryptedRecordings,
       tasks: decryptedTasks,
       recognition: decryptedRecognition,
-      thumbnail: decryptedThumbnail,
       encrypted: undefined,
     };
   } catch (error) {

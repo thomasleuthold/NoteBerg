@@ -291,9 +291,7 @@ export async function performSync({
     }
 
     for (const note of result.downloaded.notes) {
-      // Note is decrypted (plain text) from Nextcloud.
-      // Strip _currentFileEtag (internal) and thumbnail (local-only, never stored in NC).
-      // Keeping a stale thumbnail from another device wastes memory and can OOM Android.
+      // Strip _currentFileEtag (internal) and thumbnail (legacy safety strip).
       const { _currentFileEtag, thumbnail: _thumbnail, ...noteToSave } = note;
       noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
       purgePdfPageDeletedMedia(noteToSave);

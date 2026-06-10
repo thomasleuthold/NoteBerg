@@ -250,19 +250,6 @@ describe("copyNote", () => {
     expect(copied.lastSyncedEtag).toBeNull();
   });
 
-  it("does not carry thumbnail onto the copy", async () => {
-    seedNote(makeNote({}));
-    stores.noteContent.set("note-1", {
-      id: "note-1",
-      strokes: [],
-      thumbnail: "data:image/jpeg;base64,xyz",
-    });
-
-    const copied = await copyNote("note-1", "nb-b");
-
-    expect(copied.thumbnail).toBeNull();
-  });
-
   it("does not carry previousNotebookId onto the copy", async () => {
     seedNote(makeNote({ previousNotebookId: "nb-old" }));
 

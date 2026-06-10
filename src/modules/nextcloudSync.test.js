@@ -997,7 +997,6 @@ describe("Nextcloud Sync Module", () => {
         media: { data: "enc-media", iv: "iv3" }, // ← encrypted blob, not array
         tasks: { data: "enc-tasks", iv: "iv4" },
         recognition: null,
-        thumbnail: null,
         modified: Date.now(),
       };
 

@@ -386,15 +386,17 @@ export function getStrokeBounds(strokes) {
  * @param {boolean} options.fullSize - Render at full editor size (800x600) without fitting (default: false)
  * @param {boolean} options.showTextIndicator - Unused (kept for compatibility)
  */
+// Content coordinate space width — matches CanvasRenderer.maxContentWidth
+const CONTENT_WIDTH = 1200;
+
 export function renderNotePreview(canvas, note, options = {}) {
   const { padding = 10, fullSize = false } = options;
 
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
 
-  // For full-size rendering, use fixed 800x600 dimensions
-  const canvasWidth = fullSize ? 800 : rect.width;
-  const canvasHeight = fullSize ? 600 : rect.height;
+  const canvasWidth = fullSize ? 360 : rect.width;
+  const canvasHeight = fullSize ? 500 : rect.height;
 
   canvas.width = canvasWidth * dpr;
   canvas.height = canvasHeight * dpr;
@@ -402,25 +404,37 @@ export function renderNotePreview(canvas, note, options = {}) {
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
 
-  // Clear canvas
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  // Fill solid background (prevents black on JPEG-encoded thumbnails)
+  const isDark = getTheme() === "dark";
+  ctx.fillStyle = isDark ? "#1e1e2e" : "#ffffff";
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-  // Draw background pattern if exists
-  if (note.background && note.background !== "none") {
-    drawBackgroundPattern(ctx, note.background, canvasWidth, canvasHeight);
-  }
+  if (fullSize) {
+    // Render at content scale: 1200px content → canvasWidth px display
+    const scale = canvasWidth / CONTENT_WIDTH;
+    const contentHeight = canvasHeight / scale;
 
-  // Draw strokes if they exist
-  if (note.strokes && note.strokes.length > 0) {
-    const palette = getThemePalette();
+    if (note.background && note.background !== "none") {
+      drawBackgroundPattern(ctx, note.background, CONTENT_WIDTH, contentHeight, 0);
+    }
 
-    if (fullSize) {
-      // Render at actual positions (like the editor does)
+    if (note.strokes && note.strokes.length > 0) {
+      const palette = getThemePalette();
+      ctx.save();
+      ctx.scale(scale, scale);
       note.strokes.forEach((stroke) => {
-        drawStroke(ctx, stroke, palette);
+        if (!stroke._deleted && !stroke.isDeleted) drawStroke(ctx, stroke, palette);
       });
-    } else {
-      // Scale to fit (legacy behavior for non-full-size previews)
+      ctx.restore();
+    }
+  } else {
+    // Compact fit-to-bounds for small previews
+    if (note.background && note.background !== "none") {
+      drawBackgroundPattern(ctx, note.background, canvasWidth, canvasHeight);
+    }
+
+    if (note.strokes && note.strokes.length > 0) {
+      const palette = getThemePalette();
       const bounds = getStrokeBounds(note.strokes);
       if (bounds) {
         const availableWidth = canvasWidth - padding * 2;
@@ -428,23 +442,211 @@ export function renderNotePreview(canvas, note, options = {}) {
         const scaleX = availableWidth / Math.max(1, bounds.width);
         const scaleY = availableHeight / Math.max(1, bounds.height);
         const scale = Math.min(scaleX, scaleY);
-
-        // Calculate centered offset to position the scaled content
-        const scaledWidth = bounds.width * scale;
-        const scaledHeight = bounds.height * scale;
-        const offsetX = padding + (availableWidth - scaledWidth) / 2 - bounds.minX * scale;
-        const offsetY = padding + (availableHeight - scaledHeight) / 2 - bounds.minY * scale;
+        const offsetX = padding + (availableWidth - bounds.width * scale) / 2 - bounds.minX * scale;
+        const offsetY =
+          padding + (availableHeight - bounds.height * scale) / 2 - bounds.minY * scale;
 
         ctx.save();
         ctx.translate(offsetX, offsetY);
         ctx.scale(scale, scale);
-
         note.strokes.forEach((stroke) => {
-          drawStroke(ctx, stroke, palette);
+          if (!stroke._deleted && !stroke.isDeleted) drawStroke(ctx, stroke, palette);
         });
-
         ctx.restore();
       }
+    }
+  }
+}
+
+/**
+ * Walk a laid-out text editor element and return draw commands for the thumbnail canvas.
+ * Requires editorElement to be in the DOM and visible.
+ */
+function snapshotTextLayout(editorElement, thumbWidth, thumbHeight, dpr) {
+  const maxContentWidth = 1200;
+  const thumbScale = thumbWidth / maxContentWidth;
+  const contentHeight = thumbHeight / thumbScale;
+  const editorZoom = 1.0; // overview always renders at zoom=1
+  const draws = [];
+
+  try {
+    const editorRect = editorElement.getBoundingClientRect();
+    if (editorRect.width === 0 && editorRect.height === 0) return draws;
+
+    const walker = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+
+    while (walker.nextNode()) {
+      const textNode = walker.currentNode;
+      const text = textNode.textContent;
+      if (!text.trim()) continue;
+      const el = textNode.parentElement;
+      if (!el) continue;
+      const cs = window.getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+
+      range.selectNode(textNode);
+      const rects = range.getClientRects();
+      if (!rects.length) continue;
+
+      const screenFontSize = parseFloat(cs.fontSize) || 16;
+      const thumbFontSize = (screenFontSize / editorZoom) * thumbScale * dpr;
+      const font = `${cs.fontStyle} ${cs.fontWeight} ${thumbFontSize.toFixed(2)}px ${cs.fontFamily}`;
+      const color = cs.color;
+
+      for (const rect of rects) {
+        const contentX = (rect.left - editorRect.left) / editorZoom;
+        const contentY = (rect.top - editorRect.top) / editorZoom;
+        if (contentY > contentHeight) continue;
+        draws.push({
+          type: "text",
+          text,
+          font,
+          color,
+          tx: contentX * thumbScale * dpr,
+          ty: (contentY + rect.height * 0.85) * thumbScale * dpr,
+        });
+      }
+    }
+
+    for (const cell of editorElement.querySelectorAll("td, th")) {
+      const cs = window.getComputedStyle(cell);
+      const rect = cell.getBoundingClientRect();
+      if (!rect.width && !rect.height) continue;
+      const contentX = (rect.left - editorRect.left) / editorZoom;
+      const contentY = (rect.top - editorRect.top) / editorZoom;
+      if (contentY > contentHeight) continue;
+      const bw = parseFloat(cs.borderTopWidth) || 0;
+      if (bw <= 0) continue;
+      // Fall back to a visible color when the computed border color is transparent
+      // (happens when the ghost div is outside the full CSS cascade for --border-color vars).
+      const borderColor = cs.borderTopColor === "rgba(0, 0, 0, 0)" ? "#cccccc" : cs.borderTopColor;
+      draws.push({
+        type: "rect",
+        x: contentX * thumbScale * dpr,
+        y: contentY * thumbScale * dpr,
+        w: (rect.width / editorZoom) * thumbScale * dpr,
+        h: (rect.height / editorZoom) * thumbScale * dpr,
+        color: borderColor,
+        lineWidth: Math.max(0.5, (bw / editorZoom) * thumbScale * dpr),
+      });
+    }
+  } catch (e) {
+    console.warn("[noteRenderer] text snapshot failed:", e);
+  }
+  return draws;
+}
+
+function drawTextSnapshot(ctx, draws) {
+  for (const cmd of draws) {
+    if (cmd.type === "rect") {
+      ctx.strokeStyle = cmd.color;
+      ctx.lineWidth = cmd.lineWidth;
+      ctx.strokeRect(cmd.x, cmd.y, cmd.w, cmd.h);
+    } else {
+      ctx.font = cmd.font;
+      ctx.fillStyle = cmd.color;
+      ctx.fillText(cmd.text, cmd.tx, cmd.ty);
+    }
+  }
+}
+
+/**
+ * Render a high-quality note snapshot into a canvas.
+ * Layers (in order): background fill → background pattern → media (images + first PDF page)
+ *                    → strokes → text.
+ *
+ * @param {HTMLCanvasElement} canvas - Target canvas
+ * @param {Object} note - Full note object (strokes, background, content HTML, media array)
+ */
+export async function renderNoteSnapshot(canvas, note) {
+  const dpr = window.devicePixelRatio || 1;
+  const thumbWidth = 360;
+  const thumbHeight = 500;
+  const maxContentWidth = 1200;
+  const scale = thumbWidth / maxContentWidth;
+  const contentHeight = thumbHeight / scale;
+
+  canvas.width = thumbWidth * dpr;
+  canvas.height = thumbHeight * dpr;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  ctx.scale(dpr, dpr);
+
+  // 1. Background fill + pattern (via CanvasRenderer for correct theme color + pattern rendering)
+  // Dynamic import keeps pdfjs-dist out of the module graph for test environments.
+  // CanvasRenderer requires a DOM element to mount its internal canvases; detached div satisfies it.
+  const { CanvasRenderer } = await import("../components/NoteCanvas/CanvasRenderer.js");
+  const detachedMount = document.createElement("div");
+  const renderer = new CanvasRenderer(detachedMount, { maxContentWidth });
+
+  // Set strokes empty for this pass — we draw them ourselves after media so z-order is correct.
+  renderer.setData([], note.background || "none");
+  renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
+  renderer.destroy();
+
+  // 2. Media: images and first PDF page (loaded async, drawn at content-space coordinates)
+  if (Array.isArray(note.media) && note.media.length > 0) {
+    const { getRenderedMedia } = await import("../modules/mediaManager.js");
+    const visibleItems = note.media
+      .filter((item) => !item.deleted && item.y < contentHeight)
+      .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+
+    // Only render the first PDF page to keep load time reasonable
+    let pdfPageRendered = false;
+
+    await Promise.all(
+      visibleItems.map(async (item) => {
+        if (item.type === "pdf-page") {
+          if (pdfPageRendered) return;
+          pdfPageRendered = true;
+        }
+        const renderable = await getRenderedMedia(item, scale).catch(() => null);
+        if (!renderable) return;
+
+        ctx.save();
+        ctx.scale(scale, scale);
+        if (item.rotation) {
+          const cx = item.x + item.width / 2;
+          const cy = item.y + item.height / 2;
+          ctx.translate(cx, cy);
+          ctx.rotate((item.rotation * Math.PI) / 180);
+          ctx.translate(-cx, -cy);
+        }
+        ctx.drawImage(renderable, item.x, item.y, item.width, item.height);
+        ctx.restore();
+      }),
+    );
+  }
+
+  // 3. Strokes (drawn on top of media, same as in the editor)
+  if (Array.isArray(note.strokes) && note.strokes.length > 0) {
+    const palette = getThemePalette();
+    ctx.save();
+    ctx.scale(scale, scale);
+    note.strokes.forEach((stroke) => {
+      if (!stroke._deleted && !stroke.isDeleted) drawStroke(ctx, stroke, palette);
+    });
+    ctx.restore();
+  }
+
+  // 4. Text layer — inject HTML into a hidden off-screen element so the browser lays it out
+  //    at 1200px width (the content coordinate space), then walk with getBoundingClientRect().
+  if (note.content) {
+    const ghost = document.createElement("div");
+    ghost.className = "text-editor";
+    // opacity:0 keeps the element invisible while still participating in layout
+    // (visibility:hidden causes getBoundingClientRect to return zeros in some browsers).
+    ghost.style.cssText =
+      "position:fixed;left:0;top:-9999px;width:1200px;opacity:0;pointer-events:none;z-index:-1;";
+    ghost.innerHTML = note.content;
+    document.body.appendChild(ghost);
+    try {
+      drawTextSnapshot(ctx, snapshotTextLayout(ghost, thumbWidth, thumbHeight, dpr));
+    } finally {
+      document.body.removeChild(ghost);
     }
   }
 }

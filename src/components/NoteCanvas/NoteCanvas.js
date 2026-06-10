@@ -9,7 +9,6 @@
 import { t } from "../../i18n/index.js";
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
-import { getRenderedMedia } from "../../modules/mediaManager.js";
 import { downloadPdfBytes, exportNoteToPdf } from "../../modules/pdfExport.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
@@ -4439,247 +4438,6 @@ export class NoteCanvas {
    * Stores promise on instance so destroy() can wait for completion
    * @private
    */
-  /**
-   * Pre-capture text layout while the editor is still visible in the DOM.
-   * Must be called before the router hides the notebook container, because
-   * getBoundingClientRect returns zeros on hidden elements.
-   * Stored in _cachedTextSnapshot for use by _saveThumbnail().
-   */
-  cacheTextSnapshot() {
-    const thumbWidth = 360;
-    const thumbHeight = 500;
-    const dpr = window.devicePixelRatio || 1;
-    this._cachedTextSnapshot = this._snapshotTextLayout(
-      this.textEditorLayer?._editorElement ?? null,
-      this.zoomScale,
-      thumbWidth,
-      thumbHeight,
-      dpr,
-    );
-  }
-
-  _saveThumbnail() {
-    if (!this.noteId || !this.renderer || !this.noteData) return;
-    if (!_IS_NEXTCLOUD && !this.strokeManager?.worker) return;
-
-    const noteId = this.noteId;
-    const worker = this.strokeManager?.worker ?? null;
-    const renderer = this.renderer;
-
-    const thumbWidth = 360;
-    const thumbHeight = 500;
-    const dpr = window.devicePixelRatio || 1;
-
-    // Use the snapshot captured by cacheTextSnapshot() before the view was hidden.
-    // Fall back to a fresh snapshot in case _saveThumbnail is called in other contexts
-    // (e.g. after PDF delete) where the editor is still visible.
-    const textSnapshot =
-      this._cachedTextSnapshot ??
-      this._snapshotTextLayout(
-        this.textEditorLayer?._editorElement ?? null,
-        this.zoomScale,
-        thumbWidth,
-        thumbHeight,
-        dpr,
-      );
-    this._cachedTextSnapshot = null;
-
-    // Store the promise so destroy() can wait for it
-    this._pendingThumbnailSave = this._doSaveThumbnail(
-      renderer,
-      noteId,
-      worker,
-      textSnapshot,
-      thumbWidth,
-      thumbHeight,
-      dpr,
-    );
-  }
-
-  /**
-   * Snapshot all text node layout positions from the live DOM synchronously.
-   * Must be called while the editor is still attached and visible — getBoundingClientRect
-   * returns zeros once the element is detached or hidden during teardown.
-   *
-   * Returns an array of draw calls: { text, font, color, tx, ty } already converted
-   * to thumbnail bitmap pixel coordinates so _drawTextSnapshot just calls fillText.
-   * @private
-   */
-  _snapshotTextLayout(editorElement, editorZoom, thumbWidth, thumbHeight, dpr) {
-    if (!editorElement) {
-      console.log("[thumb] no editorElement");
-      return [];
-    }
-
-    const draws = [];
-    try {
-      const maxContentWidth = 1200;
-      const thumbScale = thumbWidth / maxContentWidth;
-      const contentHeight = thumbHeight / thumbScale;
-
-      const editorRect = editorElement.getBoundingClientRect();
-      if (editorRect.width === 0 && editorRect.height === 0) return [];
-
-      const walker = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
-      const range = document.createRange();
-
-      while (walker.nextNode()) {
-        const textNode = walker.currentNode;
-        const text = textNode.textContent;
-        if (!text.trim()) continue;
-
-        const el = textNode.parentElement;
-        if (!el) continue;
-        const cs = window.getComputedStyle(el);
-        if (cs.display === "none" || cs.visibility === "hidden") continue;
-
-        range.selectNode(textNode);
-        const rects = range.getClientRects();
-        if (!rects.length) continue;
-
-        // cs.fontSize is in screen pixels; convert to content-space then to thumbnail bitmap pixels
-        const screenFontSize = parseFloat(cs.fontSize) || 16;
-        const thumbFontSize = (screenFontSize / editorZoom) * thumbScale * dpr;
-        const font = `${cs.fontStyle} ${cs.fontWeight} ${thumbFontSize.toFixed(2)}px ${cs.fontFamily}`;
-        const color = cs.color;
-
-        for (const rect of rects) {
-          const contentX = (rect.left - editorRect.left) / editorZoom;
-          const contentY = (rect.top - editorRect.top) / editorZoom;
-          if (contentY > contentHeight) continue;
-
-          // ty: baseline ≈ top of line box + ~85% of line height
-          const tx = contentX * thumbScale * dpr;
-          const ty = (contentY + rect.height * 0.85) * thumbScale * dpr;
-
-          draws.push({ type: "text", text, font, color, tx, ty });
-        }
-      }
-
-      // Second pass: capture borders of table cells (td/th).
-      // CSS borders are not visible via text node walking — we read the computed
-      // border style and the element's bounding rect directly.
-      for (const cell of editorElement.querySelectorAll("td, th")) {
-        const cs = window.getComputedStyle(cell);
-        const rect = cell.getBoundingClientRect();
-        if (!rect.width && !rect.height) continue;
-
-        const contentX = (rect.left - editorRect.left) / editorZoom;
-        const contentY = (rect.top - editorRect.top) / editorZoom;
-        if (contentY > contentHeight) continue;
-
-        const bw = parseFloat(cs.borderTopWidth) || 0;
-        if (bw <= 0) continue;
-
-        // Use borderTopColor as the unified border color (all sides same in our CSS)
-        const borderColor = cs.borderTopColor;
-        const cellW = (rect.width / editorZoom) * thumbScale * dpr;
-        const cellH = (rect.height / editorZoom) * thumbScale * dpr;
-        const cellX = contentX * thumbScale * dpr;
-        const cellY = contentY * thumbScale * dpr;
-        const lineWidth = Math.max(0.5, (bw / editorZoom) * thumbScale * dpr);
-
-        draws.push({
-          type: "rect",
-          x: cellX,
-          y: cellY,
-          w: cellW,
-          h: cellH,
-          color: borderColor,
-          lineWidth,
-        });
-      }
-    } catch (err) {
-      console.warn("[NoteCanvas] Text layout snapshot failed:", err);
-    }
-    return draws;
-  }
-
-  /**
-   * Draw a pre-captured text snapshot onto the thumbnail canvas.
-   * @private
-   */
-  _drawTextSnapshot(canvas, textSnapshot) {
-    if (!textSnapshot.length) return;
-    const ctx = canvas.getContext("2d");
-    for (const cmd of textSnapshot) {
-      if (cmd.type === "rect") {
-        ctx.strokeStyle = cmd.color;
-        ctx.lineWidth = cmd.lineWidth;
-        ctx.strokeRect(cmd.x, cmd.y, cmd.w, cmd.h);
-      } else {
-        ctx.font = cmd.font;
-        ctx.fillStyle = cmd.color;
-        ctx.fillText(cmd.text, cmd.tx, cmd.ty);
-      }
-    }
-  }
-
-  /**
-   * Internal async implementation of thumbnail save.
-   * Ensures any first-page PDF has a rendered bitmap before the snapshot, then
-   * composites the text layer from a pre-captured layout snapshot.
-   * @private
-   */
-  async _doSaveThumbnail(renderer, noteId, worker, textSnapshot, thumbWidth, thumbHeight, dpr) {
-    try {
-      // 1. Ensure the first PDF page has a renderable bitmap before the snapshot.
-      //    PDF pages are lazy-loaded; if the first page was scrolled out of the keep-zone
-      //    its ImageBitmap is null and renderSnapshot() silently skips it.
-      if (renderer.mediaManager) {
-        const scale = thumbWidth / renderer.maxContentWidth;
-        const contentHeight = thumbHeight / scale;
-        const items = renderer.mediaManager.getItems();
-        const firstPagePdf = items.find(
-          (item) => item.type === "pdf-page" && !item.renderable && item.y < contentHeight,
-        );
-        if (firstPagePdf) {
-          const renderable = await getRenderedMedia(firstPagePdf, 1.0).catch(() => null);
-          if (renderable && !firstPagePdf.renderable) {
-            firstPagePdf.renderable = renderable;
-            firstPagePdf.renderableScale = 1.0;
-          }
-        }
-      }
-
-      // 2. Create offscreen canvas and render background + media + strokes
-      const canvas = document.createElement("canvas");
-      canvas.width = thumbWidth * dpr;
-      canvas.height = thumbHeight * dpr;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      ctx.scale(dpr, dpr);
-      renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
-
-      // 3. Composite text from the pre-captured layout snapshot
-      this._drawTextSnapshot(canvas, textSnapshot);
-
-      // 4. Encode as base64 JPEG
-      const thumbnail = canvas.toDataURL("image/jpeg", 0.92);
-
-      // 5. Update in-memory data if still valid
-      if (this.noteData && this.noteId === noteId) {
-        this.noteData.thumbnail = thumbnail;
-      }
-
-      if (_IS_NEXTCLOUD) {
-        // No worker in NC build — save thumbnail directly via updateNote
-        await updateNote(noteId, { thumbnail }).catch((e) =>
-          console.error("[NoteCanvas] WebDAV thumbnail save failed:", e),
-        );
-      } else {
-        // Post to worker - this must happen before CLOSE is sent
-        worker.postMessage({
-          type: "SAVE_THUMBNAIL",
-          noteId: noteId,
-          thumbnail,
-        });
-      }
-    } catch (error) {
-      console.error("[NoteCanvas] Failed to save thumbnail:", error);
-    }
-  }
 
   /**
    * Delete the imported PDF and all its pages
@@ -4734,7 +4492,6 @@ export class NoteCanvas {
     this.renderer.showA4PageBreaks = true;
     this.renderer.forceRedraw();
     this._renderPdfControls();
-    this._saveThumbnail();
   }
 
   /**
@@ -4786,16 +4543,6 @@ export class NoteCanvas {
           console.error("[NoteCanvas] Recognition failed:", e),
         );
       }
-    }
-
-    // Step 3: Save thumbnail if changes were made or if it's missing.
-    // Must happen before renderer is destroyed (uses renderer.renderSnapshot).
-    // Stores promise in _pendingThumbnailSave.
-    if (
-      (this.strokesChanged || this.mediaChanged || this.textChanged || !this.noteData?.thumbnail) &&
-      this.noteId
-    ) {
-      this._saveThumbnail();
     }
 
     // Cancel pending task render
@@ -4903,10 +4650,6 @@ export class NoteCanvas {
       this.recordingManager = null;
     }
 
-    // Destroy strokeManager after thumbnail save completes.
-    // forceSave() was already called at the top of destroy() to flush pending strokes.
-    // Here we only send CLOSE so the worker shuts down after processing its queue
-    // (which includes the SAVE_THUMBNAIL message posted by _doSaveThumbnail).
     const cleanupStrokeManager = () => {
       if (this.strokeManager) {
         this.strokeManager.destroy(); // sends CLOSE to worker
@@ -4927,22 +4670,14 @@ export class NoteCanvas {
       window.__noteCanvas = null;
     }
 
-    // Return promise that resolves when all async work (thumbnail + recognition) completes.
+    // Return promise that resolves when all async work (recognition) completes.
     // Resolves with { mediaChanged } so callers can decide whether to force a sync even
     // when the note's synced flag appears clean (the Web Worker may not have processed
     // SAVE_MEDIA yet when syncOnNoteClose reads the index store).
-    let pendingThumbnail;
-    if (this._pendingThumbnailSave) {
-      pendingThumbnail = this._pendingThumbnailSave
-        .then(cleanupStrokeManager)
-        .catch(cleanupStrokeManager);
-    } else {
-      cleanupStrokeManager();
-      pendingThumbnail = Promise.resolve();
-    }
+    cleanupStrokeManager();
 
-    // Wait for thumbnail save, recognition, stroke save, and any in-progress PDF import
-    const pending = [pendingThumbnail];
+    // Wait for recognition, stroke save, and any in-progress PDF import
+    const pending = [Promise.resolve()];
     if (pendingRecognition) pending.push(pendingRecognition);
     if (pendingStrokeSave) pending.push(pendingStrokeSave);
     if (pendingTextSave) pending.push(pendingTextSave);

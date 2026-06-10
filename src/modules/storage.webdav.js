@@ -61,6 +61,7 @@ async function davGet(path) {
     headers: {
       "OCS-APIREQUEST": "true",
       requesttoken: window.OC?.requestToken || "",
+      "Cache-Control": "no-cache",
     },
     credentials: "same-origin",
   });
@@ -414,19 +415,24 @@ export async function getNote(id) {
   // We need to find which notebook the note belongs to — try quick notes first, then scan notebooks
   // For efficiency, accept notebookId hint via a small in-memory cache populated on getAllNotes
   const cached = _notePathCache.get(id);
+  let note;
   if (cached !== undefined) {
-    const note = await davGet(getNotePath(id, cached));
+    note = await davGet(getNotePath(id, cached));
     if (note) {
       note.tasks = Array.isArray(note.tasks) ? note.tasks : [];
       await _cacheFileLocations(note);
-      return note;
     }
   }
-  // Scan all notebooks
-  const note = await _findNote(id);
+  if (!note) {
+    // Scan all notebooks
+    note = await _findNote(id);
+    if (note) {
+      note.tasks = Array.isArray(note.tasks) ? note.tasks : [];
+      await _cacheFileLocations(note);
+    }
+  }
   if (note) {
-    note.tasks = Array.isArray(note.tasks) ? note.tasks : [];
-    await _cacheFileLocations(note);
+    delete note.thumbnail;
   }
   return note;
 }
@@ -531,6 +537,7 @@ async function _getNotesInFolder(folder, notebookId) {
   const notes = await Promise.all(noteFiles.map((p) => davGet(p).catch(() => null)));
   return notes.filter(Boolean).map((n) => {
     _notePathCache.set(n.id, notebookId);
+    delete n.thumbnail;
     return n;
   });
 }
@@ -663,7 +670,6 @@ export async function copyNote(noteId, targetNotebookId) {
     ...note,
     id: generateId(),
     notebookId: targetNotebookId ?? null,
-    thumbnail: null,
     deletedMedia: [],
     version: 1,
     created: now,

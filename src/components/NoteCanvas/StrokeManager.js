@@ -163,20 +163,6 @@ export class StrokeManager {
   }
 
   /**
-   * Save thumbnail metadata via the worker
-   * This ensures thumbnail saves are serialized with media saves to prevent race conditions
-   */
-  saveThumbnail({ thumbnail }) {
-    if (!this.worker) return;
-
-    this.worker.postMessage({
-      type: "SAVE_THUMBNAIL",
-      noteId: this.noteId,
-      thumbnail,
-    });
-  }
-
-  /**
    * Save tasks via the worker
    */
   saveTasks(tasks) {

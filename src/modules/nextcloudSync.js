@@ -26,7 +26,6 @@ import {
   permanentlyDeleteNotesInNotebook,
   saveFile,
   saveNote,
-  saveThumbnailLocally,
 } from "./storage.js";
 import {
   getAllRequiredFolders,
@@ -40,7 +39,6 @@ import {
   getNoteMediaFolder,
   getNotePath,
   getQuickNotesTombstonePath,
-  getThumbnailPath,
   parsePath,
   ROOT_FOLDER,
   STORAGE_VERSION,
@@ -147,9 +145,6 @@ async function decryptNoteLocally(note) {
     recognition: isBlob(note.recognition)
       ? await decryptObject(note.recognition, key)
       : note.recognition,
-    thumbnail: isBlob(note.thumbnail)
-      ? await decryptObject(note.thumbnail, key)
-      : (note.thumbnail ?? null),
     encrypted: undefined,
   };
 }
@@ -216,14 +211,6 @@ async function decryptNoteFromNextcloud(note) {
         }
       }
     }
-  }
-
-  // Strip thumbnail — it is local-only (generated per-device) and must never be
-  // propagated from NC to another device's storage. Keeping it wastes RAM and can
-  // OOM Android when the note is JSON-stringified during an IndexedDB write.
-  if (decryptedNote.thumbnail !== undefined) {
-    const { thumbnail: _t, ...withoutThumbnail } = decryptedNote;
-    decryptedNote = withoutThumbnail;
   }
 
   // Return plain text note (storage.js will handle local encryption on save)
@@ -687,9 +674,9 @@ async function syncNoteMedia(note) {
   // When the note is locally encrypted, media is stored as an encrypted blob —
   // media files were already uploaded when the note was last synced unencrypted,
   // and the encrypted payload references them by fileId inside the blob.
-  if (note.media !== undefined && !Array.isArray(note.media)) return;
+  if (note.media !== undefined && !Array.isArray(note.media)) return true;
   const hasRecordings = Array.isArray(note.recordings) && note.recordings.length > 0;
-  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return true;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
@@ -760,17 +747,24 @@ async function syncNoteMedia(note) {
   // Upload in parallel batches
   if (uploadTasks.length > 0) {
     const MEDIA_UPLOAD_CONCURRENCY = 3;
-    await runInBatches(uploadTasks, MEDIA_UPLOAD_CONCURRENCY, async (task) => {
-      try {
-        console.log(`[Sync] Uploading media file: ${task.filename}`);
-        await uploadFile(task.path, task.blob);
-        return { success: true, filename: task.filename };
-      } catch (error) {
-        console.error(`[Sync] Failed to upload media file ${task.filename}:`, error);
-        return { success: false, filename: task.filename, error };
-      }
-    });
+    const uploadResults = await runInBatches(
+      uploadTasks,
+      MEDIA_UPLOAD_CONCURRENCY,
+      async (task) => {
+        try {
+          console.log(`[Sync] Uploading media file: ${task.filename}`);
+          await uploadFile(task.path, task.blob);
+          return { success: true, filename: task.filename };
+        } catch (error) {
+          console.error(`[Sync] Failed to upload media file ${task.filename}:`, error);
+          return { success: false, filename: task.filename, error };
+        }
+      },
+    );
+    const anyFailed = uploadResults.some((r) => !r.success);
+    if (anyFailed) return false;
   }
+  return true;
 }
 
 /**
@@ -835,55 +829,16 @@ async function cleanupOrphanedMedia(note) {
 }
 
 /**
- * Download media files for a note
- * Ensures all binary files referenced in the note are downloaded to local storage.
+ * Download media files for a note that are missing locally.
+ * Returns a Set of fileIds that were expected but not found on the server,
+ * so callers can mark the note for re-upload (self-healing).
  */
-async function downloadThumbnailIfMissing(note, remoteFiles = null) {
-  // Skip if already have a thumbnail locally
-  const localIndex = await getRawNote(note.id).catch(() => null);
-  if (localIndex?.thumbnail) return;
-
-  const thumbPath = getThumbnailPath(note.id, note.notebookId);
-  const thumbFilename = `${note.id}_thumb.jpg`;
-
-  // Use preloaded file listing if available, otherwise check directly
-  let exists = false;
-  if (remoteFiles) {
-    exists = remoteFiles.some((f) => f.name === thumbFilename);
-  } else {
-    try {
-      const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
-      const files = await listFiles(mediaFolder).catch(() => []);
-      exists = files.some((f) => f.name === thumbFilename);
-    } catch {
-      return;
-    }
-  }
-  if (!exists) return;
-
-  try {
-    const { content } = await downloadFile(thumbPath, true);
-    if (!content) return;
-    // content is an ArrayBuffer — convert to base64 data URL
-    const bytes = new Uint8Array(content);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const thumbnail = `data:image/jpeg;base64,${btoa(binary)}`;
-    await saveThumbnailLocally(note.id, thumbnail);
-    console.log(`[Sync] Downloaded thumbnail for note ${note.id}`);
-  } catch (e) {
-    console.warn(`[Sync] Thumbnail download failed for ${note.id}:`, e);
-  }
-}
-
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
-  if (note.media !== undefined && !Array.isArray(note.media)) return;
+  if (note.media !== undefined && !Array.isArray(note.media)) return new Set();
   const hasRecordings = Array.isArray(note.recordings) && note.recordings.some((r) => !r.deleted);
 
-  // Always try to download thumbnail sidecar regardless of whether there is other media
-  await downloadThumbnailIfMissing(note, preloadedRemoteFiles);
-
-  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings)
+    return new Set();
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
@@ -910,6 +865,8 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
     }
   }
 
+  const missingOnServer = new Set();
+
   for (const item of itemsToDownload) {
     const fileId = item.fileId;
     if (!fileId) continue;
@@ -926,7 +883,7 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
         remoteFiles = await listFiles(mediaFolder);
       } catch (e) {
         console.warn(`[Sync] Failed to list media folder ${mediaFolder}:`, e);
-        return; // Stop if folder doesn't exist
+        return missingOnServer; // Stop if folder doesn't exist
       }
     }
 
@@ -945,8 +902,15 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
         const blob = new Blob([content], { type: mimeType });
         await saveFile(blob, fileId);
       }
+    } else {
+      console.warn(
+        `[Sync] Media file ${fileId} not found in remote folder ${mediaFolder} (${remoteFiles.length} file(s) listed) — note ${note.id} needs re-upload`,
+      );
+      missingOnServer.add(fileId);
     }
   }
+
+  return missingOnServer;
 }
 
 /**
@@ -1474,8 +1438,15 @@ export async function syncNotes(notes) {
       // decryptNoteLocally is a no-op when note.encrypted is falsy.
       const decryptedNote = await decryptNoteLocally(syncedNote);
 
-      // Sync media files (upload binaries) — must use decrypted media array
-      await syncNoteMedia(decryptedNote);
+      // Sync media files (upload binaries) — must use decrypted media array.
+      // If any binary fails to upload, skip the note JSON so synced stays false
+      // and the next sync cycle retries (prevents NC from having a note JSON that
+      // references media files that don't exist on the server yet).
+      const mediaOk = await syncNoteMedia(decryptedNote);
+      if (!mediaOk) {
+        console.warn(`[Sync] Skipping JSON upload for note ${note.id} — media upload incomplete`);
+        return { success: false, id: note.id, error: "media upload incomplete" };
+      }
 
       // Clean up orphaned media files (deleted from note but still on server)
       await cleanupOrphanedMedia(decryptedNote);
@@ -1483,16 +1454,13 @@ export async function syncNotes(notes) {
       // Decrypt local encryption before upload so Nextcloud always contains readable JSON
       const encryptedNote = await decryptNoteLocally(syncedNote);
 
-      // Strip internal sync tracking fields and local-only UI fields before uploading.
-      // thumbnail is local-only (generated per-device) — never upload it so NC always
-      // stores a stable JSON file that doesn't oscillate etags between devices.
+      // Strip internal sync tracking fields before uploading.
       const noteForUpload = { ...encryptedNote };
       delete noteForUpload.lastSyncedEtag;
       delete noteForUpload.synced;
       delete noteForUpload.encrypted;
       delete noteForUpload._currentFileEtag;
       delete noteForUpload.previousNotebookId;
-      delete noteForUpload.thumbnail;
 
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
@@ -1502,25 +1470,6 @@ export async function syncNotes(notes) {
       const uploadEtag = note.previousNotebookId !== undefined ? null : note.lastSyncedEtag;
       const etag = await uploadFile(path, content, syncedNote.modified, uploadEtag);
       console.log(`Successfully uploaded note ${note.id}`);
-
-      // Upload thumbnail as a sidecar file — independently of the note JSON so it
-      // never affects the note's etag and cannot cause oscillation.
-      const fullNote = await getRawNote(note.id);
-      if (fullNote?.thumbnail) {
-        try {
-          const thumbPath = getThumbnailPath(note.id, note.notebookId);
-          // thumbnail is a base64 data URL — extract the raw binary
-          const base64 = fullNote.thumbnail.split(",")[1];
-          if (base64) {
-            const binary = atob(base64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            await uploadFile(thumbPath, new Blob([bytes], { type: "image/jpeg" }));
-          }
-        } catch (e) {
-          console.warn(`[Sync] Thumbnail upload failed for ${note.id}:`, e);
-        }
-      }
 
       return {
         success: true,
@@ -1588,6 +1537,22 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
   // Step 1: Fetch all remote files in one request
   const remoteFiles = await fetchRemoteState();
 
+  // Index remote media files for efficient lookup.
+  // Map: noteId -> Array of { name, path }
+  const remoteMediaMap = new Map();
+  for (const file of remoteFiles) {
+    const parsed = parsePath(file.path);
+    if (parsed.type === "media" && parsed.noteId) {
+      if (!remoteMediaMap.has(parsed.noteId)) {
+        remoteMediaMap.set(parsed.noteId, []);
+      }
+      remoteMediaMap.get(parsed.noteId).push({
+        name: parsed.filename,
+        path: file.path,
+      });
+    }
+  }
+
   // Lists of items to download
   const notebooksToDownload = [];
   const notesToDownload = [];
@@ -1641,22 +1606,6 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
     }
   }
 
-  // Index remote media files for efficient lookup
-  // Map: noteId -> Array of { name, path }
-  const remoteMediaMap = new Map();
-  for (const file of remoteFiles) {
-    const parsed = parsePath(file.path);
-    if (parsed.type === "media" && parsed.noteId) {
-      if (!remoteMediaMap.has(parsed.noteId)) {
-        remoteMediaMap.set(parsed.noteId, []);
-      }
-      remoteMediaMap.get(parsed.noteId).push({
-        name: parsed.filename,
-        path: file.path,
-      });
-    }
-  }
-
   console.log(
     `[Sync] Incremental check: ${notebooksToDownload.length} notebooks, ${notesToDownload.length} notes to download.`,
   );
@@ -1680,6 +1629,10 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
   });
   notebooks.push(...downloadedNotebooks.filter((n) => n));
 
+  // IDs of notes whose media was missing on the server — these need a re-upload
+  // from the device that has the binaries locally, so we flag them synced=false.
+  const notesWithMissingMedia = new Set();
+
   // Download Notes
   const downloadedNotes = await runInBatches(notesToDownload, CONCURRENCY, async (item) => {
     try {
@@ -1689,8 +1642,8 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
         note._currentFileEtag = item.etag;
         const decrypted = await decryptNoteFromNextcloud(note);
 
-        // Download media files for this note
-        await downloadNoteMedia(decrypted, remoteMediaMap.get(decrypted.id));
+        const missing = await downloadNoteMedia(decrypted, remoteMediaMap.get(decrypted.id));
+        if (missing.size > 0) notesWithMissingMedia.add(decrypted.id);
 
         return decrypted;
       }
@@ -1709,10 +1662,11 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
     console.log(`[Sync] Checking media for ${mediaCheckQueue.length} unchanged notes...`);
     await runInBatches(mediaCheckQueue, CONCURRENCY, async (stub) => {
       const remoteMedia = remoteMediaMap.get(stub.id);
-      if (!remoteMedia || remoteMedia.length === 0) return; // no remote media, skip
+      if (!remoteMedia || remoteMedia.length === 0) return;
       const fullNote = await getRawNote(stub.id);
       if (!fullNote) return;
-      await downloadNoteMedia(fullNote, remoteMedia);
+      const missing = await downloadNoteMedia(fullNote, remoteMedia);
+      if (missing.size > 0) notesWithMissingMedia.add(stub.id);
     });
   }
 
@@ -1738,7 +1692,7 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
     if (t) tombstones.set(t.key, t.data);
   });
 
-  return { notebooks, notes, tombstones };
+  return { notebooks, notes, tombstones, remoteMediaMap, notesWithMissingMedia };
 }
 
 /**
@@ -1985,6 +1939,27 @@ export async function fullSync(localNotebooks, localNotes) {
   const notesToDelete = [];
   const noteEtagsToUpdate = []; // Notes whose etag changed on server but content is not newer
   const conflicts = { notebooks: [], notes: [] };
+
+  // Self-heal: notes whose media files were missing on the server need re-upload
+  // from whichever device holds the local binaries. Mark them synced=false so
+  // the note-classification loop below will queue them for upload.
+  if (remoteData.notesWithMissingMedia.size > 0) {
+    console.log(
+      `[Sync] ${remoteData.notesWithMissingMedia.size} note(s) have missing remote media — marking for re-upload: ${[...remoteData.notesWithMissingMedia].join(", ")}`,
+    );
+    for (const noteId of remoteData.notesWithMissingMedia) {
+      const stub = localNotes.find((n) => n.id === noteId);
+      if (stub && stub.synced !== false) {
+        await saveNote({ ...(await getFullNote(stub)), synced: false });
+      }
+    }
+    // Refresh localNotes map so the classification loop sees the updated synced flag.
+    for (const note of localNotes) {
+      if (remoteData.notesWithMissingMedia.has(note.id)) {
+        note.synced = false;
+      }
+    }
+  }
 
   // Create maps for quick lookup
   const localNotebookMap = new Map(localNotebooks.map((n) => [n.id, n]));
