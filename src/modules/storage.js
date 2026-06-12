@@ -742,13 +742,19 @@ export async function saveNotebook(notebook) {
 
 /**
  * Update only lastSyncedEtag + synced on the index — no datachange event,
- * no content write. Used for etag oscillation fix.
+ * no content write. Used after uploads and for the etag oscillation fix.
+ * @param {number} [expectedModified] - The note's `modified` timestamp at the time
+ *   the etag was obtained. If the note was edited since (timestamps differ), only
+ *   the etag is updated and `synced` is left untouched — flipping it to true would
+ *   mask the mid-sync edit and it would never be uploaded.
  */
-export async function updateNoteEtag(noteId, etag) {
+export async function updateNoteEtag(noteId, etag, expectedModified) {
   const note = await db.get("notes", noteId);
   if (!note) return;
   note.lastSyncedEtag = etag;
-  note.synced = true;
+  if (expectedModified === undefined || note.modified === expectedModified) {
+    note.synced = true;
+  }
   await db.put("notes", note);
 }
 

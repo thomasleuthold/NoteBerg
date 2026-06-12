@@ -143,9 +143,16 @@ class MockWebDAVServer {
 
     if (method === "PUT") {
       const ifMatch = headers["If-Match"];
+      const ifNoneMatch = headers["If-None-Match"];
       const existing = this.files.get(path);
 
-      if (ifMatch && existing && `"${existing.etag}"` !== ifMatch) {
+      // The &quot; entity-encoding only exists in PROPFIND XML serialization;
+      // a real server compares If-Match against the bare etag.
+      const bareEtag = (e) => e?.replace(/&quot;/g, "").replace(/"/g, "");
+      if (ifMatch && (!existing || bareEtag(existing.etag) !== bareEtag(ifMatch))) {
+        return { ok: false, status: 412, statusText: "Precondition Failed" };
+      }
+      if (ifNoneMatch === "*" && existing) {
         return { ok: false, status: 412, statusText: "Precondition Failed" };
       }
 
@@ -170,6 +177,9 @@ class MockWebDAVServer {
       const file = this.files.get(path);
       if (!file) return { ok: false, status: 404, statusText: "Not Found" };
       if (file.isCollection) return { ok: false, status: 405, statusText: "Is Collection" };
+      // Real servers always have an etag for an existing file — lazily assign
+      // one for files seeded without it so If-Match round-trips work.
+      if (!file.etag) file.etag = this._generateEtag();
 
       return {
         ok: true,
@@ -488,6 +498,8 @@ describe("Nextcloud Sync Module", () => {
       expect(result.downloaded.notes.some((n) => n.id === noteId)).toBe(false);
       expect(result.noteEtagsToUpdate.some((e) => e.id === noteId)).toBe(true);
       expect(result.noteEtagsToUpdate.find((e) => e.id === noteId).etag).toBe("etag-E2");
+      // Carries the local modified timestamp so updateNoteEtag can detect mid-sync edits
+      expect(result.noteEtagsToUpdate.find((e) => e.id === noteId).modified).toBe(T1);
     });
 
     it("should merge and upload when remote is a stale fork (remote.version < local.version, local is clean)", async () => {
@@ -1072,31 +1084,126 @@ describe("Nextcloud Sync Module", () => {
       expect(mockServer.files.has("/NoteBerg/notebooks/nb-purge")).toBe(false);
     });
 
-    it("should retry upload on 412 Precondition Failed", async () => {
+    it("should fail the upload on 412 instead of force-overwriting remote changes", async () => {
+      // Remote changed after our PROPFIND (concurrent edit from another device).
+      // The upload must FAIL (note stays synced=false, next cycle merges) — the
+      // old behavior force-overwrote and silently lost the remote edit.
       const note = {
         id: "n-412",
         notebookId: "nb1",
-        content: "New",
-        lastSyncedEtag: "wrong-etag",
+        title: "Local",
+        content: "Local edit",
+        lastSyncedEtag: "stale-etag",
         synced: false,
+        modified: 1000,
       };
 
-      // Remote exists with different etag
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
       mockServer.files.set("/NoteBerg/notebooks/nb1/notes/n-412.json", {
-        content: "{}",
-        etag: "real-etag",
+        content: JSON.stringify({ id: "n-412", content: "Concurrent remote edit" }),
+        etag: "current-etag",
         mtime: new Date(),
       });
 
-      // The sync logic will try to upload with If-Match: "wrong-etag"
-      // Mock server returns 412
-      // Logic should retry without If-Match
+      const result = await syncNotes([note]);
 
-      await fullSync([], [note]);
+      expect(result.uploaded).toBe(0);
+      expect(result.failed).toBe(1);
+      expect(result.errors[0].id).toBe("n-412");
 
+      // Remote content must be preserved, not overwritten
       const file = mockServer.files.get("/NoteBerg/notebooks/nb1/notes/n-412.json");
-      const content = JSON.parse(file.content);
-      expect(content.content).toBe("New");
+      expect(JSON.parse(file.content).content).toBe("Concurrent remote edit");
+    });
+
+    it("should recover from a 412 on the next sync cycle without losing either side's changes", async () => {
+      // Full lifecycle of the un-stick path that replaced the 412 force-overwrite:
+      // Cycle 1: local uploads with If-Match, but another device wrote between our
+      //          PROPFIND and PUT → 412 → upload fails, note stays synced=false.
+      // Cycle 2: etag mismatch is detected up front → merge → upload with the fresh
+      //          etag succeeds. Both devices' strokes survive on the server.
+      const noteId = "n-412-recover";
+      const notePath = `/NoteBerg/notebooks/nb1/notes/${noteId}.json`;
+      const localStroke = { id: "s-local", x: [1], y: [1] };
+      const remoteStroke = { id: "s-other-device", x: [2], y: [2] };
+
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(notePath, {
+        content: JSON.stringify({
+          id: noteId,
+          notebookId: "nb1",
+          strokes: [],
+          deletedStrokes: [],
+          version: 1,
+          modified: 1000,
+        }),
+        etag: "etag-v1",
+        mtime: new Date(1000),
+      });
+
+      // Local: edited (synced=false), base etag still matches the server → cycle 1
+      // takes the plain-upload path with If-Match: etag-v1.
+      const localNote = {
+        id: noteId,
+        notebookId: "nb1",
+        strokes: [localStroke],
+        deletedStrokes: [],
+        version: 2,
+        modified: 2000,
+        synced: false,
+        lastSyncedEtag: "etag-v1",
+      };
+
+      // Inject the race: just before our PUT lands, another device updates the note.
+      const originalFetch = fetch.getMockImplementation();
+      let injected = false;
+      fetch.mockImplementation(async (url, options) => {
+        if (!injected && url.includes(`${noteId}.json`) && options?.method === "PUT") {
+          injected = true;
+          mockServer.files.set(notePath, {
+            content: JSON.stringify({
+              id: noteId,
+              notebookId: "nb1",
+              strokes: [remoteStroke],
+              deletedStrokes: [],
+              version: 2,
+              modified: 1500,
+            }),
+            etag: "etag-v2",
+            mtime: new Date(1500),
+          });
+        }
+        return originalFetch(url, options);
+      });
+
+      // Cycle 1: upload must FAIL (not force-overwrite the other device's stroke)
+      const result1 = await fullSync([], [{ ...localNote }]);
+      expect(injected).toBe(true);
+      expect(result1.uploaded.notes.uploaded).toBe(0);
+      expect(result1.uploaded.notes.failed).toBe(1);
+      const afterCycle1 = JSON.parse(mockServer.files.get(notePath).content);
+      expect(afterCycle1.strokes.find((s) => s.id === "s-other-device")).toBeTruthy();
+
+      // Cycle 2: note is still synced=false with the stale base etag — the etag
+      // mismatch routes it through the merge path, which uploads with the fresh etag.
+      const result2 = await fullSync([], [{ ...localNote }]);
+      expect(result2.uploaded.notes.uploaded).toBe(1);
+      expect(result2.conflicts.notes).toHaveLength(0);
+
+      // Both sides' strokes must be on the server now
+      const afterCycle2 = JSON.parse(mockServer.files.get(notePath).content);
+      expect(afterCycle2.strokes.find((s) => s.id === "s-local")).toBeTruthy();
+      expect(afterCycle2.strokes.find((s) => s.id === "s-other-device")).toBeTruthy();
+
+      fetch.mockImplementation(originalFetch);
     });
 
     it("should self-heal if synced: true but missing on server", async () => {
@@ -1276,6 +1383,89 @@ describe("Nextcloud Sync Module", () => {
         mockServer.files.get(`/NoteBerg/notebooks/${notebookId}/_tombstones.json`).content,
       );
       expect(tombstone.notes.some((n) => n.id === noteId)).toBe(true);
+    });
+
+    it("should preserve concurrent tombstone entries via 412 retry", async () => {
+      const notebookId = "nb1";
+      const tombstonePath = `/NoteBerg/notebooks/${notebookId}/_tombstones.json`;
+      const entry = (id) => ({ id, deletedAt: new Date().toISOString() });
+
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/n-mine.json`, {
+        content: "{}",
+        mtime: new Date(),
+      });
+      mockServer.files.set(tombstonePath, {
+        content: JSON.stringify({ notes: [entry("n-other-device")], media: [], notebooks: [] }),
+        etag: "tomb-v1",
+        mtime: new Date(),
+      });
+
+      // Simulate a concurrent writer: just before our first tombstone PUT, another
+      // device replaces the tombstone (new entry, new etag) → our If-Match fails.
+      const originalFetch = fetch.getMockImplementation();
+      let injected = false;
+      fetch.mockImplementation(async (url, options) => {
+        if (!injected && url.includes("_tombstones.json") && options?.method === "PUT") {
+          injected = true;
+          mockServer.files.set(tombstonePath, {
+            content: JSON.stringify({
+              notes: [entry("n-other-device"), entry("n-concurrent")],
+              media: [],
+              notebooks: [],
+            }),
+            etag: "tomb-v2",
+            mtime: new Date(),
+          });
+        }
+        return originalFetch(url, options);
+      });
+
+      const ok = await deleteRemoteNote("n-mine", notebookId);
+      expect(ok).toBe(true);
+      expect(injected).toBe(true);
+
+      // All three entries must survive: ours, the pre-existing one, and the
+      // concurrent one written mid-flight (old behavior dropped it).
+      const tombstone = JSON.parse(mockServer.files.get(tombstonePath).content);
+      const ids = tombstone.notes.map((t) => t.id);
+      expect(ids).toContain("n-mine");
+      expect(ids).toContain("n-other-device");
+      expect(ids).toContain("n-concurrent");
+
+      fetch.mockImplementation(originalFetch);
+    });
+
+    it("should not wipe a corrupted tombstone", async () => {
+      const notebookId = "nb1";
+      const tombstonePath = `/NoteBerg/notebooks/${notebookId}/_tombstones.json`;
+      const corrupted = "not-json{{{";
+
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/n-x.json`, {
+        content: "{}",
+        mtime: new Date(),
+      });
+      mockServer.files.set(tombstonePath, {
+        content: corrupted,
+        etag: "tomb-bad",
+        mtime: new Date(),
+      });
+
+      // deleteRemoteNote must fail (returns false) instead of replacing the
+      // unparseable tombstone with an empty one (which would lose all history).
+      const ok = await deleteRemoteNote("n-x", notebookId);
+      expect(ok).toBe(false);
+
+      expect(mockServer.files.get(tombstonePath).content).toBe(corrupted);
+      // The note file must not have been deleted either (operation aborted)
+      expect(mockServer.files.has(`/NoteBerg/notebooks/${notebookId}/notes/n-x.json`)).toBe(true);
     });
 
     it("should handle errors in deleteRemoteNotebook", async () => {

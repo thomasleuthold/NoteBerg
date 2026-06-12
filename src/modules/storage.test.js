@@ -4,7 +4,14 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clearNoteMoveFlag, copyNote, moveNote, updateNote, updateNotebook } from "./storage.js";
+import {
+  clearNoteMoveFlag,
+  copyNote,
+  moveNote,
+  updateNote,
+  updateNotebook,
+  updateNoteEtag,
+} from "./storage.js";
 
 // ── Multi-store in-memory DB mock ─────────────────────────────────────────────
 // Schema v4 has two note stores: "notes" (index) and "noteContent" (payload).
@@ -396,6 +403,45 @@ describe("updateNotebook", () => {
 
   it("throws when notebook does not exist", async () => {
     await expect(updateNotebook("ghost", { title: "X" })).rejects.toThrow("Notebook not found");
+  });
+});
+
+// ── updateNoteEtag ────────────────────────────────────────────────────────────
+
+describe("updateNoteEtag", () => {
+  it("updates etag and marks synced when no expectedModified is given", async () => {
+    seedNote(makeNote({ synced: false, lastSyncedEtag: "old", modified: 1000 }));
+
+    await updateNoteEtag("note-1", "new-etag");
+
+    const updated = stores.notes.get("note-1");
+    expect(updated.lastSyncedEtag).toBe("new-etag");
+    expect(updated.synced).toBe(true);
+  });
+
+  it("marks synced when the note was not modified during sync", async () => {
+    seedNote(makeNote({ synced: false, modified: 1000 }));
+
+    await updateNoteEtag("note-1", "new-etag", 1000);
+
+    expect(stores.notes.get("note-1").synced).toBe(true);
+  });
+
+  it("does NOT mark synced when the note was modified during sync", async () => {
+    // The note was uploaded with modified=1000, but the user edited it while the
+    // upload was in flight (modified is now 2000, synced=false). Flipping synced
+    // to true would mask the edit and it would never be uploaded.
+    seedNote(makeNote({ synced: false, modified: 2000 }));
+
+    await updateNoteEtag("note-1", "new-etag", 1000);
+
+    const updated = stores.notes.get("note-1");
+    expect(updated.lastSyncedEtag).toBe("new-etag"); // etag still updated
+    expect(updated.synced).toBe(false); // edit-pending flag preserved
+  });
+
+  it("is a no-op when the note does not exist", async () => {
+    await expect(updateNoteEtag("missing", "etag", 1000)).resolves.toBeUndefined();
   });
 });
 

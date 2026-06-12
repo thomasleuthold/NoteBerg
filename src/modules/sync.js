@@ -252,14 +252,17 @@ export async function performSync({
       }
     }
 
+    // Pass the modified timestamp each note had when it was uploaded so
+    // updateNoteEtag won't flip synced=true over an edit made during the sync.
+    const uploadedModified = new Map((result.notesToUpload || []).map((n) => [n.id, n.modified]));
     for (const id of result.uploaded.notes.uploadedIds || []) {
       const etag = result.uploaded.notes.metadata?.[id]?.etag;
       if (etag) {
         // Patch only the index — avoids loading/decrypting/re-encrypting content.
-        await updateNoteEtag(id, etag);
+        await updateNoteEtag(id, etag, uploadedModified.get(id));
       } else {
         const index = await getNoteIndex(id);
-        if (index) await updateNoteEtag(id, index.lastSyncedEtag);
+        if (index) await updateNoteEtag(id, index.lastSyncedEtag, uploadedModified.get(id));
       }
     }
 
@@ -337,7 +340,7 @@ export async function performSync({
         console.log(
           `[Sync:save] note=${note.id} → version+modified identical (${currentLocalIndex.version}/${currentLocalIndex.modified}). Skipping save, updating etag only.`,
         );
-        await updateNoteEtag(note.id, noteToSave.lastSyncedEtag);
+        await updateNoteEtag(note.id, noteToSave.lastSyncedEtag, currentLocalIndex.modified);
       } else {
         console.log(
           `[Sync:save] note=${note.id} → saving downloaded note (version ${noteToSave.version}, modified ${noteToSave.modified})`,
@@ -348,8 +351,8 @@ export async function performSync({
 
     // Accept remote etag for notes whose server etag changed but content is not newer than local.
     // This silently updates lastSyncedEtag without downloading content or firing datachange.
-    for (const { id, etag } of result.noteEtagsToUpdate || []) {
-      await updateNoteEtag(id, etag);
+    for (const { id, etag, modified } of result.noteEtagsToUpdate || []) {
+      await updateNoteEtag(id, etag, modified);
     }
 
     // Process deletions (Remote deleted -> Local delete)

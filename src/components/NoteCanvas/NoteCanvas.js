@@ -312,10 +312,17 @@ export class NoteCanvas {
     const inMemoryData = this.noteData;
 
     // --- MERGE STROKES ---
-    const dbStrokes = freshDataFromDB.strokes || [];
-    const memStrokes = inMemoryData.strokes || [];
-    const dbDeleted = new Set(freshDataFromDB.deletedStrokes || []);
-    const memDeleted = new Set(inMemoryData.deletedStrokes || []);
+    // Use Array.isArray so that encrypted blobs ({data,iv,version}) from notes that
+    // were uploaded by a native client with local encryption are treated as empty
+    // rather than thrown as "not iterable".
+    const dbStrokes = Array.isArray(freshDataFromDB.strokes) ? freshDataFromDB.strokes : [];
+    const memStrokes = Array.isArray(inMemoryData.strokes) ? inMemoryData.strokes : [];
+    const dbDeleted = new Set(
+      Array.isArray(freshDataFromDB.deletedStrokes) ? freshDataFromDB.deletedStrokes : [],
+    );
+    const memDeleted = new Set(
+      Array.isArray(inMemoryData.deletedStrokes) ? inMemoryData.deletedStrokes : [],
+    );
 
     const allDeletedIds = new Set([...dbDeleted, ...memDeleted]);
     const mergedStrokesMap = new Map();
@@ -342,15 +349,20 @@ export class NoteCanvas {
     // For now, we assume media and other properties are less likely to have
     // in-memory vs. DB conflicts during a drawing session. We prioritize
     // the DB version for these.
-    inMemoryData.media = freshDataFromDB.media || [];
-    inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
+    inMemoryData.media = Array.isArray(freshDataFromDB.media) ? freshDataFromDB.media : [];
+    inMemoryData.deletedMedia = Array.isArray(freshDataFromDB.deletedMedia)
+      ? freshDataFromDB.deletedMedia
+      : [];
     // Merge tasks like strokes: union of local+remote, deletedTasks wins
     const localDeletedTaskIds = new Set([
-      ...(inMemoryData.deletedTasks || []),
-      ...(freshDataFromDB.deletedTasks || []),
+      ...(Array.isArray(inMemoryData.deletedTasks) ? inMemoryData.deletedTasks : []),
+      ...(Array.isArray(freshDataFromDB.deletedTasks) ? freshDataFromDB.deletedTasks : []),
     ]);
     const mergedTasksMap = new Map();
-    [...(inMemoryData.tasks || []), ...(freshDataFromDB.tasks || [])].forEach((t) => {
+    [
+      ...(Array.isArray(inMemoryData.tasks) ? inMemoryData.tasks : []),
+      ...(Array.isArray(freshDataFromDB.tasks) ? freshDataFromDB.tasks : []),
+    ].forEach((t) => {
       if (t.id) mergedTasksMap.set(t.id, t);
     });
     // Filter out deleted tasks and orphaned stroke tasks (strokes gone after merge)
@@ -414,22 +426,14 @@ export class NoteCanvas {
       return;
     }
 
-    // Ensure strokes array exists and is shared across modules
-    if (!this.noteData.strokes) {
-      this.noteData.strokes = [];
-    }
-    if (!this.noteData.deletedStrokes) {
-      this.noteData.deletedStrokes = [];
-    }
-    if (!this.noteData.media) {
-      this.noteData.media = [];
-    }
-    if (!this.noteData.deletedMedia) {
-      this.noteData.deletedMedia = [];
-    }
-    if (!this.noteData.deletedTasks) {
-      this.noteData.deletedTasks = [];
-    }
+    // Ensure strokes array exists and is shared across modules.
+    // Use Array.isArray so a non-array (e.g. an encrypted blob from a native client
+    // that was synced without decryption) is treated as empty rather than iterated.
+    if (!Array.isArray(this.noteData.strokes)) this.noteData.strokes = [];
+    if (!Array.isArray(this.noteData.deletedStrokes)) this.noteData.deletedStrokes = [];
+    if (!Array.isArray(this.noteData.media)) this.noteData.media = [];
+    if (!Array.isArray(this.noteData.deletedMedia)) this.noteData.deletedMedia = [];
+    if (!Array.isArray(this.noteData.deletedTasks)) this.noteData.deletedTasks = [];
 
     // Initialize pen presets
     this.penPresets = this.noteData.penPresets || [
@@ -709,6 +713,19 @@ export class NoteCanvas {
    */
   async insertImage(source = "picker") {
     try {
+      // Capture viewport position BEFORE opening the file dialog.
+      // The browser can reset scroll position while the OS dialog is open,
+      // and the centering offset must be accounted for (canvas is centered when
+      // narrower than the viewport — scrollLeft alone gives the wrong content X).
+      const scrollLeft = this.scroller.getScrollLeft();
+      const scrollTop = this.scroller.getScrollTop();
+      const { width: viewportWidth, height: viewportHeight } = this.scroller.getViewportSize();
+      const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+      const offsetX =
+        scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+      const centerX = (scrollLeft + viewportWidth / 2 - offsetX) / this.zoomScale;
+      const centerY = (scrollTop + viewportHeight / 2) / this.zoomScale;
+
       let files = [];
       if (source === "camera") {
         const file = await captureFromCamera();
@@ -720,11 +737,6 @@ export class NoteCanvas {
       if (files.length === 0) {
         return;
       }
-
-      // Calculate center of viewport for insertion
-      const viewport = this.scroller.getViewportBounds();
-      const centerX = viewport.left + viewport.width / 2;
-      const centerY = viewport.top + viewport.height / 2;
 
       const insertedItems = [];
 

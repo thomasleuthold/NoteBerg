@@ -38,14 +38,45 @@ import {
 
 // ─── Tombstone helpers ─────────────────────────────────────────────────────────
 
-async function _readTombstone(path) {
-  const data = await davGet(path);
-  return data || createEmptyTombstone();
+async function _readTombstoneWithEtag(path) {
+  const res = await fetch(`${getWebDAVBase()}${path}`, {
+    headers: {
+      "OCS-APIREQUEST": "true",
+      requesttoken: window.OC?.requestToken || "",
+      "Cache-Control": "no-cache",
+    },
+    credentials: "same-origin",
+  });
+  if (res.status === 404) return { tombstone: createEmptyTombstone(), etag: null };
+  if (!res.ok) throw new Error(`DAV GET ${path} failed: ${res.status}`);
+  const etag = res.headers.get("etag")?.replace(/"/g, "") ?? null;
+  // A tombstone that exists but cannot be parsed must abort the operation —
+  // replacing it with an empty one would wipe the deletion history and make
+  // deleted notes resurrect on other devices.
+  const tombstone = await res.json();
+  return { tombstone, etag };
 }
 
-async function _writeTombstone(path, tombstone) {
-  cleanupOldTombstones(tombstone);
-  await davPut(path, tombstone);
+/**
+ * Read-modify-write a tombstone with optimistic concurrency: the PUT carries
+ * If-Match (or If-None-Match: * when creating), and on 412 the tombstone is
+ * re-read and `mutate` re-applied, so concurrent writers from other devices
+ * never lose their entries.
+ */
+async function _updateTombstone(path, mutate) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    const { tombstone, etag } = await _readTombstoneWithEtag(path);
+    mutate(tombstone);
+    cleanupOldTombstones(tombstone);
+    try {
+      await davPut(path, tombstone, etag ? { "If-Match": `"${etag}"` } : { "If-None-Match": "*" });
+      return;
+    } catch (e) {
+      if (e.status !== 412 || attempt >= MAX_ATTEMPTS) throw e;
+      console.warn(`[WebDAV] Tombstone ${path} changed concurrently, retrying update`);
+    }
+  }
 }
 
 // ─── WebDAV helpers ────────────────────────────────────────────────────────────
@@ -86,17 +117,20 @@ async function davPutWithRetry(path, options, retries = 3) {
     }
     const body = await res.text().catch(() => "");
     console.error(`[WebDAV] PUT ${path} failed ${res.status}:`, body);
-    throw new Error(`DAV PUT ${path} failed: ${res.status}`);
+    const err = new Error(`DAV PUT ${path} failed: ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
 }
 
-async function davPut(path, data) {
+async function davPut(path, data, extraHeaders = {}) {
   await davPutWithRetry(path, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
       "OCS-APIREQUEST": "true",
       requesttoken: window.OC?.requestToken || "",
+      ...extraHeaders,
     },
     credentials: "same-origin",
     body: JSON.stringify(data),
@@ -171,6 +205,33 @@ async function davMkcol(path) {
     throw new Error(`DAV MKCOL ${path} failed: ${res.status}`);
   }
   _knownFolders.add(path);
+}
+
+/** Server-side MOVE or COPY (works on files and folders, recursive). */
+async function _davMoveOrCopy(method, from, to) {
+  const res = await fetch(`${getWebDAVBase()}${from}`, {
+    method,
+    headers: {
+      Destination: `${getWebDAVBase()}${to}`,
+      Overwrite: "T",
+      "OCS-APIREQUEST": "true",
+      requesttoken: window.OC?.requestToken || "",
+    },
+    credentials: "same-origin",
+  });
+  if (!res.ok) {
+    const err = new Error(`DAV ${method} ${from} → ${to} failed: ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+}
+
+async function davMove(from, to) {
+  await _davMoveOrCopy("MOVE", from, to);
+}
+
+async function davCopy(from, to) {
+  await _davMoveOrCopy("COPY", from, to);
 }
 
 /** PROPFIND a directory, returns array of child filenames (not the dir itself) */
@@ -327,9 +388,7 @@ export async function deleteNotebook(id) {
   await davPut(getNotebookPath(id), updated);
 
   // Write global notebook tombstone so other devices know this notebook was deleted
-  const globalTombstone = await _readTombstone(getGlobalNotebookTombstonePath());
-  addNotebookTombstone(globalTombstone, id);
-  await _writeTombstone(getGlobalNotebookTombstonePath(), globalTombstone);
+  await _updateTombstone(getGlobalNotebookTombstonePath(), (t) => addNotebookTombstone(t, id));
 
   // Soft-delete all notes in this notebook (each deleteNote writes its own tombstone)
   const notes = await getNotesByNotebook(id);
@@ -362,9 +421,7 @@ export async function restoreNotebook(id) {
 
 export async function permanentlyDeleteNotebook(id) {
   // Write global notebook tombstone before deleting the folder
-  const globalTombstone = await _readTombstone(getGlobalNotebookTombstonePath());
-  addNotebookTombstone(globalTombstone, id);
-  await _writeTombstone(getGlobalNotebookTombstonePath(), globalTombstone);
+  await _updateTombstone(getGlobalNotebookTombstonePath(), (t) => addNotebookTombstone(t, id));
   await davDelete(getNotebookFolder(id));
 }
 
@@ -411,6 +468,23 @@ async function _putNote(note) {
   await davPut(path, note);
 }
 
+function _normalizeNote(note) {
+  // Guard against encrypted blobs ({data, iv, version}) that may have been uploaded
+  // by a native client with local encryption. Normalize all array fields to their defaults
+  // so the rest of the app can safely iterate/spread them.
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  note.strokes = arr(note.strokes);
+  note.deletedStrokes = arr(note.deletedStrokes);
+  note.media = arr(note.media);
+  note.deletedMedia = arr(note.deletedMedia);
+  note.tasks = arr(note.tasks);
+  note.deletedTasks = arr(note.deletedTasks);
+  note.recordings = arr(note.recordings);
+  note.deletedRecordings = arr(note.deletedRecordings);
+  delete note.thumbnail;
+  return note;
+}
+
 export async function getNote(id) {
   // We need to find which notebook the note belongs to — try quick notes first, then scan notebooks
   // For efficiency, accept notebookId hint via a small in-memory cache populated on getAllNotes
@@ -419,7 +493,7 @@ export async function getNote(id) {
   if (cached !== undefined) {
     note = await davGet(getNotePath(id, cached));
     if (note) {
-      note.tasks = Array.isArray(note.tasks) ? note.tasks : [];
+      _normalizeNote(note);
       await _cacheFileLocations(note);
     }
   }
@@ -427,12 +501,9 @@ export async function getNote(id) {
     // Scan all notebooks
     note = await _findNote(id);
     if (note) {
-      note.tasks = Array.isArray(note.tasks) ? note.tasks : [];
+      _normalizeNote(note);
       await _cacheFileLocations(note);
     }
-  }
-  if (note) {
-    delete note.thumbnail;
   }
   return note;
 }
@@ -606,9 +677,7 @@ export async function deleteNote(id) {
   const tombstonePath = note.notebookId
     ? getNotebookTombstonePath(note.notebookId)
     : getQuickNotesTombstonePath();
-  const tombstone = await _readTombstone(tombstonePath);
-  addNoteTombstone(tombstone, id);
-  await _writeTombstone(tombstonePath, tombstone);
+  await _updateTombstone(tombstonePath, (t) => addNoteTombstone(t, id));
 
   console.log("Note deleted:", id);
   return updated;
@@ -618,16 +687,16 @@ export async function permanentlyDeleteNote(id) {
   const note = await getNote(id);
   if (!note) return;
 
-  // Write tombstone for media files before deleting them
+  // Write tombstone for the note and its media files before deleting them
   const tombstonePath = note.notebookId
     ? getNotebookTombstonePath(note.notebookId)
     : getQuickNotesTombstonePath();
-  const tombstone = await _readTombstone(tombstonePath);
-  addNoteTombstone(tombstone, id);
-  for (const item of note.media || []) {
-    if (item.fileId) addMediaTombstone(tombstone, id, item.fileId);
-  }
-  await _writeTombstone(tombstonePath, tombstone);
+  await _updateTombstone(tombstonePath, (tombstone) => {
+    addNoteTombstone(tombstone, id);
+    for (const item of note.media || []) {
+      if (item.fileId) addMediaTombstone(tombstone, id, item.fileId);
+    }
+  });
 
   const path = getNotePath(id, note.notebookId);
   await davDelete(path);
@@ -652,13 +721,36 @@ export async function moveNote(noteId, targetNotebookId) {
   const note = await getNote(noteId);
   if (!note) throw new Error("Note not found");
   const previousNotebookId = note.notebookId ?? null;
-  if (previousNotebookId === (targetNotebookId ?? null)) return;
+  const target = targetNotebookId ?? null;
+  if (previousNotebookId === target) return;
 
-  // Delete from old location, write to new
-  await davDelete(getNotePath(noteId, previousNotebookId));
-  const updated = { ...note, notebookId: targetNotebookId ?? null, modified: Date.now() };
-  _notePathCache.set(noteId, targetNotebookId ?? null);
+  // 1. Write the note at the new location first — never delete the only copy.
+  const updated = { ...note, notebookId: target, modified: Date.now() };
   await _putNote(updated);
+  _notePathCache.set(noteId, target);
+
+  // 2. Move the media folder server-side (atomic, recursive; 404 = note has no media).
+  try {
+    await davMove(
+      getNoteMediaFolder(noteId, previousNotebookId),
+      getNoteMediaFolder(noteId, target),
+    );
+  } catch (e) {
+    if (e.status !== 404) throw e;
+  }
+  // Keep cached file locations valid so getFileUrl keeps working this session
+  for (const [fid, loc] of _fileLocationCache) {
+    if (loc.noteId === noteId) _fileLocationCache.set(fid, { ...loc, notebookId: target });
+  }
+
+  // 3. Remove the old JSON and tombstone the old location so native clients
+  //    don't "self-heal" the note back into the old notebook.
+  await davDelete(getNotePath(noteId, previousNotebookId));
+  const oldTombstonePath = previousNotebookId
+    ? getNotebookTombstonePath(previousNotebookId)
+    : getQuickNotesTombstonePath();
+  await _updateTombstone(oldTombstonePath, (t) => addNoteTombstone(t, noteId));
+
   console.log(`Note moved: ${noteId} → ${targetNotebookId}`);
 }
 
@@ -675,7 +767,26 @@ export async function copyNote(noteId, targetNotebookId) {
     created: now,
     modified: now,
   };
+
+  // Copy media files server-side into the copy's own folder. Media is stored
+  // per-note, so sharing fileIds with the original would orphan the copy's
+  // media as soon as the original note is permanently deleted.
+  const srcFiles = await davList(getNoteMediaFolder(noteId, note.notebookId ?? null)).catch(
+    () => [],
+  );
+  if (srcFiles.length > 0) {
+    const destFolder = getNoteMediaFolder(newNote.id, newNote.notebookId);
+    await davMkcol(destFolder);
+    for (const srcPath of srcFiles) {
+      const name = srcPath.replace(/\/$/, "").split("/").pop();
+      await davCopy(srcPath, `${destFolder}/${name}`);
+    }
+  }
+
+  // Write the JSON only after the media copy succeeded, so a half-copied note
+  // never becomes visible.
   await _putNote(newNote);
+  _notePathCache.set(newNote.id, newNote.notebookId);
   console.log(`Note copied: ${noteId} → ${newNote.id}`);
   return newNote;
 }

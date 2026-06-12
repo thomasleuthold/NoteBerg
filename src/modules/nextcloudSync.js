@@ -550,8 +550,18 @@ async function createFolder(path) {
 /**
  * Upload a file to Nextcloud using WebDAV
  * Uses X-OC-Mtime to set the modification time to match local file
+ * @param {string|null} etag - If set, sent as If-Match so a concurrent remote
+ *   change fails the upload (412) instead of being overwritten.
+ * @param {boolean} options.requireAbsent - Send If-None-Match: * so the upload
+ *   fails (412) if the file already exists (used for tombstone creation races).
  */
-async function uploadFile(path, content, mtime = null, etag = null) {
+async function uploadFile(
+  path,
+  content,
+  mtime = null,
+  etag = null,
+  { requireAbsent = false } = {},
+) {
   const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
@@ -572,30 +582,23 @@ async function uploadFile(path, content, mtime = null, etag = null) {
   // Use ETag to prevent overwriting changes (If-Match)
   if (etag) {
     headers["If-Match"] = `"${etag}"`;
+  } else if (requireAbsent) {
+    headers["If-None-Match"] = "*";
   }
 
-  let response = await _fetch(webdavUrl, {
+  const response = await _fetch(webdavUrl, {
     method: "PUT",
     headers,
     body: content,
   });
 
   if (response.status === 412) {
-    console.warn(
-      `[NextcloudSync] 412 Conflict for ${path}. Remote changed since last sync. Forcing overwrite — NC changes will be lost if not merged prior.`,
-    );
-
-    // Remove If-Match to force overwrite (Brute force resolution)
-    if (headers["If-Match"]) {
-      delete headers["If-Match"];
-    }
-
-    // Retry upload without the version check
-    response = await _fetch(webdavUrl, {
-      method: "PUT",
-      headers,
-      body: content,
-    });
+    // Remote changed since our last sync. Do NOT force-overwrite — fail this
+    // upload so the item stays synced=false and the next sync cycle downloads
+    // the remote version, merges, and re-uploads.
+    const err = new Error(`Upload conflict (412) for ${path} — remote changed since last sync`);
+    err.status = 412;
+    throw err;
   }
 
   if (!response.ok && response.status !== 201 && response.status !== 204) {
@@ -1144,6 +1147,37 @@ async function deleteFile(path) {
 }
 
 /**
+ * Read-modify-write a remote tombstone with optimistic concurrency.
+ * Re-reads the tombstone and re-applies `mutate` on every attempt, uploading
+ * with If-Match (or If-None-Match: * when creating) so a concurrent writer on
+ * another device causes a 412 retry instead of having its entries silently
+ * overwritten (lost entries make deleted notes resurrect).
+ * A tombstone that exists but fails to parse aborts the operation — replacing
+ * it with an empty one would wipe the deletion history.
+ * @param {string} tombstonePath
+ * @param {Function} mutate - (tombstone) => void, applied to the freshly-read tombstone
+ */
+async function updateRemoteTombstone(tombstonePath, mutate) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    const { content, etag } = await downloadFile(tombstonePath);
+    const tombstone = content ? JSON.parse(content) : createEmptyTombstone();
+    mutate(tombstone);
+    cleanupOldTombstones(tombstone);
+    try {
+      await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2), null, etag, {
+        requireAbsent: !etag,
+      });
+      return;
+    } catch (e) {
+      if (e.status !== 412 || attempt >= MAX_ATTEMPTS) throw e;
+      // Lost the race against another device — re-read and retry
+      console.warn(`[Sync] Tombstone ${tombstonePath} changed concurrently, retrying update`);
+    }
+  }
+}
+
+/**
  * Ensure all required folders for hierarchical structure exist
  */
 async function ensureHierarchicalStructure() {
@@ -1189,21 +1223,11 @@ export async function syncNotebooks(notebooks) {
       const successfullyDeleted = deleteResults.filter((r) => r.success);
 
       if (successfullyDeleted.length > 0) {
-        const tombstonePath = getGlobalNotebookTombstonePath();
-        let tombstone;
-        try {
-          const { content } = await downloadFile(tombstonePath);
-          tombstone = content ? JSON.parse(content) : createEmptyTombstone();
-        } catch (e) {
-          console.warn(`[Sync] Could not download global tombstone, creating new.`, e);
-          tombstone = createEmptyTombstone();
-        }
-
-        for (const result of successfullyDeleted) {
-          tombstone = addNotebookTombstone(tombstone, result.id);
-        }
-
-        await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+        await updateRemoteTombstone(getGlobalNotebookTombstonePath(), (tombstone) => {
+          for (const result of successfullyDeleted) {
+            addNotebookTombstone(tombstone, result.id);
+          }
+        });
 
         // Step 3: Clean up local stubs only for successful deletions
         for (const result of successfullyDeleted) {
@@ -1333,22 +1357,12 @@ export async function syncNotes(notes) {
             ? getNotebookTombstonePath(notebookId)
             : getQuickNotesTombstonePath();
 
-          let tombstone;
-          try {
-            const { content: tombstoneContent } = await downloadFile(tombstonePath);
-            tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
-          } catch (e) {
-            console.warn(`[Sync] Could not download tombstone ${tombstonePath}, creating new.`, e);
-            tombstone = createEmptyTombstone();
-          }
-
           // Add only successfully deleted notes to tombstone
-          for (const result of successfullyDeleted) {
-            tombstone = addNoteTombstone(tombstone, result.id);
-          }
-
-          // Upload updated tombstone
-          await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+          await updateRemoteTombstone(tombstonePath, (tombstone) => {
+            for (const result of successfullyDeleted) {
+              addNoteTombstone(tombstone, result.id);
+            }
+          });
 
           // Step 3: Clean up local stubs only for successful deletions
           for (const result of successfullyDeleted) {
@@ -1402,18 +1416,18 @@ export async function syncNotes(notes) {
         await deleteFile(oldMediaFolder).catch(() => {});
       });
 
-      // Write tombstone once for the whole group (serial — no race)
-      let tombstone;
+      // Write tombstone once for the whole group. If this fails the move still
+      // completes (note uploads to its new location); only the old-location
+      // cleanup marker is missing, so log and continue rather than abort the sync.
       try {
-        const { content } = await downloadFile(tombstonePath);
-        tombstone = content ? JSON.parse(content) : createEmptyTombstone();
-      } catch {
-        tombstone = createEmptyTombstone();
+        await updateRemoteTombstone(tombstonePath, (tombstone) => {
+          for (const note of groupNotes) {
+            addNoteTombstone(tombstone, note.id);
+          }
+        });
+      } catch (e) {
+        console.error(`[Sync] Failed to write move tombstone ${tombstonePath}:`, e);
       }
-      for (const note of groupNotes) {
-        tombstone = addNoteTombstone(tombstone, note.id);
-      }
-      await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
 
       console.log(
         `[Sync] Cleaned up ${groupNotes.length} moved note(s) from ${key}: ${groupNotes.map((n) => n.id).join(", ")}`,
@@ -2133,7 +2147,11 @@ export async function fullSync(localNotebooks, localNotes) {
         console.log(
           `[Sync:classify] note=${local.id} → etag oscillation detected (remote.modified === local.modified = ${local.modified}). Accepting etag without download.`,
         );
-        noteEtagsToUpdate.push({ id: local.id, etag: remote._currentFileEtag });
+        noteEtagsToUpdate.push({
+          id: local.id,
+          etag: remote._currentFileEtag,
+          modified: local.modified,
+        });
       } else if (
         remote.version !== undefined &&
         local.version !== undefined &&
@@ -2287,15 +2305,10 @@ export async function deleteRemoteNote(noteId, notebookId) {
       ? getNotebookTombstonePath(notebookId)
       : getQuickNotesTombstonePath();
 
-    // Download current tombstone
-    const { content: tombstoneContent } = await downloadFile(tombstonePath);
-    let tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
-
-    // Add to tombstone
-    tombstone = addNoteTombstone(tombstone, noteId);
-
-    // Upload updated tombstone
-    await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+    // Add to tombstone (etag-protected read-modify-write)
+    await updateRemoteTombstone(tombstonePath, (tombstone) => {
+      addNoteTombstone(tombstone, noteId);
+    });
 
     // Delete the actual note file
     await deleteFile(notePath);
