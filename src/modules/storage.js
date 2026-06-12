@@ -175,7 +175,8 @@ export async function initStorage() {
 /**
  * One-time migration: remove stale thumbnailFileId/thumbnailTimestamp from the notes index
  * and delete the corresponding orphaned blobs from the files store.
- * Thumbnail data is now embedded as base64 in noteContent.
+ * Thumbnails are no longer stored or synced — they are rendered on demand in the
+ * overview (see renderNoteSnapshot), so these legacy fields and blobs are dead weight.
  */
 async function _migrateThumbnailsToNoteContent() {
   const migrated = await getSetting("thumbnailMigrationV5Done");
@@ -694,6 +695,9 @@ export async function deleteFile(id) {
 // No-op in Tauri build — blobs are stored in IndexedDB via saveFile/getFile.
 // In NC build this is replaced by storage.webdav.js which uploads to WebDAV.
 export async function saveMediaForNote(_blob, _filename, _noteId, _notebookId) {}
+// No-op in Tauri build — orphaned server media is cleaned by cleanupOrphanedMedia
+// during sync. In NC build this is replaced by storage.webdav.js.
+export async function cleanupNoteMedia(_noteId, _notebookId, _validFileIds) {}
 // NC-only: returns a direct URL for a file. Always null in Tauri build.
 export function getFileUrl(_id) {
   return null;

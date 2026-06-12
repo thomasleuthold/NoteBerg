@@ -5,7 +5,14 @@
  * Handles encryption key management and biometric unlock integration.
  */
 
-import { decryptData, deriveKeyFromPassword, encryptData, generateSalt } from "./encryption.js";
+import {
+  decryptData,
+  deriveKeyFromPassword,
+  ENCRYPTION_CONFIG,
+  encryptData,
+  generateSalt,
+  LEGACY_PBKDF2_ITERATIONS,
+} from "./encryption.js";
 import { getSecureCredential, saveSecureCredential } from "./secureStorage.js";
 import { getSetting, setSetting } from "./storage.js";
 
@@ -83,7 +90,7 @@ export async function setupMasterPassword(password, hint = "", enableBiometric =
     const config = {
       version: 1,
       salt: saltBase64,
-      iterations: 100000,
+      iterations: ENCRYPTION_CONFIG.PBKDF2_ITERATIONS,
       algorithm: "PBKDF2-SHA256",
       passwordHint: hint || null,
       createdAt: new Date().toISOString(),
@@ -190,8 +197,10 @@ export async function unlockApp(password) {
     // Convert salt from base64
     const salt = base64ToBufferHelper(config.salt);
 
-    // Derive key from password
-    const key = await deriveKeyFromPassword(password, salt);
+    // Derive key from password using the iteration count this config was
+    // created with (configs from before the field existed used the legacy count)
+    const iterations = config.iterations || LEGACY_PBKDF2_ITERATIONS;
+    const key = await deriveKeyFromPassword(password, salt, iterations);
 
     // Test the key by trying to decrypt the test data
     const testEncrypted = await getSetting(STORAGE_KEYS.PASSWORD_TEST);
@@ -375,10 +384,12 @@ export async function changeMasterPassword(oldPassword, newPassword, newHint) {
     // 3. Save re-encrypted data
     // For now, we'll just update the password configuration
 
-    // Save new encryption configuration
+    // Save new encryption configuration. The key is re-derived from a new salt
+    // anyway, so a password change also upgrades to the current iteration count.
     const newConfig = {
       ...oldConfig,
       salt: newSaltBase64,
+      iterations: ENCRYPTION_CONFIG.PBKDF2_ITERATIONS,
       passwordHint: newHint !== undefined ? newHint : oldConfig.passwordHint,
       changedAt: new Date().toISOString(),
     };

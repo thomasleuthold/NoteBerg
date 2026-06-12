@@ -8,7 +8,8 @@
  * Each message handler writes ONLY to the store(s) it needs:
  *   SAVE_STROKES     → noteContent (strokes) + notes (modified/version/synced/hasStrokes)
  *   SAVE_MEDIA       → noteContent (media)   + notes (modified/version/synced)
- *   SAVE_PRESETS     → noteContent (penPresets) + notes (modified/version/synced)
+ *   SAVE_PRESETS     → noteContent (penPresets) only — no index bump, presets
+ *                      are UI preferences and must not trigger a re-upload
  *   SAVE_TASKS       → noteContent (tasks)   + notes (modified/version/synced)
  *   SAVE_CONTENT     → noteContent (content) + notes (modified/version/synced/hasContent)
  *   SAVE_RECORDINGS  → noteContent (recordings/deletedRecordings) + notes (modified/version/synced)
@@ -143,23 +144,14 @@ async function processMessage(e) {
   if (type === "SAVE_PRESETS") {
     const db = await getDB();
 
-    const tx = db.transaction(["notes", "noteContent"], "readwrite");
-    const notesStore = tx.objectStore("notes");
-    const contentStore = tx.objectStore("noteContent");
-
-    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
-
-    if (index && content) {
+    // Pen presets are per-note UI preferences — deliberately do NOT bump
+    // modified/version or clear synced: a preset-only change must not trigger a
+    // full note re-upload. Presets ride along with the next content/stroke save.
+    const content = await db.get("noteContent", noteId);
+    if (content) {
       content.penPresets = presets;
-
-      index.modified = Date.now();
-      index.version = (index.version || 0) + 1;
-      index.synced = false;
-
-      await Promise.all([notesStore.put(index), contentStore.put(content)]);
+      await db.put("noteContent", content);
     }
-
-    await tx.done;
   }
 
   if (type === "SAVE_TASKS") {

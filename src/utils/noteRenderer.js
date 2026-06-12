@@ -5,6 +5,7 @@
  */
 
 import { getTheme } from "../modules/theme.js";
+import { sanitizeNoteHtml } from "./sanitizeHtml.js";
 
 export const MARKER_ALPHA = 0.3;
 
@@ -641,7 +642,8 @@ export async function renderNoteSnapshot(canvas, note) {
     // (visibility:hidden causes getBoundingClientRect to return zeros in some browsers).
     ghost.style.cssText =
       "position:fixed;left:0;top:-9999px;width:1200px;opacity:0;pointer-events:none;z-index:-1;";
-    ghost.innerHTML = note.content;
+    // note.content is untrusted synced HTML — sanitize before attaching to the DOM
+    ghost.innerHTML = sanitizeNoteHtml(note.content);
     document.body.appendChild(ghost);
     try {
       drawTextSnapshot(ctx, snapshotTextLayout(ghost, thumbWidth, thumbHeight, dpr));

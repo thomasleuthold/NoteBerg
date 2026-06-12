@@ -11,6 +11,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { APP_NAME, APP_VERSION } from "../config.js";
 import { decryptObject } from "./encryption.js";
 import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
+import { extFromMime, mimeFromExt } from "./mime.js";
 import {
   getSecureCredential as _tauriGetSecureCredential,
   deleteSecureCredential,
@@ -69,24 +70,6 @@ export function configureHttpProvider(fetchFn, getCredentialFn) {
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
 const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
-
-// Mime type mapping for file extensions
-const MIME_TYPES = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/gif": ".gif",
-  "image/webp": ".webp",
-  "image/svg+xml": ".svg",
-  "application/pdf": ".pdf",
-  "audio/webm": ".webm",
-  "audio/webm;codecs=opus": ".webm",
-  "audio/ogg": ".ogg",
-  "audio/mp4": ".m4a",
-};
-
-function getExtensionFromMime(mimeType) {
-  return MIME_TYPES[mimeType] || ".bin";
-}
 
 /**
  * Build a Basic Auth header value that is safe for non-Latin1 credentials.
@@ -364,7 +347,6 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     }
 
     console.log("Init response status:", initResponse.status);
-    console.log("Init response headers:", initResponse.headers);
 
     if (!initResponse.ok) {
       const errorText = await initResponse.text();
@@ -374,8 +356,10 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
       );
     }
 
+    // SECURITY: never log the response body or parsed data — it contains the
+    // poll token, which lets anyone reading the log obtain the app password
+    // while the login flow is open (~20 min).
     const responseText = await initResponse.text();
-    console.log("Init response body:", responseText);
 
     if (!responseText || responseText.trim() === "") {
       console.error("Empty response from server");
@@ -387,16 +371,13 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
       initData = JSON.parse(responseText);
     } catch (e) {
       console.error("Failed to parse init response as JSON:", e);
-      console.error("Response text was:", responseText);
       throw new Error(`Invalid JSON response from server: ${e.message}`);
     }
-
-    console.log("Parsed init data:", initData);
 
     const { poll, login } = initData;
 
     if (!poll || !login) {
-      console.error("Missing required fields in response:", { poll, login });
+      console.error("Invalid login flow response - missing poll or login");
       throw new Error("Invalid login flow response - missing poll or login");
     }
 
@@ -405,15 +386,11 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     const endpoint = poll.endpoint;
 
     if (!token || !endpoint) {
-      console.error("Missing token or endpoint in poll object:", poll);
+      console.error("Invalid poll response - missing token or endpoint");
       throw new Error("Invalid poll response - missing token or endpoint");
     }
 
-    console.log("Login Flow initialized:", {
-      endpoint,
-      token: `${token.substring(0, 10)}...`,
-      login,
-    });
+    console.log("Login Flow initialized, poll endpoint:", endpoint);
 
     // Step 2: Provide login URL to callback (for UI display)
     if (onLoginUrlReady) {
@@ -421,7 +398,7 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     }
 
     // Step 3: Try to open login page in default browser
-    console.log("Opening login page in browser:", login);
+    console.log("Opening login page in browser...");
     try {
       await openUrl(login);
       console.log("Browser opened successfully");
@@ -738,7 +715,7 @@ async function syncNoteMedia(note) {
     }
 
     // Determine filename
-    const ext = getExtensionFromMime(blob.type);
+    const ext = extFromMime(blob.type);
     const filename = `${fileId}${ext}`;
 
     // Queue upload if not exists on server
@@ -898,11 +875,7 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
       if (content) {
         // Infer mime type from extension
         const ext = remoteFile.name.substring(remoteFile.name.lastIndexOf("."));
-        const mimeType =
-          Object.keys(MIME_TYPES).find((key) => MIME_TYPES[key] === ext) ||
-          "application/octet-stream";
-
-        const blob = new Blob([content], { type: mimeType });
+        const blob = new Blob([content], { type: mimeFromExt(ext) });
         await saveFile(blob, fileId);
       }
     } else {
@@ -940,6 +913,15 @@ async function fetchRemoteState() {
     return []; // Root folder doesn't exist
   }
 
+  // Stock Nextcloud ships with `dav.propfind.depth_infinity` disabled and answers
+  // Depth: infinity with 400 — fall back to walking the tree with Depth: 1.
+  if (response.status === 400 || response.status === 403 || response.status === 501) {
+    console.warn(
+      `[Sync] PROPFIND Depth: infinity rejected (${response.status}) — falling back to per-folder listing`,
+    );
+    return fetchRemoteStateShallow();
+  }
+
   if (!response.ok) {
     throw new Error(`Failed to fetch remote state: ${response.status} ${response.statusText}`);
   }
@@ -961,6 +943,41 @@ async function fetchRemoteState() {
       path, // e.g. /NoteBerg/notebooks/...
     };
   });
+}
+
+/**
+ * Fallback for servers that reject PROPFIND Depth: infinity.
+ * Walks the known folder layout with Depth: 1 requests:
+ *   /NoteBerg/notebooks            → global tombstone + notebook folders
+ *   /NoteBerg/notebooks/{id}       → _notebook.json, _tombstones.json
+ *   /NoteBerg/notebooks/{id}/notes → note JSONs
+ *   /NoteBerg/quickNotes           → quick note JSONs + tombstone
+ * Media folders are intentionally NOT walked — downloadNoteMedia lists them on
+ * demand for notes that are missing binaries. The only degradation is that the
+ * missing-media check for *unchanged* notes is skipped in this mode.
+ */
+async function fetchRemoteStateShallow() {
+  const items = [];
+  const addFiles = (folder, files) => {
+    for (const f of files) {
+      items.push({ ...f, path: `${folder}/${f.name}` });
+    }
+  };
+
+  const notebooksFolder = `${ROOT_FOLDER}/notebooks`;
+  addFiles(notebooksFolder, await listFiles(notebooksFolder));
+
+  const notebookFolders = await listFolders(notebooksFolder);
+  await runInBatches(notebookFolders, 5, async (nb) => {
+    const nbFolder = `${notebooksFolder}/${nb.name}`;
+    addFiles(nbFolder, await listFiles(nbFolder));
+    addFiles(`${nbFolder}/notes`, await listFiles(`${nbFolder}/notes`));
+  });
+
+  const quickNotesFolder = `${ROOT_FOLDER}/quickNotes`;
+  addFiles(quickNotesFolder, await listFiles(quickNotesFolder));
+
+  return items;
 }
 
 /**
@@ -1002,7 +1019,7 @@ export async function listFiles(path) {
  * @returns {Promise<boolean>} true if at least one remote note etag differs from local
  */
 export async function hasRemoteChanges(notebookId, localNotes) {
-  if (!isAuthenticated()) return false;
+  if (!(await isAuthenticated())) return false;
 
   try {
     const folder = notebookId ? getNotebookNotesFolder(notebookId) : `${ROOT_FOLDER}/quickNotes`;
@@ -1178,6 +1195,59 @@ async function updateRemoteTombstone(tombstonePath, mutate) {
 }
 
 /**
+ * Purge a batch of items remotely: delete files FIRST, then record the ids in
+ * the tombstone, then clean up local stubs — each step only for items whose
+ * deletion succeeded (prevents data loss if the tombstone write succeeds but
+ * the deletion fails). Shared by syncNotebooks and syncNotes.
+ * @returns {Array} per-item results tagged with action:"purge"
+ */
+async function purgeRemoteItems(
+  items,
+  { deleteRemote, tombstonePath, addTombstone, cleanupLocal },
+) {
+  const deleteResults = await runInBatches(items, 5, async (item) => {
+    try {
+      await deleteRemote(item);
+      return { success: true, id: item.id, action: "purge" };
+    } catch (e) {
+      console.error(`[Sync] Failed to delete purged item ${item.id}:`, e);
+      return { success: false, id: item.id, error: e.message, action: "purge" };
+    }
+  });
+
+  const succeeded = deleteResults.filter((r) => r.success);
+  if (succeeded.length > 0) {
+    await updateRemoteTombstone(tombstonePath, (tombstone) => {
+      for (const r of succeeded) addTombstone(tombstone, r.id);
+    });
+    for (const r of succeeded) await cleanupLocal(r.id);
+  }
+  return deleteResults;
+}
+
+/**
+ * Aggregate per-item batch results into the summary shape returned by
+ * syncNotebooks/syncNotes. Successful purges count neither as uploads nor failures.
+ */
+async function aggregateSyncResults(batchResults) {
+  const results = { uploaded: 0, failed: 0, errors: [], uploadedIds: [], metadata: {} };
+  for (const res of batchResults) {
+    if (!res.success) {
+      results.failed++;
+      results.errors.push({ id: res.id, error: res.error });
+      continue;
+    }
+    if (res.action === "purge") continue;
+    results.uploaded++;
+    results.uploadedIds.push(res.id);
+    results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+    // Clear previousNotebookId now that the move has been synced to Nextcloud
+    if (res.hadPreviousLocation) await clearNoteMoveFlag(res.id);
+  }
+  return results;
+}
+
+/**
  * Ensure all required folders for hierarchical structure exist
  */
 async function ensureHierarchicalStructure() {
@@ -1191,7 +1261,7 @@ async function ensureHierarchicalStructure() {
  * Sync notebooks to Nextcloud (hierarchical structure)
  */
 export async function syncNotebooks(notebooks) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -1203,40 +1273,22 @@ export async function syncNotebooks(notebooks) {
   const activeNotebooks = notebooks.filter((n) => !n.purged);
   const purgedResults = [];
 
-  // Process purged notebooks: Delete files FIRST, then update tombstone
-  // This prevents data loss if tombstone succeeds but deletion fails
   if (purgedNotebooks.length > 0) {
     try {
-      // Step 1: Attempt to delete remote folders first
-      const deleteResults = await runInBatches(purgedNotebooks, 5, async (notebook) => {
-        try {
-          console.log(`[Sync] Deleting remote notebook ${notebook.id}`);
-          await deleteRemoteNotebook(notebook.id);
-          return { success: true, id: notebook.id, action: "purge" };
-        } catch (e) {
-          console.error(`[Sync] Failed to delete remote notebook ${notebook.id}:`, e);
-          return { success: false, id: notebook.id, error: e.message, action: "purge" };
-        }
-      });
-
-      // Step 2: Only add successfully deleted notebooks to tombstone
-      const successfullyDeleted = deleteResults.filter((r) => r.success);
-
-      if (successfullyDeleted.length > 0) {
-        await updateRemoteTombstone(getGlobalNotebookTombstonePath(), (tombstone) => {
-          for (const result of successfullyDeleted) {
-            addNotebookTombstone(tombstone, result.id);
-          }
-        });
-
-        // Step 3: Clean up local stubs only for successful deletions
-        for (const result of successfullyDeleted) {
-          await permanentlyDeleteNotesInNotebook(result.id);
-          await permanentlyDeleteNotebook(result.id);
-        }
-      }
-
-      purgedResults.push(...deleteResults);
+      purgedResults.push(
+        ...(await purgeRemoteItems(purgedNotebooks, {
+          deleteRemote: (nb) => {
+            console.log(`[Sync] Deleting remote notebook ${nb.id}`);
+            return deleteRemoteNotebook(nb.id);
+          },
+          tombstonePath: getGlobalNotebookTombstonePath(),
+          addTombstone: addNotebookTombstone,
+          cleanupLocal: async (id) => {
+            await permanentlyDeleteNotesInNotebook(id);
+            await permanentlyDeleteNotebook(id);
+          },
+        })),
+      );
     } catch (error) {
       console.error("[Sync] Failed to process purged notebooks:", error);
     }
@@ -1276,38 +1328,14 @@ export async function syncNotebooks(notebooks) {
     }
   });
 
-  const batchResults = [...purgedResults, ...uploadResults];
-
-  const results = {
-    uploaded: 0,
-    failed: 0,
-    errors: [],
-    uploadedIds: [],
-    metadata: {},
-  };
-
-  for (const res of batchResults) {
-    if (res.success) {
-      // Only count as uploaded if it wasn't a purge action
-      if (res.action !== "purge") {
-        results.uploaded++;
-        results.uploadedIds.push(res.id);
-        results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
-      }
-    } else {
-      results.failed++;
-      results.errors.push({ id: res.id, error: res.error });
-    }
-  }
-
-  return results;
+  return aggregateSyncResults([...purgedResults, ...uploadResults]);
 }
 
 /**
  * Sync notes to Nextcloud (hierarchical structure)
  */
 export async function syncNotes(notes) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -1331,47 +1359,26 @@ export async function syncNotes(notes) {
 
     for (const [key, groupNotes] of Object.entries(byNotebook)) {
       const notebookId = key === "quickNotes" ? null : key;
+      const tombstonePath = notebookId
+        ? getNotebookTombstonePath(notebookId)
+        : getQuickNotesTombstonePath();
 
       try {
-        // Step 1: Delete files first (before updating tombstone)
-        const deleteResults = await runInBatches(groupNotes, 5, async (note) => {
-          try {
-            const notePath = getNotePath(note.id, note.notebookId);
-            const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
-
-            await deleteFile(notePath);
-            await deleteFile(mediaFolder).catch(() => {}); // Ignore if folder doesn't exist
-
-            return { success: true, id: note.id, action: "purge" };
-          } catch (e) {
-            console.error(`[Sync] Failed to delete purged note files ${note.id}:`, e);
-            return { success: false, id: note.id, error: e.message, action: "purge" };
-          }
-        });
-
-        // Step 2: Only add successfully deleted notes to tombstone
-        const successfullyDeleted = deleteResults.filter((r) => r.success);
-
-        if (successfullyDeleted.length > 0) {
-          const tombstonePath = notebookId
-            ? getNotebookTombstonePath(notebookId)
-            : getQuickNotesTombstonePath();
-
-          // Add only successfully deleted notes to tombstone
-          await updateRemoteTombstone(tombstonePath, (tombstone) => {
-            for (const result of successfullyDeleted) {
-              addNoteTombstone(tombstone, result.id);
-            }
-          });
-
-          // Step 3: Clean up local stubs only for successful deletions
-          for (const result of successfullyDeleted) {
-            await permanentlyDeleteNote(result.id);
-            console.log(`[Sync] Purged note ${result.id} completely`);
-          }
-        }
-
-        purgedResults.push(...deleteResults);
+        purgedResults.push(
+          ...(await purgeRemoteItems(groupNotes, {
+            deleteRemote: async (note) => {
+              await deleteFile(getNotePath(note.id, note.notebookId));
+              // Ignore if media folder doesn't exist
+              await deleteFile(getNoteMediaFolder(note.id, note.notebookId)).catch(() => {});
+            },
+            tombstonePath,
+            addTombstone: addNoteTombstone,
+            cleanupLocal: async (id) => {
+              await permanentlyDeleteNote(id);
+              console.log(`[Sync] Purged note ${id} completely`);
+            },
+          })),
+        );
       } catch (error) {
         console.error(`[Sync] Failed to process purged notes group for ${key}:`, error);
         // Mark all in group as failed
@@ -1465,11 +1472,9 @@ export async function syncNotes(notes) {
       // Clean up orphaned media files (deleted from note but still on server)
       await cleanupOrphanedMedia(decryptedNote);
 
-      // Decrypt local encryption before upload so Nextcloud always contains readable JSON
-      const encryptedNote = await decryptNoteLocally(syncedNote);
-
       // Strip internal sync tracking fields before uploading.
-      const noteForUpload = { ...encryptedNote };
+      // decryptedNote is already plain — Nextcloud always receives readable JSON.
+      const noteForUpload = { ...decryptedNote };
       delete noteForUpload.lastSyncedEtag;
       delete noteForUpload.synced;
       delete noteForUpload.encrypted;
@@ -1497,36 +1502,7 @@ export async function syncNotes(notes) {
     }
   });
 
-  const batchResults = [...purgedResults, ...uploadResults];
-
-  const results = {
-    uploaded: 0,
-    failed: 0,
-    errors: [],
-    uploadedIds: [],
-    metadata: {},
-  };
-
-  for (const res of batchResults) {
-    if (res.success) {
-      // Only count as uploaded if it wasn't a purge action
-      if (res.action !== "purge") {
-        results.uploaded++;
-        results.uploadedIds.push(res.id);
-        results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
-
-        // Clear previousNotebookId now that the move has been synced to Nextcloud
-        if (res.hadPreviousLocation) {
-          await clearNoteMoveFlag(res.id);
-        }
-      }
-    } else {
-      results.failed++;
-      results.errors.push({ id: res.id, error: res.error });
-    }
-  }
-
-  return results;
+  return aggregateSyncResults([...purgedResults, ...uploadResults]);
 }
 
 /**
@@ -1534,7 +1510,7 @@ export async function syncNotes(notes) {
  * Optimized to only download changed files based on ETags
  */
 export async function downloadAllData(localNotebooks = [], localNotes = []) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -1710,10 +1686,15 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
 }
 
 /**
- * Merge strokes while respecting deletions
- * Prioritizes strokes from the first array (priorityStrokes) in case of conflict
- * @param {Array} priorityStrokes - Strokes from the newer/priority version
- * @param {Array} secondaryStrokes - Strokes from the older/secondary version
+ * Merge strokes while respecting deletions.
+ * Strokes are stored and consumed in temporal order (the handwriting recognition
+ * backend depends on it), so the merge must preserve that order: the older side's
+ * strokes form the base (keeping their positions), the newer side overrides
+ * same-id strokes in place and appends its new strokes at the end. When every
+ * stroke carries a start timestamp (time[0]), the result is sorted by it so
+ * interleaved edits from two devices also end up in true temporal order.
+ * @param {Array} priorityStrokes - Strokes from the newer/priority version (wins conflicts)
+ * @param {Array} secondaryStrokes - Strokes from the older/secondary version (base order)
  * @param {Array} priorityDeleted - Deleted stroke IDs from priority version
  * @param {Array} secondaryDeleted - Deleted stroke IDs from secondary version
  * @returns {Object} Object with merged strokes and deletedStrokes arrays
@@ -1727,36 +1708,27 @@ function mergeStrokes(
   // Combine all deleted stroke IDs from both sides
   const allDeletedIds = new Set([...priorityDeleted, ...secondaryDeleted]);
 
-  // Create a map of stroke ID to stroke for deduplication
-  const strokesById = new Map();
+  // Legacy strokes without an id are keyed by their JSON serialization
+  const keyOf = (stroke) => stroke.id ?? JSON.stringify(stroke);
 
-  // Add priority strokes first (wins conflicts)
-  for (const stroke of priorityStrokes) {
-    if (stroke.id && !allDeletedIds.has(stroke.id)) {
-      strokesById.set(stroke.id, stroke);
-    } else if (!stroke.id) {
-      // Legacy stroke without ID - keep it for now (will be migrated)
-      strokesById.set(JSON.stringify(stroke), stroke);
-    }
+  // Older side first (base order), then newer side: Map.set on an existing key
+  // replaces the value but keeps the original insertion position, so same-id
+  // strokes take the newer content at the older position; new strokes append.
+  const strokesById = new Map();
+  for (const stroke of [...secondaryStrokes, ...priorityStrokes]) {
+    if (stroke.id && allDeletedIds.has(stroke.id)) continue;
+    strokesById.set(keyOf(stroke), stroke);
   }
 
-  // Add secondary strokes (only if not already present)
-  for (const stroke of secondaryStrokes) {
-    if (stroke.id) {
-      if (!allDeletedIds.has(stroke.id) && !strokesById.has(stroke.id)) {
-        strokesById.set(stroke.id, stroke);
-      }
-    } else {
-      // Legacy stroke without ID
-      const key = JSON.stringify(stroke);
-      if (!strokesById.has(key)) {
-        strokesById.set(key, stroke);
-      }
-    }
+  const merged = Array.from(strokesById.values());
+
+  // Sort by stroke start time when all strokes have one (legacy strokes may not)
+  if (merged.every((s) => typeof s.time?.[0] === "number")) {
+    merged.sort((a, b) => a.time[0] - b.time[0]);
   }
 
   return {
-    strokes: Array.from(strokesById.values()),
+    strokes: merged,
     deletedStrokes: Array.from(allDeletedIds),
   };
 }
@@ -1922,7 +1894,7 @@ export function attemptMerge(local, remote) {
  * Uses timestamp-based conflict resolution (newer wins)
  */
 export async function fullSync(localNotebooks, localNotes) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2023,7 +1995,18 @@ export async function fullSync(localNotebooks, localNotes) {
     const isModifiedRemotely = local.lastSyncedEtag !== remote.lastSyncedEtag;
 
     if (isModifiedLocally && isModifiedRemotely) {
-      conflicts.notebooks.push({ local, remote });
+      // Notebooks have no mergeable content (title/description/color only), so
+      // resolve modified-both-sides by last-write-wins instead of surfacing a
+      // conflict that nothing downstream resolves (which left the notebook
+      // permanently stuck unsynced).
+      if ((remote.modified || 0) > (local.modified || 0)) {
+        console.log(`[Sync] Notebook ${local.id} conflict → remote is newer, downloading`);
+        notebooksToDownload.push(remote);
+      } else {
+        // Local wins: upload using the remote's current etag as If-Match base
+        console.log(`[Sync] Notebook ${local.id} conflict → local is newer, uploading`);
+        notebooksToUpload.push({ ...local, lastSyncedEtag: remote.lastSyncedEtag });
+      }
     } else if (isModifiedLocally) {
       notebooksToUpload.push(local);
     } else if (isModifiedRemotely) {
@@ -2138,6 +2121,12 @@ export async function fullSync(localNotebooks, localNotes) {
       // In both cases there is no real remote change: skip the download and just accept
       // the remote etag so the next PROPFIND comparison is correct.
       // The guard `!isModifiedLocally` ensures we only skip downloads when local is clean.
+      //
+      // NOTE: strict equality is intentional. `remote.modified` comes from the downloaded
+      // note JSON (millisecond precision), NOT the WebDAV mtime — in true oscillation the
+      // remote file IS our own upload, so the timestamps match exactly. A looser tolerance
+      // (remote.modified <= local.modified + 2000) was tried before and swallowed genuinely
+      // newer remote edits, causing stroke loss (commit e809876). Do not relax this.
       if (
         remote.modified &&
         local.modified &&
@@ -2269,7 +2258,7 @@ export async function fullSync(localNotebooks, localNotes) {
  * Delete remote notebook (marks in tombstone, doesn't actually delete folder yet)
  */
 export async function deleteRemoteNotebook(notebookId) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2293,7 +2282,7 @@ export async function deleteRemoteNotebook(notebookId) {
  * Delete remote note (marks in tombstone and deletes file)
  */
 export async function deleteRemoteNote(noteId, notebookId) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2329,7 +2318,7 @@ export async function deleteRemoteNote(noteId, notebookId) {
  * Upload tombstone file for a notebook
  */
 export async function uploadTombstone(notebookId, tombstone) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2348,7 +2337,7 @@ export async function uploadTombstone(notebookId, tombstone) {
  * Download tombstone file for a notebook
  */
 export async function downloadTombstone(notebookId) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2368,7 +2357,7 @@ export async function downloadTombstone(notebookId) {
  * Downloads all files from flat structure and re-uploads in hierarchical structure
  */
 export async function migrateToHierarchical() {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2446,7 +2435,7 @@ export async function migrateToHierarchical() {
  * Also checks local storage version to avoid re-migration
  */
 export async function needsMigration() {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     return false;
   }
 
@@ -2484,7 +2473,7 @@ export async function needsMigration() {
  * Only call this after confirming migration was successful
  */
 export async function cleanupLegacyFiles() {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 

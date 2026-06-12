@@ -5,8 +5,19 @@
 
 import { recognizeUnprocessedNotes } from "./autoRecognition.js";
 import { hasRemoteChanges, isAuthenticated } from "./nextcloudSync.js";
-import { getNoteIndex, getNotesByNotebook } from "./storage.js";
+import { getAllNotesForSync, getNoteIndex } from "./storage.js";
 import { getIsSyncing, performSync } from "./sync.js";
+
+/**
+ * Local note index for one notebook (or quick notes), INCLUDING soft-deleted notes.
+ * hasRemoteChanges compares etags per note id — a soft-deleted note still has its
+ * JSON (and etag) on the server, so excluding it would make every remote file look
+ * "changed" and trigger a full sync on every note/notebook open.
+ */
+async function getLocalNotesForChangeCheck(notebookId) {
+  const allNotes = await getAllNotesForSync();
+  return allNotes.filter((n) => (n.notebookId ?? null) === (notebookId ?? null));
+}
 
 // Configuration
 const INACTIVITY_TIMEOUT = 30000; // 30 seconds of inactivity before syncing
@@ -151,7 +162,7 @@ export async function syncOnNotebookOpen(notebookId) {
   if (getIsSyncing()) return;
 
   try {
-    const localNotes = await getNotesByNotebook(notebookId);
+    const localNotes = await getLocalNotesForChangeCheck(notebookId);
     const changed = await hasRemoteChanges(notebookId, localNotes);
     if (!changed) return;
 
@@ -182,7 +193,7 @@ export async function syncOnNoteOpen(noteId) {
     const noteIndex = await getNoteIndex(noteId);
     const resolvedNotebookId = noteIndex?.notebookId ?? null;
 
-    const localNotes = await getNotesByNotebook(resolvedNotebookId);
+    const localNotes = await getLocalNotesForChangeCheck(resolvedNotebookId);
     const changed = await hasRemoteChanges(resolvedNotebookId, localNotes);
     if (!changed) return;
 

@@ -120,105 +120,117 @@ export async function performSync({
   notifySyncStatusChange();
 
   try {
-    console.log(`Sync: Starting ${silent ? "silent" : "manual"} sync...`);
+    // Conflict resolutions are saved locally, then a fresh pass picks them up as
+    // plain uploads. A bounded loop replaces the old self-recursion (which could
+    // re-enter indefinitely); after MAX_SYNC_PASSES whatever conflicts remain are
+    // reported via the sync-conflicts event below.
+    const MAX_SYNC_PASSES = 3;
+    let usePreferNewer = preferNewer;
+    let notebooks;
+    let notes;
+    let localNotebooksMap;
+    let localNotesMap;
+    let result;
 
-    const notebooks = await getAllNotebooksForSync();
-    // Fetch lightweight metadata only — no strokes, content, or media blobs.
-    // Full note content is lazy-loaded inside fullSync only for notes that need uploading or merging.
-    const notes = await getAllNoteMetadataForSync();
+    for (let pass = 1; ; pass++) {
+      console.log(`Sync: Starting ${silent ? "silent" : "manual"} sync (pass ${pass})...`);
 
-    // Debug: Show unsynced items count
-    if (!silent) {
-      const unsyncedNotebooks = notebooks.filter((n) => n.synced === false);
-      const unsyncedNotes = notes.filter((n) => n.synced === false);
-      console.log(
-        `Before sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`,
-      );
-    }
+      notebooks = await getAllNotebooksForSync();
+      // Fetch lightweight metadata only — no strokes, content, or media blobs.
+      // Full note content is lazy-loaded inside fullSync only for notes that need uploading or merging.
+      notes = await getAllNoteMetadataForSync();
 
-    // Create maps of original local state for race condition detection
-    const localNotebooksMap = new Map(notebooks.map((n) => [n.id, n]));
-    const localNotesMap = new Map(notes.map((n) => [n.id, n]));
-
-    // Pass copies of notes to fullSync to prevent any potential mutation of our local references
-    // which we need for updating status later.
-    const notesForSync = notes.map((n) => ({ ...n }));
-    const result = await fullSync(notebooks, notesForSync);
-
-    // Handle automatic timestamp-based conflict resolution (for app startup)
-    if (preferNewer && result.conflicts?.notes?.length > 0) {
-      for (const conflict of result.conflicts.notes) {
-        const localTime = conflict.local.modified || 0;
-        const remoteTime = conflict.remote.modified || 0;
-
-        if (remoteTime > localTime) {
-          // Remote is newer, use remote version
-          console.log(
-            `[Sync] Auto-resolving conflict for note ${conflict.local.id}: remote is newer (${new Date(remoteTime).toISOString()} > ${new Date(localTime).toISOString()})`,
-          );
-          const remoteToSave = {
-            ...conflict.remote,
-            lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
-            synced: true,
-            _currentFileEtag: undefined,
-            thumbnail: undefined, // local-only, never from NC
-          };
-          purgePdfPageDeletedMedia(remoteToSave);
-          await saveNote(remoteToSave);
-        } else {
-          // Local is newer or same timestamp, keep local version
-          console.log(
-            `[Sync] Auto-resolving conflict for note ${conflict.local.id}: local is newer or equal (${new Date(localTime).toISOString()} >= ${new Date(remoteTime).toISOString()})`,
-          );
-          await saveNote({
-            ...conflict.local,
-            lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
-            synced: false,
-            version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
-            modified: Date.now(),
-          });
-        }
+      // Debug: Show unsynced items count
+      if (!silent) {
+        const unsyncedNotebooks = notebooks.filter((n) => n.synced === false);
+        const unsyncedNotes = notes.filter((n) => n.synced === false);
+        console.log(
+          `Before sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`,
+        );
       }
-      // Re-trigger sync to process resolutions
-      isSyncing = false;
-      notifySyncStatusChange();
-      return await performSync({ silent, skipConflictResolution, preferNewer: false });
-    }
 
-    // Handle manual conflict resolution (only for manual syncs)
-    if (!skipConflictResolution && !silent && result.conflicts?.notes?.length > 0) {
-      for (const conflict of result.conflicts.notes) {
-        const choice = await showConflictResolutionDialog(conflict.local, conflict.remote);
-        if (choice === "local") {
-          // Keep local version - skip encryption as it's already in correct format
-          await saveNote(
-            {
+      // Create maps of original local state for race condition detection
+      localNotebooksMap = new Map(notebooks.map((n) => [n.id, n]));
+      localNotesMap = new Map(notes.map((n) => [n.id, n]));
+
+      // Pass copies of notes to fullSync to prevent any potential mutation of our local references
+      // which we need for updating status later.
+      const notesForSync = notes.map((n) => ({ ...n }));
+      result = await fullSync(notebooks, notesForSync);
+
+      const noteConflicts = result.conflicts?.notes ?? [];
+      if (noteConflicts.length === 0 || pass >= MAX_SYNC_PASSES) break;
+
+      // Automatic timestamp-based conflict resolution (for app startup)
+      if (usePreferNewer) {
+        for (const conflict of noteConflicts) {
+          const localTime = conflict.local.modified || 0;
+          const remoteTime = conflict.remote.modified || 0;
+
+          if (remoteTime > localTime) {
+            // Remote is newer, use remote version
+            console.log(
+              `[Sync] Auto-resolving conflict for note ${conflict.local.id}: remote is newer (${new Date(remoteTime).toISOString()} > ${new Date(localTime).toISOString()})`,
+            );
+            const remoteToSave = {
+              ...conflict.remote,
+              lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+              synced: true,
+              _currentFileEtag: undefined,
+              thumbnail: undefined, // local-only, never from NC
+            };
+            purgePdfPageDeletedMedia(remoteToSave);
+            await saveNote(remoteToSave);
+          } else {
+            // Local is newer or same timestamp, keep local version
+            console.log(
+              `[Sync] Auto-resolving conflict for note ${conflict.local.id}: local is newer or equal (${new Date(localTime).toISOString()} >= ${new Date(remoteTime).toISOString()})`,
+            );
+            await saveNote({
               ...conflict.local,
               lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
               synced: false,
               version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
               modified: Date.now(),
-            },
-            // Allow saveNote to handle encryption since we are working with decrypted data
-          );
-        } else {
-          // Use remote version - saveNote will handle local encryption
-          // Also update with current file etag for proper future sync tracking
-          const remoteToSave = {
-            ...conflict.remote,
-            lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
-            synced: true,
-            _currentFileEtag: undefined,
-            thumbnail: undefined, // local-only, never from NC
-          };
-          purgePdfPageDeletedMedia(remoteToSave);
-          await saveNote(remoteToSave);
+            });
+          }
         }
+        usePreferNewer = false;
+        continue; // re-run so resolutions upload
       }
-      // Re-trigger sync to process resolutions
-      isSyncing = false;
-      notifySyncStatusChange();
-      return await performSync({ silent, skipConflictResolution });
+
+      // Manual conflict resolution (only for manual syncs)
+      if (!skipConflictResolution && !silent) {
+        for (const conflict of noteConflicts) {
+          const choice = await showConflictResolutionDialog(conflict.local, conflict.remote);
+          if (choice === "local") {
+            // Keep local version — saveNote handles encryption of the decrypted data
+            await saveNote({
+              ...conflict.local,
+              lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+              synced: false,
+              version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
+              modified: Date.now(),
+            });
+          } else {
+            // Use remote version — saveNote will handle local encryption.
+            // Also update with current file etag for proper future sync tracking.
+            const remoteToSave = {
+              ...conflict.remote,
+              lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+              synced: true,
+              _currentFileEtag: undefined,
+              thumbnail: undefined, // local-only, never from NC
+            };
+            purgePdfPageDeletedMedia(remoteToSave);
+            await saveNote(remoteToSave);
+          }
+        }
+        continue; // re-run so resolutions upload
+      }
+
+      // Silent sync with conflicts and no resolution strategy — report them below
+      break;
     }
 
     // Update last sync result on success

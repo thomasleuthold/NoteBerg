@@ -13,6 +13,7 @@ import { downloadPdfBytes, exportNoteToPdf } from "../../modules/pdfExport.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
+  cleanupNoteMedia,
   deleteFile,
   deleteNote,
   generateId,
@@ -1440,11 +1441,22 @@ export class NoteCanvas {
           registerPendingUpload(r.fileId, uploadPromise);
           return uploadPromise;
         });
-      Promise.all(uploads).then(() =>
-        updateNote(this.noteId, { recordings, deletedRecordings }).catch((e) =>
+      const noteId = this.noteId;
+      Promise.all(uploads).then(async () => {
+        await updateNote(noteId, { recordings, deletedRecordings }).catch((e) =>
           console.error("[NoteCanvas] WebDAV recordings save failed:", e),
-        ),
-      );
+        );
+        // Remove server binaries for deleted recordings. Include media + pdfSource
+        // fileIds (saved via _saveMediaChanges) so we don't delete live media.
+        const validFileIds = [
+          ...recordings.filter((r) => !r.deleted).map((r) => r.fileId),
+          ...(this.noteData.media ?? []).map((i) => i.fileId),
+          this.noteData.pdfSource,
+        ].filter(Boolean);
+        await cleanupNoteMedia(noteId, notebookId, validFileIds).catch((e) =>
+          console.error("[NoteCanvas] WebDAV orphan recording cleanup failed:", e),
+        );
+      });
       return;
     }
 
@@ -3161,6 +3173,17 @@ export class NoteCanvas {
         deletedMedia: noteData.deletedMedia,
         pdfSource: noteData.pdfSource,
       }).catch((e) => console.error("[NoteCanvas] WebDAV media save failed:", e));
+
+      // Delete server binaries no longer referenced. Include recording fileIds
+      // (saved via a separate path) so we don't delete live recordings.
+      const validFileIds = [
+        ...serializableMedia.map((i) => i.fileId),
+        noteData.pdfSource,
+        ...(noteData.recordings ?? []).filter((r) => !r.deleted).map((r) => r.fileId),
+      ].filter(Boolean);
+      await cleanupNoteMedia(noteId, notebookId, validFileIds).catch((e) =>
+        console.error("[NoteCanvas] WebDAV orphan media cleanup failed:", e),
+      );
     } else {
       // Use StrokeManager (which uses StorageWorker) to save media updates
       // This prevents race conditions between stroke saving and media saving
@@ -4446,12 +4469,6 @@ export class NoteCanvas {
   }
 
   /**
-   * Generate and save a thumbnail for the current note
-   * Stores promise on instance so destroy() can wait for completion
-   * @private
-   */
-
-  /**
    * Delete the imported PDF and all its pages
    */
   async deletePdf() {
@@ -4532,9 +4549,8 @@ export class NoteCanvas {
    */
   destroy() {
     // Step 1: Force-flush any pending content to the worker immediately.
-    // Text content must be flushed before the thumbnail save so the DB reflects the
-    // latest hasContent flag, and before recognition which reads DB content.
-    // Strokes must be flushed for the same reasons.
+    // Text content must be flushed before recognition (which reads DB content) so
+    // the DB reflects the latest hasContent flag. Strokes must be flushed too.
     this._pendingTextSave = null;
     if (this.textEditorLayer) {
       this.textEditorLayer.forceSave();
@@ -4546,7 +4562,7 @@ export class NoteCanvas {
     }
 
     // Step 2: Trigger handwriting recognition if strokes changed.
-    // Runs concurrently with thumbnail save — both are awaited before sync starts.
+    // Awaited (via the returned promise) before sync starts.
     let pendingRecognition = null;
     if (this.strokesChanged && this.noteId && this.noteData?.strokes) {
       const activeStrokes = this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted);
@@ -4586,7 +4602,7 @@ export class NoteCanvas {
       }
     }
 
-    // Destroy modules (except strokeManager - must wait for thumbnail)
+    // Destroy modules (strokeManager last — it owns the worker CLOSE)
     if (this.renderer) {
       this.renderer.destroy();
       this.renderer = null;

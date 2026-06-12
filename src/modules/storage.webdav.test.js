@@ -285,6 +285,132 @@ describe("copyNote (WebDAV)", () => {
   });
 });
 
+// ── cleanupNoteMedia ──────────────────────────────────────────────────────────
+
+describe("cleanupNoteMedia (WebDAV)", () => {
+  beforeEach(() => {
+    // Two media binaries on the server; the note will only reference one of them.
+    server.seedFolder("/NoteBerg/notebooks/nb-a/notes/n1_media");
+    server.seed("/NoteBerg/notebooks/nb-a/notes/n1_media/keep.png", {
+      isCollection: false,
+      content: "KEEP",
+    });
+    server.seed("/NoteBerg/notebooks/nb-a/notes/n1_media/orphan.png", {
+      isCollection: false,
+      content: "ORPHAN",
+    });
+  });
+
+  it("deletes server binaries no longer referenced by the note", async () => {
+    await storage.cleanupNoteMedia("n1", "nb-a", ["keep"]);
+
+    expect(server.files.has("/NoteBerg/notebooks/nb-a/notes/n1_media/keep.png")).toBe(true);
+    expect(server.files.has("/NoteBerg/notebooks/nb-a/notes/n1_media/orphan.png")).toBe(false);
+  });
+
+  it("keeps every referenced file and tolerates a missing folder", async () => {
+    await storage.cleanupNoteMedia("n1", "nb-a", ["keep", "orphan"]);
+    expect(server.files.has("/NoteBerg/notebooks/nb-a/notes/n1_media/keep.png")).toBe(true);
+    expect(server.files.has("/NoteBerg/notebooks/nb-a/notes/n1_media/orphan.png")).toBe(true);
+
+    // No media folder for this note — must not throw
+    await expect(storage.cleanupNoteMedia("n-none", null, [])).resolves.toBeUndefined();
+  });
+});
+
+// ── Delete semantics ──────────────────────────────────────────────────────────
+
+describe("delete semantics (WebDAV)", () => {
+  it("soft deleteNote sets the deleted flag but writes NO tombstone", async () => {
+    // To native clients a tombstone means "permanently purged — hard-delete your
+    // local copy". A recycle-bin delete must propagate via the deleted flag only.
+    seedNoteWithMedia();
+
+    await storage.deleteNote("n1");
+
+    const json = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/notes/n1.json").content);
+    expect(json.deleted).toBe(true);
+    expect(server.files.has("/NoteBerg/notebooks/nb-a/_tombstones.json")).toBe(false);
+  });
+
+  it("permanentlyDeleteNote removes files and writes the tombstone", async () => {
+    seedNoteWithMedia();
+
+    await storage.permanentlyDeleteNote("n1");
+
+    expect(server.files.has("/NoteBerg/notebooks/nb-a/notes/n1.json")).toBe(false);
+    expect(server.files.has("/NoteBerg/notebooks/nb-a/notes/n1_media/f1.png")).toBe(false);
+    const tombstone = JSON.parse(
+      server.files.get("/NoteBerg/notebooks/nb-a/_tombstones.json").content,
+    );
+    expect(tombstone.notes.some((t) => t.id === "n1")).toBe(true);
+  });
+});
+
+// ── Write queue serialization ─────────────────────────────────────────────────
+
+describe("per-note write queue (WebDAV)", () => {
+  it("serializes deleteNote behind an in-flight updateNote (no resurrection)", async () => {
+    seedNoteWithMedia();
+
+    // Slow down the update's PUT so an unqueued delete would interleave:
+    // delete would read+write the pre-update note, then the update's PUT would
+    // land last and resurrect the note with deleted missing.
+    const base = fetchImpl;
+    let delayed = false;
+    fetchImpl = async (url, options) => {
+      if (!delayed && options?.method === "PUT" && url.includes("/notes/n1.json")) {
+        delayed = true;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return base(url, options);
+    };
+
+    const updatePromise = storage.updateNote("n1", { title: "Updated title" });
+    const deletePromise = storage.deleteNote("n1");
+    await Promise.all([updatePromise, deletePromise]);
+
+    const json = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/notes/n1.json").content);
+    expect(json.deleted).toBe(true); // delete must win (ran last)
+    expect(json.title).toBe("Updated title"); // update was not lost either
+  });
+});
+
+// ── Read cache ────────────────────────────────────────────────────────────────
+
+describe("read cache (WebDAV)", () => {
+  it("reuses listed notes within the TTL but never serves stale data after a write", async () => {
+    seedNoteWithMedia();
+    let noteGets = 0;
+    const base = fetchImpl;
+    fetchImpl = (url, options) => {
+      if ((options?.method ?? "GET") === "GET" && url.includes("/notes/n1.json")) noteGets++;
+      return base(url, options);
+    };
+
+    await storage.getNotesByNotebook("nb-a");
+    await storage.getNotesByNotebook("nb-a"); // second call within TTL → cache hit
+    expect(noteGets).toBe(1);
+
+    // Any local write invalidates the cache
+    await storage.updateNote("n1", { title: "Changed" });
+    const notes = await storage.getNotesByNotebook("nb-a");
+    expect(notes.find((n) => n.id === "n1").title).toBe("Changed");
+  });
+});
+
+// ── WebDAV base path safety ───────────────────────────────────────────────────
+
+describe("getWebDAVBase safety", () => {
+  it("fails loudly instead of falling back to another user's DAV root", async () => {
+    seedNoteWithMedia();
+    delete window.OC; // Nextcloud globals unavailable
+
+    // Any operation must reject — never silently target /files/admin
+    await expect(storage.getNote("n1")).rejects.toThrow(/Nextcloud user not available/);
+  });
+});
+
 // ── Tombstone concurrency & corruption ────────────────────────────────────────
 
 describe("tombstone updates (WebDAV)", () => {
@@ -314,7 +440,7 @@ describe("tombstone updates (WebDAV)", () => {
       return base(url, options);
     };
 
-    await storage.deleteNote("n1");
+    await storage.permanentlyDeleteNote("n1");
 
     expect(injected).toBe(true);
     const tombstone = JSON.parse(server.files.get(tombstonePath).content);
@@ -329,9 +455,11 @@ describe("tombstone updates (WebDAV)", () => {
     const tombstonePath = "/NoteBerg/notebooks/nb-a/_tombstones.json";
     server.seed(tombstonePath, { isCollection: false, content: "not-json{{{" });
 
-    await expect(storage.deleteNote("n1")).rejects.toThrow();
+    await expect(storage.permanentlyDeleteNote("n1")).rejects.toThrow();
 
-    // Corrupted tombstone left untouched — deletion history not destroyed
+    // Corrupted tombstone left untouched — deletion history not destroyed,
+    // and the note file was not deleted (operation aborted before the DELETE)
     expect(server.files.get(tombstonePath).content).toBe("not-json{{{");
+    expect(server.files.has("/NoteBerg/notebooks/nb-a/notes/n1.json")).toBe(true);
   });
 });

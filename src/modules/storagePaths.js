@@ -22,11 +22,39 @@
 export const STORAGE_VERSION = 2; // Hierarchical structure
 export const ROOT_FOLDER = "/NoteBerg";
 
+// ─── Path-segment validation ──────────────────────────────────────────────────
+// Note/notebook ids and media filenames end up in WebDAV URLs for PUT/DELETE/MOVE.
+// Ids parsed from *downloaded* JSON are untrusted — an id like "../../Photos"
+// would steer writes/deletes outside the NoteBerg folder. App-generated ids are
+// always UUIDs, so a strict charset check loses nothing.
+
+const SAFE_ID = /^[\w-]{1,64}$/;
+
+function assertSafeId(id, kind) {
+  if (typeof id !== "string" || !SAFE_ID.test(id)) {
+    throw new Error(`Invalid ${kind} id for storage path: ${JSON.stringify(id)}`);
+  }
+  return id;
+}
+
+function assertSafeFilename(filename) {
+  if (
+    typeof filename !== "string" ||
+    filename.length === 0 ||
+    filename.includes("/") ||
+    filename.includes("\\") ||
+    filename.includes("..")
+  ) {
+    throw new Error(`Invalid filename for storage path: ${JSON.stringify(filename)}`);
+  }
+  return filename;
+}
+
 /**
  * Get the folder path for a notebook
  */
 export function getNotebookFolder(notebookId) {
-  return `${ROOT_FOLDER}/notebooks/${notebookId}`;
+  return `${ROOT_FOLDER}/notebooks/${assertSafeId(notebookId, "notebook")}`;
 }
 
 /**
@@ -47,6 +75,7 @@ export function getNotebookNotesFolder(notebookId) {
  * Get the path for a note file within a notebook
  */
 export function getNotePath(noteId, notebookId) {
+  assertSafeId(noteId, "note");
   if (notebookId) {
     return `${getNotebookNotesFolder(notebookId)}/${noteId}.json`;
   }
@@ -58,6 +87,7 @@ export function getNotePath(noteId, notebookId) {
  * Get the folder path for a note's media files
  */
 export function getNoteMediaFolder(noteId, notebookId) {
+  assertSafeId(noteId, "note");
   if (notebookId) {
     return `${getNotebookNotesFolder(notebookId)}/${noteId}_media`;
   }
@@ -68,15 +98,7 @@ export function getNoteMediaFolder(noteId, notebookId) {
  * Get the path for a media file within a note
  */
 export function getMediaPath(noteId, notebookId, filename) {
-  return `${getNoteMediaFolder(noteId, notebookId)}/${filename}`;
-}
-
-/**
- * Get the path for a note's thumbnail sidecar file on Nextcloud.
- * Stored in the media folder so it shares the same folder lifecycle as other media.
- */
-export function getThumbnailPath(noteId, notebookId) {
-  return `${getNoteMediaFolder(noteId, notebookId)}/${noteId}_thumb.jpg`;
+  return `${getNoteMediaFolder(noteId, notebookId)}/${assertSafeFilename(filename)}`;
 }
 
 /**
@@ -169,9 +191,9 @@ export function parsePath(path) {
  * Legacy flat structure paths (for migration)
  */
 export function getLegacyNotebookPath(notebookId) {
-  return `${ROOT_FOLDER}/notebook_${notebookId}.json`;
+  return `${ROOT_FOLDER}/notebook_${assertSafeId(notebookId, "notebook")}.json`;
 }
 
 export function getLegacyNotePath(noteId) {
-  return `${ROOT_FOLDER}/note_${noteId}.json`;
+  return `${ROOT_FOLDER}/note_${assertSafeId(noteId, "note")}.json`;
 }

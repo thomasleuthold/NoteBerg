@@ -49,6 +49,7 @@ describe("StorageWorker", () => {
     };
     mockDb = {
       get: vi.fn(),
+      put: vi.fn(),
       transaction: vi.fn(() => mockTx),
     };
     openDB.mockResolvedValue(mockDb);
@@ -190,12 +191,9 @@ describe("StorageWorker", () => {
     );
   });
 
-  it("should handle SAVE_PRESETS", async () => {
-    const indexEntry = { id: "note-1", version: 1 };
+  it("should handle SAVE_PRESETS without bumping version or clearing synced", async () => {
     const contentEntry = { id: "note-1", penPresets: [] };
-
-    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
-    mockContentStore.get.mockResolvedValue({ ...contentEntry });
+    mockDb.get.mockResolvedValue({ ...contentEntry });
 
     const data = {
       type: "SAVE_PRESETS",
@@ -206,14 +204,14 @@ describe("StorageWorker", () => {
     await workerHandler({ data });
     await flushPromises();
 
-    expect(mockContentStore.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        penPresets: [{ color: "red" }],
-      }),
+    // Presets are UI preferences: only the content record is written.
+    expect(mockDb.put).toHaveBeenCalledWith(
+      "noteContent",
+      expect.objectContaining({ penPresets: [{ color: "red" }] }),
     );
-    expect(mockNotesStore.put).toHaveBeenCalledWith(
-      expect.objectContaining({ version: 2, synced: false }),
-    );
+    // No index write — a preset-only change must not mark the note unsynced
+    // (that used to re-upload the whole note JSON for a pen color change).
+    expect(mockNotesStore.put).not.toHaveBeenCalled();
   });
 
   it("should handle SAVE_TASKS", async () => {

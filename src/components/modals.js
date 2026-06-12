@@ -5,6 +5,7 @@
 
 import { t } from "../i18n/index.js";
 import { createNote, createNotebook, updateNote, updateNotebook } from "../modules/storage.js";
+import { sanitizeNoteHtml } from "../utils/sanitizeHtml.js";
 
 /**
  * Show modal
@@ -693,7 +694,7 @@ export function showConflictResolutionDialog(local, remote) {
       <div id="modal-overlay" class="modal-overlay">
         <div class="modal-dialog modal--wide">
           <div class="modal-header">
-            <h3 class="modal-title">${t("modals.conflict.title", { title: local.title })}</h3>
+            <h3 class="modal-title">${t("modals.conflict.title", { title: escapeHtml(local.title) })}</h3>
           </div>
           <div class="modal-body">
             <p>${t("modals.conflict.message")}</p>
@@ -701,14 +702,14 @@ export function showConflictResolutionDialog(local, remote) {
               <div class="conflict-option">
                 <h4>${t("modals.conflict.local")}</h4>
                 <p><small>${t("modals.conflict.modified", { date: formatDate(local.modified) })}</small></p>
-                <div class="conflict-option__preview">${local.content || t("modals.conflict.noContent")}</div>
+                <div class="conflict-option__preview">${sanitizeNoteHtml(local.content) || t("modals.conflict.noContent")}</div>
                 <p>${t("modals.conflict.strokes", { count: local.strokes?.length || 0 })}</p>
                 <button class="btn-primary use-local conflict-option__keep-btn">${t("modals.conflict.keepLocal")}</button>
               </div>
               <div class="conflict-option">
                 <h4>${t("modals.conflict.remote")}</h4>
                 <p><small>${t("modals.conflict.modified", { date: formatDate(remote.modified) })}</small></p>
-                <div class="conflict-option__preview">${remote.content || t("modals.conflict.noContent")}</div>
+                <div class="conflict-option__preview">${sanitizeNoteHtml(remote.content) || t("modals.conflict.noContent")}</div>
                 <p>${t("modals.conflict.strokes", { count: remote.strokes?.length || 0 })}</p>
                 <button class="btn-primary use-remote conflict-option__keep-btn">${t("modals.conflict.keepRemote")}</button>
               </div>

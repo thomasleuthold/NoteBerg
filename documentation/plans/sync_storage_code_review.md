@@ -60,56 +60,56 @@ Additionally, in the NC build a tombstone that fails to parse (`storage.webdav.j
 ### 6. All `isAuthenticated()` guards in nextcloudSync.js are no-ops
 `isAuthenticated` is async (`nextcloudSync.js:295`), but 12 call sites in the same file call it without `await` — e.g. lines 1160, 1286, 1523, 1002. `!Promise` is always `false`, so the guards never fire. Mostly benign (downstream `getStoredCredentials` throws), but `hasRemoteChanges` (line 1002) intends `return false` when logged out and instead proceeds. `autoSync.js` awaits correctly; these should too.
 
-- [ ] Fixed
+- [x] Fixed — all 12 guards now `await isAuthenticated()`.
 
-### 7. Etag-oscillation guard compares mismatched time resolutions
-`nextcloudSync.js:2127-2137` requires `remote.modified === local.modified` exactly. `remote.modified` comes from WebDAV `getlastmodified` (second resolution — set via `X-OC-Mtime = floor(ms/1000)`), while `local.modified` is a millisecond timestamp from the note JSON. They're only equal when the ms component happens to be 0, so the guard almost never fires and oscillating etags fall through to a full redundant download (the `version+modified identical` check in `sync.js:331-340` then catches it after downloading).
+### 7. Etag-oscillation guard compares mismatched time resolutions — **WITHDRAWN (not a bug)**
+~~`remote.modified` comes from WebDAV `getlastmodified` (second resolution)…~~ Re-analysis showed the finding's premise was wrong: in the oscillation branch, `remote` is always a **fully downloaded** note (the etag differed, so `downloadAllData` fetched it), and its `modified` comes from the note JSON with millisecond precision — not from the WebDAV mtime. In true oscillation the remote file is our own upload, so strict equality matches exactly.
 
-**Fix:** tolerance comparison, e.g. `Math.abs(remote.modified - local.modified) < 2000`. The original implementation of this fix used a 2-second tolerance — strict equality looks like a regression.
+Moreover, a 2-second tolerance *was* the original implementation and was deliberately removed in commit e809876 ("Fix sync bug leading to stroke loss") because it swallowed genuinely newer remote edits. A clarifying comment was added at the guard so this isn't "fixed" again.
 
-- [ ] Fixed
+- [x] Resolved — withdrawn; protective comment added in `fullSync`.
 
 ### 8. Notebook conflicts are detected but never resolved
 `fullSync` populates `conflicts.notebooks` (`nextcloudSync.js:2011-2012`), but `performSync` only resolves `conflicts.notes` — both the `preferNewer` path and the dialog path. A conflicted notebook stays `synced=false` with a mismatched etag forever: re-flagged every sync, never uploaded, never downloaded. Title/color edits on two devices deadlock.
 
 **Fix:** notebooks have no mergeable content — last-write-wins on `modified` is sufficient.
 
-- [ ] Fixed
+- [x] Fixed — fullSync now resolves modified-both-sides notebooks by last-write-wins in the same cycle (newer remote → download, newer local → upload with the remote etag as If-Match base). `conflicts.notebooks` is no longer populated. Covered by two new tests.
 
 ### 9. `hasRemoteChanges` false-positives on soft-deleted notes → sync on every note open
 `autoSync.js:185-186` passes `getNotesByNotebook()` (filters `!n.deleted`) into `hasRemoteChanges`. A soft-deleted note still has its JSON on the server, so its etag is unknown locally → `localEtagMap.get(noteId) !== file.etag` is always true (`nextcloudSync.js:1010-1015`) → every note/notebook open in that folder triggers a full sync until the deleted note is purged.
 
 **Fix:** pass the unfiltered index (including deleted notes, scoped to the notebook).
 
-- [ ] Fixed
+- [x] Fixed — new `getLocalNotesForChangeCheck()` helper filters `getAllNotesForSync()` by notebook without excluding deleted notes. Also fixes the quick-notes case (`getNotesByNotebook(null)` queried an IndexedDB index with a null key, which can't match). Covered by new autoSync tests.
 
 ### 10. NC build writes tombstones on *soft* delete — semantic mismatch with native clients
 In the native flow, tombstones mean "permanently purged; delete your local copy" (`sync.js` calls `permanentlyDeleteNote` when a tombstoned note is missing remotely). The NC build writes tombstones on plain soft delete (`storage.webdav.js:613-629`, `323-341`) and `restoreNote`/`restoreNotebook` never remove the entry. While the JSON exists remotely the tombstone is ignored, but any transient listing glitch where the note appears missing causes native clients to **permanently** delete a note the NC user only recycled.
 
 **Fix:** tombstone only in `permanentlyDeleteNote`/`permanentlyDeleteNotebook` (which already do it).
 
-- [ ] Fixed
+- [x] Fixed — `deleteNote`/`deleteNotebook` no longer write tombstones (the `deleted` flag in the JSON propagates recycle-bin state); `permanentlyDeleteNote`/`permanentlyDeleteNotebook` still do. The `moveNote` old-location tombstone stays (intentional — it marks an obsolete path, and remote presence at the new path prevents local hard-deletes). Covered by new delete-semantics tests.
 
 ### 11. NC build: only `updateNote` goes through the per-note write queue
 `_enqueueWrite` (`storage.webdav.js:570-585`) exists to serialize read-modify-write, but `saveNote`, `deleteNote`, `restoreNote`, `moveNote`, and `clearNoteMoveFlag` bypass it. A `deleteNote` racing a queued `updateNote` can interleave so the update's PUT lands last and resurrects the note (with the tombstone still claiming it's deleted).
 
 **Fix:** route all note writes for a given id through the queue.
 
-- [ ] Fixed
+- [x] Fixed — `saveNote`, `deleteNote`, `restoreNote`, `moveNote`, `clearNoteMoveFlag`, and `permanentlyDeleteNote` all run through `_enqueueWrite` now. Also fixed a latent unhandled-rejection leak in the queue's cleanup chain. Covered by a serialization test (delayed update + immediate delete).
 
 ### 12. `mergeStrokes` scrambles temporal stroke order
 `nextcloudSync.js:1707-1748` appends the secondary side's unique strokes after all priority strokes. Strokes are stored and consumed in temporal order — the handwriting recognition backend depends on it — so a merged note can produce garbled recognition and wrong z-order rendering.
 
 **Fix:** if strokes carry a timestamp, sort the merged result by it; otherwise preserve the older array's order as the base and splice in newer strokes.
 
-- [ ] Fixed
+- [x] Fixed — merge now uses the older side as base order, the newer side overrides same-id strokes in place (still wins conflicts) and appends its new strokes; when all strokes carry `time[0]` (set by StrokeManager) the result is additionally sorted by it. Covered by two new ordering tests.
 
 ### 13. `fetchRemoteState` relies on `Depth: infinity`, which Nextcloud disables by default
 `nextcloudSync.js:926-934` — `dav.propfind.depth_infinity` is off by default on stock Nextcloud; servers respond 400 and the whole sync throws. Works on servers where it's enabled, fails hard on stock installs.
 
 **Fix:** fall back to per-folder Depth:1 walks (`listFiles`/`listFolders` already exist).
 
-- [ ] Fixed
+- [x] Fixed — on 400/403/501, `fetchRemoteStateShallow()` walks the known layout with Depth:1 (notebooks root → per-notebook folder + notes folder → quickNotes). Media folders are not walked; `downloadNoteMedia` lists them on demand, so the only degradation is the missing-media check for unchanged notes. Covered by a fallback test.
 
 ---
 
@@ -120,38 +120,38 @@ In the native flow, tombstones mean "permanently purged; delete your local copy"
 
 **Fix:** sanitize on render (DOMPurify or NC's built-in sanitizer) at the injection points — thumbnail ghost and the text-editor load path.
 
-- [ ] Fixed
+- [x] Fixed — added DOMPurify (`src/utils/sanitizeHtml.js`, default profile keeps formatting/classes/data-* for task spans) and applied it at **four** sinks: thumbnail ghost (`noteRenderer.js`), editor load (`TextEditorLayer.js`, with `_lastHtml` kept in sanitized form for dirty-detection), PDF-export iframe (`pdfExport.js` — `document.write` even executes `<script>`), and the conflict-dialog content previews (`modals.js`). Also found and fixed an unescaped note **title** interpolation in the conflict dialog (i18next is configured with `escapeValue: false`). Covered by `sanitizeHtml.test.js`.
 
 ### 15. Server-supplied ids flow into WebDAV paths unvalidated
 `note.id` / `note.notebookId` parsed out of downloaded JSON are interpolated into paths for PUT/DELETE (`storagePaths.js:49-65`). An id containing `../` lets crafted content steer deletes/writes anywhere in the user's DAV space (e.g. `/Photos`). Ids are self-generated UUIDs in normal operation.
 
 **Fix:** validate `^[0-9a-f-]{36}$`-style at sync ingestion.
 
-- [ ] Fixed
+- [x] Fixed — validation lives in the path builders themselves (`storagePaths.js`), the single chokepoint both backends use: ids must match `^[\w-]{1,64}$`, media filenames must not contain `/`, `\`, or `..`. Covered by `storagePaths.test.js`.
 
 ### 16. PBKDF2 at 100k iterations, extractable key
 `encryption.js:14` — OWASP's current guidance for PBKDF2-SHA256 is ~600k iterations; 100k is weak against offline brute force of synced encrypted blobs. The derived AES key is also created with `extractable: true` (`encryption.js:93`) with no current need.
 
 **Fix:** bump iterations (the `version` field in encrypted blobs gives a migration hook); set extractable false.
 
-- [ ] Fixed
+- [x] Fixed — `PBKDF2_ITERATIONS` raised to 600,000 for **new** key derivations; `deriveKeyFromPassword`/`hashPassword` take an explicit `iterations` parameter, and `unlockApp` passes the count stored in the user's `encryption_config` (the field always existed — it was just ignored), falling back to the legacy 100k for configs without it. `changeMasterPassword` upgrades to the new count (it re-derives from a fresh salt anyway). Derived key is now `extractable: false` (nothing calls `exportKey`; workers receive the key via structured clone, which is unaffected). Covered by `masterPassword.test.js`.
 
 ### 17. Login flow logs sensitive material; bad uid fallback
 `startLoginFlow` logs the full `login/v2` response body including the poll token (`nextcloudSync.js:377-378`) — anyone reading the log within the 20-minute window can poll for the app password. Also `storage.webdav.js:54` falls back to uid `"admin"` when `window.OC` is missing; better to throw than aim requests at another user's DAV root.
 
-- [ ] Fixed
+- [x] Fixed — `startLoginFlow` no longer logs the response body, parsed init data, token prefix, or login URL (a SECURITY comment marks why); `getWebDAVBase()` throws when no Nextcloud uid is available instead of defaulting to `admin`. Covered by a `getWebDAVBase` safety test.
 
 ---
 
-## Simplification opportunities
+## Simplification opportunities — all done
 
-- **Duplicate decryption in `syncNotes`**: `nextcloudSync.js:1439` and `:1455` both call `decryptNoteLocally(syncedNote)` — the second result is misnamed `encryptedNote`. Reuse `decryptedNote`.
-- **MIME table duplicated** in `nextcloudSync.js:74-89` and `storage.webdav.js:715-737` — extract a shared `mime.js` (they already drifted: only the webdav copy has magic-byte sniffing).
-- **`syncNotebooks` / `syncNotes` share ~120 lines** of purge-delete-then-tombstone and result-aggregation logic — factor into one helper parameterized by tombstone path and delete function.
-- **`performSync` re-invokes itself recursively** after conflict resolution (`sync.js:185`, `:221`) — a `while` loop with a max-iterations guard is easier to reason about and can't stack up.
-- **NC overview cost**: `getAllNotes` downloads every note JSON including full strokes (one GET per note, every overview render — `storage.webdav.js:548-557`), and `getAllNotebooks` re-PROPFINDs each time (called by `getAllNotes`, `_findNote`, and the `getFile` fallback). A short-lived in-memory cache keyed by folder etag would cut most of the traffic.
-- **`tombstones.js` `mergeTombstones` is dead code** in the current sync path — superseded by the re-read-and-re-apply retry loop added for finding 5; can be deleted.
-- **StorageWorker `SAVE_PRESETS` bumps `version`/`modified` and flags `synced=false`** for a pen-preset change (`StorageWorker.js:143-163`) — UI preference churn triggering full note re-uploads, same class of problem as the thumbnail fix.
+- [x] **Duplicate decryption in `syncNotes`** — second `decryptNoteLocally` call removed; `noteForUpload` is built from the already-decrypted note.
+- [x] **MIME table duplicated** — extracted `src/modules/mime.js` (`MIME_TO_EXT`, `extFromMime`, `mimeFromExt`); both backends import it. Magic-byte sniffing stays webdav-local (only consumer).
+- [x] **`syncNotebooks` / `syncNotes` shared purge + aggregation** — factored into `purgeRemoteItems()` (delete-first → tombstone → local cleanup, parameterized by delete/tombstone/cleanup functions) and `aggregateSyncResults()`. ~100 lines removed, behavior preserved.
+- [x] **`performSync` recursion → bounded loop** — at most 3 passes; conflict resolutions `continue` into a fresh pass. Bonus: `isSyncing` is now held across passes (the recursion briefly released it, leaving a window for a concurrent sync to start mid-resolution).
+- [x] **NC overview cost** — 15s in-memory read cache for notebook and note-folder listings in `storage.webdav.js`, cleared by every local write (`davPut`/`davDelete`/`MOVE`/`COPY`), so staleness only applies to other clients' changes within the TTL. Entries are cloned on hit (same mutation contract as a fresh fetch). Chose write-invalidated TTL over the etag-keyed variant — simpler, and etag-keying would inherit the NC etag-oscillation problem. Also deduplicated `getAllNotebooks`/`getDeletedNotebooks` into one cached `_getAllNotebooksRaw()`. Covered by a cache test (hit within TTL, never stale after a write).
+- [x] **`mergeTombstones` dead code** — deleted (superseded by the If-Match re-read-and-re-apply retry loop from finding 5).
+- [x] **StorageWorker `SAVE_PRESETS` churn** — writes only `noteContent.penPresets`; no `modified`/`version`/`synced` change. A pen-color change no longer re-uploads the note; presets ride along with the next content/stroke save. Test updated to pin this.
 
 ---
 

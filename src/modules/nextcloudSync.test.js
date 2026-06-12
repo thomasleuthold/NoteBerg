@@ -726,6 +726,75 @@ describe("Nextcloud Sync Module", () => {
       expect(mockServer.files.has(`/NoteBerg/notebooks/nb1/notes/${noteId}.json`)).toBe(true);
     });
 
+    it("should resolve notebook conflicts by last-write-wins (local newer → upload)", async () => {
+      // Notebooks have no mergeable content — a modified-both-sides notebook must
+      // resolve automatically instead of being reported as a conflict forever.
+      const remoteNb = { id: "nb-lww", title: "Remote Title", modified: 1000 };
+      mockServer.files.set("/NoteBerg/notebooks/nb-lww", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb-lww/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb-lww/_notebook.json", {
+        content: JSON.stringify(remoteNb),
+        etag: "etag-remote",
+        mtime: new Date(),
+      });
+
+      const localNb = {
+        id: "nb-lww",
+        title: "Local Title",
+        modified: 2000, // newer than remote
+        synced: false,
+        lastSyncedEtag: "etag-stale", // ≠ remote → modified both sides
+      };
+
+      const result = await fullSync([localNb], []);
+
+      expect(result.conflicts.notebooks).toHaveLength(0);
+      expect(result.uploaded.notebooks.uploaded).toBe(1);
+      const uploaded = JSON.parse(
+        mockServer.files.get("/NoteBerg/notebooks/nb-lww/_notebook.json").content,
+      );
+      expect(uploaded.title).toBe("Local Title");
+    });
+
+    it("should resolve notebook conflicts by last-write-wins (remote newer → download)", async () => {
+      const remoteNb = { id: "nb-lww2", title: "Remote Title", modified: 3000 };
+      mockServer.files.set("/NoteBerg/notebooks/nb-lww2", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb-lww2/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb-lww2/_notebook.json", {
+        content: JSON.stringify(remoteNb),
+        etag: "etag-remote",
+        mtime: new Date(),
+      });
+
+      const localNb = {
+        id: "nb-lww2",
+        title: "Local Title",
+        modified: 2000, // older than remote
+        synced: false,
+        lastSyncedEtag: "etag-stale",
+      };
+
+      const result = await fullSync([localNb], []);
+
+      expect(result.conflicts.notebooks).toHaveLength(0);
+      expect(result.uploaded.notebooks.uploaded).toBe(0);
+      expect(result.downloaded.notebooks.some((n) => n.id === "nb-lww2")).toBe(true);
+      // Remote was not overwritten
+      const remote = JSON.parse(
+        mockServer.files.get("/NoteBerg/notebooks/nb-lww2/_notebook.json").content,
+      );
+      expect(remote.title).toBe("Remote Title");
+    });
+
     it("should preserve background setting during merge", async () => {
       const noteId = "n-bg-merge";
       // Local is newer, has background
@@ -830,6 +899,59 @@ describe("Nextcloud Sync Module", () => {
       expect(mergedArg.strokes).toHaveLength(2); // Should have S1 and S2
       expect(mergedArg.strokes.find((s) => s.id === "s1")).toBeTruthy();
       expect(mergedArg.strokes.find((s) => s.id === "s2")).toBeTruthy();
+    });
+
+    it("should keep merged strokes in temporal order (sorted by time[0])", () => {
+      // Recognition consumes strokes in temporal order — a merge must not put the
+      // newer device's strokes in front of older ones.
+      const older = {
+        id: "n-order",
+        modified: 1000,
+        strokes: [
+          { id: "s1", time: [100], x: [1], y: [1] },
+          { id: "s2", time: [200], x: [2], y: [2] },
+        ],
+        deletedStrokes: [],
+      };
+      const newer = {
+        id: "n-order",
+        modified: 2000,
+        strokes: [
+          { id: "s1", time: [100], x: [99], y: [99] }, // same id, edited content
+          { id: "s3", time: [300], x: [3], y: [3] }, // drawn later
+        ],
+        deletedStrokes: [],
+      };
+
+      const merged = attemptMerge(newer, older);
+      expect(merged.strokes.map((s) => s.id)).toEqual(["s1", "s2", "s3"]);
+      // Same-id conflict: newer side's content wins
+      expect(merged.strokes[0].x).toEqual([99]);
+    });
+
+    it("should keep the older side's base order for legacy strokes without timestamps", () => {
+      const older = {
+        id: "n-legacy-order",
+        modified: 1000,
+        strokes: [
+          { id: "s1", x: [1], y: [1] },
+          { id: "s2", x: [2], y: [2] },
+        ],
+        deletedStrokes: [],
+      };
+      const newer = {
+        id: "n-legacy-order",
+        modified: 2000,
+        strokes: [
+          { id: "s1", x: [1], y: [1] },
+          { id: "s3", x: [3], y: [3] },
+        ],
+        deletedStrokes: [],
+      };
+
+      const merged = attemptMerge(newer, older);
+      // Base order preserved, new strokes appended — never newer-first
+      expect(merged.strokes.map((s) => s.id)).toEqual(["s1", "s2", "s3"]);
     });
 
     it("should propagate stroke deletions during merge", async () => {
@@ -1297,6 +1419,61 @@ describe("Nextcloud Sync Module", () => {
 
       // Should instruct to delete locally
       expect(result.notebooksToDelete).toContain(notebookId);
+    });
+  });
+
+  describe("PROPFIND Depth: infinity fallback", () => {
+    it("should fall back to per-folder listing when the server rejects Depth: infinity", async () => {
+      // Stock Nextcloud has dav.propfind.depth_infinity disabled → 400.
+      const originalFetch = fetch.getMockImplementation();
+      let rejectedInfinity = false;
+      fetch.mockImplementation(async (url, options) => {
+        if (options?.method === "PROPFIND" && options?.headers?.Depth === "infinity") {
+          rejectedInfinity = true;
+          return { ok: false, status: 400, statusText: "Bad Request", text: async () => "" };
+        }
+        return originalFetch(url, options);
+      });
+
+      // Seed hierarchical structure
+      mockServer.files.set("/NoteBerg/notebooks", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/quickNotes", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/_notebook.json", {
+        content: JSON.stringify({ id: "nb1", title: "NB", modified: 1000 }),
+        etag: "e-nb",
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/_tombstones.json", {
+        content: JSON.stringify({ notes: [], media: [], notebooks: [] }),
+        etag: "e-tomb",
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes/n1.json", {
+        content: JSON.stringify({ id: "n1", notebookId: "nb1", content: "A", modified: 1000 }),
+        etag: "e-n1",
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/quickNotes/qn1.json", {
+        content: JSON.stringify({ id: "qn1", notebookId: null, content: "Q", modified: 1000 }),
+        etag: "e-qn1",
+        mtime: new Date(),
+      });
+
+      const result = await downloadAllData([], []);
+
+      expect(rejectedInfinity).toBe(true);
+      // Everything must still be discovered via the Depth: 1 walk
+      expect(result.notebooks.some((n) => n.id === "nb1")).toBe(true);
+      expect(result.notes.some((n) => n.id === "n1")).toBe(true);
+      expect(result.notes.some((n) => n.id === "qn1")).toBe(true);
+      expect(result.tombstones.has("nb1")).toBe(true);
+
+      fetch.mockImplementation(originalFetch);
     });
   });
 

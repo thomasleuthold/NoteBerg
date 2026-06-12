@@ -11,6 +11,7 @@
 import html2canvas from "html2canvas";
 import { LineCapStyle, PDFDocument, rgb } from "pdf-lib";
 import { getMarkerPalette, getThemePalette, MARKER_ALPHA } from "../utils/noteRenderer.js";
+import { sanitizeNoteHtml } from "../utils/sanitizeHtml.js";
 import { getFile } from "./storage.js";
 
 // A4 dimensions in PDF points (72 pt/inch)
@@ -38,6 +39,9 @@ const TEXT_LINE_HEIGHT = 1.6;
  */
 async function renderTextToCanvas(html, scale = 2) {
   if (!html) return null;
+  // Untrusted synced HTML written into a same-origin iframe via document.write —
+  // which, unlike innerHTML, even executes <script> tags. Sanitize first.
+  html = sanitizeNoteHtml(html);
   // Strip all tags and check if there's any visible text content
   const textOnly = html.replace(/<[^>]*>/g, "").trim();
   if (!textOnly) return null;

@@ -15,6 +15,7 @@
  *   /NoteBerg/quickNotes/_tombstones.json
  */
 
+import { extFromMime, mimeFromExt } from "./mime.js";
 import {
   getAllRequiredFolders,
   getGlobalNotebookTombstonePath,
@@ -79,10 +80,39 @@ async function _updateTombstone(path, mutate) {
   }
 }
 
+// ─── Read cache ───────────────────────────────────────────────────────────────
+// The overview re-fetches every notebook JSON and every note JSON (including
+// strokes) on each render. Cache folder listings briefly; every local write
+// invalidates the whole cache, so staleness is limited to changes made by
+// OTHER clients within the TTL — the next render after that re-fetches.
+
+const CACHE_TTL_MS = 15000;
+const _readCache = new Map(); // key → { ts, data }
+
+function _cacheGet(key) {
+  const hit = _readCache.get(key);
+  if (!hit || Date.now() - hit.ts > CACHE_TTL_MS) return null;
+  // Clone so callers can mutate their copy, same contract as a fresh fetch
+  return structuredClone(hit.data);
+}
+
+function _cacheSet(key, data) {
+  _readCache.set(key, { ts: Date.now(), data: structuredClone(data) });
+}
+
+function _invalidateReadCache() {
+  _readCache.clear();
+}
+
 // ─── WebDAV helpers ────────────────────────────────────────────────────────────
 
 function getWebDAVBase() {
-  const uid = window.OC?.currentUser || window.OC?.getCurrentUser?.()?.uid || "admin";
+  const uid = window.OC?.currentUser || window.OC?.getCurrentUser?.()?.uid;
+  if (!uid) {
+    // Never guess a uid — a wrong fallback would aim requests at another
+    // user's DAV root. Failing loudly is the safe behavior.
+    throw new Error("[WebDAV] Nextcloud user not available (window.OC missing)");
+  }
   const webroot = window.OC?.webroot || "";
   return `${webroot}/remote.php/dav/files/${uid}`;
 }
@@ -124,6 +154,7 @@ async function davPutWithRetry(path, options, retries = 3) {
 }
 
 async function davPut(path, data, extraHeaders = {}) {
+  _invalidateReadCache();
   await davPutWithRetry(path, {
     method: "PUT",
     headers: {
@@ -151,6 +182,7 @@ async function davPutBinary(path, blob) {
 }
 
 async function davDelete(path) {
+  _invalidateReadCache();
   const res = await fetch(`${getWebDAVBase()}${path}`, {
     method: "DELETE",
     headers: {
@@ -209,6 +241,7 @@ async function davMkcol(path) {
 
 /** Server-side MOVE or COPY (works on files and folders, recursive). */
 async function _davMoveOrCopy(method, from, to) {
+  _invalidateReadCache();
   const res = await fetch(`${getWebDAVBase()}${from}`, {
     method,
     headers: {
@@ -350,7 +383,10 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
   return notebook;
 }
 
-export async function getAllNotebooks() {
+async function _getAllNotebooksRaw() {
+  const cached = _cacheGet("notebooks");
+  if (cached) return cached;
+
   const paths = await davList(`${ROOT_FOLDER}/notebooks`);
   const notebookIds = paths
     .filter((p) => !p.endsWith(".json")) // exclude _tombstones.json
@@ -360,7 +396,14 @@ export async function getAllNotebooks() {
   const notebooks = await Promise.all(
     notebookIds.map((id) => davGet(getNotebookPath(id)).catch(() => null)),
   );
-  return notebooks.filter((n) => n && !n.deleted).sort((a, b) => b.modified - a.modified);
+  const result = notebooks.filter(Boolean);
+  _cacheSet("notebooks", result);
+  return result;
+}
+
+export async function getAllNotebooks() {
+  const notebooks = await _getAllNotebooksRaw();
+  return notebooks.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
 }
 
 export async function getNotebook(id) {
@@ -382,15 +425,16 @@ export async function updateNotebook(id, updates) {
 }
 
 export async function deleteNotebook(id) {
+  // Soft delete only — no tombstone. To native clients a tombstone means
+  // "permanently purged, hard-delete your local copy"; the deleted flags in the
+  // JSON are what propagate a recycle-bin delete. Tombstones are written by
+  // permanentlyDeleteNotebook().
   const notebook = await getNotebook(id);
   if (!notebook) throw new Error("Notebook not found");
   const updated = { ...notebook, deleted: true, modified: Date.now() };
   await davPut(getNotebookPath(id), updated);
 
-  // Write global notebook tombstone so other devices know this notebook was deleted
-  await _updateTombstone(getGlobalNotebookTombstonePath(), (t) => addNotebookTombstone(t, id));
-
-  // Soft-delete all notes in this notebook (each deleteNote writes its own tombstone)
+  // Soft-delete all notes in this notebook
   const notes = await getNotesByNotebook(id);
   for (const note of notes) {
     await deleteNote(note.id);
@@ -400,15 +444,8 @@ export async function deleteNotebook(id) {
 }
 
 export async function getDeletedNotebooks() {
-  const paths = await davList(`${ROOT_FOLDER}/notebooks`);
-  const notebookIds = paths
-    .filter((p) => !p.endsWith(".json"))
-    .map((p) => p.replace(/\/$/, "").split("/").pop())
-    .filter(Boolean);
-  const notebooks = await Promise.all(
-    notebookIds.map((id) => davGet(getNotebookPath(id)).catch(() => null)),
-  );
-  return notebooks.filter((n) => n?.deleted);
+  const notebooks = await _getAllNotebooksRaw();
+  return notebooks.filter((n) => n.deleted);
 }
 
 export async function restoreNotebook(id) {
@@ -603,14 +640,21 @@ async function _getAllNotesIncludingDeleted() {
 }
 
 async function _getNotesInFolder(folder, notebookId) {
-  const paths = await davList(folder);
-  const noteFiles = paths.filter((p) => p.endsWith(".json") && !p.includes("_tombstones"));
-  const notes = await Promise.all(noteFiles.map((p) => davGet(p).catch(() => null)));
-  return notes.filter(Boolean).map((n) => {
+  let notes = _cacheGet(`notes:${folder}`);
+  if (!notes) {
+    const paths = await davList(folder);
+    const noteFiles = paths.filter((p) => p.endsWith(".json") && !p.includes("_tombstones"));
+    const fetched = await Promise.all(noteFiles.map((p) => davGet(p).catch(() => null)));
+    notes = fetched.filter(Boolean).map((n) => {
+      delete n.thumbnail;
+      return n;
+    });
+    _cacheSet(`notes:${folder}`, notes);
+  }
+  for (const n of notes) {
     _notePathCache.set(n.id, notebookId);
-    delete n.thumbnail;
-    return n;
-  });
+  }
+  return notes;
 }
 
 export async function getNotesByNotebook(notebookId) {
@@ -630,13 +674,14 @@ const _writeQueues = new Map(); // noteId → Promise
 function _enqueueWrite(id, fn) {
   const prev = _writeQueues.get(id) ?? Promise.resolve();
   // Always run fn after the previous write settles (success or failure)
-  const next = prev.then(
-    () => fn(),
-    () => fn(),
-  );
-  _writeQueues.set(id, next);
-  next.finally(() => {
-    if (_writeQueues.get(id) === next) _writeQueues.delete(id);
+  const next = prev.then(() => fn());
+  // The queue stores a settled-tracking promise with the rejection swallowed —
+  // only the caller (via the returned `next`) handles the real error. Storing
+  // `next` directly would surface an unhandled rejection from the cleanup chain.
+  const settled = next.catch(() => {});
+  _writeQueues.set(id, settled);
+  settled.then(() => {
+    if (_writeQueues.get(id) === settled) _writeQueues.delete(id);
   });
   return next;
 }
@@ -660,48 +705,51 @@ export function updateNote(id, updates) {
   });
 }
 
-export async function saveNote(note) {
-  await _putNote(note);
-  window.dispatchEvent(
-    new CustomEvent("datachange", { detail: { noteId: note.id, source: "local" } }),
-  );
-}
-
-export async function deleteNote(id) {
-  const note = await getNote(id);
-  if (!note) throw new Error("Note not found");
-  const updated = { ...note, deleted: true, modified: Date.now() };
-  await _putNote(updated);
-
-  // Write tombstone so other devices know this note was deleted
-  const tombstonePath = note.notebookId
-    ? getNotebookTombstonePath(note.notebookId)
-    : getQuickNotesTombstonePath();
-  await _updateTombstone(tombstonePath, (t) => addNoteTombstone(t, id));
-
-  console.log("Note deleted:", id);
-  return updated;
-}
-
-export async function permanentlyDeleteNote(id) {
-  const note = await getNote(id);
-  if (!note) return;
-
-  // Write tombstone for the note and its media files before deleting them
-  const tombstonePath = note.notebookId
-    ? getNotebookTombstonePath(note.notebookId)
-    : getQuickNotesTombstonePath();
-  await _updateTombstone(tombstonePath, (tombstone) => {
-    addNoteTombstone(tombstone, id);
-    for (const item of note.media || []) {
-      if (item.fileId) addMediaTombstone(tombstone, id, item.fileId);
-    }
+export function saveNote(note) {
+  return _enqueueWrite(note.id, async () => {
+    await _putNote(note);
+    window.dispatchEvent(
+      new CustomEvent("datachange", { detail: { noteId: note.id, source: "local" } }),
+    );
   });
+}
 
-  const path = getNotePath(id, note.notebookId);
-  await davDelete(path);
-  await davDelete(getNoteMediaFolder(id, note.notebookId));
-  _notePathCache.delete(id);
+export function deleteNote(id) {
+  // Soft delete only — no tombstone. To native clients a tombstone means
+  // "permanently purged, hard-delete your local copy"; the deleted flag in the
+  // JSON is what propagates a recycle-bin delete. Tombstones are written by
+  // permanentlyDeleteNote().
+  return _enqueueWrite(id, async () => {
+    const note = await getNote(id);
+    if (!note) throw new Error("Note not found");
+    const updated = { ...note, deleted: true, modified: Date.now() };
+    await _putNote(updated);
+    console.log("Note deleted:", id);
+    return updated;
+  });
+}
+
+export function permanentlyDeleteNote(id) {
+  return _enqueueWrite(id, async () => {
+    const note = await getNote(id);
+    if (!note) return;
+
+    // Write tombstone for the note and its media files before deleting them
+    const tombstonePath = note.notebookId
+      ? getNotebookTombstonePath(note.notebookId)
+      : getQuickNotesTombstonePath();
+    await _updateTombstone(tombstonePath, (tombstone) => {
+      addNoteTombstone(tombstone, id);
+      for (const item of note.media || []) {
+        if (item.fileId) addMediaTombstone(tombstone, id, item.fileId);
+      }
+    });
+
+    const path = getNotePath(id, note.notebookId);
+    await davDelete(path);
+    await davDelete(getNoteMediaFolder(id, note.notebookId));
+    _notePathCache.delete(id);
+  });
 }
 
 export async function getDeletedNotes() {
@@ -709,49 +757,53 @@ export async function getDeletedNotes() {
   return all.filter((n) => n.deleted);
 }
 
-export async function restoreNote(id) {
-  const note = await getNote(id);
-  if (!note) throw new Error("Note not found");
-  const updated = { ...note, deleted: false, modified: Date.now() };
-  await _putNote(updated);
-  return updated;
+export function restoreNote(id) {
+  return _enqueueWrite(id, async () => {
+    const note = await getNote(id);
+    if (!note) throw new Error("Note not found");
+    const updated = { ...note, deleted: false, modified: Date.now() };
+    await _putNote(updated);
+    return updated;
+  });
 }
 
-export async function moveNote(noteId, targetNotebookId) {
-  const note = await getNote(noteId);
-  if (!note) throw new Error("Note not found");
-  const previousNotebookId = note.notebookId ?? null;
-  const target = targetNotebookId ?? null;
-  if (previousNotebookId === target) return;
+export function moveNote(noteId, targetNotebookId) {
+  return _enqueueWrite(noteId, async () => {
+    const note = await getNote(noteId);
+    if (!note) throw new Error("Note not found");
+    const previousNotebookId = note.notebookId ?? null;
+    const target = targetNotebookId ?? null;
+    if (previousNotebookId === target) return;
 
-  // 1. Write the note at the new location first — never delete the only copy.
-  const updated = { ...note, notebookId: target, modified: Date.now() };
-  await _putNote(updated);
-  _notePathCache.set(noteId, target);
+    // 1. Write the note at the new location first — never delete the only copy.
+    const updated = { ...note, notebookId: target, modified: Date.now() };
+    await _putNote(updated);
+    _notePathCache.set(noteId, target);
 
-  // 2. Move the media folder server-side (atomic, recursive; 404 = note has no media).
-  try {
-    await davMove(
-      getNoteMediaFolder(noteId, previousNotebookId),
-      getNoteMediaFolder(noteId, target),
-    );
-  } catch (e) {
-    if (e.status !== 404) throw e;
-  }
-  // Keep cached file locations valid so getFileUrl keeps working this session
-  for (const [fid, loc] of _fileLocationCache) {
-    if (loc.noteId === noteId) _fileLocationCache.set(fid, { ...loc, notebookId: target });
-  }
+    // 2. Move the media folder server-side (atomic, recursive; 404 = note has no media).
+    try {
+      await davMove(
+        getNoteMediaFolder(noteId, previousNotebookId),
+        getNoteMediaFolder(noteId, target),
+      );
+    } catch (e) {
+      if (e.status !== 404) throw e;
+    }
+    // Keep cached file locations valid so getFileUrl keeps working this session
+    for (const [fid, loc] of _fileLocationCache) {
+      if (loc.noteId === noteId) _fileLocationCache.set(fid, { ...loc, notebookId: target });
+    }
 
-  // 3. Remove the old JSON and tombstone the old location so native clients
-  //    don't "self-heal" the note back into the old notebook.
-  await davDelete(getNotePath(noteId, previousNotebookId));
-  const oldTombstonePath = previousNotebookId
-    ? getNotebookTombstonePath(previousNotebookId)
-    : getQuickNotesTombstonePath();
-  await _updateTombstone(oldTombstonePath, (t) => addNoteTombstone(t, noteId));
+    // 3. Remove the old JSON and tombstone the old location so native clients
+    //    don't "self-heal" the note back into the old notebook.
+    await davDelete(getNotePath(noteId, previousNotebookId));
+    const oldTombstonePath = previousNotebookId
+      ? getNotebookTombstonePath(previousNotebookId)
+      : getQuickNotesTombstonePath();
+    await _updateTombstone(oldTombstonePath, (t) => addNoteTombstone(t, noteId));
 
-  console.log(`Note moved: ${noteId} → ${targetNotebookId}`);
+    console.log(`Note moved: ${noteId} → ${targetNotebookId}`);
+  });
 }
 
 export async function copyNote(noteId, targetNotebookId) {
@@ -791,11 +843,13 @@ export async function copyNote(noteId, targetNotebookId) {
   return newNote;
 }
 
-export async function clearNoteMoveFlag(id) {
-  const note = await getNote(id);
-  if (!note) return;
-  delete note.previousNotebookId;
-  await _putNote(note);
+export function clearNoteMoveFlag(id) {
+  return _enqueueWrite(id, async () => {
+    const note = await getNote(id);
+    if (!note) return;
+    delete note.previousNotebookId;
+    await _putNote(note);
+  });
 }
 
 export async function purgeNote(id) {
@@ -808,30 +862,6 @@ export async function permanentlyDeleteNotesInNotebook(notebookId) {
 }
 
 // ─── Media / files ────────────────────────────────────────────────────────────
-
-const MIME_TO_EXT = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/gif": ".gif",
-  "image/webp": ".webp",
-  "image/svg+xml": ".svg",
-  "application/pdf": ".pdf",
-  "audio/webm": ".webm",
-  "audio/webm;codecs=opus": ".webm",
-  "audio/ogg": ".ogg",
-  "audio/mp4": ".m4a",
-};
-
-function _extFromMime(type) {
-  return MIME_TO_EXT[type] || ".bin";
-}
-
-// Mirror sync's lookup: find first MIME type matching the extension
-function _mimeFromExt(ext) {
-  return (
-    Object.keys(MIME_TO_EXT).find((key) => MIME_TO_EXT[key] === ext) || "application/octet-stream"
-  );
-}
 
 // Detect MIME type from magic bytes when the blob has no useful type
 async function _sniffMime(blob) {
@@ -851,7 +881,7 @@ async function _ensureMimeType(blob, ext) {
   if (usefulType) return blob;
   // Try extension first (mirrors sync's approach), then magic bytes as fallback
   if (ext) {
-    const mime = _mimeFromExt(ext);
+    const mime = mimeFromExt(ext);
     if (mime !== "application/octet-stream") return new Blob([blob], { type: mime });
   }
   const sniffed = await _sniffMime(blob);
@@ -874,7 +904,7 @@ export async function saveFile(blob, id = null) {
 }
 
 export async function saveMediaForNote(blob, fileId, noteId, notebookId) {
-  const ext = _extFromMime(blob.type);
+  const ext = extFromMime(blob.type);
   const filename = `${fileId}${ext}`;
   const folder = getNoteMediaFolder(noteId, notebookId);
   await davMkcol(folder);
@@ -882,6 +912,30 @@ export async function saveMediaForNote(blob, fileId, noteId, notebookId) {
   // Record location so getFile() can fetch from WebDAV after a page reload
   _fileLocationCache.set(fileId, { noteId, notebookId, ext });
   _fileCache.set(fileId, blob);
+}
+
+/**
+ * Delete media binaries on the server that are no longer referenced by the note.
+ * Mirrors the native sync layer's cleanupOrphanedMedia — without it, deleting an
+ * image/PDF/recording in the NC app leaves its binary in the folder forever.
+ * @param {string[]} validFileIds - fileIds the note still references (media + pdfSource + recordings)
+ */
+export async function cleanupNoteMedia(noteId, notebookId, validFileIds) {
+  const folder = getNoteMediaFolder(noteId, notebookId);
+  const files = await davList(folder).catch(() => []); // folder may not exist yet
+  const valid = new Set(validFileIds);
+
+  for (const path of files) {
+    const name = path.replace(/\/$/, "").split("/").pop();
+    const dotIdx = name.lastIndexOf(".");
+    const fileId = dotIdx > 0 ? name.slice(0, dotIdx) : name;
+    if (valid.has(fileId)) continue;
+    await davDelete(getMediaPath(noteId, notebookId, name)).catch((e) =>
+      console.warn(`[WebDAV] Failed to delete orphaned media ${name}:`, e),
+    );
+    _fileCache.delete(fileId);
+    _fileLocationCache.delete(fileId);
+  }
 }
 
 export async function getFile(id) {

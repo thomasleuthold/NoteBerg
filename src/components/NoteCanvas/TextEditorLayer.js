@@ -25,6 +25,7 @@ import "trumbowyg/dist/plugins/table/trumbowyg.table.js";
 import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
 
 import { getIcon } from "../../utils/icons.js";
+import { sanitizeNoteHtml } from "../../utils/sanitizeHtml.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
 import { SelectionFloatingBar } from "./SelectionFloatingBar.js";
@@ -271,9 +272,12 @@ export class TextEditorLayer {
       trumbowyg.textEditorLayer = this;
     }
 
-    // Set initial content
-    this.$editor.trumbowyg("html", htmlContent || "");
-    this._lastHtml = htmlContent || "";
+    // Set initial content — note HTML is untrusted synced data, sanitize before
+    // it enters the live editor DOM. _lastHtml must hold the sanitized form so
+    // dirty-detection compares like with like.
+    const safeHtml = sanitizeNoteHtml(htmlContent || "");
+    this.$editor.trumbowyg("html", safeHtml);
+    this._lastHtml = safeHtml;
 
     // Move toolbar to fixed vertical sidebar
     const trumbowygBox = this.container.querySelector(".trumbowyg-box");
