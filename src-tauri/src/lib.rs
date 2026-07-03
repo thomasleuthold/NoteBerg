@@ -389,12 +389,63 @@ async fn native_audio_stop() -> Result<serde_json::Value, String> {
 #[cfg(not(any(target_os = "android", target_os = "windows")))]
 async fn native_audio_stop() -> Result<serde_json::Value, String> { Err("not supported".into()) }
 
+/// Validate that `path` points at a recording file we created: a flat file
+/// inside an allowed directory (the OS temp dir, or on Android the app cache
+/// dir) whose name matches our recording naming. Rejects path traversal and
+/// arbitrary reads — without this the command would read/delete any file the
+/// user can access (see security review).
+fn validate_recording_path(
+    path: &str,
+    allowed_dirs: &[std::path::PathBuf],
+) -> Result<std::path::PathBuf, String> {
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|e| format!("Invalid recording path: {}", e))?;
+
+    let name = canonical
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Recording path has no file name".to_string())?;
+    let name_ok = (name.starts_with("noteberg_rec_") || name.starts_with("rec_"))
+        && (name.ends_with(".wav") || name.ends_with(".mp4"));
+    if !name_ok {
+        return Err("Refusing to read non-recording file".to_string());
+    }
+
+    let parent = canonical
+        .parent()
+        .ok_or_else(|| "Recording path has no parent directory".to_string())?;
+    let in_allowed = allowed_dirs.iter().any(|dir| {
+        std::fs::canonicalize(dir).map(|d| parent == d).unwrap_or(false)
+    });
+    if !in_allowed {
+        return Err("Recording file is outside the allowed directory".to_string());
+    }
+
+    Ok(canonical)
+}
+
 /// Read a native recording file into base64 on the Rust heap and delete it.
 #[tauri::command]
-async fn native_audio_read_and_delete(path: String) -> Result<String, String> {
-    let bytes = std::fs::read(&path)
+async fn native_audio_read_and_delete(
+    #[allow(unused_variables)] app: tauri::AppHandle,
+    path: String,
+) -> Result<String, String> {
+    // `mut` is used only on Android (cache-dir push); allow the unused-mut warning elsewhere.
+    #[allow(unused_mut)]
+    let mut allowed_dirs = vec![std::env::temp_dir()];
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        if let Ok(cache_dir) = app.path().app_cache_dir() {
+            allowed_dirs.push(cache_dir);
+        }
+    }
+
+    let safe_path = validate_recording_path(&path, &allowed_dirs)?;
+
+    let bytes = std::fs::read(&safe_path)
         .map_err(|e| format!("Failed to read recording file: {}", e))?;
-    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&safe_path);
     use base64::{Engine as _, engine::general_purpose};
     Ok(general_purpose::STANDARD_NO_PAD.encode(&bytes))
 }
@@ -750,9 +801,13 @@ fn spawn_recognition_sidecar(app: &tauri::App) -> Result<(), Box<dyn std::error:
         );
     });
 
-    // Wait for the sidecar to become ready (poll up to 10 seconds)
+    // Poll for readiness off the main thread so app startup is not blocked for up
+    // to 10s. The recognition URL stays empty until the sidecar answers; recognition
+    // is only triggered on note-close/post-sync (never at page load), so a few-second
+    // delay is harmless and the layer already tolerates an empty URL.
+    let app_handle = app.handle().clone();
     let check_url = format!("{}/recognize", url);
-    let ready = std::thread::spawn(move || {
+    std::thread::spawn(move || {
         for i in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(500));
             if let Ok(resp) = ureq::post(&check_url)
@@ -760,28 +815,17 @@ fn spawn_recognition_sidecar(app: &tauri::App) -> Result<(), Box<dyn std::error:
                 .send_string("[]")
             {
                 if resp.status() == 200 {
-                    eprintln!(
-                        "[Recognition Sidecar] Ready after {}ms",
-                        (i + 1) * 500
-                    );
-                    return true;
+                    eprintln!("[Recognition Sidecar] Ready after {}ms", (i + 1) * 500);
+                    let state = app_handle.state::<Mutex<RecognitionState>>();
+                    state.lock().unwrap().url = url.clone();
+                    eprintln!("[Recognition Sidecar] Available at {}", url);
+                    return;
                 }
             }
         }
-        eprintln!("[Recognition Sidecar] Failed to become ready within 10 seconds");
-        false
-    })
-    .join()
-    .unwrap_or(false);
-
-    if ready {
-        let state = app.state::<Mutex<RecognitionState>>();
-        state.lock().unwrap().url = url.clone();
-        eprintln!("[Recognition Sidecar] Available at {}", url);
-    } else {
-        eprintln!("[Recognition Sidecar] Not available, falling back to external URL");
+        eprintln!("[Recognition Sidecar] Not ready within 10 seconds, falling back to external URL");
         let _ = child.kill();
-    }
+    });
 
     Ok(())
 }
@@ -900,5 +944,66 @@ fn register_audio_privacy() {
                 grant(&candidate.to_string_lossy());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_recording_path;
+    use std::fs;
+
+    #[test]
+    fn accepts_a_recording_file_in_an_allowed_dir() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("noteberg_rec_{}.wav", std::process::id()));
+        fs::write(&path, b"x").unwrap();
+
+        let result = validate_recording_path(&path.to_string_lossy(), &[dir.clone()]);
+        fs::remove_file(&path).ok();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn accepts_the_android_rec_prefix() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("rec_{}.mp4", std::process::id()));
+        fs::write(&path, b"x").unwrap();
+
+        let result = validate_recording_path(&path.to_string_lossy(), &[dir.clone()]);
+        fs::remove_file(&path).ok();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rejects_a_file_with_the_wrong_name() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("secrets_{}.wav", std::process::id()));
+        fs::write(&path, b"x").unwrap();
+
+        let result = validate_recording_path(&path.to_string_lossy(), &[dir.clone()]);
+        fs::remove_file(&path).ok();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_a_recording_named_file_outside_allowed_dirs() {
+        // File has a valid recording name but lives outside any allowed dir.
+        let outside = std::env::temp_dir().join(format!("nb_outside_{}", std::process::id()));
+        fs::create_dir_all(&outside).unwrap();
+        let path = outside.join("noteberg_rec_1.wav");
+        fs::write(&path, b"x").unwrap();
+
+        let allowed = std::env::temp_dir(); // parent is `outside`, not `allowed`
+        let result = validate_recording_path(&path.to_string_lossy(), &[allowed]);
+        fs::remove_file(&path).ok();
+        fs::remove_dir(&outside).ok();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_a_nonexistent_path() {
+        let dir = std::env::temp_dir();
+        let result = validate_recording_path("noteberg_rec_does_not_exist.wav", &[dir]);
+        assert!(result.is_err());
     }
 }

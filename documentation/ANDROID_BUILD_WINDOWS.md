@@ -142,8 +142,7 @@ Edit `src-tauri/capabilities/default.json` to ensure it includes Android:
   "platforms": ["windows", "macos", "linux", "android"],
   "permissions": [
     "core:default",
-    "http:default",
-    "shell:allow-open"
+    "http:default"
   ]
 }
 ```

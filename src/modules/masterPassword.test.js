@@ -31,7 +31,13 @@ vi.mock("./storage.js", () => ({
 }));
 
 import { deriveKeyFromPassword } from "./encryption.js";
-import { lockApp, setupMasterPassword, unlockApp } from "./masterPassword.js";
+import {
+  clearMasterPassword,
+  isAppUnlocked,
+  lockApp,
+  setupMasterPassword,
+  unlockApp,
+} from "./masterPassword.js";
 
 const SALT_B64 = btoa(String.fromCharCode(...new Uint8Array(16)));
 
@@ -47,6 +53,22 @@ describe("setupMasterPassword", () => {
 
     const config = settings.get("encryption_config");
     expect(config.iterations).toBe(600000);
+  });
+});
+
+describe("clearMasterPassword", () => {
+  it("clears encryption config and turns encrypt_local_data off", async () => {
+    settings.set("encryption_config", { version: 1, salt: SALT_B64, iterations: 600000 });
+    settings.set("password_test", { data: "enc", iv: "iv" });
+    settings.set("encrypt_local_data", true);
+
+    await clearMasterPassword();
+
+    expect(settings.get("encryption_config")).toBeNull();
+    expect(settings.get("password_test")).toBeNull();
+    // The key fix: encryption is turned off so post-reset saves don't fail closed
+    expect(settings.get("encrypt_local_data")).toBe(false);
+    expect(isAppUnlocked()).toBe(false);
   });
 });
 

@@ -224,11 +224,13 @@ export function showLicensesDialog() {
 
   // Close handlers
   const closeDialog = () => {
+    document.removeEventListener("keydown", keyHandler);
     overlay.remove();
   };
 
+  const closeBtn = overlay.querySelector(".close-licenses-btn");
   overlay.querySelector(".modal-close")?.addEventListener("click", closeDialog);
-  overlay.querySelector(".close-licenses-btn")?.addEventListener("click", closeDialog);
+  closeBtn?.addEventListener("click", closeDialog);
 
   // Close on overlay click
   let mousedownOnOverlay = false;
@@ -241,12 +243,15 @@ export function showLicensesDialog() {
     }
   });
 
-  // Close on Escape key
-  const escapeHandler = (e) => {
-    if (e.key === "Escape") {
+  // ESC and ENTER both dismiss this read-only dialog (only Close is offered).
+  const keyHandler = (e) => {
+    if (e.key === "Escape" || e.key === "Enter") {
+      e.preventDefault();
       closeDialog();
-      document.removeEventListener("keydown", escapeHandler);
     }
   };
-  document.addEventListener("keydown", escapeHandler);
+  document.addEventListener("keydown", keyHandler);
+
+  // Focus the Close button so ENTER/SPACE dismiss it.
+  setTimeout(() => closeBtn?.focus(), 100);
 }

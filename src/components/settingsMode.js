@@ -13,7 +13,7 @@ import {
   testConnection,
 } from "../modules/nextcloudSync.js";
 import { getSetting, purgeLocalData, setSetting } from "../modules/storage.js";
-import { performSync, resetSyncWorker } from "../modules/sync.js";
+import { performSync } from "../modules/sync.js";
 import { getTheme, setTheme } from "../modules/theme.js";
 import { showLicensesDialog } from "./licensesDialog.js";
 import { showAlertDialog, showConfirmDialog } from "./modals.js";
@@ -34,6 +34,8 @@ export async function renderSettings(container) {
 
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? false; // Default: disabled
+  const { isMasterPasswordSet } = await import("../modules/masterPassword.js");
+  const masterPasswordSet = await isMasterPasswordSet();
   // Migrate old recognition_url setting to recognition_fallback_url
   const legacyRecognitionUrl = await getSetting("recognition_url");
   if (legacyRecognitionUrl) {
@@ -313,13 +315,17 @@ export async function renderSettings(container) {
       <div class="settings-section">
         <h3 class="settings-section-heading--danger">${t("settings.sections.dangerZone")}</h3>
 
-        <div class="setting-item">
+        ${
+          masterPasswordSet
+            ? `<div class="setting-item">
           <div class="setting-label">
             <span class="setting-name">${t("settings.dangerZone.resetPassword")}</span>
             <span class="setting-description">${t("settings.dangerZone.resetPasswordDesc")}</span>
           </div>
           <button id="reset-master-password-btn" class="btn-secondary btn-warning">${t("settings.dangerZone.resetPasswordBtn")}</button>
-        </div>
+        </div>`
+            : ""
+        }
 
         <div class="setting-item">
           <div class="setting-label">
@@ -700,8 +706,7 @@ export async function renderSettings(container) {
           };
         });
 
-        // Login successful — reset worker so it picks up the new credentials
-        resetSyncWorker();
+        // Login successful
         loginUrlContainer.style.display = "none";
         statusSpan.textContent = "✓ Connected successfully!";
         statusSpan.style.color = "var(--color-success)";
@@ -769,7 +774,6 @@ export async function renderSettings(container) {
     disconnectBtn?.addEventListener("click", async () => {
       if (confirm(t("settings.nextcloud.disconnectConfirm"))) {
         await clearCredentials();
-        resetSyncWorker();
 
         // Notify footer about auth change
         window.dispatchEvent(new CustomEvent("nextcloud-auth-changed"));

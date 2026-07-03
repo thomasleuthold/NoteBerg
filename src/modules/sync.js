@@ -57,9 +57,6 @@ export function getLastSyncResult() {
   return lastSyncResult;
 }
 
-/** No-op: kept for API compatibility with callers that previously used syncWorkerClient. */
-export function resetSyncWorker() {}
-
 /**
  * Remove stale pdf-page IDs from deletedMedia once the PDF is fully gone.
  * pdf-page items accumulate in deletedMedia when a PDF is removed (500 entries

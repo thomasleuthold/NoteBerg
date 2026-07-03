@@ -188,59 +188,6 @@ export async function decryptData(encryptedData, ivBase64, key) {
 }
 
 /**
- * Hash a password for verification purposes (NOT for encryption)
- * This creates a hash that can be stored to verify the password later
- * @param {string} password - Password to hash
- * @param {Uint8Array} salt - Salt for hashing
- * @returns {Promise<string>} Base64 hash
- */
-export async function hashPassword(password, salt, iterations = PBKDF2_ITERATIONS) {
-  try {
-    const encoder = new TextEncoder();
-    const passwordBuffer = encoder.encode(password);
-
-    // Import password as a key
-    const baseKey = await crypto.subtle.importKey("raw", passwordBuffer, "PBKDF2", false, [
-      "deriveBits",
-    ]);
-
-    // Derive bits (not a key) for hashing
-    const hashBits = await crypto.subtle.deriveBits(
-      {
-        name: "PBKDF2",
-        salt: salt,
-        iterations,
-        hash: "SHA-256",
-      },
-      baseKey,
-      256, // 256 bits
-    );
-
-    return bufferToBase64(hashBits);
-  } catch (error) {
-    console.error("[Encryption] Failed to hash password:", error);
-    throw new Error("Failed to hash password");
-  }
-}
-
-/**
- * Verify a password against a stored hash
- * @param {string} password - Password to verify
- * @param {string} storedHash - Base64 stored hash
- * @param {Uint8Array} salt - Salt used for original hash
- * @returns {Promise<boolean>} True if password matches
- */
-export async function verifyPassword(password, storedHash, salt) {
-  try {
-    const computedHash = await hashPassword(password, salt);
-    return computedHash === storedHash;
-  } catch (error) {
-    console.error("[Encryption] Failed to verify password:", error);
-    return false;
-  }
-}
-
-/**
  * Encrypt an object and return it in a structured format
  * @param {Object} obj - Object to encrypt
  * @param {CryptoKey} key - Encryption key

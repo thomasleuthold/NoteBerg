@@ -452,7 +452,8 @@
       "importProgressTitle": "PDF wird importiert",
       "importProgressUpload": "PDF-Datei wird gespeichert ...",
       "importProgressPage": "Seite {{current}} von {{total}} wird gelesen ...",
-      "importProgressSaving": "Datei {{current}} von {{total}} wird hochgeladen ..."
+      "importProgressSaving": "Datei {{current}} von {{total}} wird hochgeladen ...",
+      "importProgressFinalizing": "Wird abgeschlossen ..."
     },
     "textSelection": {
       "cut": "Ausschneiden",

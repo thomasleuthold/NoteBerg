@@ -674,4 +674,85 @@ describe("NoteCanvas Class", () => {
       expect(noteCanvas.renderer.render).toHaveBeenCalled();
     });
   });
+
+  // Coalescing media-save: rapid calls must collapse to one in-flight run plus at
+  // most one trailing run, so concurrent WebDAV PUTs can't collide (423 Locked).
+  // We borrow the real _saveMediaChanges onto a fake `this` with a controllable
+  // _runMediaSave, so the test exercises production code without a full instance.
+  describe("_saveMediaChanges coalescing", () => {
+    function makeCtx() {
+      let resolveRun;
+      const ctx = {
+        noteId: "n1",
+        mediaManager: {},
+        noteData: {},
+        _mediaSaveRunning: null,
+        _mediaSaveDirty: false,
+        _mediaSaveProgress: null,
+        runCalls: [],
+        // One pending run at a time; the test resolves it via releaseRun()
+        _runMediaSave: vi.fn(function (progress) {
+          ctx.runCalls.push(progress ?? null);
+          return new Promise((r) => {
+            resolveRun = r;
+          });
+        }),
+        save: NoteCanvas.prototype._saveMediaChanges,
+      };
+      ctx.releaseRun = async () => {
+        const r = resolveRun;
+        resolveRun = null;
+        r();
+        await Promise.resolve(); // let the runner loop advance
+        await Promise.resolve();
+      };
+      return ctx;
+    }
+
+    it("runs a single save when called once", async () => {
+      const ctx = makeCtx();
+      const p = ctx.save();
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
+      await ctx.releaseRun();
+      await p;
+      expect(ctx.runCalls).toHaveLength(1);
+      expect(ctx._mediaSaveRunning).toBeNull();
+    });
+
+    it("collapses a burst of calls into one in-flight + one trailing run", async () => {
+      const ctx = makeCtx();
+      const p1 = ctx.save(); // starts run #1
+      const p2 = ctx.save(); // flags dirty
+      const p3 = ctx.save(); // still just dirty
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
+
+      await ctx.releaseRun(); // run #1 finishes → dirty → trailing run #2 starts
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(2);
+
+      await ctx.releaseRun(); // run #2 finishes, not dirty → done
+      await Promise.all([p1, p2, p3]);
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(2); // never a 3rd
+      expect(ctx._mediaSaveRunning).toBeNull();
+    });
+
+    it("passes a progress callback to an executed run", async () => {
+      const ctx = makeCtx();
+      const onProgress = vi.fn();
+      const p = ctx.save(onProgress);
+      await ctx.releaseRun();
+      await p;
+      expect(ctx.runCalls[0]).toBe(onProgress);
+    });
+
+    it("stops the trailing run once the note is closed (noteId nulled)", async () => {
+      const ctx = makeCtx();
+      const p1 = ctx.save();
+      ctx.save(); // flag dirty
+      ctx.noteId = null; // simulate destroy() during the in-flight run
+      await ctx.releaseRun(); // run #1 ends; loop guard sees noteId null → no trailing
+      await p1;
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
+      expect(ctx._mediaSaveRunning).toBeNull();
+    });
+  });
 });

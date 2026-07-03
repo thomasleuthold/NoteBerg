@@ -51,22 +51,11 @@ import {
   createEmptyTombstone,
 } from "./tombstones.js";
 
-// ─── Injectable HTTP / credential providers ───────────────────────────────────
-// Defaults to the real Tauri implementations. SyncWorker overrides these with
-// worker-safe shims via configureHttpProvider() before running any sync logic.
-let _fetch = _tauriFetch;
-let _getSecureCredential = _tauriGetSecureCredential;
-
-/**
- * Override the fetch implementation and credential reader used by this module.
- * Called by SyncWorker.js to inject worker-safe shims (no Tauri IPC needed).
- * @param {Function} fetchFn         — drop-in for fetch()
- * @param {Function} getCredentialFn — drop-in for getSecureCredential(key)
- */
-export function configureHttpProvider(fetchFn, getCredentialFn) {
-  _fetch = fetchFn;
-  _getSecureCredential = getCredentialFn;
-}
+// ─── HTTP / credential providers ──────────────────────────────────────────────
+// The real Tauri implementations. (Previously these were injectable for an
+// off-thread SyncWorker that no longer exists.)
+const _fetch = _tauriFetch;
+const _getSecureCredential = _tauriGetSecureCredential;
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
 const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
@@ -1447,7 +1436,8 @@ export async function syncNotes(notes) {
       // Get the correct path based on whether note is in a notebook or is a quick note
       const path = getNotePath(note.id, note.notebookId);
 
-      console.log(`Uploading note ${note.id} (${note.title}) to ${path}`);
+      // Log id/path only — never the title (note content must not leak to logs).
+      console.log(`Uploading note ${note.id} to ${path}`);
 
       const syncedNote = {
         ...note,

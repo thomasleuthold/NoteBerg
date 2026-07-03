@@ -719,6 +719,10 @@ function attachSearchListeners(container) {
         renderSearchResultsList(searchResults, searchState.results);
       }
     }
+
+    // Focus the search field when the tab activates so the user can type
+    // immediately; ENTER then runs the search (harmless action).
+    setTimeout(() => searchInput.focus(), 100);
   }
 }
 

@@ -536,12 +536,22 @@ export async function copyNote(noteId, targetNotebookId) {
     newPdfSource = pdfBlob ? await saveFile(pdfBlob) : note.pdfSource;
   }
 
+  // Deep-copy recording blobs so the copy doesn't share fileIds with the original
+  // (purging one note would otherwise delete the other's audio).
+  const newRecordings = [];
+  for (const rec of note.recordings || []) {
+    const blob = rec.fileId ? await getFile(rec.fileId) : null;
+    const newFileId = blob ? await saveFile(blob) : rec.fileId;
+    newRecordings.push({ ...rec, fileId: newFileId });
+  }
+
   const now = Date.now();
   const newNote = {
     ...note,
     id: generateId(),
     notebookId: targetNotebookId ?? null,
     media: newMedia,
+    recordings: newRecordings,
     pdfSource: newPdfSource,
     previousNotebookId: undefined,
     deletedMedia: [],
@@ -565,19 +575,45 @@ export async function clearNoteMoveFlag(id) {
   await db.put("notes", note);
 }
 
+/**
+ * Collect every local blob fileId a note references: media, pdfSource, and
+ * recording files. Used to clean up the "files" store when a note is destroyed.
+ * Uses getNote() so encrypted media/recordings are decrypted to plain arrays
+ * (the raw content record stores them as opaque {data,iv} blobs with no fileIds).
+ * Falls back to the raw content record if decryption is unavailable (app locked).
+ */
+async function collectNoteBlobIds(id) {
+  const ids = new Set();
+  let note = null;
+  try {
+    note = await getNote(id);
+  } catch (_e) {
+    // App locked / corrupted — fall back to whatever is readable in raw content.
+    note = await getRawNote(id);
+  }
+  if (!note) return ids;
+
+  if (Array.isArray(note.media)) {
+    for (const item of note.media) if (item?.fileId) ids.add(item.fileId);
+  }
+  if (note.pdfSource) ids.add(note.pdfSource);
+  if (Array.isArray(note.recordings)) {
+    for (const rec of note.recordings) if (rec?.fileId) ids.add(rec.fileId);
+  }
+  return ids;
+}
+
 export async function purgeNote(id) {
   const index = await db.get("notes", id);
   if (!index) return;
 
-  // Delete local media files — need full content for fileIds
+  // Delete all local blob files this note references (media, PDF, recordings).
   try {
-    const content = await db.get("noteContent", id);
-    const mediaItems = content?.media ?? [];
-    for (const item of mediaItems) {
-      if (item.fileId) await deleteFile(item.fileId);
+    for (const fileId of await collectNoteBlobIds(id)) {
+      await deleteFile(fileId);
     }
   } catch (e) {
-    console.warn("[Storage] Could not clean up media during purge:", e);
+    console.warn("[Storage] Could not clean up blobs during purge:", e);
   }
 
   // Delete content record
@@ -779,6 +815,7 @@ export async function clearAllData() {
     db.clear("notebooks"),
     db.clear("notes"),
     db.clear("noteContent"),
+    db.clear("files"),
     db.clear("settings"),
   ]);
   console.log("All data cleared");
@@ -787,10 +824,23 @@ export async function clearAllData() {
 export async function purgeLocalData() {
   if (!db) throw new Error("Database not initialized. Call initStorage() first.");
 
-  await Promise.all([db.clear("notebooks"), db.clear("notes"), db.clear("noteContent")]);
+  // Clear notes/notebooks/content AND the binary blob store — leaving "files"
+  // behind would orphan every image, PDF, and recording in IndexedDB.
+  // "settings" is intentionally kept (credentials, encryption config).
+  await Promise.all([
+    db.clear("notebooks"),
+    db.clear("notes"),
+    db.clear("noteContent"),
+    db.clear("files"),
+  ]);
 
-  const [nb, n] = await Promise.all([db.getAll("notebooks"), db.getAll("notes")]);
-  if (nb.length > 0 || n.length > 0) throw new Error("Purge failed: Data still exists!");
+  const [nb, n, f] = await Promise.all([
+    db.getAll("notebooks"),
+    db.getAll("notes"),
+    db.getAll("files"),
+  ]);
+  if (nb.length > 0 || n.length > 0 || f.length > 0)
+    throw new Error("Purge failed: Data still exists!");
 }
 
 export async function isLocalEncryptionEnabled() {
@@ -880,7 +930,7 @@ async function _saveNoteSplit(note, { skipEncryption = false } = {}) {
   let { index, content } = splitNote(note);
 
   if (!skipEncryption) {
-    content = await _encryptContent(content, index);
+    content = await _encryptContent(content);
     // encrypted flag lives on the index so getAllNoteMetadataForSync can see it
     index.encrypted = content._encrypted;
     delete content._encrypted;
@@ -900,16 +950,18 @@ async function _saveNoteSplit(note, { skipEncryption = false } = {}) {
  * Returns the (possibly encrypted) content object, with a temporary `_encrypted`
  * boolean flag that _saveNoteSplit copies to the index entry.
  */
-async function _encryptContent(content, index) {
+async function _encryptContent(content) {
   const shouldEncrypt = await isLocalEncryptionEnabled();
   if (!shouldEncrypt) return { ...content, _encrypted: false };
 
   const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
   const { encryptObject } = await import("./encryption.js");
 
+  // Fail closed: encryption is enabled, so never persist plaintext content. If we
+  // cannot encrypt (locked, or a crypto error), abort the save and surface the
+  // error instead of silently writing readable data with encrypted:false.
   if (!isAppUnlocked()) {
-    console.warn("[Storage] Cannot encrypt note content - app is locked");
-    return { ...content, _encrypted: index.encrypted ?? false };
+    throw new Error("Cannot encrypt note content - app is locked");
   }
 
   try {
@@ -941,7 +993,7 @@ async function _encryptContent(content, index) {
     };
   } catch (error) {
     console.error("[Storage] Failed to encrypt note content:", error);
-    return { ...content, _encrypted: false };
+    throw new Error("Failed to encrypt note content - save aborted to avoid storing plaintext");
   }
 }
 

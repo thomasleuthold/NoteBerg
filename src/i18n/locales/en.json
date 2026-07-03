@@ -452,7 +452,8 @@
       "importProgressTitle": "Importing PDF",
       "importProgressUpload": "Saving PDF file ...",
       "importProgressPage": "Reading page {{current}} of {{total}} ...",
-      "importProgressSaving": "Uploading file {{current}} of {{total}} ..."
+      "importProgressSaving": "Uploading file {{current}} of {{total}} ...",
+      "importProgressFinalizing": "Finalizing ..."
     },
     "textSelection": {
       "cut": "Cut",

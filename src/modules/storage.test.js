@@ -5,9 +5,12 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearAllData,
   clearNoteMoveFlag,
   copyNote,
   moveNote,
+  purgeLocalData,
+  purgeNote,
   updateNote,
   updateNotebook,
   updateNoteEtag,
@@ -49,6 +52,10 @@ vi.mock("idb", () => ({
         stores[storeName]?.delete(id);
         return Promise.resolve();
       }),
+      clear: vi.fn((storeName) => {
+        stores[storeName]?.clear();
+        return Promise.resolve();
+      }),
       getAll: vi.fn((storeName) => Promise.resolve([...(stores[storeName]?.values() ?? [])])),
       getAllFromIndex: vi.fn((storeName, _index, value) =>
         Promise.resolve(
@@ -67,6 +74,17 @@ vi.mock("idb", () => ({
       }),
     });
   }),
+}));
+
+// Mocks for the encryption fail-closed tests. _encryptContent dynamically imports
+// these inside storage.js, so vi.mock intercepts them. Default state: app unlocked.
+let _appUnlocked = true;
+vi.mock("./masterPassword.js", () => ({
+  isAppUnlocked: vi.fn(() => _appUnlocked),
+  getEncryptionKey: vi.fn(() => ({ type: "secret" })),
+}));
+vi.mock("./encryption.js", () => ({
+  encryptObject: vi.fn(async (obj) => ({ data: `enc:${JSON.stringify(obj)}`, iv: "iv" })),
 }));
 
 // Minimal mocks for helpers used by copyNote
@@ -138,6 +156,7 @@ function seedNote(note) {
     deletedStrokes: note.deletedStrokes ?? [],
     media: note.media ?? [],
     deletedMedia: note.deletedMedia ?? [],
+    recordings: note.recordings ?? [],
     tasks: note.tasks ?? [],
     recognition: note.recognition ?? null,
     penPresets: note.penPresets ?? null,
@@ -147,11 +166,18 @@ function seedNote(note) {
   stores.noteContent.set(note.id, content);
 }
 
+/** Seed a blob into the local "files" store and return its id. */
+function seedFile(id) {
+  stores.files.set(id, { id, data: new Blob(["x"]), type: "application/octet-stream" });
+  return id;
+}
+
 // Seed the in-memory stores before each test
 beforeEach(async () => {
   for (const s of Object.values(stores)) s.clear();
   fileStore.clear();
   vi.clearAllMocks();
+  _appUnlocked = true;
 
   // initStorage sets db internally — trigger it once
   const { initStorage } = await import("./storage.js");
@@ -470,5 +496,143 @@ describe("clearNoteMoveFlag", () => {
   it("is a no-op when the note does not exist", async () => {
     // Should not throw
     await expect(clearNoteMoveFlag("missing")).resolves.toBeUndefined();
+  });
+});
+
+// ── Encryption fail-closed ──────────────────────────────────────────────────────
+// When local encryption is enabled, a save must never persist plaintext content.
+// If we cannot encrypt (app locked, or a crypto error), the save must abort.
+
+describe("encryption fail-closed", () => {
+  beforeEach(() => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+  });
+
+  it("encrypts content when enabled and unlocked", async () => {
+    seedNote(makeNote({ content: "secret" }));
+    _appUnlocked = true;
+
+    await updateNote("note-1", { content: "secret text" });
+
+    const content = stores.noteContent.get("note-1");
+    expect(typeof content.content).toBe("object");
+    expect(content.content.iv).toBe("iv");
+    expect(stores.notes.get("note-1").encrypted).toBe(true);
+  });
+
+  it("aborts the save when the app is locked (does not write plaintext)", async () => {
+    seedNote(makeNote({ content: "secret" }));
+    const before = structuredClone(stores.noteContent.get("note-1"));
+    _appUnlocked = false;
+
+    await expect(updateNote("note-1", { content: "new secret" })).rejects.toThrow(/locked/);
+
+    // Stored content unchanged — no plaintext "new secret" persisted
+    expect(stores.noteContent.get("note-1")).toEqual(before);
+  });
+
+  it("aborts the save when encryption throws (does not write plaintext)", async () => {
+    seedNote(makeNote({ content: "secret" }));
+    _appUnlocked = true;
+    const { encryptObject } = await import("./encryption.js");
+    encryptObject.mockRejectedValueOnce(new Error("crypto boom"));
+
+    await expect(updateNote("note-1", { content: "new secret" })).rejects.toThrow(/save aborted/);
+  });
+});
+
+// ── purgeNote blob cleanup ──────────────────────────────────────────────────────
+// Purging a note must delete ALL its local blobs: media, pdfSource, recordings.
+
+describe("purgeNote blob cleanup", () => {
+  it("deletes media, pdfSource, and recording blobs from the files store", async () => {
+    seedFile("media-1");
+    seedFile("pdf-1");
+    seedFile("rec-1");
+    seedNote(
+      makeNote({
+        media: [{ id: "m1", fileId: "media-1", type: "image" }],
+        pdfSource: "pdf-1",
+        recordings: [{ id: "r1", fileId: "rec-1", name: "clip" }],
+      }),
+    );
+
+    await purgeNote("note-1");
+
+    expect(stores.files.has("media-1")).toBe(false);
+    expect(stores.files.has("pdf-1")).toBe(false);
+    expect(stores.files.has("rec-1")).toBe(false);
+  });
+
+  it("removes the content record and leaves a purged stub", async () => {
+    seedNote(makeNote());
+
+    await purgeNote("note-1");
+
+    expect(stores.noteContent.has("note-1")).toBe(false);
+    expect(stores.notes.get("note-1").purged).toBe(true);
+  });
+});
+
+// ── copyNote recording blobs ────────────────────────────────────────────────────
+
+describe("copyNote recording blobs", () => {
+  it("deep-copies recording blobs to new fileIds", async () => {
+    seedFile("rec-orig");
+    seedNote(makeNote({ recordings: [{ id: "r1", fileId: "rec-orig", name: "clip" }] }));
+
+    const copied = await copyNote("note-1", "nb-b");
+
+    expect(copied.recordings).toHaveLength(1);
+    // New blob created, original fileId not shared
+    expect(copied.recordings[0].fileId).not.toBe("rec-orig");
+    expect(stores.files.has(copied.recordings[0].fileId)).toBe(true);
+    // Original blob untouched
+    expect(stores.files.has("rec-orig")).toBe(true);
+  });
+
+  it("keeps the original fileId when the blob is missing (fallback)", async () => {
+    seedNote(makeNote({ recordings: [{ id: "r1", fileId: "rec-gone", name: "clip" }] }));
+
+    const copied = await copyNote("note-1", "nb-b");
+
+    expect(copied.recordings[0].fileId).toBe("rec-gone");
+  });
+});
+
+// ── purgeLocalData / clearAllData clear the files store ──────────────────────────
+
+describe("purgeLocalData", () => {
+  it("clears the files (blob) store along with notes and notebooks", async () => {
+    seedFile("blob-1");
+    seedNote(makeNote());
+    seedNotebook(makeNotebook());
+
+    await purgeLocalData();
+
+    expect(stores.files.size).toBe(0);
+    expect(stores.notes.size).toBe(0);
+    expect(stores.noteContent.size).toBe(0);
+    expect(stores.notebooks.size).toBe(0);
+  });
+
+  it("keeps the settings store (credentials / encryption config)", async () => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+
+    await purgeLocalData();
+
+    expect(stores.settings.has("encrypt_local_data")).toBe(true);
+  });
+});
+
+describe("clearAllData", () => {
+  it("clears the files store too", async () => {
+    seedFile("blob-1");
+    seedNote(makeNote());
+
+    await clearAllData();
+
+    expect(stores.files.size).toBe(0);
+    expect(stores.noteContent.size).toBe(0);
   });
 });

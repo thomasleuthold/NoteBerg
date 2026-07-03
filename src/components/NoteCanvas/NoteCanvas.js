@@ -223,6 +223,13 @@ export class NoteCanvas {
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
     this.strokesChanged = false; // Track if strokes have been modified
     this.mediaChanged = false; // Track if media has been modified
+    // Coalescing media-save state. Rapid edits (pointerup, insert, reorder) collapse
+    // into one in-flight save plus at most one trailing run, so concurrent WebDAV
+    // PUTs to the same media file can't collide (423 Locked) and cleanupNoteMedia
+    // never deletes a binary a newer edit just added.
+    this._mediaSaveRunning = null; // Promise of the active runner, or null
+    this._mediaSaveDirty = false; // A save was requested while the runner was busy
+    this._mediaSaveProgress = null; // onProgress cb for the next executed run
     this.textChanged = false; // Track if text content has been modified
     this.activeSearchQuery = null; // Track active search query for highlighting
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
@@ -793,7 +800,8 @@ export class NoteCanvas {
 
       // Save changes
       await this._saveMediaChanges();
-      this.renderer.forceRedraw();
+      // destroy() may have run during the await (slow upload) — guard the renderer.
+      this.renderer?.forceRedraw();
 
       // Record undo command for inserted images
       if (insertedItems.length > 0) {
@@ -861,14 +869,22 @@ export class NoteCanvas {
           }
 
           await this._saveMediaChanges((current, total) => {
+            // The last two steps are the note-JSON save and the orphan cleanup;
+            // the earlier steps are binary uploads. Label them accordingly so the
+            // dialog never freezes on the previous ("page N of N") message.
+            const isFinalizing = current > total - 2;
             progress.update(
               current,
               total,
-              t("canvas.pdf.importProgressSaving", { current, total }),
+              isFinalizing
+                ? t("canvas.pdf.importProgressFinalizing")
+                : t("canvas.pdf.importProgressSaving", { current, total }),
             );
           });
-          this.renderer.showA4PageBreaks = false;
-          this.renderer.forceRedraw();
+          if (this.renderer) {
+            this.renderer.showA4PageBreaks = false;
+            this.renderer.forceRedraw();
+          }
           this._renderPdfControls();
           this.historyManager?.push(new InsertMediaCommand(insertedPages, fileId));
 
@@ -3027,7 +3043,8 @@ export class NoteCanvas {
     // Note: We do NOT delete binary files on user delete action
     // This allows undo to restore the media. Files are cleaned up separately.
 
-    this.renderer.forceRedraw();
+    // destroy() may have run during the await — guard the renderer.
+    this.renderer?.forceRedraw();
   }
 
   /**
@@ -3112,10 +3129,47 @@ export class NoteCanvas {
   }
 
   /**
-   * Save media changes to storage
-   * @private
+   * Persist media changes, coalescing rapid calls.
+   *
+   * While a save is in flight, further calls just flag the state dirty; the
+   * active runner then performs exactly one trailing save after it finishes.
+   * Each run snapshots the *current* media state, so the trailing run always
+   * reflects the latest edits (and its cleanup uses up-to-date validFileIds).
+   *
+   * Returns a promise that resolves when a run covering this call has completed,
+   * so awaiting callers (e.g. PDF import) still block until their data is durable.
+   * @param {(current:number,total:number)=>void} [onProgress] - upload progress
+   *   for the run that actually executes (used by the PDF import dialog).
    */
-  async _saveMediaChanges(onProgress) {
+  _saveMediaChanges(onProgress) {
+    if (!this.noteId || !this.mediaManager || !this.noteData) return Promise.resolve();
+
+    if (onProgress) this._mediaSaveProgress = onProgress;
+
+    // A runner is already active — flag a trailing pass and ride its promise.
+    if (this._mediaSaveRunning) {
+      this._mediaSaveDirty = true;
+      return this._mediaSaveRunning;
+    }
+
+    // Start a runner that drains dirty passes, then clears itself.
+    this._mediaSaveRunning = (async () => {
+      try {
+        do {
+          this._mediaSaveDirty = false;
+          const progress = this._mediaSaveProgress;
+          this._mediaSaveProgress = null;
+          await this._runMediaSave(progress);
+        } while (this._mediaSaveDirty && this.noteId && this.mediaManager && this.noteData);
+      } finally {
+        this._mediaSaveRunning = null;
+      }
+    })();
+    return this._mediaSaveRunning;
+  }
+
+  /** Perform a single media-save pass (snapshot → upload → JSON → cleanup). */
+  async _runMediaSave(onProgress) {
     if (!this.noteId || !this.mediaManager || !this.noteData) return;
     // Capture IDs immediately — destroy() nulls this.noteId mid-async and would corrupt paths
     const noteId = this.noteId;
@@ -3148,26 +3202,31 @@ export class NoteCanvas {
         return true;
       });
       const hasPdfSource = !!noteData.pdfSource;
-      const totalUploads = uniqueMediaItems.length + (hasPdfSource ? 1 : 0) + 1;
-      let uploaded = 0;
+      // Phases reported to onProgress: each media upload, the PDF upload, the note
+      // JSON save, and the orphan cleanup. Report each phase BEFORE it starts so the
+      // dialog reflects the in-flight work (a large PDF upload is slow and otherwise
+      // leaves the label frozen on the previous phase). step is 1-based.
+      const totalSteps = uniqueMediaItems.length + (hasPdfSource ? 1 : 0) + 2;
+      let step = 0;
       for (const item of uniqueMediaItems) {
+        onProgress?.(++step, totalSteps);
         const blob = await getFile(item.fileId);
         if (blob) {
           await saveMediaForNote(blob, item.fileId, noteId, notebookId).catch((e) =>
             console.error("[NoteCanvas] WebDAV media upload failed:", item.fileId, e),
           );
         }
-        onProgress?.(++uploaded, totalUploads);
       }
       if (hasPdfSource) {
+        onProgress?.(++step, totalSteps);
         const pdfBlob = await getFile(noteData.pdfSource);
         if (pdfBlob) {
           await saveMediaForNote(pdfBlob, noteData.pdfSource, noteId, notebookId).catch((e) =>
             console.error("[NoteCanvas] WebDAV PDF upload failed:", e),
           );
         }
-        onProgress?.(++uploaded, totalUploads);
       }
+      onProgress?.(++step, totalSteps);
       await updateNote(noteId, {
         media: serializableMedia,
         deletedMedia: noteData.deletedMedia,
@@ -3176,6 +3235,7 @@ export class NoteCanvas {
 
       // Delete server binaries no longer referenced. Include recording fileIds
       // (saved via a separate path) so we don't delete live recordings.
+      onProgress?.(++step, totalSteps);
       const validFileIds = [
         ...serializableMedia.map((i) => i.fileId),
         noteData.pdfSource,
@@ -4518,8 +4578,11 @@ export class NoteCanvas {
       deleteFile(sourceFileId).catch(() => {});
     }
 
-    this.renderer.showA4PageBreaks = true;
-    this.renderer.forceRedraw();
+    // destroy() may have run during the await — guard the renderer.
+    if (this.renderer) {
+      this.renderer.showA4PageBreaks = true;
+      this.renderer.forceRedraw();
+    }
     this._renderPdfControls();
   }
 
@@ -4687,6 +4750,10 @@ export class NoteCanvas {
 
     // Capture flags before clearing state
     const hadMediaChanges = this.mediaChanged;
+    // Capture any in-flight media save so close waits for it (and its trailing
+    // pass) to finish — otherwise a late WebDAV upload outlives destroy() and its
+    // post-save redraw dereferences the now-null renderer.
+    const pendingMediaSave = this._mediaSaveRunning;
 
     // Clear state
     this.noteId = null;
@@ -4710,6 +4777,7 @@ export class NoteCanvas {
     if (pendingStrokeSave) pending.push(pendingStrokeSave);
     if (pendingTextSave) pending.push(pendingTextSave);
     if (this._pendingPdfImport) pending.push(this._pendingPdfImport);
+    if (pendingMediaSave) pending.push(pendingMediaSave);
     return Promise.all(pending).then(() => ({ mediaChanged: hadMediaChanges }));
   }
 }
