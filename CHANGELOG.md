@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.33] - 2026-07-06
+
+### Security
+- **Recognition backend**: sidecar now binds to `localhost` only by default; remote access requires explicit opt-in (`ServerSettings:AllowRemote` or `--allow-remote`)
+- **Native audio**: recording path validated to prevent path traversal / arbitrary file reads, restricted to temp/cache dirs
+- **Tauri capabilities**: removed unused `shell:allow-open` permission
+- **Master password**: clearing it now also disables local encryption flag, preventing saves from silently failing closed
+- **Encryption**: PBKDF2 iteration count raised from 100,000 to 600,000 for new key derivations; existing configs keep their stored iteration count for backward compatibility
+
+### Changed
+- **Thumbnails**: always re-rendered on demand instead of stored and synced — removes stale/missing-thumbnail and etag-churn bugs
+- **Sync/storage**: reworked conflict and etag handling in `nextcloudSync.js`/`storage.webdav.js` following internal code review; simplified `tombstones.js`; added `sanitizeHtml.js` and `mime.js` utilities
+- **ImageCropper**: JPEG quality raised to 0.95, added bilinear resampling and contrast LUT for sharper scanned/cropped images
+- **NoteCanvas**: media saves now coalesced (one in-flight + one trailing save) with progress labeling; note close waits for pending media saves
+- **UI**: improved keyboard handling (ESC/ENTER) and focus management in modals/dialogs; search field auto-focuses on tab activation
+- Nextcloud supported version range bumped to 30–35
+- Settings: "reset master password" only shown when a master password is set; removed unnecessary `resetSyncWorker` calls on sign-in/disconnect
+
 ## [0.5.29-alpha.4] - 2026-04-20
 
 ### Fixed
