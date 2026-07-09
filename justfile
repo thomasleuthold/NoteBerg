@@ -96,11 +96,6 @@ package-sidecar:
     Copy-Item "src-tauri/binaries/temp/appsettings.json" -Destination "src-tauri/binaries/appsettings.json" -Force
     Remove-Item -Recurse -Force "src-tauri/binaries/temp"
 
-# Package the recognition backend and installer script (legacy standalone service)
-package-backend:
-    dotnet publish src-recognition-backend -c Release -r win-x64 --self-contained false -o dist-backend
-    Copy-Item "src-recognition-backend/install-service.ps1" -Destination "dist-backend/"
-
 # Build and package the Nextcloud app release
 # Requires: noteberg.key + noteberg.crt in repo root (from NC certificate process)
 # Output: builds/noteberg-<version>.tar.gz + builds/noteberg-<version>.tar.gz.sig
@@ -219,6 +214,16 @@ podman-restart:
 # Push to GitHub (default: main branch)
 push-gh branch="main":
     git push github {{branch}}
+
+# Publish a release to the public GitHub mirror: pushes main + a matching vX.Y.Z tag.
+# Run this only at release time, after CHANGELOG.md/README/docs are updated and committed on gitea.
+release-gh:
+    if ((git status --porcelain) -ne $null) { Write-Error "Working tree not clean — commit or stash first."; exit 1 }
+    if ((git rev-parse --abbrev-ref HEAD) -ne "main") { Write-Error "Not on main — checkout main before releasing."; exit 1 }
+    git push origin main
+    git push origin --tags
+    git push github main
+    git push github "v{{version}}"
 
 # Increase version (patch) and sync
 bump:

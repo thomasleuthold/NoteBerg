@@ -20,7 +20,7 @@
     "build:nextcloud": "cross-env VITE_PLATFORM=nextcloud vite build",
     "dev:nextcloud": "cross-env VITE_PLATFORM=nextcloud vite build --watch",
     "sync-version": "node sync-version.js",
-    "version": "npm run sync-version && git add src-tauri/tauri.conf.json"
+    "version": "npm run sync-version && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml"
   },
   "keywords": [
     "notes",
