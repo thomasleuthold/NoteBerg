@@ -17,6 +17,9 @@
 - **UI**: improved keyboard handling (ESC/ENTER) and focus management in modals/dialogs; search field auto-focuses on tab activation
 - Nextcloud supported version range bumped to 30–35
 - Settings: "reset master password" only shown when a master password is set; removed unnecessary `resetSyncWorker` calls on sign-in/disconnect
+- **Handwriting recognition (Windows)**: settings UI now shows a simple sidecar status indicator instead of a configurable service URL — self-hosting the recognition service is no longer a supported scenario
+- **Handwriting recognition (other platforms)**: settings now show a hint that the feature is Windows-only, replacing the fallback-URL field
+- Removed the legacy standalone Windows-service installer (`install-service.ps1`, `just package-backend`) — the recognition backend is only shipped as the bundled Tauri sidecar now
 
 ## [0.5.29-alpha.4] - 2026-04-20
 

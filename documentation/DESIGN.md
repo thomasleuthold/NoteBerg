@@ -198,7 +198,7 @@ Named presets store pen type, color, and width. Saved per-note in `noteContent.p
 
 ## Handwriting Recognition
 
-**Windows only** (local sidecar); other platforms can configure an external URL.
+**Windows only**, via a bundled local sidecar. Not available on any other platform — hosting the recognition service yourself is not a supported scenario, so no URL configuration exists outside Windows.
 
 ### Sidecar Service
 
@@ -319,9 +319,33 @@ Optionally encrypts note JSON before upload to Nextcloud, using the same PBKDF2 
 - **Frontend:** Vite bundle served via `templates/index.php`
 - **CSP:** Allows `worker-src 'self' blob:` for the StorageWorker
 - **No native audio recording** — import only
-- **No local recognition** — external URL configurable
+- **No handwriting recognition** — Windows-sidecar-only feature; not shown in NC settings
 - **Storage:** `storage.webdav.js` replaces `storage.js` entirely via Vite alias
 - **Build:** `just build-nc` → Vite build → `occ integrity:sign-app` → tar.gz + archive signature
+
+---
+
+## Nextcloud App — Design Rationale
+
+The Nextcloud app shares the same `src/` frontend as the Tauri desktop/Android app (see Platform Variants above), but deliberately drops several subsystems rather than porting them:
+
+| Subsystem | Tauri | Nextcloud | Why dropped |
+|---|---|---|---|
+| Authentication | App password stored in OS keychain | None — Nextcloud session cookie | User is already logged in to Nextcloud; `@nextcloud/axios` sends session headers automatically |
+| Local encryption / master password | Active | Always off | Nextcloud already controls server-side access; no separate local secret to protect |
+| Sync engine (`nextcloudSync.js`, `autoSync.js`) | Active — etag tracking, conflict resolution, three-way merge | None — `storage.webdav.js` reads/writes WebDAV directly | There is nothing to reconcile: the NC app **is** the server, so every read/write is already the source of truth |
+| Settings panel | Full (theme, language, sync, encryption, recognition, purge) | Hidden entirely | Theme/language come from Nextcloud itself; the dropped subsystems above have no settings to expose |
+| Handwriting recognition | Sidecar-based (Windows only) | Not available — hint text only | Recognition depends on the Windows `InkAnalyzer` sidecar; there is no supported way to self-host the service, so non-Windows platforms show no setting at all |
+| Tombstones | Written to IndexedDB + WebDAV | Written to WebDAV only | Still required so Tauri fat clients sharing the same `/NoteBerg/` folder see deletions from the NC app |
+
+`storage.webdav.js` keeps the exact same exported function signatures as the IndexedDB `storage.js` (`getAllNotes`, `getNote`, `saveNote`, `deleteNote`, `saveMedia`, etc.) so every caller above the storage layer is platform-agnostic; only the module swapped via the Vite alias differs.
+
+### Open questions (unresolved as of this writing)
+
+- **Handwriting recognition** — the Windows `InkAnalyzer` sidecar doesn't translate to a web app; recognition is simply unavailable on the NC app (no self-hosting option is offered).
+- **Offline support** — out of scope; the NC app requires a live connection to the Nextcloud server.
+- **Card size setting** — fixed default; no per-user setting yet.
+- **Nextcloud App Store publishing** — the app currently ships as an `-rc` (release candidate) version intentionally, to keep it out of the main store listing until more testing has happened.
 
 ---
 
