@@ -113,20 +113,41 @@ describe("MediaManager", () => {
     expect(hit).toBeNull();
   });
 
-  it("loads image on demand", async () => {
+  it("loads image on demand and caches it once the Image element fires onload", async () => {
     const { getFile } = await import("../../modules/storage.js");
-    getFile.mockResolvedValue(new Blob(["fake-image"], { type: "image/png" }));
+    const blob = new Blob(["fake-image"], { type: "image/png" });
+    getFile.mockResolvedValue(blob);
 
-    // Should trigger load
+    // Stub Image so `img.src = ...` synchronously fires onload, like jsdom's
+    // real Image (which never actually decodes anything) would never do on
+    // its own — this lets us verify the cache/onImageLoaded effects, not just
+    // that getFile was called.
+    class FakeImage {
+      set src(_value) {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    vi.stubGlobal("Image", FakeImage);
+    const onImageLoaded = vi.fn();
+    mediaManager.setOnImageLoaded(onImageLoaded);
+
+    // First call: not cached yet, triggers a load, returns null.
     const img = mediaManager.getImage("f1");
-    expect(img).toBeNull(); // First call returns null but starts load
+    expect(img).toBeNull();
     expect(getFile).toHaveBeenCalledWith("f1");
 
-    // Wait for promise resolution (simulated)
+    // Wait for getFile's promise and the stubbed Image's onload to resolve.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // We can't easily test the onload callback of Image in jsdom without more mocking,
-    // but we verified the storage call was made.
+    expect(onImageLoaded).toHaveBeenCalled();
+    // Second call: now cached, returns the loaded image without calling getFile again.
+    getFile.mockClear();
+    const cachedImg = mediaManager.getImage("f1");
+    expect(cachedImg).toBeInstanceOf(FakeImage);
+    expect(getFile).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
   });
 
   it("handles image load errors gracefully", async () => {

@@ -3,9 +3,11 @@ import {
   CropImageCommand,
   DeleteMediaCommand,
   DrawStrokeCommand,
+  EraseStrokePartsCommand,
   EraseStrokesCommand,
   InsertMediaCommand,
   MarkTaskCommand,
+  PasteStrokesCommand,
   ReorderMediaCommand,
   ShiftContentCommand,
   TextChangeCommand,
@@ -66,6 +68,9 @@ describe("NoteCanvas Commands", () => {
         forceRedraw: vi.fn(),
         drawDirectStroke: vi.fn(),
         setSelectedStrokes: vi.fn(),
+      },
+      selectionOverlay: {
+        hide: vi.fn(),
       },
       spatialIndex: {
         insert: vi.fn(),
@@ -395,6 +400,174 @@ describe("NoteCanvas Commands", () => {
       // relying on the text editor content update if it was a text insertion.
       // But if it's "Insert Space", it might need to shift text blocks?
       // The current ShiftContentCommand implementation in context only handles strokes and media.
+    });
+  });
+
+  describe("PasteStrokesCommand", () => {
+    it("redo restores deleted pasted strokes and reinserts them into the spatial index", () => {
+      const pasted = { id: "p1", x: [5], y: [5], _deleted: true };
+      mockStrokes.push(pasted);
+      const index = mockStrokes.length - 1;
+      noteCanvas.noteData.deletedStrokes.push("p1");
+
+      const cmd = new PasteStrokesCommand([pasted], [index]);
+      cmd.redo(noteCanvas);
+
+      expect(pasted._deleted).toBe(false);
+      expect(noteCanvas.noteData.deletedStrokes).not.toContain("p1");
+      expect(noteCanvas.spatialIndex.insert).toHaveBeenCalledWith(pasted, index);
+      expect(noteCanvas.strokeManager.markDirty).toHaveBeenCalled();
+      expect(noteCanvas.strokeManager.forceSave).toHaveBeenCalled();
+      expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalled();
+    });
+
+    it("redo is a no-op for a stroke that is not currently deleted", () => {
+      const pasted = { id: "p1", x: [5], y: [5], _deleted: false };
+      mockStrokes.push(pasted);
+      const index = mockStrokes.length - 1;
+
+      const cmd = new PasteStrokesCommand([pasted], [index]);
+      cmd.redo(noteCanvas);
+
+      expect(noteCanvas.spatialIndex.insert).not.toHaveBeenCalled();
+    });
+
+    it("undo marks pasted strokes deleted, tracks their id, and clears selection", () => {
+      const pasted = { id: "p1", x: [5], y: [5], _deleted: false };
+      mockStrokes.push(pasted);
+      const index = mockStrokes.length - 1;
+
+      const cmd = new PasteStrokesCommand([pasted], [index]);
+      cmd.undo(noteCanvas);
+
+      expect(pasted._deleted).toBe(true);
+      expect(noteCanvas.noteData.deletedStrokes).toContain("p1");
+      expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenCalledWith(new Set(), null);
+      expect(noteCanvas.selectionOverlay.hide).toHaveBeenCalled();
+      expect(noteCanvas.strokeManager.forceSave).toHaveBeenCalled();
+    });
+
+    it("undo does not duplicate the id in deletedStrokes when called twice in a row", () => {
+      const pasted = { id: "p1", x: [5], y: [5], _deleted: false };
+      mockStrokes.push(pasted);
+      const index = mockStrokes.length - 1;
+
+      const cmd = new PasteStrokesCommand([pasted], [index]);
+      cmd.undo(noteCanvas);
+      cmd.undo(noteCanvas); // stroke is already _deleted, so the second call should be a no-op
+
+      expect(noteCanvas.noteData.deletedStrokes.filter((id) => id === "p1")).toHaveLength(1);
+    });
+
+    it("handles a missing selectionOverlay gracefully", () => {
+      noteCanvas.selectionOverlay = null;
+      const pasted = { id: "p1", x: [5], y: [5], _deleted: false };
+      mockStrokes.push(pasted);
+      const cmd = new PasteStrokesCommand([pasted], [mockStrokes.length - 1]);
+      expect(() => cmd.undo(noteCanvas)).not.toThrow();
+    });
+  });
+
+  describe("EraseStrokePartsCommand", () => {
+    function makeOperation({ originalIndex, originalId, subStrokeIndices }) {
+      return {
+        originalIndex,
+        originalId,
+        subStrokes: subStrokeIndices.map((index) => ({
+          stroke: mockStrokes[index],
+          index,
+        })),
+      };
+    }
+
+    it("redo deletes the original stroke and restores its sub-strokes", () => {
+      // s1 (index 0) gets erased into two sub-strokes appended at indices 2 and 3.
+      const sub1 = { id: "sub1", x: [1], y: [1], _deleted: true };
+      const sub2 = { id: "sub2", x: [2], y: [2], _deleted: true };
+      mockStrokes.push(sub1, sub2);
+      noteCanvas.noteData.deletedStrokes.push("sub1", "sub2");
+
+      const operation = makeOperation({
+        originalIndex: 0,
+        originalId: "s1",
+        subStrokeIndices: [2, 3],
+      });
+      const cmd = new EraseStrokePartsCommand([operation]);
+
+      cmd.redo(noteCanvas);
+
+      expect(mockStrokes[0]._deleted).toBe(true);
+      expect(noteCanvas.noteData.deletedStrokes).toContain("s1");
+      expect(sub1._deleted).toBe(false);
+      expect(sub2._deleted).toBe(false);
+      expect(noteCanvas.noteData.deletedStrokes).not.toContain("sub1");
+      expect(noteCanvas.noteData.deletedStrokes).not.toContain("sub2");
+      expect(noteCanvas.strokeManager.markDirty).toHaveBeenCalled();
+      expect(noteCanvas.strokeManager.forceSave).toHaveBeenCalled();
+      expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalled();
+    });
+
+    it("undo restores the original stroke and deletes the sub-strokes", () => {
+      const sub1 = { id: "sub1", x: [1], y: [1], _deleted: false };
+      mockStrokes.push(sub1);
+      mockStrokes[0]._deleted = true;
+      noteCanvas.noteData.deletedStrokes.push("s1");
+
+      const operation = makeOperation({
+        originalIndex: 0,
+        originalId: "s1",
+        subStrokeIndices: [2],
+      });
+      const cmd = new EraseStrokePartsCommand([operation]);
+
+      cmd.undo(noteCanvas);
+
+      expect(mockStrokes[0]._deleted).toBe(false);
+      expect(noteCanvas.noteData.deletedStrokes).not.toContain("s1");
+      expect(sub1._deleted).toBe(true);
+      expect(noteCanvas.noteData.deletedStrokes).toContain("sub1");
+    });
+
+    it("groups multiple operations from a single gesture into one undo/redo step", () => {
+      const sub1 = { id: "sub1", x: [1], y: [1], _deleted: true };
+      const sub2 = { id: "sub2", x: [2], y: [2], _deleted: true };
+      mockStrokes.push(sub1, sub2);
+      noteCanvas.noteData.deletedStrokes.push("sub1", "sub2");
+
+      const operations = [
+        makeOperation({ originalIndex: 0, originalId: "s1", subStrokeIndices: [2] }),
+        makeOperation({ originalIndex: 1, originalId: "s2", subStrokeIndices: [3] }),
+      ];
+      const cmd = new EraseStrokePartsCommand(operations);
+
+      cmd.redo(noteCanvas);
+
+      expect(mockStrokes[0]._deleted).toBe(true);
+      expect(mockStrokes[1]._deleted).toBe(true);
+      expect(sub1._deleted).toBe(false);
+      expect(sub2._deleted).toBe(false);
+      // A single redo() call should only trigger one save/redraw cycle, not one per operation.
+      expect(noteCanvas.strokeManager.forceSave).toHaveBeenCalledTimes(1);
+      expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalledTimes(1);
+    });
+
+    it("redo is a no-op when the original is already deleted", () => {
+      mockStrokes[0]._deleted = true;
+      const operation = makeOperation({ originalIndex: 0, originalId: "s1", subStrokeIndices: [] });
+      const cmd = new EraseStrokePartsCommand([operation]);
+
+      cmd.redo(noteCanvas);
+
+      expect(noteCanvas.noteData.deletedStrokes).not.toContain("s1"); // not pushed again
+    });
+
+    it("undo is a no-op when the original is not currently deleted", () => {
+      const operation = makeOperation({ originalIndex: 0, originalId: "s1", subStrokeIndices: [] });
+      const cmd = new EraseStrokePartsCommand([operation]);
+
+      cmd.undo(noteCanvas);
+
+      expect(mockStrokes[0]._deleted).toBe(false);
     });
   });
 });

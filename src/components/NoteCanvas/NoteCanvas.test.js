@@ -452,7 +452,9 @@ describe("NoteCanvas Class", () => {
 
       noteCanvas._onStrokeEnd();
       expect(noteCanvas.strokeManager.endStroke).toHaveBeenCalled();
-      expect(noteCanvas.historyManager.push).toHaveBeenCalled();
+      expect(noteCanvas.historyManager.push).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).DrawStrokeCommand),
+      );
     });
   });
 
@@ -500,7 +502,10 @@ describe("NoteCanvas Class", () => {
 
       noteCanvas._onStrokeEnd();
 
-      expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenCalled();
+      expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenCalledWith(
+        new Set([0]),
+        expect.objectContaining({ minX: expect.any(Number) }),
+      );
     });
   });
 
@@ -572,7 +577,94 @@ describe("NoteCanvas Class", () => {
       await noteCanvas.insertImage("picker");
 
       expect(noteCanvas.mediaManager.addItem).toHaveBeenCalled();
-      expect(noteCanvas.historyManager.push).toHaveBeenCalled();
+      expect(noteCanvas.historyManager.push).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).InsertMediaCommand),
+      );
+    });
+  });
+
+  describe("Hit-detection geometry", () => {
+    // These are pure functions on the instance (no note load needed). The
+    // Eraser/Lasso interaction tests above stub them out to test wiring —
+    // these test the actual math those stubs bypass.
+
+    describe("_strokeIntersectsCircle", () => {
+      it("returns true when a stroke point lies inside the circle", () => {
+        const stroke = { x: [0, 50, 100], y: [0, 50, 100] };
+        expect(noteCanvas._strokeIntersectsCircle(stroke, 50, 50, 10)).toBe(true);
+      });
+
+      it("returns false when no stroke point is within the radius", () => {
+        const stroke = { x: [0, 100], y: [0, 100] };
+        expect(noteCanvas._strokeIntersectsCircle(stroke, 50, 50, 10)).toBe(false);
+      });
+
+      it("treats a point exactly on the circle boundary as intersecting", () => {
+        const stroke = { x: [10], y: [0] }; // distance from (0,0) is exactly 10
+        expect(noteCanvas._strokeIntersectsCircle(stroke, 0, 0, 10)).toBe(true);
+      });
+
+      it("returns false for an empty stroke", () => {
+        const stroke = { x: [], y: [] };
+        expect(noteCanvas._strokeIntersectsCircle(stroke, 0, 0, 100)).toBe(false);
+      });
+    });
+
+    describe("_isPointInPolygon", () => {
+      const square = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      it("returns true for a point inside the polygon", () => {
+        expect(noteCanvas._isPointInPolygon({ x: 50, y: 50 }, square)).toBe(true);
+      });
+
+      it("returns false for a point outside the polygon", () => {
+        expect(noteCanvas._isPointInPolygon({ x: 150, y: 50 }, square)).toBe(false);
+      });
+
+      it("returns false for a point inside the carved-out notch of a concave polygon", () => {
+        // C-shaped polygon: a square with a rectangular bite taken out of the right side.
+        const concave = [
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+          { x: 100, y: 40 },
+          { x: 50, y: 40 },
+          { x: 50, y: 60 },
+          { x: 100, y: 60 },
+          { x: 100, y: 100 },
+          { x: 0, y: 100 },
+        ];
+        expect(noteCanvas._isPointInPolygon({ x: 90, y: 50 }, concave)).toBe(false); // in the bite
+        expect(noteCanvas._isPointInPolygon({ x: 30, y: 50 }, concave)).toBe(true); // solid area
+      });
+    });
+
+    describe("_isStrokeFullyInPolygon", () => {
+      const square = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      it("returns true when every point of the stroke is inside the polygon", () => {
+        const stroke = { x: [10, 50, 90], y: [10, 50, 90] };
+        expect(noteCanvas._isStrokeFullyInPolygon(stroke, square)).toBe(true);
+      });
+
+      it("returns false when any single point falls outside the polygon", () => {
+        const stroke = { x: [10, 50, 150], y: [10, 50, 50] }; // last point is outside
+        expect(noteCanvas._isStrokeFullyInPolygon(stroke, square)).toBe(false);
+      });
+
+      it("returns true for a stroke with no points (vacuously true)", () => {
+        const stroke = { x: [], y: [] };
+        expect(noteCanvas._isStrokeFullyInPolygon(stroke, square)).toBe(true);
+      });
     });
   });
 

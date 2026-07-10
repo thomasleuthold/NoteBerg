@@ -62,6 +62,7 @@ format:
 
 test:
     npm run test
+    npm run test:nextcloud
 
 fct:
     just format

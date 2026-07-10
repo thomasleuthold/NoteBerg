@@ -5,12 +5,48 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  checkFileExists,
   clearAllData,
   clearNoteMoveFlag,
   copyNote,
+  createNote,
+  createNotebook,
+  deleteFile,
+  deleteNote,
+  deleteNotebook,
+  fixCorruptedNotes,
+  generateId,
+  getAllNotebooks,
+  getAllNotebooksForSync,
+  getAllNoteMetadataForSync,
+  getAllNotes,
+  getAllNotesForSync,
+  getDeletedNotebooks,
+  getDeletedNotes,
+  getFile,
+  getNote,
+  getNoteIndex,
+  getQuickNotes,
+  getRawNote,
+  getSetting,
+  getStorageStats,
+  getStorageVersion,
+  initStorage,
+  isLocalEncryptionEnabled,
+  migrateNotesToEncrypted,
   moveNote,
+  permanentlyDeleteNote,
+  permanentlyDeleteNotebook,
+  permanentlyDeleteNotesInNotebook,
   purgeLocalData,
   purgeNote,
+  purgeNotebook,
+  restoreNote,
+  restoreNotebook,
+  saveFile,
+  saveNote,
+  setSetting,
+  setStorageVersion,
   updateNote,
   updateNotebook,
   updateNoteEtag,
@@ -62,7 +98,7 @@ vi.mock("idb", () => ({
           [...(stores[storeName]?.values() ?? [])].filter((r) => r.notebookId === value),
         ),
       ),
-      count: vi.fn(() => Promise.resolve(0)),
+      count: vi.fn((storeName, id) => Promise.resolve(stores[storeName]?.has(id) ? 1 : 0)),
       transaction: vi.fn((storeNames) => {
         const storeMap = {};
         const names = Array.isArray(storeNames) ? storeNames : [storeNames];
@@ -85,6 +121,18 @@ vi.mock("./masterPassword.js", () => ({
 }));
 vi.mock("./encryption.js", () => ({
   encryptObject: vi.fn(async (obj) => ({ data: `enc:${JSON.stringify(obj)}`, iv: "iv" })),
+  decryptObject: vi.fn(async (blob) => {
+    if (blob && typeof blob === "object" && typeof blob.data === "string") {
+      const prefix = "enc:";
+      const raw = blob.data.startsWith(prefix) ? blob.data.slice(prefix.length) : blob.data;
+      try {
+        return JSON.parse(raw);
+      } catch (_e) {
+        return raw;
+      }
+    }
+    return blob;
+  }),
 }));
 
 // Minimal mocks for helpers used by copyNote
@@ -634,5 +682,759 @@ describe("clearAllData", () => {
 
     expect(stores.files.size).toBe(0);
     expect(stores.noteContent.size).toBe(0);
+  });
+});
+
+// ── generateId ────────────────────────────────────────────────────────────────
+
+describe("generateId", () => {
+  it("produces a valid-looking UUID via crypto.randomUUID", () => {
+    const id = generateId();
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
+  it("falls back to crypto.getRandomValues when randomUUID is unavailable", () => {
+    const original = crypto.randomUUID;
+    // Remove randomUUID to force the getRandomValues fallback path
+    // eslint-disable-next-line no-param-reassign
+    crypto.randomUUID = undefined;
+    try {
+      const id = generateId();
+      expect(typeof id).toBe("string");
+      expect(id.length).toBeGreaterThan(10);
+      expect(id).toContain("-");
+    } finally {
+      crypto.randomUUID = original;
+    }
+  });
+
+  it("falls back to Math.random when crypto is entirely unavailable", () => {
+    // `crypto` is a getter-only global in this environment; vi.stubGlobal
+    // replaces it safely and vi.unstubAllGlobals() restores it afterwards.
+    vi.stubGlobal("crypto", undefined);
+    try {
+      const id = generateId();
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("falls through to getRandomValues when randomUUID throws", () => {
+    const original = crypto.randomUUID;
+    crypto.randomUUID = () => {
+      throw new Error("not supported in this context");
+    };
+    try {
+      const id = generateId();
+      expect(typeof id).toBe("string");
+      expect(id.length).toBeGreaterThan(10);
+    } finally {
+      crypto.randomUUID = original;
+    }
+  });
+});
+
+// ── Notebook CRUD ────────────────────────────────────────────────────────────
+
+describe("createNotebook", () => {
+  it("creates a notebook with defaults and dispatches notebook-created", async () => {
+    const events = [];
+    window.addEventListener("notebook-created", (e) => events.push(e));
+
+    const nb = await createNotebook({ title: "My Notebook" });
+
+    expect(nb.title).toBe("My Notebook");
+    expect(nb.description).toBe("");
+    expect(nb.color).toBe("#3b82f6");
+    expect(nb.version).toBe(1);
+    expect(nb.synced).toBe(false);
+    expect(nb.deleted).toBe(false);
+    expect(stores.notebooks.has(nb.id)).toBe(true);
+    expect(events).toHaveLength(1);
+    expect(events[0].detail.notebookId).toBe(nb.id);
+    window.removeEventListener("notebook-created", events[0]);
+  });
+
+  it("honors provided description and color", async () => {
+    const nb = await createNotebook({ title: "X", description: "desc", color: "#ff0000" });
+    expect(nb.description).toBe("desc");
+    expect(nb.color).toBe("#ff0000");
+  });
+});
+
+describe("getAllNotebooks", () => {
+  it("filters out deleted notebooks and sorts by modified desc", async () => {
+    seedNotebook(makeNotebook({ id: "nb-1", modified: 100 }));
+    seedNotebook(makeNotebook({ id: "nb-2", modified: 300 }));
+    seedNotebook(makeNotebook({ id: "nb-3", modified: 200, deleted: true }));
+
+    const all = await getAllNotebooks();
+
+    expect(all.map((n) => n.id)).toEqual(["nb-2", "nb-1"]);
+  });
+});
+
+describe("getAllNotebooksForSync", () => {
+  it("includes deleted notebooks, sorted by modified desc", async () => {
+    seedNotebook(makeNotebook({ id: "nb-1", modified: 100 }));
+    seedNotebook(makeNotebook({ id: "nb-2", modified: 300, deleted: true }));
+
+    const all = await getAllNotebooksForSync();
+
+    expect(all.map((n) => n.id)).toEqual(["nb-2", "nb-1"]);
+  });
+});
+
+describe("deleteNotebook", () => {
+  it("soft-deletes the notebook and cascades to its notes", async () => {
+    seedNotebook(makeNotebook({ id: "nb-a", version: 1 }));
+    seedNote(makeNote({ id: "note-1", notebookId: "nb-a" }));
+    seedNote(makeNote({ id: "note-2", notebookId: "nb-a" }));
+
+    await deleteNotebook("nb-a");
+
+    const nb = stores.notebooks.get("nb-a");
+    expect(nb.deleted).toBe(true);
+    expect(nb.version).toBe(2);
+    expect(nb.synced).toBe(false);
+
+    expect(stores.notes.get("note-1").deleted).toBe(true);
+    expect(stores.notes.get("note-2").deleted).toBe(true);
+  });
+
+  it("does not re-delete notes that are already deleted", async () => {
+    seedNotebook(makeNotebook({ id: "nb-a" }));
+    seedNote(makeNote({ id: "note-1", notebookId: "nb-a", deleted: true, version: 5 }));
+
+    await deleteNotebook("nb-a");
+
+    // Version should be untouched since the note was already deleted (loop skips it)
+    expect(stores.notes.get("note-1").version).toBe(5);
+  });
+
+  it("throws when notebook does not exist", async () => {
+    await expect(deleteNotebook("ghost")).rejects.toThrow("Notebook not found");
+  });
+});
+
+describe("purgeNotebook", () => {
+  it("purges all notes in the notebook and stubs the notebook", async () => {
+    seedNotebook(makeNotebook({ id: "nb-a", title: "Notebook A", lastSyncedEtag: "etag-1" }));
+    seedNote(makeNote({ id: "note-1", notebookId: "nb-a" }));
+
+    await purgeNotebook("nb-a");
+
+    // Note should be purged (stubbed)
+    expect(stores.notes.get("note-1").purged).toBe(true);
+    expect(stores.noteContent.has("note-1")).toBe(false);
+
+    // Notebook should be stubbed
+    const nb = stores.notebooks.get("nb-a");
+    expect(nb.purged).toBe(true);
+    expect(nb.deleted).toBe(true);
+    expect(nb.synced).toBe(false);
+    expect(nb.title).toBe("Notebook A");
+    expect(nb.lastSyncedEtag).toBe("etag-1");
+  });
+
+  it("is a no-op when notebook does not exist", async () => {
+    await expect(purgeNotebook("ghost")).resolves.toBeUndefined();
+  });
+});
+
+describe("permanentlyDeleteNotebook", () => {
+  it("removes the notebook record entirely", async () => {
+    seedNotebook(makeNotebook({ id: "nb-a" }));
+
+    await permanentlyDeleteNotebook("nb-a");
+
+    expect(stores.notebooks.has("nb-a")).toBe(false);
+  });
+});
+
+// ── createNote ────────────────────────────────────────────────────────────────
+
+describe("createNote", () => {
+  it("creates a note with expected defaults and dispatches note-created", async () => {
+    const events = [];
+    window.addEventListener("note-created", (e) => events.push(e));
+
+    const note = await createNote({ title: "New note", notebookId: "nb-a" });
+
+    expect(note.title).toBe("New note");
+    expect(note.notebookId).toBe("nb-a");
+    expect(note.version).toBe(1);
+    expect(note.synced).toBe(false);
+    expect(note.deleted).toBe(false);
+    expect(stores.notes.has(note.id)).toBe(true);
+    expect(stores.noteContent.has(note.id)).toBe(true);
+    expect(events).toHaveLength(1);
+    expect(events[0].detail.noteId).toBe(note.id);
+    window.removeEventListener("note-created", events[0]);
+  });
+
+  it("defaults notebookId to null for quick notes", async () => {
+    const note = await createNote({ title: "Quick note" });
+    expect(note.notebookId).toBeNull();
+    expect(stores.notes.get(note.id).notebookId).toBeNull();
+  });
+});
+
+// ── Note read/list operations ───────────────────────────────────────────────
+
+describe("getAllNotes", () => {
+  it("filters deleted notes and sorts by modified desc", async () => {
+    seedNote(makeNote({ id: "note-1", modified: 100 }));
+    seedNote(makeNote({ id: "note-2", modified: 300 }));
+    seedNote(makeNote({ id: "note-3", modified: 200, deleted: true }));
+
+    const all = await getAllNotes();
+
+    expect(all.map((n) => n.id)).toEqual(["note-2", "note-1"]);
+  });
+});
+
+describe("getAllNotesForSync / getAllNoteMetadataForSync", () => {
+  it("includes deleted and non-deleted notes without filtering", async () => {
+    seedNote(makeNote({ id: "note-1" }));
+    seedNote(makeNote({ id: "note-2", deleted: true }));
+
+    const forSync = await getAllNotesForSync();
+    const metaForSync = await getAllNoteMetadataForSync();
+
+    expect(forSync.map((n) => n.id).sort()).toEqual(["note-1", "note-2"]);
+    expect(metaForSync.map((n) => n.id).sort()).toEqual(["note-1", "note-2"]);
+  });
+});
+
+describe("getQuickNotes", () => {
+  it("returns only non-deleted notes with null notebookId, sorted by modified desc", async () => {
+    seedNote(makeNote({ id: "note-1", notebookId: null, modified: 100 }));
+    seedNote(makeNote({ id: "note-2", notebookId: null, modified: 300 }));
+    seedNote(makeNote({ id: "note-3", notebookId: "nb-a", modified: 200 }));
+    seedNote(makeNote({ id: "note-4", notebookId: null, modified: 400, deleted: true }));
+
+    const quick = await getQuickNotes();
+
+    expect(quick.map((n) => n.id)).toEqual(["note-2", "note-1"]);
+  });
+});
+
+describe("getNoteIndex", () => {
+  it("returns the index record only", async () => {
+    seedNote(makeNote({ id: "note-1", title: "Hi" }));
+
+    const idx = await getNoteIndex("note-1");
+
+    expect(idx.id).toBe("note-1");
+    expect(idx.title).toBe("Hi");
+    // Index record should not carry content-only fields like `content`
+    expect(idx.content).toBeUndefined();
+  });
+});
+
+describe("getNote / getRawNote", () => {
+  it("merges index and content into a full note", async () => {
+    seedNote(makeNote({ id: "note-1", content: "hello world", title: "T" }));
+
+    const note = await getNote("note-1");
+
+    expect(note.id).toBe("note-1");
+    expect(note.title).toBe("T");
+    expect(note.content).toBe("hello world");
+    expect(note.tasks).toEqual([]);
+  });
+
+  it("returns null when the note does not exist", async () => {
+    expect(await getNote("ghost")).toBeNull();
+    expect(await getRawNote("ghost")).toBeNull();
+  });
+
+  it("getRawNote returns content without decrypting, even if flagged encrypted", async () => {
+    seedNote(makeNote({ id: "note-1", content: "plaintext-ish" }));
+    stores.notes.set("note-1", { ...stores.notes.get("note-1"), encrypted: true });
+
+    const raw = await getRawNote("note-1");
+
+    // getRawNote must not attempt decryption — content passes through untouched
+    expect(raw.content).toBe("plaintext-ish");
+    expect(raw.tasks).toEqual([]);
+  });
+
+  it("decrypts an encrypted note when unlocked", async () => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+    seedNote(makeNote({ id: "note-1", content: "secret" }));
+    // Re-save via updateNote to go through the real encryption path
+    await updateNote("note-1", { content: "secret payload" });
+
+    const note = await getNote("note-1");
+
+    expect(note.content).toBe("secret payload");
+    expect(note.encrypted).toBeUndefined();
+  });
+
+  it("throws when reading an encrypted note while app is locked", async () => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+    seedNote(makeNote({ id: "note-1", content: "secret" }));
+    await updateNote("note-1", { content: "secret payload" });
+
+    _appUnlocked = false;
+    await expect(getNote("note-1")).rejects.toThrow(/locked/);
+  });
+
+  it("throws when reading an encrypted note but local encryption is disabled", async () => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+    seedNote(makeNote({ id: "note-1", content: "secret" }));
+    await updateNote("note-1", { content: "secret payload" });
+
+    // Now disable local encryption setting entirely (e.g. user turned it off elsewhere)
+    stores.settings.delete("encrypt_local_data");
+
+    await expect(getNote("note-1")).rejects.toThrow(/encryption is disabled/);
+  });
+});
+
+describe("deleteNote", () => {
+  it("soft-deletes and bumps version", async () => {
+    seedNote(makeNote({ id: "note-1", version: 2 }));
+
+    const result = await deleteNote("note-1");
+
+    expect(result.deleted).toBe(true);
+    expect(stores.notes.get("note-1").deleted).toBe(true);
+    expect(stores.notes.get("note-1").version).toBe(3);
+    expect(stores.notes.get("note-1").synced).toBe(false);
+  });
+
+  it("throws when note does not exist", async () => {
+    await expect(deleteNote("ghost")).rejects.toThrow("Note not found");
+  });
+});
+
+describe("permanentlyDeleteNote", () => {
+  it("removes both index and content records", async () => {
+    seedNote(makeNote({ id: "note-1" }));
+
+    await permanentlyDeleteNote("note-1");
+
+    expect(stores.notes.has("note-1")).toBe(false);
+    expect(stores.noteContent.has("note-1")).toBe(false);
+  });
+});
+
+describe("permanentlyDeleteNotesInNotebook", () => {
+  it("removes all notes (index + content) belonging to the notebook", async () => {
+    seedNote(makeNote({ id: "note-1", notebookId: "nb-a" }));
+    seedNote(makeNote({ id: "note-2", notebookId: "nb-a" }));
+    seedNote(makeNote({ id: "note-3", notebookId: "nb-b" }));
+
+    await permanentlyDeleteNotesInNotebook("nb-a");
+
+    expect(stores.notes.has("note-1")).toBe(false);
+    expect(stores.notes.has("note-2")).toBe(false);
+    expect(stores.noteContent.has("note-1")).toBe(false);
+    expect(stores.noteContent.has("note-2")).toBe(false);
+    // Untouched
+    expect(stores.notes.has("note-3")).toBe(true);
+  });
+});
+
+// ── Recycle bin ──────────────────────────────────────────────────────────────
+
+describe("getDeletedNotebooks / getDeletedNotes", () => {
+  it("returns only deleted-and-not-purged records, sorted by modified desc", async () => {
+    seedNotebook(makeNotebook({ id: "nb-1", deleted: true, modified: 100 }));
+    seedNotebook(makeNotebook({ id: "nb-2", deleted: true, modified: 300 }));
+    seedNotebook(makeNotebook({ id: "nb-3", deleted: true, purged: true, modified: 200 }));
+    seedNotebook(makeNotebook({ id: "nb-4", deleted: false, modified: 400 }));
+
+    const deletedNotebooks = await getDeletedNotebooks();
+    expect(deletedNotebooks.map((n) => n.id)).toEqual(["nb-2", "nb-1"]);
+
+    seedNote(makeNote({ id: "note-1", deleted: true, modified: 100 }));
+    seedNote(makeNote({ id: "note-2", deleted: true, modified: 300 }));
+    seedNote(makeNote({ id: "note-3", deleted: true, purged: true, modified: 200 }));
+    seedNote(makeNote({ id: "note-4", deleted: false, modified: 400 }));
+
+    const deletedNotes = await getDeletedNotes();
+    expect(deletedNotes.map((n) => n.id)).toEqual(["note-2", "note-1"]);
+  });
+});
+
+describe("restoreNotebook", () => {
+  it("clears deleted and bumps version", async () => {
+    seedNotebook(makeNotebook({ id: "nb-1", deleted: true, version: 1 }));
+
+    const restored = await restoreNotebook("nb-1");
+
+    expect(restored.deleted).toBe(false);
+    expect(restored.version).toBe(2);
+    expect(restored.synced).toBe(false);
+  });
+
+  it("throws when notebook does not exist", async () => {
+    await expect(restoreNotebook("ghost")).rejects.toThrow("Notebook not found");
+  });
+});
+
+describe("restoreNote", () => {
+  it("clears deleted and bumps version", async () => {
+    seedNote(makeNote({ id: "note-1", deleted: true, version: 1 }));
+
+    const restored = await restoreNote("note-1");
+
+    expect(restored.deleted).toBe(false);
+    expect(restored.version).toBe(2);
+    expect(restored.synced).toBe(false);
+  });
+
+  it("throws when note does not exist", async () => {
+    await expect(restoreNote("ghost")).rejects.toThrow("Note not found");
+  });
+});
+
+// ── File/blob operations ─────────────────────────────────────────────────────
+// Note: the top-of-file `vi.mock("./storage.js", ...)` factory replaces the
+// exported getFile/saveFile with fakes backed by `fileStore` (a plain Map) for
+// ALL consumers of this module, including this test file's own imports. So the
+// imported `saveFile`/`getFile` here exercise the mock, not the real
+// db-backed implementation — assert against `fileStore`, not `stores.files`.
+
+describe("saveFile / getFile", () => {
+  it("stores a Blob and returns a generated id", async () => {
+    const blob = new Blob(["hello"], { type: "text/plain" });
+
+    const id = await saveFile(blob);
+
+    expect(typeof id).toBe("string");
+    expect(fileStore.has(id)).toBe(true);
+  });
+
+  it("round-trips a Blob through getFile", async () => {
+    const blob = new Blob(["hello world"], { type: "text/plain" });
+    const id = await saveFile(blob);
+
+    const retrieved = await getFile(id);
+
+    expect(retrieved).toBe(blob);
+  });
+
+  it("getFile returns null for a missing id", async () => {
+    expect(await getFile("missing")).toBeNull();
+  });
+});
+
+describe("checkFileExists / deleteFile", () => {
+  it("returns true for a file that exists in the store", async () => {
+    seedFile("file-1");
+
+    expect(await checkFileExists("file-1")).toBe(true);
+  });
+
+  it("returns false for a file that does not exist", async () => {
+    expect(await checkFileExists("missing-file")).toBe(false);
+  });
+
+  it("deleteFile removes the record from the files store", async () => {
+    seedFile("file-1");
+
+    await deleteFile("file-1");
+
+    expect(stores.files.has("file-1")).toBe(false);
+  });
+});
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+
+describe("getSetting / setSetting", () => {
+  it("returns null for an unset key", async () => {
+    expect(await getSetting("nonexistent")).toBeNull();
+  });
+
+  it("round-trips a value", async () => {
+    await setSetting("myKey", { nested: true });
+    expect(await getSetting("myKey")).toEqual({ nested: true });
+  });
+});
+
+describe("getStorageVersion / setStorageVersion", () => {
+  it("defaults to 1 when unset", async () => {
+    expect(await getStorageVersion()).toBe(1);
+  });
+
+  it("round-trips a version number", async () => {
+    await setStorageVersion(3);
+    expect(await getStorageVersion()).toBe(3);
+  });
+});
+
+describe("isLocalEncryptionEnabled", () => {
+  it("defaults to false when unset", async () => {
+    expect(await isLocalEncryptionEnabled()).toBe(false);
+  });
+
+  it("reflects the stored setting", async () => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+    expect(await isLocalEncryptionEnabled()).toBe(true);
+  });
+});
+
+// ── saveNote (sync path) ─────────────────────────────────────────────────────
+
+describe("saveNote", () => {
+  it("splits and stores a full note, dispatching datachange", async () => {
+    const events = [];
+    window.addEventListener("datachange", (e) => events.push(e));
+
+    await saveNote(makeNote({ id: "note-sync", content: "from sync" }));
+
+    expect(stores.notes.has("note-sync")).toBe(true);
+    expect(stores.noteContent.get("note-sync").content).toBe("from sync");
+    expect(events).toHaveLength(1);
+    expect(events[0].detail.noteId).toBe("note-sync");
+    window.removeEventListener("datachange", events[0]);
+  });
+
+  it("skipEncryption stores content as-is without encrypting", async () => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+
+    await saveNote(makeNote({ id: "note-sync", content: "plain from sync" }), {
+      skipEncryption: true,
+    });
+
+    expect(stores.noteContent.get("note-sync").content).toBe("plain from sync");
+    // Encrypted flag on the index should remain whatever was on the note object
+    // (splitNote copies note.encrypted verbatim since skipEncryption never sets index.encrypted)
+    expect(stores.notes.get("note-sync").encrypted).toBeUndefined();
+  });
+});
+
+// ── getStorageStats ──────────────────────────────────────────────────────────
+
+describe("getStorageStats", () => {
+  it("counts notebooks, notes, and quick notes", async () => {
+    seedNotebook(makeNotebook({ id: "nb-1" }));
+    seedNote(makeNote({ id: "note-1", notebookId: "nb-1" }));
+    seedNote(makeNote({ id: "note-2", notebookId: null }));
+    seedNote(makeNote({ id: "note-3", notebookId: null, deleted: true }));
+
+    const stats = await getStorageStats();
+
+    expect(stats.notebookCount).toBe(1);
+    expect(stats.noteCount).toBe(2); // deleted note-3 excluded
+    expect(stats.quickNoteCount).toBe(1); // note-2 only (note-3 filtered out earlier)
+  });
+});
+
+// ── fixCorruptedNotes ─────────────────────────────────────────────────────────
+
+describe("fixCorruptedNotes", () => {
+  it("sets encrypted:true on the index when content looks encrypted but flag is missing", async () => {
+    seedNote(makeNote({ id: "note-1" }));
+    stores.noteContent.set("note-1", {
+      ...stores.noteContent.get("note-1"),
+      content: { data: "cipher", iv: "iv" },
+    });
+    stores.notes.set("note-1", { ...stores.notes.get("note-1"), encrypted: false });
+
+    const result = await fixCorruptedNotes();
+
+    expect(result.fixed).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(stores.notes.get("note-1").encrypted).toBe(true);
+  });
+
+  it("detects encrypted strokes blobs too", async () => {
+    seedNote(makeNote({ id: "note-1" }));
+    stores.noteContent.set("note-1", {
+      ...stores.noteContent.get("note-1"),
+      strokes: { data: "cipher", iv: "iv" },
+    });
+    stores.notes.set("note-1", { ...stores.notes.get("note-1"), encrypted: false });
+
+    const result = await fixCorruptedNotes();
+
+    expect(result.fixed).toBe(1);
+    expect(stores.notes.get("note-1").encrypted).toBe(true);
+  });
+
+  it("skips notes that are already correctly flagged or not encrypted", async () => {
+    seedNote(makeNote({ id: "note-1", content: "plain text" }));
+
+    const result = await fixCorruptedNotes();
+
+    expect(result.fixed).toBe(0);
+    expect(result.skipped).toBe(1);
+  });
+
+  it("skips content records with no matching index entry", async () => {
+    stores.noteContent.set("orphan-1", { id: "orphan-1", content: "orphaned" });
+
+    const result = await fixCorruptedNotes();
+
+    expect(result.fixed).toBe(0);
+    expect(result.skipped).toBe(0);
+  });
+});
+
+// ── migrateNotesToEncrypted ───────────────────────────────────────────────────
+
+describe("migrateNotesToEncrypted", () => {
+  it("returns zeroed result when local encryption is disabled", async () => {
+    const result = await migrateNotesToEncrypted();
+    expect(result).toEqual({ migrated: 0, skipped: 0, failed: 0 });
+  });
+
+  it("throws when encryption is enabled but the app is locked", async () => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+    _appUnlocked = false;
+
+    await expect(migrateNotesToEncrypted()).rejects.toThrow(/locked/);
+  });
+
+  it("migrates unencrypted notes and skips already-encrypted ones", async () => {
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+    seedNote(makeNote({ id: "note-1", content: "needs encryption" }));
+    seedNote(makeNote({ id: "note-2", content: "already done" }));
+    stores.notes.set("note-2", { ...stores.notes.get("note-2"), encrypted: true });
+
+    const result = await migrateNotesToEncrypted();
+
+    expect(result.migrated).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(stores.notes.get("note-1").encrypted).toBe(true);
+  });
+});
+
+// ── initStorage / _migrateThumbnailsToNoteContent ────────────────────────────
+
+describe("initStorage thumbnail migration", () => {
+  it("removes stale thumbnailFileId/thumbnailTimestamp and deletes the orphaned blob", async () => {
+    // Reset the "done" flag so migration runs again, and seed a note with legacy fields.
+    stores.settings.delete("thumbnailMigrationV5Done");
+    seedFile("thumb-1");
+    seedNote(makeNote({ id: "note-1" }));
+    stores.notes.set("note-1", {
+      ...stores.notes.get("note-1"),
+      thumbnailFileId: "thumb-1",
+      thumbnailTimestamp: 12345,
+    });
+
+    await initStorage();
+
+    const idx = stores.notes.get("note-1");
+    expect(idx.thumbnailFileId).toBeUndefined();
+    expect(idx.thumbnailTimestamp).toBeUndefined();
+    expect(stores.files.has("thumb-1")).toBe(false);
+    expect(await getSetting("thumbnailMigrationV5Done")).toBe(true);
+  });
+
+  it("is a no-op (does not re-scan) once the migration flag is already set", async () => {
+    stores.settings.set("thumbnailMigrationV5Done", {
+      key: "thumbnailMigrationV5Done",
+      value: true,
+    });
+    seedFile("thumb-1");
+    seedNote(makeNote({ id: "note-1" }));
+    stores.notes.set("note-1", {
+      ...stores.notes.get("note-1"),
+      thumbnailFileId: "thumb-1",
+    });
+
+    await initStorage();
+
+    // Migration flag already true — should skip the scan, leaving legacy fields intact
+    const idx = stores.notes.get("note-1");
+    expect(idx.thumbnailFileId).toBe("thumb-1");
+    expect(stores.files.has("thumb-1")).toBe(true);
+  });
+
+  it("does nothing when no notes have a thumbnailFileId", async () => {
+    stores.settings.delete("thumbnailMigrationV5Done");
+    seedNote(makeNote({ id: "note-1" }));
+
+    await expect(initStorage()).resolves.toBeDefined();
+    expect(await getSetting("thumbnailMigrationV5Done")).toBe(true);
+  });
+});
+
+// ── splitNote/mergeNote via createNote — derived flags ───────────────────────
+
+describe("splitNote derived flags (via createNote + updateNote)", () => {
+  it("sets hasStrokes/hasContent/hasRecognition based on note content", async () => {
+    const note = await createNote({ title: "T" });
+    await updateNote(note.id, {
+      strokes: [{ id: "s1", x: [1], y: [1], pressure: [1], width: 2 }],
+      content: "some text",
+      recognition: { fullText: "recognized text" },
+    });
+
+    const idx = stores.notes.get(note.id);
+    expect(idx.hasStrokes).toBe(true);
+    expect(idx.hasContent).toBe(true);
+    expect(idx.hasRecognition).toBe(true);
+  });
+
+  it("flags are false for empty strokes/content/recognition", async () => {
+    const note = await createNote({ title: "T" });
+    await updateNote(note.id, { strokes: [], content: "   ", recognition: null });
+
+    const idx = stores.notes.get(note.id);
+    expect(idx.hasStrokes).toBe(false);
+    expect(idx.hasContent).toBe(false); // whitespace-only content trims to empty
+    expect(idx.hasRecognition).toBe(false);
+  });
+
+  it("hasRecognition is false when fullText is an empty string", async () => {
+    const note = await createNote({ title: "T" });
+    await updateNote(note.id, { recognition: { fullText: "" } });
+
+    expect(stores.notes.get(note.id).hasRecognition).toBe(false);
+  });
+
+  it("stores a metadata-only media snapshot in the index (no fileId/positions)", async () => {
+    const note = await createNote({ title: "T" });
+    await updateNote(note.id, {
+      media: [
+        { id: "m1", name: "img.png", type: "image", size: 100, fileId: "file-x", x: 5, y: 5 },
+      ],
+    });
+
+    const idx = stores.notes.get(note.id);
+    expect(idx.media[0]).toEqual({
+      id: "m1",
+      name: "img.png",
+      type: "image",
+      size: 100,
+      deleted: undefined,
+    });
+    expect(idx.media[0].fileId).toBeUndefined();
+    expect(idx.media[0].x).toBeUndefined();
+
+    // Content store retains the full object
+    const content = stores.noteContent.get(note.id);
+    expect(content.media[0].fileId).toBe("file-x");
+    expect(content.media[0].x).toBe(5);
+  });
+
+  it("stores a metadata-only recordings snapshot in the index (no fileId)", async () => {
+    const note = await createNote({ title: "T" });
+    await updateNote(note.id, {
+      recordings: [{ id: "r1", name: "clip.wav", duration: 30, fileId: "file-r" }],
+    });
+
+    const idx = stores.notes.get(note.id);
+    expect(idx.recordings[0]).toEqual({
+      id: "r1",
+      name: "clip.wav",
+      duration: 30,
+      deleted: undefined,
+    });
+    expect(idx.recordings[0].fileId).toBeUndefined();
+
+    const content = stores.noteContent.get(note.id);
+    expect(content.recordings[0].fileId).toBe("file-r");
   });
 });

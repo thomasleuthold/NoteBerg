@@ -206,4 +206,58 @@ describe("CanvasRenderer", () => {
     expect(mockCtx.rotate).toHaveBeenCalled();
     expect(mockCtx.drawImage).toHaveBeenCalled();
   });
+
+  describe("_getCenteringOffset", () => {
+    it("returns 0 when content fills or exceeds the screen viewport", () => {
+      renderer.resize(1200, 600); // screenViewportWidth=1200, viewportWidth=1200 (maxContentWidth), zoom=1
+      expect(renderer._getCenteringOffset()).toBe(0);
+    });
+
+    it("centers narrower content within a wider screen viewport", () => {
+      renderer.resize(1200, 600);
+      renderer.zoomScale = 0.5; // scaled content width = 1200 * 0.5 = 600
+      // screenViewportWidth is fixed at resize-time (1200); centering offset = (1200-600)/2
+      expect(renderer._getCenteringOffset()).toBe(300);
+    });
+
+    it("returns 0 when zoomed content exactly fills the screen viewport", () => {
+      renderer.resize(1200, 600);
+      renderer.zoomScale = 1.0;
+      expect(renderer._getCenteringOffset()).toBe(0);
+    });
+  });
+
+  describe("_isItemInKeepZone", () => {
+    beforeEach(() => {
+      renderer.resize(800, 600); // viewportHeight = 600, so margin = 300
+      renderer.bufferTop = 1000;
+      renderer.bufferHeight = 1800; // 3x viewport by default
+      // keepTop = 1000 - 300 = 700; keepBottom = 1000 + 1800 + 300 = 3100
+    });
+
+    it("keeps an item that overlaps the buffer region", () => {
+      const item = { y: 1500, height: 100 };
+      expect(renderer._isItemInKeepZone(item)).toBe(true);
+    });
+
+    it("keeps an item within the margin above the buffer", () => {
+      const item = { y: 750, height: 50 }; // bottom edge 800, still >= keepTop (700)
+      expect(renderer._isItemInKeepZone(item)).toBe(true);
+    });
+
+    it("releases an item entirely above the keep zone", () => {
+      const item = { y: 200, height: 50 }; // bottom edge 250, < keepTop (700)
+      expect(renderer._isItemInKeepZone(item)).toBe(false);
+    });
+
+    it("releases an item entirely below the keep zone", () => {
+      const item = { y: 3200, height: 50 }; // top edge 3200, > keepBottom (3100)
+      expect(renderer._isItemInKeepZone(item)).toBe(false);
+    });
+
+    it("keeps an item exactly at the keep zone boundary", () => {
+      const item = { y: 3100, height: 0 }; // y === keepBottom
+      expect(renderer._isItemInKeepZone(item)).toBe(true);
+    });
+  });
 });

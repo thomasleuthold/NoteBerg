@@ -33,7 +33,18 @@ vi.mock("./autoRecognition.js", () => ({
   recognizeUnprocessedNotes: vi.fn(),
 }));
 
-import { syncOnNoteClose, syncOnNoteOpen } from "./autoSync.js";
+import { recognizeUnprocessedNotes } from "./autoRecognition.js";
+import {
+  initAutoSync,
+  resetInactivityTimer,
+  stopInactivityTimer,
+  syncOnAppStart,
+  syncOnNotebookCreate,
+  syncOnNotebookOpen,
+  syncOnNoteClose,
+  syncOnNoteCreate,
+  syncOnNoteOpen,
+} from "./autoSync.js";
 import { hasRemoteChanges, isAuthenticated } from "./nextcloudSync.js";
 import { getAllNotesForSync, getNoteIndex } from "./storage.js";
 import { performSync } from "./sync.js";
@@ -141,5 +152,283 @@ describe("syncOnNoteOpen — change check inputs", () => {
     expect(notebookId).toBeNull();
     expect(localNotes.map((n) => n.id)).toEqual(["qn1"]);
     expect(performSync).toHaveBeenCalledOnce();
+  });
+
+  it("does nothing while a sync is already in progress", async () => {
+    const { getIsSyncing } = await import("./sync.js");
+    vi.mocked(getIsSyncing).mockReturnValue(true);
+
+    await syncOnNoteOpen("n1");
+
+    expect(getNoteIndex).not.toHaveBeenCalled();
+    vi.mocked(getIsSyncing).mockReturnValue(false);
+  });
+
+  it("swallows errors instead of throwing", async () => {
+    vi.mocked(getNoteIndex).mockResolvedValue({ id: "n1", notebookId: "nb1" });
+    vi.mocked(hasRemoteChanges).mockRejectedValue(new Error("network error"));
+
+    await expect(syncOnNoteOpen("n1")).resolves.toBeUndefined();
+  });
+});
+
+describe("resetInactivityTimer / stopInactivityTimer", () => {
+  afterEach(() => {
+    stopInactivityTimer();
+  });
+
+  it("does not sync before the 30s inactivity window elapses", () => {
+    resetInactivityTimer("n1");
+    vi.advanceTimersByTime(29000);
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("syncs the active note after 30s of inactivity", async () => {
+    vi.mocked(getNoteIndex).mockResolvedValue({ id: "n1", synced: false });
+    resetInactivityTimer("n1");
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(performSync).toHaveBeenCalled();
+  });
+
+  it("resets the timer on repeated calls (only the last note's timer fires)", async () => {
+    vi.mocked(getNoteIndex).mockResolvedValue({ id: "n2", synced: false });
+    resetInactivityTimer("n1");
+    vi.advanceTimersByTime(20000);
+    resetInactivityTimer("n2"); // restarts the 30s window
+    vi.advanceTimersByTime(20000);
+    expect(performSync).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(performSync).toHaveBeenCalledOnce();
+  });
+
+  it("stopInactivityTimer cancels a pending sync", async () => {
+    resetInactivityTimer("n1");
+    stopInactivityTimer();
+    await vi.advanceTimersByTimeAsync(31000);
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("stopInactivityTimer is a no-op when nothing is pending", () => {
+    expect(() => stopInactivityTimer()).not.toThrow();
+  });
+});
+
+describe("sync cooldown (shouldSync)", () => {
+  it("skips a second sync trigger within the 5s cooldown window", async () => {
+    await syncOnNoteCreate("n1");
+    expect(performSync).toHaveBeenCalledOnce();
+
+    await syncOnNoteCreate("n2");
+    expect(performSync).toHaveBeenCalledOnce(); // still within cooldown, no second call
+  });
+
+  it("allows a sync once the cooldown window passes", async () => {
+    await syncOnNoteCreate("n1");
+    vi.advanceTimersByTime(5000);
+    await syncOnNoteCreate("n2");
+    expect(performSync).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not sync while another sync is already in progress", async () => {
+    const { getIsSyncing } = await import("./sync.js");
+    vi.mocked(getIsSyncing).mockReturnValue(true);
+
+    await syncOnNoteCreate("n1");
+
+    expect(performSync).not.toHaveBeenCalled();
+    vi.mocked(getIsSyncing).mockReturnValue(false);
+  });
+});
+
+describe("syncOnNoteCreate", () => {
+  it("does nothing when not authenticated", async () => {
+    vi.mocked(isAuthenticated).mockResolvedValue(false);
+    await syncOnNoteCreate("n1");
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("syncs a newly created note", async () => {
+    await syncOnNoteCreate("n1");
+    expect(performSync).toHaveBeenCalledWith({ silent: true, skipConflictResolution: true });
+  });
+});
+
+describe("syncOnNotebookCreate", () => {
+  it("does nothing when not authenticated", async () => {
+    vi.mocked(isAuthenticated).mockResolvedValue(false);
+    await syncOnNotebookCreate("nb1");
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("syncs a newly created notebook", async () => {
+    await syncOnNotebookCreate("nb1");
+    expect(performSync).toHaveBeenCalledWith({ silent: true, skipConflictResolution: true });
+  });
+
+  it("swallows errors from performSync instead of throwing", async () => {
+    vi.mocked(performSync).mockRejectedValue(new Error("network down"));
+    await expect(syncOnNotebookCreate("nb1")).resolves.toBeUndefined();
+  });
+});
+
+describe("syncOnNotebookOpen", () => {
+  it("does not sync when there are no remote changes", async () => {
+    vi.mocked(getAllNotesForSync).mockResolvedValue([]);
+    vi.mocked(hasRemoteChanges).mockResolvedValue(false);
+    await syncOnNotebookOpen("nb1");
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("syncs when remote changes are detected", async () => {
+    vi.mocked(getAllNotesForSync).mockResolvedValue([]);
+    vi.mocked(hasRemoteChanges).mockResolvedValue(true);
+    await syncOnNotebookOpen("nb1");
+    expect(performSync).toHaveBeenCalledWith({ silent: true, skipConflictResolution: true });
+  });
+
+  it("skips entirely while a sync is already in progress", async () => {
+    const { getIsSyncing } = await import("./sync.js");
+    vi.mocked(getIsSyncing).mockReturnValue(true);
+
+    await syncOnNotebookOpen("nb1");
+
+    expect(hasRemoteChanges).not.toHaveBeenCalled();
+    vi.mocked(getIsSyncing).mockReturnValue(false);
+  });
+
+  it("filters local notes to the given notebook (including quick notes as null)", async () => {
+    vi.mocked(getAllNotesForSync).mockResolvedValue([
+      { id: "a", notebookId: "nb1" },
+      { id: "b", notebookId: "nb2" },
+      { id: "c", notebookId: null },
+    ]);
+    vi.mocked(hasRemoteChanges).mockResolvedValue(false);
+
+    await syncOnNotebookOpen("nb1");
+
+    expect(hasRemoteChanges).toHaveBeenCalledWith("nb1", [{ id: "a", notebookId: "nb1" }]);
+  });
+
+  it("swallows errors instead of throwing", async () => {
+    vi.mocked(getAllNotesForSync).mockResolvedValue([]);
+    vi.mocked(hasRemoteChanges).mockRejectedValue(new Error("network error"));
+    await expect(syncOnNotebookOpen("nb1")).resolves.toBeUndefined();
+  });
+});
+
+describe("syncOnAppStart", () => {
+  it("does nothing when not authenticated", async () => {
+    vi.mocked(isAuthenticated).mockResolvedValue(false);
+    await syncOnAppStart();
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("performs an initial sync with preferNewer conflict resolution", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(0);
+    await syncOnAppStart();
+    expect(performSync).toHaveBeenCalledWith({
+      silent: true,
+      skipConflictResolution: true,
+      preferNewer: true,
+    });
+  });
+
+  it("does not attempt recognition when the initial sync fails", async () => {
+    vi.mocked(performSync).mockRejectedValueOnce(new Error("sync failed"));
+    await syncOnAppStart();
+    expect(recognizeUnprocessedNotes).not.toHaveBeenCalled();
+  });
+
+  it("runs recognition after a successful sync and re-syncs if notes were recognized", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(3);
+    await syncOnAppStart();
+
+    expect(recognizeUnprocessedNotes).toHaveBeenCalled();
+    // Initial sync + follow-up sync for the newly recognized notes.
+    expect(performSync).toHaveBeenCalledTimes(2);
+    expect(performSync).toHaveBeenLastCalledWith({ silent: true, skipConflictResolution: true });
+  });
+
+  it("does not re-sync when no notes needed recognition", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(0);
+    await syncOnAppStart();
+    expect(performSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows errors from the post-sync recognition step", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockRejectedValue(new Error("recognition failed"));
+    await expect(syncOnAppStart()).resolves.toBeUndefined();
+  });
+});
+
+describe("initAutoSync", () => {
+  afterEach(() => {
+    stopInactivityTimer();
+  });
+
+  it("triggers an initial sync on startup", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(0);
+    initAutoSync(); // syncOnAppStart() runs fire-and-forget internally
+    await vi.waitFor(() =>
+      expect(performSync).toHaveBeenCalledWith(
+        expect.objectContaining({ silent: true, preferNewer: true }),
+      ),
+    );
+  });
+
+  it("wires syncOnNoteOpen to navigate events carrying a noteId", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(0);
+    vi.mocked(getNoteIndex).mockResolvedValue({ id: "n1", notebookId: "nb1" });
+    vi.mocked(hasRemoteChanges).mockResolvedValue(false);
+    initAutoSync();
+
+    window.dispatchEvent(
+      new CustomEvent("navigate", { detail: { mode: "notebook", params: { noteId: "n1" } } }),
+    );
+    await vi.waitFor(() => expect(hasRemoteChanges).toHaveBeenCalled());
+  });
+
+  it("wires syncOnNotebookOpen to navigate events carrying a notebookId in overview mode", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(0);
+    vi.mocked(getAllNotesForSync).mockResolvedValue([]);
+    vi.mocked(hasRemoteChanges).mockResolvedValue(false);
+    initAutoSync();
+
+    window.dispatchEvent(
+      new CustomEvent("navigate", { detail: { mode: "overview", params: { notebookId: "nb1" } } }),
+    );
+    await vi.waitFor(() => expect(hasRemoteChanges).toHaveBeenCalledWith("nb1", []));
+  });
+
+  it("wires syncOnNoteCreate to the note-created event", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(0);
+    initAutoSync();
+    vi.mocked(performSync).mockClear();
+    vi.advanceTimersByTime(5000); // clear cooldown left over from the startup sync
+
+    window.dispatchEvent(new CustomEvent("note-created", { detail: { noteId: "n1" } }));
+    await vi.waitFor(() => expect(performSync).toHaveBeenCalled());
+  });
+
+  it("wires syncOnNotebookCreate to the notebook-created event", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(0);
+    initAutoSync();
+    vi.mocked(performSync).mockClear();
+    vi.advanceTimersByTime(5000);
+
+    window.dispatchEvent(new CustomEvent("notebook-created", { detail: { notebookId: "nb1" } }));
+    await vi.waitFor(() => expect(performSync).toHaveBeenCalled());
+  });
+
+  it("ignores note-created events without a noteId", async () => {
+    vi.mocked(recognizeUnprocessedNotes).mockResolvedValue(0);
+    initAutoSync();
+    await vi.waitFor(() => expect(performSync).toHaveBeenCalled()); // wait out the startup sync
+    vi.mocked(performSync).mockClear();
+
+    window.dispatchEvent(new CustomEvent("note-created", { detail: {} }));
+    await Promise.resolve();
+    expect(performSync).not.toHaveBeenCalled();
   });
 });
