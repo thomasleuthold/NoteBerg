@@ -113,7 +113,11 @@ For each note to upload:
   2. syncNoteMedia()               — upload binary files (see below)
   3. cleanupOrphanedMedia()        — delete remote files no longer referenced
   4. Strip internal fields         — remove synced, lastSyncedEtag, thumbnail, _currentFileEtag
-  5. PUT note JSON                 — with If-Match: {etag} header (412 = force overwrite)
+  5. PUT note JSON                 — with If-Match: {etag} header. A 412
+     (remote changed since our last sync) FAILS the upload — the note stays
+     synced=false so the next cycle downloads + merges + re-uploads. It is
+     NEVER force-overwritten (that would silently lose the concurrent remote
+     edit; see the 412-recovery requirement below and commit e809876).
 ```
 
 ### Step 4b — Legacy PDF healing
@@ -257,6 +261,23 @@ Resolution: accept the new etag via `updateNoteEtag()` without downloading. No c
 ### Legacy PDF notes (no `pdfSource`)
 - Notes created before `pdfSource` field was introduced have `pdf-page` items with `fileId` in content but `pdfSource = null` in the index.
 - The "healing" block in Step 4b patches these. It requires the notes folder chain to already exist on the remote — if it does not, `createFolder()` gets a 409 Conflict. `syncNoteMedia()` now creates the full parent chain before the media folder to avoid this.
+
+### Self-heal of a plain note whose notebook folder is missing (latent gap)
+- Design intent (Step 2 / Step 3 "self-heal"): a locally-modified note that is
+  missing on the remote should be re-uploaded, recreating structure as needed.
+- Actual behavior: `syncNoteMedia()` creates the `{notebookId} → notes → _media`
+  folder chain **only for notes that have media/pdf/recordings** — it returns
+  early (before any `createFolder`) for a plain text/stroke note. So uploading a
+  plain note into a notebook folder that does not exist on the server returns
+  **409 Conflict** and the upload fails.
+- Consequence: the note is **not lost** — it stays `synced=false` and retries —
+  but it will keep failing until the notebook folder is (re)created, e.g. by a
+  notebook sync or a media-bearing note in the same notebook. A note orphaned by
+  a remote notebook purge (notebook deleted on another device) therefore cannot
+  self-heal on its own.
+- This is a real gap between design ("self-heal re-uploads") and code, flagged
+  rather than encoded as correct. Fix would be to ensure the parent folder chain
+  in the note-JSON upload path too (not only in `syncNoteMedia`).
 
 ### Race conditions during sync
 - `performSync` snapshots local state before calling `fullSync`.
