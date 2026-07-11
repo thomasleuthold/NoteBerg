@@ -317,6 +317,55 @@ describe("Nextcloud Sync Integration (multi-device / multi-cycle)", () => {
     expect(resultB.downloaded.notes.some((n) => n.id === noteId)).toBe(false);
   });
 
+  // KNOWN GAP (expected-fail, xfail-style). Documents the DESIGN requirement that
+  // scenario 3 cannot currently satisfy: a plain note (no media) whose notebook
+  // folder is missing on the server should SELF-HEAL — recreate the folder chain
+  // and upload — per documentation/sync_architecture.md ("self-heal re-uploads").
+  //
+  // Today it does not: syncNotes → ensureHierarchicalStructure only creates
+  // root/notebooks/quickNotes, and syncNoteMedia (the only code that creates
+  // notebooks/{id}/notes) early-returns for a note with no media/pdf/recordings.
+  // So the note-JSON PUT hits a missing parent collection → 409 → upload fails.
+  // No data is lost (the note stays synced=false and retries), but it can never
+  // succeed until something else recreates the folder.
+  //
+  // `it.fails` inverts the result: this stays GREEN while the body throws (the
+  // upload assertion below fails today), and turns RED the moment the production
+  // fix lands (create the parent chain in the note-JSON upload path). When that
+  // happens, convert this to a normal `it(...)` — it then documents the fixed
+  // behavior. The assertion is written to fail ONLY on this specific gap (a
+  // successful self-heal upload), so an unrelated throw would not mask it: the
+  // mock is fully seeded, auth is set up in beforeEach, and no other statement
+  // here can throw before the upload assertion.
+  it.fails("KNOWN GAP: self-heals a plain note whose notebook folder is missing on the server", async () => {
+    const noteId = "n-orphan-selfheal";
+    const notebookId = "nb-folder-gone";
+    const notePath = `/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`;
+
+    // The notebook folder is deliberately NOT seeded — it is missing on the
+    // server (e.g. lost server-side, or purged by another device). Only the
+    // top-level /NoteBerg + notebooks/quickNotes exist (constructor + sync).
+
+    const result = await fullSync(
+      [],
+      [
+        {
+          id: noteId,
+          notebookId,
+          content: "Edited locally; notebook folder is gone on the server",
+          modified: 2000,
+          synced: false,
+        },
+      ],
+    );
+
+    // REQUIREMENT (currently unmet): the note self-heals — the folder chain is
+    // recreated and the note lands on the server. This assertion throws today
+    // (uploaded === 0), which is what keeps the expected-fail test green.
+    expect(result.uploaded.notes.uploaded).toBe(1);
+    expect(mockServer.files.has(notePath)).toBe(true);
+  });
+
   it("scenario 4: media added on A survives a non-media edit merge on B", async () => {
     const noteId = "n-media-survive";
     const notebookId = "nb1";

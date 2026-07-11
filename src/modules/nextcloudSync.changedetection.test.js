@@ -111,15 +111,19 @@ describe("Nextcloud Sync Module", () => {
       expect(result).toBe(true);
     });
 
-    it("returns true when a locally-known note was deleted remotely", async () => {
+    it("delegates deletion detection to tombstones — a remotely-absent note is NOT a 'change' here", async () => {
       mockServer.seedNotebook("nb1");
       // Remote no longer has n1 at all.
 
       const result = await hasRemoteChanges("nb1", [{ id: "n1", lastSyncedEtag: "etag-A" }]);
-      // n1 isn't in remoteFiles, so the loop never flags it — but a local note the
-      // server has forgotten means nothing to compare, so this documents current
-      // behavior: absence of a remote file for a known local note is NOT itself
-      // treated as a change by this function (deletions are surfaced via tombstones).
+      // BY DESIGN (sync_architecture.md "Tombstones"): deletions are surfaced via
+      // the tombstone mechanism in fullSync, NOT by this cheap etag-diff gate.
+      // hasRemoteChanges only compares etags of files that still exist, so a
+      // note the server has dropped is intentionally not reported as a change by
+      // this function. This is a requirement (separation of concerns: the gate
+      // detects content drift; tombstones detect deletions), not an accident —
+      // if this ever returns true, the gate has taken on deletion-detection
+      // responsibility it should not have.
       expect(result).toBe(false);
     });
 

@@ -192,7 +192,11 @@ describe("MockWebDAVServer fixture", () => {
 
     const res = await server.handleRequest(
       `${server.baseUrl}${server.rootPath}/NoteBerg/notebooks/nb1`,
-      { ...AUTH, method: "PROPFIND", headers: { Authorization: "Basic dGVzdA==", Depth: "infinity" } },
+      {
+        ...AUTH,
+        method: "PROPFIND",
+        headers: { Authorization: "Basic dGVzdA==", Depth: "infinity" },
+      },
     );
     const xml = await res.text();
     const hrefs = [...xml.matchAll(/<d:href>([^<]+)<\/d:href>/g)].map((m) =>
