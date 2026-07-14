@@ -433,6 +433,7 @@
       "delete": "Delete"
     },
     "media": {
+      "select": "Select",
       "crop": "Crop",
       "sendToFront": "Send to Front",
       "sendToBack": "Send to Back",

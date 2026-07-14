@@ -143,6 +143,7 @@ export class NoteToolbar {
     this.onModeChange = onModeChange;
     this.onPenSettingsChange = options.onPenSettingsChange || (() => {});
     this.onOptionsChange = options.onOptionsChange || (() => {});
+    this.getBackground = options.getBackground || (() => "none");
     this.onAction = options.onAction || (() => {});
     this.onUndo = options.onUndo || (() => {});
     this.onRedo = options.onRedo || (() => {});
@@ -1126,8 +1127,24 @@ export class NoteToolbar {
    * @private
    */
   _openOptionsDialog() {
+    this._syncBackgroundActiveState();
     this.optionsDialog.classList.add("note-canvas-toolbar__options-dialog--open");
     document.addEventListener("pointerdown", this._handleDocumentPointerDown);
+  }
+
+  /**
+   * Highlight the background option matching the note's current background.
+   * @private
+   */
+  _syncBackgroundActiveState() {
+    const current = this.getBackground() || "none";
+    const bgOptions = this.optionsDialog.querySelectorAll(".background-option");
+    bgOptions.forEach((btn) => {
+      btn.classList.toggle(
+        "note-canvas-toolbar__option-btn--active",
+        btn.dataset.value === current,
+      );
+    });
   }
 
   /**

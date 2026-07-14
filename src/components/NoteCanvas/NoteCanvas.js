@@ -263,6 +263,8 @@ export class NoteCanvas {
     this._onPointerDownNav = this._onPointerDownNav.bind(this);
     this._onPointerMoveNav = this._onPointerMoveNav.bind(this);
     this._onPointerUpNav = this._onPointerUpNav.bind(this);
+    this._onPointerMoveHover = this._onPointerMoveHover.bind(this);
+    this._onPointerLeaveHover = this._onPointerLeaveHover.bind(this);
     this._onStrokeStart = this._onStrokeStart.bind(this);
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
@@ -526,6 +528,7 @@ export class NoteCanvas {
       onCrop: (id) => this.cropSelectedMedia(id),
       onToFront: (id) => this.moveSelectedMediaToFront(id),
       onToBack: (id) => this.moveSelectedMediaToBack(id),
+      onSelect: (id) => this._selectMediaById(id),
     });
 
     // Initialize SelectionOverlay (3-dot menu for lasso selection)
@@ -654,6 +657,7 @@ export class NoteCanvas {
           this.currentPenColorIndex = colorIndex;
           this.currentPenType = type;
         },
+        getBackground: () => this.noteData.background || "none",
         onOptionsChange: async (action) => {
           if (action.type === "background") {
             this.noteData.background = action.value;
@@ -1608,6 +1612,10 @@ export class NoteCanvas {
     viewport.addEventListener("pointercancel", this._onPointerUpNav);
     viewport.addEventListener("pointerleave", this._onPointerUpNav);
 
+    // Mouse hover affordance for images (shows the option button on hover)
+    viewport.addEventListener("pointermove", this._onPointerMoveHover);
+    viewport.addEventListener("pointerleave", this._onPointerLeaveHover);
+
     // Right-click paste menu (stopPropagation prevents the global window prevention in main.js)
     viewport.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -2306,6 +2314,92 @@ export class NoteCanvas {
    * Trigger long press action (select item)
    * @private
    */
+  /**
+   * Select a media item by id (used by the option menu's "Select" action).
+   * Promotes the image to the selected state so move/resize handles appear.
+   * @private
+   */
+  _selectMediaById(id) {
+    const item = this.mediaManager.getItems().find((i) => i.id === id);
+    if (!item) return;
+    this.selectedMediaId = item.id;
+    this.renderer.setSelectedMedia(item.id);
+    this._updateMediaOverlay();
+    if (this.strokeManager.currentStroke) {
+      this.strokeManager.cancelCurrentStroke();
+      this.renderer.forceRedraw();
+    }
+  }
+
+  /**
+   * Viewport pointermove: drive the image hover affordance (mouse only).
+   * @private
+   */
+  _onPointerMoveHover(e) {
+    if (e.pointerType !== "mouse") return;
+    // Coalesce to one hit-test per frame.
+    this._pendingHoverEvent = e;
+    if (this._hoverRafId) return;
+    this._hoverRafId = requestAnimationFrame(() => {
+      this._hoverRafId = null;
+      const ev = this._pendingHoverEvent;
+      this._pendingHoverEvent = null;
+      if (ev) this._updateMediaHover(ev);
+    });
+  }
+
+  /**
+   * Viewport pointerleave: drop the hover button when the mouse leaves the canvas.
+   * @private
+   */
+  _onPointerLeaveHover(e) {
+    if (e.pointerType !== "mouse") return;
+    if (this.mediaOverlay?.isHovering()) {
+      this.mediaOverlay.hide();
+    }
+  }
+
+  /**
+   * Update the mouse-hover option button for images. Mouse only — touch keeps
+   * long-press. Shows the ⋮ button on the image under the cursor so mouse users
+   * have a discoverable way to reach selection/actions.
+   * @private
+   */
+  _updateMediaHover(e) {
+    if (!this.mediaOverlay) return;
+    if (e.pointerType !== "mouse") return;
+    // Don't interfere while an image is selected or being dragged.
+    if (this.selectedMediaId || this.mediaDragState) return;
+
+    // Keep the button while the pointer is over the overlay itself.
+    if (this.mediaOverlay.containsTarget(e.target)) return;
+
+    const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
+    const hitItem = this.mediaManager.hitTest(x, y);
+
+    if (hitItem && hitItem.type !== "pdf-page") {
+      if (this.mediaOverlay.getActiveMediaId() !== hitItem.id || !this.mediaOverlay.isHovering()) {
+        const scrollLeft = this.scroller.getScrollLeft();
+        const scrollTop = this.scroller.getScrollTop();
+        const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+        const viewportWidth = this.scroller.getViewportSize().width;
+        const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+        const offsetX =
+          scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+        this.mediaOverlay.showForHover(
+          hitItem,
+          this.zoomScale,
+          scrollLeft,
+          scrollTop,
+          viewport,
+          offsetX,
+        );
+      }
+    } else if (this.mediaOverlay.isHovering()) {
+      this.mediaOverlay.hide();
+    }
+  }
+
   _triggerLongPress(item) {
     this.longPressTimer = null;
 
@@ -2484,21 +2578,43 @@ export class NoteCanvas {
    * @private
    */
   _updateMediaOverlay() {
-    if (this.selectedMediaId && this.mediaOverlay) {
-      const item = this.mediaManager.getItems().find((i) => i.id === this.selectedMediaId);
-      if (item) {
-        const scrollLeft = this.scroller.getScrollLeft();
-        const scrollTop = this.scroller.getScrollTop();
-        const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+    if (!this.mediaOverlay) return;
 
-        // Calculate offset (centering)
-        const viewportWidth = this.scroller.getViewportSize().width;
-        const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-        const offsetX =
-          scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+    // The overlay tracks either the selected image or (mouse only) the hovered one.
+    const trackedId = this.selectedMediaId || this.mediaOverlay.getActiveMediaId();
+    if (!trackedId) return;
 
-        this.mediaOverlay.show(item, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
-      }
+    const item = this.mediaManager.getItems().find((i) => i.id === trackedId);
+    if (!item) {
+      // Image gone (e.g. deleted) — drop a lingering hover button.
+      if (this.mediaOverlay.isHovering()) this.mediaOverlay.hide();
+      return;
+    }
+
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+
+    // Calculate offset (centering)
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    if (this.selectedMediaId) {
+      // show() is idempotent and (re)asserts the selected state + visibility.
+      this.mediaOverlay.show(item, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
+    } else {
+      // Hover button is already visible (via showForHover); just keep it anchored
+      // to the image without changing the overlay's mode.
+      this.mediaOverlay.updatePosition(
+        item,
+        this.zoomScale,
+        scrollLeft,
+        scrollTop,
+        viewport,
+        offsetX,
+      );
     }
   }
 

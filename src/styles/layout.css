@@ -243,7 +243,10 @@
   border: none;
   cursor: pointer;
   font-size: 0.875rem;
-  font-family: inherit;
+  /* The menu is appended to <body>, outside #app, so `inherit` would resolve to
+     the browser default font. Use the app font var explicitly. Scoped to our own
+     class — does not affect the NC app. */
+  font-family: var(--font-family);
   color: var(--text-primary);
 }
 
@@ -251,7 +254,9 @@
   background-color: var(--bg-secondary);
 }
 
-.note-options-menu__item--danger {
+/* Match the base rule's specificity (:is(body, #app) ...) so the danger color
+   is not overridden by the base `color: var(--text-primary)` above. */
+:is(body, #app) .note-options-menu__item--danger {
   color: var(--color-danger);
 }
 
@@ -424,7 +429,9 @@
   opacity: 0.6;
 }
 
-.card-new-note-btn:hover {
+/* Match the base rule's specificity (:is(body, #app) ...) so the hover
+   background is not overridden by the base `background-color` above. */
+:is(body, #app) .card-new-note-btn:hover {
   background-color: var(--color-primary-hover);
 }
 
@@ -700,6 +707,10 @@
   justify-content: center;
   z-index: 1000;
   animation: fadeIn 0.2s ease-in-out;
+  /* Modals are appended to <body>, outside #app, so they don't inherit the
+     app font. Set it on our own overlay class so the whole dialog matches the
+     rest of the app. Scoped to .modal-overlay — does not affect the NC app. */
+  font-family: var(--font-family);
 }
 
 .modal-overlay.modal-closing {

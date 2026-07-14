@@ -30,13 +30,11 @@ export async function updateSyncStatus() {
     syncStatus.dataset.status = "syncing";
     syncIndicator.textContent = "↻";
     syncStatus.title = t("footer.syncing");
-    syncStatus.style.cursor = "wait";
   } else if (authenticated) {
     if (!lastResult) {
       syncStatus.dataset.status = "idle";
       syncIndicator.textContent = "○";
       syncStatus.title = t("footer.syncClickHint");
-      syncStatus.style.cursor = "pointer";
     } else if (lastResult.success) {
       syncStatus.dataset.status = "connected";
       syncIndicator.textContent = "●";
@@ -49,20 +47,17 @@ export async function updateSyncStatus() {
         uploaded: lastResult.uploaded.notes,
         downloaded: lastResult.downloaded.notes,
       });
-      syncStatus.style.cursor = "pointer";
     } else {
       syncStatus.dataset.status = "error";
       syncIndicator.textContent = "⚠";
       syncStatus.title = t("footer.syncFailedTooltip", {
         error: lastResult.error || t("footer.unknownError"),
       });
-      syncStatus.style.cursor = "pointer";
     }
   } else {
     syncStatus.dataset.status = "offline";
     syncIndicator.textContent = "○";
     syncStatus.title = t("footer.notConnected");
-    syncStatus.style.cursor = "default";
   }
 }
 

@@ -60,8 +60,8 @@
 
   /* Layout */
   --sidebar-width: 280px;
-  --toolbar-height: 60px;
-  --footer-height: 40px;
+  --toolbar-height: 40px;
+  --footer-height: 30px;
 
   /* Safe area insets for mobile devices (Android notches, status bars, etc.) */
   --safe-area-inset-top: env(safe-area-inset-top, 0px);
@@ -245,13 +245,46 @@ body {
   display: flex;
   align-items: center;
   padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  transition: background-color var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
   overflow: hidden;
 }
 
-.sync-status:hover {
+/* Clickable states get button chrome so users know they can trigger a sync.
+   Non-clickable states (syncing, offline) stay flat — pure status. */
+.sync-status[data-status="idle"],
+.sync-status[data-status="connected"],
+.sync-status[data-status="error"] {
+  cursor: pointer;
+  border-color: var(--border-primary);
+  background-color: var(--bg-secondary);
+}
+
+.sync-status[data-status="idle"]:hover,
+.sync-status[data-status="connected"]:hover,
+.sync-status[data-status="error"]:hover {
   background-color: var(--bg-hover);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.sync-status[data-status="idle"]:active,
+.sync-status[data-status="connected"]:active,
+.sync-status[data-status="error"]:active {
+  background-color: var(--bg-hover);
+  box-shadow: none;
+  transform: translateY(0.5px);
+}
+
+.sync-status[data-status="syncing"] {
+  cursor: wait;
+}
+
+.sync-status[data-status="offline"] {
+  cursor: default;
 }
 
 .sync-indicator {
@@ -607,6 +640,21 @@ body {
 #app button:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
+}
+
+/* Base styling for our named button classes. Scoped to :is(body, #app) so the
+   properties also apply inside modals, which are appended to <body> (outside
+   #app) and therefore don't inherit the `#app button` rule above. Targeting our
+   own classes only — never a bare `button` — keeps this out of the NC app. */
+:is(body, #app) :is(.btn-primary, .btn-secondary) {
+  font-family: var(--font-family);
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  outline: none;
 }
 
 :is(body, #app) .btn-primary {

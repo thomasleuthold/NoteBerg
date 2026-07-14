@@ -6,7 +6,7 @@
  * Integrates with HistoryManager for unified undo/redo across text and strokes.
  */
 
-import trumbowygIconsSvg from "../../../public/img/trumbowyg-icons.svg?raw";
+import trumbowygIconsSvg from "../../assets/trumbowyg-icons.svg?raw";
 // jQuery must be on `window` before Trumbowyg is imported (separate module avoids hoisting issues)
 import jQuery from "./jquerySetup.js";
 
