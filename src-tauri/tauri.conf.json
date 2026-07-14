@@ -47,8 +47,12 @@
     "windows": {
       "wix": {
         "bannerPath": "icons/msi2.bmp",
-        "dialogImagePath": "icons/msi1.bmp"
+        "dialogImagePath": "icons/msi1.bmp",
+        "version": "0.5.33.1"
       }
+    },
+    "android": {
+      "versionCode": 533001
     }
   }
 }

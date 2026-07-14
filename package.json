@@ -1,6 +1,7 @@
 {
   "name": "noteberg",
-  "version": "0.5.33",
+  "version": "0.5.33-rc.1",
+  "build": 1,
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
   "scripts": {
@@ -21,7 +22,7 @@
     "build:nextcloud": "cross-env VITE_PLATFORM=nextcloud vite build",
     "dev:nextcloud": "cross-env VITE_PLATFORM=nextcloud vite build --watch",
     "sync-version": "node sync-version.js",
-    "version": "npm run sync-version && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml"
+    "version": "node sync-version.js && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml appinfo/info.xml package.json"
   },
   "keywords": [
     "notes",

@@ -2,35 +2,166 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'url';
 
+/**
+ * sync-version.js
+ *
+ * Single source of truth for versioning:
+ *   package.json.version  -> semver base + pre-release label, e.g. "0.5.33-rc.4"
+ *                            (npm-managed via `npm version` / `just release-*`)
+ *   package.json.build    -> monotonic build counter, incremented on EVERY build
+ *                            (managed here; may run on a dirty tree, is NOT committed)
+ *
+ * From those two, this script derives and writes:
+ *   - src-tauri/tauri.conf.json
+ *       version                        = "0.5.33"        (clean 3-part semver, suffix stripped)
+ *       bundle.windows.wix.version     = "0.5.33.<build>" (MSI ProductVersion, 4th part = build)
+ *       bundle.android.versionCode     = <versionCode>    (monotonic, encodes semver + build)
+ *   - src-tauri/Cargo.toml
+ *       version                        = "0.5.33"
+ *   - appinfo/info.xml
+ *       <version>                      = "0.5.33-rc.4"   (keeps pre-release label to hide in NC store)
+ *
+ * The frontend (footer / settings "About") reads the labeled version + stage from
+ * package.json via vite.config.js (VITE_APP_VERSION / VITE_APP_STAGE), so no source
+ * file is mutated for display.
+ *
+ * versionCode scheme (monotonic, human-decodable):
+ *   versionCode = major*10_000_000 + minor*100_000 + patch*1_000 + build
+ *   e.g. 0.5.33 build 142 -> 0 + 500_000 + 33_000 + 142 = 533_142  ("0.5.33 #142")
+ *   Constraints: minor < 100, patch < 100, build < 1000 within a single patch line.
+ *
+ * This script NEVER auto-increments the build counter. It only reads package.json
+ * and regenerates the derived files. The build counter is bumped explicitly and only
+ * by `just bump-build` (which passes --bump-build).
+ *
+ * Flags:
+ *   --bump-build   increment package.json.build by 1 before regenerating (NOT committed)
+ *   --info         print the version summary line and exit; write no files
+ */
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = __dirname;
 
 const packagePath = resolve(rootDir, 'package.json');
 const tauriConfigPath = resolve(rootDir, 'src-tauri', 'tauri.conf.json');
 const cargoTomlPath = resolve(rootDir, 'src-tauri', 'Cargo.toml');
+const infoXmlPath = resolve(rootDir, 'appinfo', 'info.xml');
+
+const bumpBuild = process.argv.includes('--bump-build');
+const infoOnly = process.argv.includes('--info');
+
+/**
+ * Parse a semver string like "0.5.33-rc.4" into its parts.
+ * Returns { major, minor, patch, stage, prNum, base, full }.
+ *   base  = "0.5.33"
+ *   stage = "rc" | "beta" | "" (empty for final releases)
+ *   prNum = pre-release counter (e.g. 4), or 0 if final
+ */
+function parseVersion(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z]+)(?:\.(\d+))?)?$/);
+  if (!match) {
+    throw new Error(`Cannot parse version "${version}" (expected e.g. 0.5.33 or 0.5.33-rc.4)`);
+  }
+  const [, major, minor, patch, stage = '', prNum = '0'] = match;
+  const base = `${major}.${minor}.${patch}`;
+  return {
+    major: Number(major),
+    minor: Number(minor),
+    patch: Number(patch),
+    stage: stage.toLowerCase(),
+    prNum: Number(prNum),
+    base,
+    full: version,
+  };
+}
+
+function computeVersionCode({ major, minor, patch }, build) {
+  if (minor >= 100) throw new Error(`minor version ${minor} >= 100 breaks versionCode scheme`);
+  if (patch >= 100) throw new Error(`patch version ${patch} >= 100 breaks versionCode scheme`);
+  if (build >= 1000) {
+    console.warn(
+      `WARNING: build ${build} >= 1000 will overflow into the patch field of versionCode. ` +
+        `Consider bumping the patch version to reset the effective build room.`,
+    );
+  }
+  return major * 10_000_000 + minor * 100_000 + patch * 1_000 + build;
+}
 
 try {
-  const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'));
+  const pkgRaw = readFileSync(packagePath, 'utf-8');
+  const pkg = JSON.parse(pkgRaw);
+
+  const parsed = parseVersion(pkg.version);
+
+  // --- 1. Build counter (bumped ONLY via --bump-build) ---------------------
+  let build = Number.isInteger(pkg.build) ? pkg.build : 0;
+  if (bumpBuild && !infoOnly) {
+    build += 1;
+    pkg.build = build;
+    // Preserve formatting/indentation of package.json as closely as possible.
+    writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+    console.log(`Build counter -> ${build}`);
+  } else if (!infoOnly) {
+    console.log(`Build counter unchanged: ${build}`);
+  }
+
+  const versionCode = computeVersionCode(parsed, build);
+  const wixVersion = `${parsed.base}.${build}`;
+
+  console.log(
+    `Version: ${parsed.full}  |  base: ${parsed.base}  |  stage: ${parsed.stage || '(final)'}  ` +
+      `|  build: ${build}  |  versionCode: ${versionCode}  |  wix: ${wixVersion}`,
+  );
+
+  // --info: read-only summary; do not touch any files.
+  if (infoOnly) {
+    process.exit(0);
+  }
+
+  // --- 2. tauri.conf.json --------------------------------------------------
   const tauriConfig = JSON.parse(readFileSync(tauriConfigPath, 'utf-8'));
 
-  if (tauriConfig.version !== pkg.version) {
-    console.log(`Bumping tauri.conf.json version: ${tauriConfig.version} -> ${pkg.version}`);
-    tauriConfig.version = pkg.version;
-    writeFileSync(tauriConfigPath, JSON.stringify(tauriConfig, null, 2));
-  } else {
-    console.log('tauri.conf.json version is already up to date');
-  }
+  tauriConfig.version = parsed.base;
 
+  tauriConfig.bundle = tauriConfig.bundle || {};
+  tauriConfig.bundle.windows = tauriConfig.bundle.windows || {};
+  tauriConfig.bundle.windows.wix = tauriConfig.bundle.windows.wix || {};
+  tauriConfig.bundle.windows.wix.version = wixVersion;
+
+  tauriConfig.bundle.android = tauriConfig.bundle.android || {};
+  tauriConfig.bundle.android.versionCode = versionCode;
+
+  writeFileSync(tauriConfigPath, `${JSON.stringify(tauriConfig, null, 2)}\n`);
+  console.log(
+    `tauri.conf.json -> version ${parsed.base}, wix.version ${wixVersion}, ` +
+      `android.versionCode ${versionCode}`,
+  );
+
+  // --- 3. Cargo.toml -------------------------------------------------------
   const cargoToml = readFileSync(cargoTomlPath, 'utf-8');
   const cargoVersionMatch = cargoToml.match(/^version = "([^"]+)"/m);
-  if (cargoVersionMatch && cargoVersionMatch[1] !== pkg.version) {
-    console.log(`Bumping Cargo.toml version: ${cargoVersionMatch[1]} -> ${pkg.version}`);
-    const updatedCargoToml = cargoToml.replace(/^version = "[^"]+"/m, `version = "${pkg.version}"`);
+  if (cargoVersionMatch && cargoVersionMatch[1] !== parsed.base) {
+    const updatedCargoToml = cargoToml.replace(/^version = "[^"]+"/m, `version = "${parsed.base}"`);
     writeFileSync(cargoTomlPath, updatedCargoToml);
+    console.log(`Cargo.toml -> version ${parsed.base}`);
   } else {
-    console.log('Cargo.toml version is already up to date');
+    console.log('Cargo.toml version already up to date');
+  }
+
+  // --- 4. appinfo/info.xml (Nextcloud app; keeps pre-release label) --------
+  const infoXml = readFileSync(infoXmlPath, 'utf-8');
+  const infoVersionMatch = infoXml.match(/<version>([^<]+)<\/version>/);
+  if (infoVersionMatch && infoVersionMatch[1] !== parsed.full) {
+    const updatedInfoXml = infoXml.replace(
+      /<version>[^<]+<\/version>/,
+      `<version>${parsed.full}</version>`,
+    );
+    writeFileSync(infoXmlPath, updatedInfoXml);
+    console.log(`info.xml -> version ${parsed.full}`);
+  } else {
+    console.log('info.xml version already up to date');
   }
 } catch (error) {
-  console.error('Failed to sync version:', error);
+  console.error('Failed to sync version:', error.message);
   process.exit(1);
 }

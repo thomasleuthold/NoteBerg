@@ -95,25 +95,33 @@ if (id.includes('perspective-transform-nc-inline')) {
 
 
 
-function getAppVersion() {
+/**
+ * Read the labeled version from package.json (single source of truth) and split
+ * it into a clean base version and a human pre-release stage.
+ *   "0.5.33-rc.4"  -> { version: "0.5.33", stage: "RC" }
+ *   "0.5.33-beta.1"-> { version: "0.5.33", stage: "Beta" }
+ *   "0.5.33"       -> { version: "0.5.33", stage: "" }
+ */
+function getAppVersionInfo() {
+  let raw = '0.0.0';
   try {
-    // Try tauri.conf.json first (source of truth for MSI/bundle)
-    const tauriConfigPath = resolve(process.cwd(), 'src-tauri', 'tauri.conf.json');
-    const content = readFileSync(tauriConfigPath, 'utf-8');
-    const config = JSON.parse(content);
-    // Handle Tauri v1 (package.version) and v2 (version)
-    return config.version || config.package?.version || '0.0.0';
+    const packagePath = resolve(process.cwd(), 'package.json');
+    raw = JSON.parse(readFileSync(packagePath, 'utf-8')).version || '0.0.0';
   } catch (e) {
-    // Fallback to package.json
-    try {
-      const packagePath = resolve(process.cwd(), 'package.json');
-      const content = readFileSync(packagePath, 'utf-8');
-      return JSON.parse(content).version || '0.0.0';
-    } catch (e2) {
-      return '0.0.0';
-    }
+    // fall through with default
   }
+
+  const match = raw.match(/^(\d+\.\d+\.\d+)(?:-([a-zA-Z]+)(?:\.\d+)?)?$/);
+  if (!match) return { version: raw, stage: '' };
+
+  const [, base, stageRaw = ''] = match;
+  const STAGE_LABELS = { rc: 'RC', beta: 'Beta', alpha: 'Alpha' };
+  const key = stageRaw.toLowerCase();
+  const stage = STAGE_LABELS[key] || (stageRaw ? stageRaw : '');
+  return { version: base, stage };
 }
+
+const appVersionInfo = getAppVersionInfo();
 
 const platform = process.env.VITE_PLATFORM || 'tauri';
 // Dev container uses /apps-extra/; production Nextcloud uses /apps/
@@ -149,7 +157,8 @@ export default defineConfig({
     ],
   },
   define: {
-    'import.meta.env.VITE_APP_VERSION': JSON.stringify(getAppVersion()),
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersionInfo.version),
+    'import.meta.env.VITE_APP_STAGE': JSON.stringify(appVersionInfo.stage),
     'import.meta.env.VITE_PLATFORM': JSON.stringify(platform),
   },
   build: {
