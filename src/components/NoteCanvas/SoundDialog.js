@@ -8,6 +8,7 @@
  * Depends on RecordingManager for all state; this class is pure UI.
  */
 
+import { t } from "../../i18n/index.js";
 import { getFile, waitForFileUrl } from "../../modules/storage.js";
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
@@ -77,7 +78,7 @@ export class SoundDialog {
   _buildButton() {
     this._btnEl = document.createElement("button");
     this._btnEl.className = "sound-dialog__trigger-btn";
-    this._btnEl.title = "Recordings";
+    this._btnEl.title = t("soundDialog.trigger");
     this._btnEl.innerHTML = getIcon("mic", 22);
 
     this._btnEl.addEventListener("click", (e) => {
@@ -118,11 +119,11 @@ export class SoundDialog {
   }
 
   _showError(err) {
-    let msg = "Could not start recording.";
+    let msg = t("soundDialog.errorGeneric");
     if (err?.name === "NotFoundError") {
-      msg = "No audio device found. Please connect a microphone.";
+      msg = t("soundDialog.errorNoDevice");
     } else if (err?.name === "NotAllowedError") {
-      msg = "Microphone access denied.";
+      msg = t("soundDialog.errorPermissionDenied");
     }
 
     if (!this._open) this._toggle();
@@ -277,13 +278,13 @@ export class SoundDialog {
 
     const title = document.createElement("span");
     title.className = "sound-dialog__title";
-    title.textContent = "Recordings";
+    title.textContent = t("soundDialog.title");
     header.appendChild(title);
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "sound-dialog__close-btn";
     closeBtn.innerHTML = getIcon("x", 16);
-    closeBtn.title = "Close";
+    closeBtn.title = t("soundDialog.close");
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this._close();
@@ -315,7 +316,7 @@ export class SoundDialog {
 
       const pauseBtn = document.createElement("button");
       pauseBtn.className = "sound-dialog__icon-btn sound-dialog__icon-btn--lg";
-      pauseBtn.title = paused ? "Resume" : "Pause";
+      pauseBtn.title = paused ? t("soundDialog.resume") : t("soundDialog.pause");
       pauseBtn.innerHTML = paused ? getIcon("play", 22) : getIcon("pause", 22);
       pauseBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -327,7 +328,7 @@ export class SoundDialog {
       const stopBtn = document.createElement("button");
       stopBtn.className =
         "sound-dialog__icon-btn sound-dialog__icon-btn--lg sound-dialog__icon-btn--stop";
-      stopBtn.title = "Stop recording";
+      stopBtn.title = t("soundDialog.stopRecording");
       stopBtn.innerHTML = getIcon("stopCircle", 22);
       stopBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -341,7 +342,7 @@ export class SoundDialog {
       if (_IS_NATIVE) {
         const newBtn = document.createElement("button");
         newBtn.className = "sound-dialog__new-btn";
-        newBtn.innerHTML = `${getIcon("mic", 16)}<span>New recording</span>`;
+        newBtn.innerHTML = `${getIcon("mic", 16)}<span>${t("soundDialog.newRecording")}</span>`;
         newBtn.addEventListener("click", async (e) => {
           e.stopPropagation();
           if (this._audioEl) {
@@ -366,7 +367,7 @@ export class SoundDialog {
       // Import audio file button (works everywhere)
       const importBtn = document.createElement("button");
       importBtn.className = "sound-dialog__new-btn";
-      importBtn.innerHTML = `${getIcon("upload", 16)}<span>Import audio file</span>`;
+      importBtn.innerHTML = `${getIcon("upload", 16)}<span>${t("soundDialog.importAudioFile")}</span>`;
       importBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         this._importAudioFile();
@@ -411,7 +412,7 @@ export class SoundDialog {
     } else if (!recording) {
       const empty = document.createElement("p");
       empty.className = "sound-dialog__empty";
-      empty.textContent = "No recordings yet.";
+      empty.textContent = t("soundDialog.noRecordings");
       this._dialogEl.appendChild(empty);
     }
   }
@@ -432,14 +433,14 @@ export class SoundDialog {
     // Delete button
     const delBtn = document.createElement("button");
     delBtn.className = "sound-dialog__icon-btn sound-dialog__icon-btn--danger";
-    delBtn.title = "Delete";
+    delBtn.title = t("soundDialog.delete");
     delBtn.innerHTML = getIcon("trash", 16);
     delBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const confirmed = await showConfirmDialog(
-        "Delete Recording",
-        "Are you sure you want to delete this recording?",
-        "Delete",
+        t("soundDialog.deleteRecordingTitle"),
+        t("soundDialog.deleteRecordingMessage"),
+        t("soundDialog.delete"),
       );
       if (confirmed) {
         if (this._selectedId === rec.id) {

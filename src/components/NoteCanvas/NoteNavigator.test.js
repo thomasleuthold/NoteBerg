@@ -61,8 +61,8 @@ describe("NoteNavigator", () => {
     parentElement.querySelector(".note-navigator__toggle-btn").click();
     expect(parentElement.querySelector(".note-navigator--expanded")).not.toBeNull();
 
-    // Then collapse
-    const collapseBtn = parentElement.querySelector(".note-navigator__btn[title='Collapse']");
+    // Then collapse (first .note-navigator__btn is always the collapse button)
+    const collapseBtn = parentElement.querySelector(".note-navigator__btn");
     collapseBtn.click();
     expect(parentElement.querySelector(".note-navigator--collapsed")).not.toBeNull();
   });
@@ -91,8 +91,11 @@ describe("NoteNavigator", () => {
     navigator.setSubjects(mockSubjects);
     navigator._toggle(); // Expand
 
-    const nextBtn = parentElement.querySelector(".note-navigator__btn[title='Next']");
-    const prevBtn = parentElement.querySelector(".note-navigator__btn[title='Previous']");
+    // Render order is collapse, previous, subject, next — .note-navigator__btn
+    // matches collapse/previous/next (the subject button has its own class).
+    const navBtns = parentElement.querySelectorAll(".note-navigator__btn");
+    const prevBtn = navBtns[1];
+    const nextBtn = navBtns[2];
     const positionEl = parentElement.querySelector(".note-navigator__position");
 
     // Next
@@ -114,8 +117,11 @@ describe("NoteNavigator", () => {
     navigator.setSubjects(mockSubjects);
     navigator._toggle(); // Expand
 
-    const nextBtn = parentElement.querySelector(".note-navigator__btn[title='Next']");
-    const prevBtn = parentElement.querySelector(".note-navigator__btn[title='Previous']");
+    // Render order is collapse, previous, subject, next — .note-navigator__btn
+    // matches collapse/previous/next (the subject button has its own class).
+    const navBtns = parentElement.querySelectorAll(".note-navigator__btn");
+    const prevBtn = navBtns[1];
+    const nextBtn = navBtns[2];
     const positionEl = parentElement.querySelector(".note-navigator__position");
 
     // Go to the last item
@@ -159,7 +165,8 @@ describe("NoteNavigator", () => {
     navigator.setSubjects(mockSubjects);
     navigator._toggle(); // Expand
 
-    const nextBtn = parentElement.querySelector(".note-navigator__btn[title='Next']");
+    // Render order is collapse, previous, subject, next.
+    const nextBtn = parentElement.querySelectorAll(".note-navigator__btn")[2];
     let subjectBtn = parentElement.querySelector(".note-navigator__subject-btn");
     let positionEl = parentElement.querySelector(".note-navigator__position");
 

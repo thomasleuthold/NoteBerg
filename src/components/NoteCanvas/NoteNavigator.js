@@ -7,6 +7,7 @@
  * position indicator.
  */
 
+import { t } from "../../i18n/index.js";
 import { getIcon } from "../../utils/icons.js";
 
 const SUBJECT_ICONS = {
@@ -134,7 +135,7 @@ export class NoteNavigator {
   _renderCollapsed() {
     const btn = document.createElement("button");
     btn.className = "note-navigator__toggle-btn";
-    btn.title = "Navigator";
+    btn.title = t("noteNavigator.toggle");
     btn.innerHTML = getIcon("compass", 22);
     btn.onclick = (e) => {
       e.stopPropagation();
@@ -149,7 +150,7 @@ export class NoteNavigator {
     // Collapse button
     const collapseBtn = document.createElement("button");
     collapseBtn.className = "note-navigator__btn";
-    collapseBtn.title = "Collapse";
+    collapseBtn.title = t("noteNavigator.collapse");
     collapseBtn.innerHTML = getIcon("chevronsUp", 22);
     collapseBtn.onclick = (e) => {
       e.stopPropagation();
@@ -160,7 +161,7 @@ export class NoteNavigator {
     // Previous button
     const prevBtn = document.createElement("button");
     prevBtn.className = "note-navigator__btn";
-    prevBtn.title = "Previous";
+    prevBtn.title = t("noteNavigator.previous");
     prevBtn.innerHTML = getIcon("arrowUp", 22);
     prevBtn.onclick = (e) => {
       e.stopPropagation();
@@ -199,7 +200,7 @@ export class NoteNavigator {
     // Next button
     const nextBtn = document.createElement("button");
     nextBtn.className = "note-navigator__btn";
-    nextBtn.title = "Next";
+    nextBtn.title = t("noteNavigator.next");
     nextBtn.innerHTML = getIcon("arrowDown", 22);
     nextBtn.onclick = (e) => {
       e.stopPropagation();

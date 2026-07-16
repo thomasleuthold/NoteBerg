@@ -1,0 +1,522 @@
+{
+  "common": {
+    "cancel": "취소",
+    "confirm": "확인",
+    "close": "닫기",
+    "delete": "삭제",
+    "restore": "복원",
+    "save": "저장",
+    "ok": "확인",
+    "loading": "불러오는 중...",
+    "error": "오류",
+    "untitled": "제목 없음",
+    "home": "홈",
+    "rename": "이름 바꾸기",
+    "create": "만들기",
+    "none": "없음",
+    "capture": "캡처",
+    "justNow": "방금 전",
+    "minutesAgo": "{{count}}분 전",
+    "hoursAgo": "{{count}}시간 전",
+    "daysAgo": "{{count}}일 전"
+  },
+  "overview": {
+    "tabs": {
+      "notes": "노트",
+      "search": "검색",
+      "markers": "마커",
+      "recycleBin": "휴지통"
+    },
+    "sections": {
+      "notebooks": "노트북",
+      "quickNotes": "빠른 노트",
+      "notes": "노트",
+      "tasks": "할 일"
+    },
+    "actions": {
+      "newNotebook": "+ 새 노트북",
+      "newQuickNote": "+ 새 빠른 노트",
+      "newNote": "+ 새 노트"
+    },
+    "empty": {
+      "noNotebooks": "아직 노트북이 없습니다. 첫 번째 노트북을 만들어 보세요!",
+      "noQuickNotes": "아직 빠른 노트가 없습니다. 노트북 밖에서 노트를 만들 수 있습니다.",
+      "noNotesInNotebook": "이 노트북에는 아직 노트가 없습니다.",
+      "noTasks": "할 일을 찾을 수 없습니다."
+    },
+    "search": {
+      "placeholder": "노트 검색...",
+      "button": "검색",
+      "searching": "검색 중...",
+      "noResults": "검색과 일치하는 노트를 찾을 수 없습니다.",
+      "clearTitle": "검색 지우기",
+      "foundInText": "텍스트에서 찾음",
+      "foundInHandwriting": "손글씨에서 찾음",
+      "foundInPdf": "PDF에서 찾음",
+      "noContent": "내용 없음"
+    },
+    "tasks": {
+      "openCount_one": "{{count}}개 진행 중",
+      "openCount_other": "{{count}}개 진행 중",
+      "showCompleted_one": "완료된 할 일 {{count}}개 표시",
+      "showCompleted_other": "완료된 할 일 {{count}}개 표시",
+      "hideCompleted_one": "완료된 할 일 {{count}}개 숨기기",
+      "hideCompleted_other": "완료된 할 일 {{count}}개 숨기기",
+      "textTask": "텍스트 할 일",
+      "strokeTask": "손글씨 할 일",
+      "selectStrokes": "클릭하여 할 일의 획을 선택하세요",
+      "showAsText": "할 일을 텍스트로 표시",
+      "showAsStrokes": "할 일을 손글씨로 표시"
+    },
+    "notebook": {
+      "noDescription": "설명 없음",
+      "deleteTitle": "노트북 삭제",
+      "optionsTitle": "노트북 옵션",
+      "newNote": "+ 새 노트",
+      "noteCount_one": "노트 {{count}}개",
+      "noteCount_other": "노트 {{count}}개"
+    },
+    "delete": {
+      "notebookTitle": "노트북 삭제",
+      "notebookMessage": "\"{{title}}\"을(를) 삭제하시겠습니까? 이 노트북의 모든 노트도 함께 삭제됩니다.",
+      "noteTitle": "노트 삭제",
+      "noteMessage": "\"{{title}}\"을(를) 삭제하시겠습니까?"
+    },
+    "noteOptions": {
+      "title": "옵션",
+      "edit": "편집",
+      "moveCopy": "이동 / 복사",
+      "delete": "삭제"
+    },
+    "notebookOptions": {
+      "edit": "편집",
+      "delete": "삭제"
+    },
+    "moveCopy": {
+      "title": "노트 이동 / 복사",
+      "move": "이동",
+      "copy": "복사",
+      "targetLabel": "대상 선택",
+      "quickNotes": "빠른 노트",
+      "current": "현재",
+      "apply": "적용"
+    },
+    "loading": "불러오는 중...",
+    "errorTab": "탭을 불러오는 중 오류 발생: {{message}}",
+    "errorRender": "오류: {{message}}"
+  },
+  "settings": {
+    "title": "설정",
+    "sections": {
+      "appearance": "화면",
+      "language": "언어",
+      "security": "보안",
+      "nextcloud": "Nextcloud 동기화",
+      "recognition": "손글씨 인식",
+      "logging": "로그",
+      "dangerZone": "위험 구역",
+      "about": "정보"
+    },
+    "appearance": {
+      "theme": "테마",
+      "themeDesc": "선호하는 색상 구성표를 선택하세요",
+      "light": "라이트",
+      "dark": "다크",
+      "cardSize": "카드 크기",
+      "cardSizeDesc": "개요에서 노트 카드의 크기를 설정합니다",
+      "cardSizeSmall": "작게",
+      "cardSizeMedium": "보통",
+      "cardSizeLarge": "크게"
+    },
+    "language": {
+      "label": "인터페이스 언어",
+      "desc": "앱 인터페이스에 사용할 언어를 선택하세요",
+      "en": "영어",
+      "de": "독일어",
+      "fr": "프랑스어",
+      "es": "스페인어",
+      "it": "이탈리아어",
+      "zh": "중국어",
+      "pt": "포르투갈어",
+      "ja": "일본어",
+      "ko": "한국어"
+    },
+    "security": {
+      "encryptLocal": "로컬 데이터 암호화",
+      "encryptLocalDesc": "이 기기에 로컬로 저장된 노트를 암호화합니다"
+    },
+    "nextcloud": {
+      "connectLabel": "Nextcloud에 연결",
+      "connectDesc": "Nextcloud 로그인 흐름을 사용하여 계정을 안전하게 연결하세요",
+      "urlLabel": "Nextcloud 서버 URL",
+      "urlDesc": "Nextcloud 서버 주소를 입력하세요",
+      "urlPlaceholder": "https://cloud.example.com",
+      "testBtn": "연결 테스트",
+      "connectBtn": "Nextcloud에 연결",
+      "loginUrlLabel": "로그인 URL",
+      "loginUrlDesc": "이 URL을 복사하여 브라우저에서 열어 로그인을 완료하세요",
+      "copyUrlBtn": "URL 복사",
+      "connected": "연결됨",
+      "connectedAs": "{{user}}(으)로 로그인됨",
+      "server": "서버: {{url}}",
+      "syncNow": "지금 동기화",
+      "disconnect": "연결 해제",
+      "testing": "테스트 중...",
+      "connecting": "연결 중...",
+      "errorNoUrl": "서버 URL을 입력하세요",
+      "initializing": "초기화 중...",
+      "startingFlow": "Nextcloud 로그인 흐름을 시작하는 중...",
+      "waitingLogin": "로그인을 기다리는 중... 위 URL을 브라우저에서 열어주세요",
+      "selectedCopyHint": "선택됨 - Ctrl+C로 복사",
+      "syncing": "Nextcloud와 동기화 중...",
+      "disconnectConfirm": "Nextcloud 연결을 해제하시겠습니까?",
+      "syncSkipped": "동기화를 건너뛰었습니다(이미 진행 중)",
+      "syncComplete": "✓ 동기화가 완료되었습니다! 노트북 {{uploadedNotebooks}}개, 노트 {{uploadedNotes}}개를 업로드했습니다. 노트북 {{downloadedNotebooks}}개, 노트 {{downloadedNotes}}개를 다운로드했습니다.",
+      "syncConflictsDetected": " ⚠️ 충돌 {{count}}건이 감지되었습니다.",
+      "syncFailed": "✗ 동기화 실패: {{message}}"
+    },
+    "recognition": {
+      "statusLabel": "상태",
+      "localActive": "로컬 인식 활성화됨",
+      "notRunning": "인식 서비스가 실행되고 있지 않습니다",
+      "windowsOnly": "손글씨 인식은 Windows 앱에서만 사용할 수 있습니다.",
+      "languageLabel": "언어",
+      "languageDesc": "손글씨 인식을 위한 대상 언어",
+      "testBtn": "연결 테스트",
+      "testing": "테스트 중...",
+      "connecting": "연결 중...",
+      "success": "✓ 연결에 성공했습니다 ({{source}})!",
+      "errorStatus": "✗ 서버가 {{status}}을(를) 반환했습니다",
+      "errorFailed": "✗ 연결 실패: {{message}}",
+      "notConfiguredError": "✗ 인식 서비스가 실행되고 있지 않습니다",
+      "localSidecar": "로컬 서비스",
+      "languages": {
+        "en-US": "영어(미국)",
+        "de-DE": "독일어",
+        "fr-FR": "프랑스어",
+        "es-ES": "스페인어",
+        "it-IT": "이탈리아어",
+        "ja-JP": "일본어",
+        "zh-CN": "중국어(간체)"
+      }
+    },
+    "logging": {
+      "logLevel": "로그 수준",
+      "logLevelDesc": "로깅을 위한 최소 심각도 수준을 설정합니다",
+      "debug": "디버그(자세히)",
+      "info": "정보",
+      "warning": "경고(기본값)",
+      "error": "오류(최소)",
+      "sessionLogs": "세션 로그",
+      "sessionLogsDesc": "이 세션의 메모리 내 로그를 봅니다",
+      "viewLogs": "로그 보기",
+      "logsTitle": "디버그 로그 ({{count}}개 항목)",
+      "logsIntro": "이번 앱 실행의 세션 로그:",
+      "copyLogs": "클립보드에 복사",
+      "clearLogs": "로그 지우기",
+      "copied": "✓ 복사됨!",
+      "clearConfirm": "모든 디버그 로그를 지우시겠습니까?",
+      "noLogs": "이 세션에서 사용 가능한 로그가 없습니다."
+    },
+    "dangerZone": {
+      "resetPassword": "마스터 암호 재설정",
+      "resetPasswordDesc": "마스터 암호와 암호화 키를 지웁니다. 새 암호를 설정해야 합니다.",
+      "resetPasswordBtn": "마스터 암호 재설정",
+      "resetPasswordConfirmTitle": "마스터 암호 재설정",
+      "resetPasswordConfirmMsg": "⚠️ 이 작업은 마스터 암호와 암호화 키를 지웁니다.<br><br>재설정 후 암호화를 사용하려면 새 마스터 암호를 설정해야 합니다.<br><br><strong>참고:</strong> 암호화된 노트는 계속 암호화된 상태로 남으며, 원래 암호 없이는 복호화할 수 없습니다.",
+      "resetPasswordConfirmBtn": "암호 재설정",
+      "resetPasswordSuccessTitle": "마스터 암호가 재설정되었습니다",
+      "resetPasswordSuccessMsg": "✓ 마스터 암호가 지워졌습니다. 이제 암호화를 활성화하여 새 암호를 설정할 수 있습니다.",
+      "purgeLocal": "로컬 데이터 삭제",
+      "purgeLocalDesc": "이 기기의 모든 로컬 노트북과 노트를 지웁니다.",
+      "purgeLocalBtn": "로컬 데이터 삭제",
+      "purgeConfirmTitle": "로컬 데이터 삭제",
+      "purgeConfirmMsg": "⚠️ 위험: 이 작업은 이 기기의 모든 로컬 노트북과 노트를 삭제합니다!<br><br>포함 항목:<ul><li>모든 노트북과 노트</li><li>삭제된 모든 항목(휴지통)</li><li>로컬 동기화 기록</li></ul>이 작업은 되돌릴 수 없습니다. 계속하시겠습니까?",
+      "purgeConfirmBtn": "모두 삭제",
+      "purging": "삭제 중...",
+      "purgingStatus": "로컬 데이터를 삭제하는 중...",
+      "purgeSuccessStatus": "✓ 로컬 데이터가 성공적으로 삭제되었습니다! \"지금 동기화\"를 클릭하여 서버에서 다운로드하세요.",
+      "purgeSuccessStatusOffline": "✓ 로컬 데이터가 성공적으로 삭제되었습니다!",
+      "purgeSuccessTitle": "삭제 완료",
+      "purgeSuccessMsgConnected": "로컬 데이터가 성공적으로 삭제되었습니다!<br><br>다음 단계:<ol><li>\"지금 동기화\"를 클릭하여 Nextcloud에서 모든 데이터 다운로드</li><li>동기화가 완료될 때까지 대기</li><li>노트가 서버에서 복원됩니다</li></ol>",
+      "purgeSuccessMsgOffline": "로컬 데이터가 성공적으로 삭제되었습니다!",
+      "purgeFailedStatus": "✗ 삭제 실패: {{message}}",
+      "purgeFailedTitle": "삭제 실패",
+      "purgeFailedMsg": "삭제 실패: {{message}}",
+      "warningConnected": "⚠️ 이 작업은 노트북, 노트, 동기화 기록을 포함한 모든 로컬 데이터를 삭제합니다. Nextcloud에 연결되어 있다면 다시 동기화하여 데이터를 복원할 수 있습니다. 동기화되지 않은 변경 사항은 영구적으로 손실됩니다.",
+      "warningDisconnected": "⚠️ 이 작업은 노트북, 노트, 동기화 기록을 포함한 모든 로컬 데이터를 삭제합니다. 이 작업은 영구적이며 되돌릴 수 없습니다."
+    },
+    "about": {
+      "description": "손글씨 노트, 텍스트, 그림을 지원하는 노트 앱입니다.",
+      "version": "버전: {{version}}",
+      "licenses": "라이선스 정보"
+    },
+    "encryption": {
+      "enabledLocalTitle": "암호화 활성화됨",
+      "enabledLocalMsg": "✓ 마스터 암호가 생성되고 로컬 데이터 암호화가 활성화되었습니다. 새 노트는 암호화됩니다.",
+      "disabledLocalMsg": "로컬 데이터 암호화가 비활성화되었습니다. 이미 암호화된 노트는 계속 암호화된 상태로 유지됩니다.",
+      "updatedTitle": "암호화 설정이 업데이트되었습니다"
+    }
+  },
+  "modals": {
+    "close": "닫기",
+    "createNotebook": {
+      "title": "노트북 만들기",
+      "titleLabel": "제목 *",
+      "titlePlaceholder": "노트북 제목을 입력하세요",
+      "descLabel": "설명",
+      "descPlaceholder": "선택적 설명",
+      "colorLabel": "색상",
+      "colors": {
+        "Blue": "파랑",
+        "Green": "초록",
+        "Purple": "보라",
+        "Red": "빨강",
+        "Orange": "주황",
+        "Pink": "분홍"
+      }
+    },
+    "createNote": {
+      "title": "노트 만들기",
+      "titleLabel": "제목 *",
+      "titlePlaceholder": "노트 제목을 입력하세요",
+      "hintQuick": "이 노트는 빠른 노트로 생성됩니다(노트북에 속하지 않음).",
+      "hintNotebook": "이 노트는 <strong>{{notebook}}</strong>에 생성됩니다."
+    },
+    "editNote": {
+      "title": "노트 편집"
+    },
+    "editNotebook": {
+      "title": "노트북 편집"
+    },
+    "noteProperties": {
+      "title": "노트 속성",
+      "noteId": "노트 ID",
+      "notebookId": "노트북 ID",
+      "version": "노트 버전",
+      "modified": "수정 시각",
+      "created": "생성 시각",
+      "synced": "동기화 상태",
+      "syncedYes": "동기화됨",
+      "syncedNo": "로컬 전용",
+      "lastEtag": "마지막 동기화 ETag",
+      "deleted": "삭제 상태",
+      "deletedYes": "휴지통에 있음",
+      "deletedNo": "활성",
+      "noValue": "없음",
+      "closeBtn": "닫기"
+    },
+    "conflict": {
+      "title": "동기화 충돌: {{title}}",
+      "message": "이 노트는 이 기기와 서버 양쪽에서 수정되었습니다. 유지할 버전을 선택하세요.",
+      "local": "로컬 버전",
+      "remote": "서버 버전",
+      "modified": "수정 시각: {{date}}",
+      "strokes": "획 수: {{count}}",
+      "keepLocal": "로컬 버전 유지",
+      "keepRemote": "서버 버전 유지",
+      "noContent": "<i>텍스트 내용 없음</i>"
+    },
+    "errors": {
+      "titleRequired": "제목은 필수입니다"
+    }
+  },
+  "auth": {
+    "setup": {
+      "titleMigration": "🔒 데이터 보호하기",
+      "titleNew": "🔒 마스터 암호 만들기",
+      "migrationHeading": "보안을 강화하고 있습니다!",
+      "migrationDesc": "데이터를 암호화로 보호하려면 마스터 암호를 만들어 주세요. 기존 데이터는 자동으로 암호화됩니다.",
+      "description": "마스터 암호는 모든 데이터를 암호화합니다. 기억할 수 있는 강력한 암호를 선택하세요.",
+      "passwordLabel": "마스터 암호",
+      "passwordPlaceholder": "마스터 암호를 입력하세요",
+      "confirmLabel": "암호 확인",
+      "confirmPlaceholder": "암호를 다시 입력하세요",
+      "hintLabel": "암호 힌트(선택 사항)",
+      "hintPlaceholder": "예: 첫 반려동물 이름 + 태어난 연도",
+      "hintDesc": "암호를 기억하는 데 도움이 되는 힌트입니다. 너무 뻔하지 않게 만드세요!",
+      "warning": "<strong>⚠️ 중요:</strong> 마스터 암호를 잊어버리면 복구할 수 없습니다. 반드시 기억하거나 안전하게 보관하세요.",
+      "cancelBtn": "취소",
+      "confirmBtnMigration": "암호화하고 계속하기",
+      "confirmBtnNew": "마스터 암호 만들기",
+      "settingUp": "설정하는 중..."
+    },
+    "unlock": {
+      "title": "🔒 NoteBerg 잠금 해제",
+      "description": "앱 잠금을 해제하려면 마스터 암호를 입력하세요",
+      "passwordLabel": "마스터 암호",
+      "passwordPlaceholder": "암호를 입력하세요",
+      "hint": "힌트: {{hint}}",
+      "unlockBtn": "잠금 해제",
+      "biometricBtn": "{{method}}(으)로 잠금 해제",
+      "unlocking": "잠금 해제 중..."
+    },
+    "strength": {
+      "enterPassword": "암호를 입력하세요",
+      "veryWeak": "매우 약함",
+      "weak": "약함",
+      "fair": "보통",
+      "good": "좋음",
+      "strong": "강함",
+      "veryStrong": "매우 강함"
+    },
+    "errors": {
+      "enterPassword": "마스터 암호를 입력하세요",
+      "tooShort": "암호는 8자 이상이어야 합니다",
+      "mismatch": "암호가 일치하지 않습니다",
+      "tooWeak": "암호가 너무 약합니다. 더 강력한 암호를 선택하세요.",
+      "wrongPassword": "암호가 올바르지 않습니다. 다시 시도하세요.",
+      "biometricFailed": "생체 인증에 실패했습니다. 암호를 사용하세요.",
+      "biometricUnavailable": "생체 인증 잠금 해제를 사용할 수 없습니다. 암호를 사용하세요.",
+      "setupFailed": "마스터 암호 설정에 실패했습니다"
+    }
+  },
+  "footer": {
+    "syncing": "동기화 중…",
+    "syncClickHint": "동기화되지 않음 · 클릭하여 지금 동기화",
+    "notConnected": "Nextcloud에 연결되지 않음",
+    "lastSyncedTooltip": "마지막 동기화 {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
+    "syncFailedTooltip": "동기화 실패: {{error}}",
+    "unknownError": "알 수 없는 오류",
+    "recognitionRunning": "손글씨 인식 실행 중…"
+  },
+  "breadcrumb": {
+    "home": "홈",
+    "rename": "이름 바꾸기",
+    "save": "저장"
+  },
+  "toolbar": {
+    "modes": {
+      "pan": "이동 모드",
+      "draw": "그리기 모드",
+      "eraser": "지우개 모드",
+      "lasso": "올가미 선택",
+      "text": "텍스트 모드"
+    },
+    "actions": {
+      "undo": "실행 취소 (Ctrl+Z)",
+      "redo": "다시 실행 (Ctrl+Y)",
+      "insert": "삽입",
+      "options": "옵션"
+    },
+    "insert": {
+      "image": "이미지 삽입",
+      "camera": "사진 촬영",
+      "pdf": "PDF 삽입",
+      "space": "세로 여백 삽입"
+    },
+    "background": {
+      "label": "배경",
+      "none": "없음",
+      "ruledNarrow": "줄 - 좁게",
+      "ruledMedium": "줄 - 보통",
+      "ruledWide": "줄 - 넓게",
+      "gridSmall": "격자 - 작게",
+      "gridMedium": "격자 - 보통",
+      "gridLarge": "격자 - 크게"
+    },
+    "exportPdf": "PDF 내보내기",
+    "deleteNote": "노트 삭제",
+    "penDialog": {
+      "lineWidth": "선 굵기: ",
+      "color": "색상",
+      "colorTitle": "색상 {{num}}",
+      "expand": "설정 펼치기",
+      "collapse": "접기",
+      "savePreset": "현재 설정을 이 프리셋에 저장"
+    },
+    "tasks": {
+      "selectStrokes": "클릭하여 할 일의 획을 선택하세요"
+    },
+    "eraser": {
+      "strokeEraser": "획 지우개",
+      "partEraser": "부분 지우개",
+      "highlighterOnly": "형광펜만 지우기",
+      "size": "크기"
+    }
+  },
+  "licenses": {
+    "title": "오픈소스 라이선스",
+    "intro": "NoteBerg는 다음의 훌륭한 오픈소스 프로젝트의 도움으로 만들어졌습니다:",
+    "viewLicense": "라이선스 보기",
+    "close": "닫기"
+  },
+  "canvas": {
+    "selection": {
+      "copy": "복사",
+      "markAsTask": "할 일로 표시",
+      "removeTask": "할 일 표시 해제",
+      "delete": "삭제"
+    },
+    "media": {
+      "select": "선택",
+      "crop": "자르기",
+      "sendToFront": "맨 앞으로",
+      "sendToBack": "맨 뒤로",
+      "delete": "삭제"
+    },
+    "pdf": {
+      "delete": "PDF 삭제",
+      "deleteConfirmTitle": "PDF 삭제",
+      "deleteConfirmMsg": "PDF 문서를 제거하시겠습니까? 모든 페이지가 제거됩니다.",
+      "exportError": "PDF 내보내기 실패",
+      "exportProgressTitle": "PDF 내보내는 중",
+      "exportProgressPage": "{{current}} / {{total}} 페이지 내보내는 중...",
+      "importProgressTitle": "PDF 가져오는 중",
+      "importProgressUpload": "PDF 파일 저장 중...",
+      "importProgressPage": "{{current}} / {{total}} 페이지 읽는 중...",
+      "importProgressSaving": "{{current}} / {{total}} 파일 업로드 중...",
+      "importProgressFinalizing": "마무리하는 중..."
+    },
+    "textSelection": {
+      "cut": "잘라내기",
+      "copy": "복사",
+      "paste": "붙여넣기"
+    },
+    "crop": {
+      "simpleCrop": "단순 자르기",
+      "perspective": "원근 보정",
+      "apply": "적용",
+      "cancel": "취소",
+      "normalizeLighting": "조명 보정"
+    }
+  },
+  "recycleBin": {
+    "notebook": "노트북",
+    "note": "노트",
+    "deletedOn": "삭제됨: {{date}}",
+    "restoreTitle": "복원",
+    "purgeTitle": "영구 삭제",
+    "restore": "복원",
+    "purge": "영구 삭제",
+    "emptyNotebooks": "삭제된 노트북이 없습니다",
+    "emptyNotes": "삭제된 노트가 없습니다",
+    "emptyTitle": "휴지통이 비어 있습니다",
+    "emptyDesc": "삭제된 노트북과 노트가 여기에 표시됩니다.",
+    "notebooksCount": "노트북 ({{count}}개)",
+    "notesCount": "노트 ({{count}}개)"
+  },
+  "soundDialog": {
+    "trigger": "녹음",
+    "title": "녹음",
+    "close": "닫기",
+    "resume": "재개",
+    "pause": "일시정지",
+    "stopRecording": "녹음 중지",
+    "newRecording": "새 녹음",
+    "importAudioFile": "오디오 파일 가져오기",
+    "noRecordings": "아직 녹음이 없습니다.",
+    "delete": "삭제",
+    "deleteRecordingTitle": "녹음 삭제",
+    "deleteRecordingMessage": "이 녹음을 삭제하시겠습니까?",
+    "errorGeneric": "녹음을 시작할 수 없습니다.",
+    "errorNoDevice": "오디오 장치를 찾을 수 없습니다. 마이크를 연결하세요.",
+    "errorPermissionDenied": "마이크 접근이 거부되었습니다."
+  },
+  "noteNavigator": {
+    "toggle": "내비게이터",
+    "collapse": "접기",
+    "previous": "이전",
+    "next": "다음"
+  }
+}

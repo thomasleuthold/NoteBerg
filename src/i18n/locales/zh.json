@@ -1,0 +1,522 @@
+{
+  "common": {
+    "cancel": "取消",
+    "confirm": "确认",
+    "close": "关闭",
+    "delete": "删除",
+    "restore": "恢复",
+    "save": "保存",
+    "ok": "确定",
+    "loading": "加载中...",
+    "error": "错误",
+    "untitled": "无标题",
+    "home": "主页",
+    "rename": "重命名",
+    "create": "创建",
+    "none": "无",
+    "capture": "拍摄",
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前"
+  },
+  "overview": {
+    "tabs": {
+      "notes": "笔记",
+      "search": "搜索",
+      "markers": "标记",
+      "recycleBin": "回收站"
+    },
+    "sections": {
+      "notebooks": "笔记本",
+      "quickNotes": "快速笔记",
+      "notes": "笔记",
+      "tasks": "任务"
+    },
+    "actions": {
+      "newNotebook": "+ 新建笔记本",
+      "newQuickNote": "+ 新建快速笔记",
+      "newNote": "+ 新建笔记"
+    },
+    "empty": {
+      "noNotebooks": "还没有笔记本，创建你的第一个笔记本吧！",
+      "noQuickNotes": "还没有快速笔记。可以在任意笔记本之外创建笔记。",
+      "noNotesInNotebook": "此笔记本中还没有笔记。",
+      "noTasks": "未找到任务。"
+    },
+    "search": {
+      "placeholder": "搜索笔记...",
+      "button": "搜索",
+      "searching": "搜索中...",
+      "noResults": "未找到匹配的笔记。",
+      "clearTitle": "清除搜索",
+      "foundInText": "在文本中找到",
+      "foundInHandwriting": "在手写内容中找到",
+      "foundInPdf": "在 PDF 中找到",
+      "noContent": "无内容"
+    },
+    "tasks": {
+      "openCount_one": "{{count}} 项未完成",
+      "openCount_other": "{{count}} 项未完成",
+      "showCompleted_one": "显示 {{count}} 项已完成任务",
+      "showCompleted_other": "显示 {{count}} 项已完成任务",
+      "hideCompleted_one": "隐藏 {{count}} 项已完成任务",
+      "hideCompleted_other": "隐藏 {{count}} 项已完成任务",
+      "textTask": "文本任务",
+      "strokeTask": "手写任务",
+      "selectStrokes": "点击以选择任务笔画",
+      "showAsText": "以文本形式显示任务",
+      "showAsStrokes": "以手写形式显示任务"
+    },
+    "notebook": {
+      "noDescription": "无描述",
+      "deleteTitle": "删除笔记本",
+      "optionsTitle": "笔记本选项",
+      "newNote": "+ 新建笔记",
+      "noteCount_one": "{{count}} 篇笔记",
+      "noteCount_other": "{{count}} 篇笔记"
+    },
+    "delete": {
+      "notebookTitle": "删除笔记本",
+      "notebookMessage": "确定要删除“{{title}}”吗？此操作将同时删除该笔记本中的所有笔记。",
+      "noteTitle": "删除笔记",
+      "noteMessage": "确定要删除“{{title}}”吗？"
+    },
+    "noteOptions": {
+      "title": "选项",
+      "edit": "编辑",
+      "moveCopy": "移动 / 复制",
+      "delete": "删除"
+    },
+    "notebookOptions": {
+      "edit": "编辑",
+      "delete": "删除"
+    },
+    "moveCopy": {
+      "title": "移动 / 复制笔记",
+      "move": "移动",
+      "copy": "复制",
+      "targetLabel": "选择目标位置",
+      "quickNotes": "快速笔记",
+      "current": "当前",
+      "apply": "应用"
+    },
+    "loading": "加载中...",
+    "errorTab": "加载标签页出错：{{message}}",
+    "errorRender": "错误：{{message}}"
+  },
+  "settings": {
+    "title": "设置",
+    "sections": {
+      "appearance": "外观",
+      "language": "语言",
+      "security": "安全",
+      "nextcloud": "Nextcloud 同步",
+      "recognition": "手写识别",
+      "logging": "日志",
+      "dangerZone": "危险操作",
+      "about": "关于"
+    },
+    "appearance": {
+      "theme": "主题",
+      "themeDesc": "选择你喜欢的配色方案",
+      "light": "浅色",
+      "dark": "深色",
+      "cardSize": "卡片大小",
+      "cardSizeDesc": "设置概览中笔记卡片的大小",
+      "cardSizeSmall": "小",
+      "cardSizeMedium": "中",
+      "cardSizeLarge": "大"
+    },
+    "language": {
+      "label": "界面语言",
+      "desc": "选择应用界面的语言",
+      "en": "英语",
+      "de": "德语",
+      "fr": "法语",
+      "es": "西班牙语",
+      "it": "意大利语",
+      "zh": "中文",
+      "pt": "葡萄牙语",
+      "ja": "日语",
+      "ko": "韩语"
+    },
+    "security": {
+      "encryptLocal": "加密本地数据",
+      "encryptLocalDesc": "加密本设备上本地存储的笔记"
+    },
+    "nextcloud": {
+      "connectLabel": "连接到 Nextcloud",
+      "connectDesc": "使用 Nextcloud 登录流程安全地连接你的账户",
+      "urlLabel": "Nextcloud 服务器地址",
+      "urlDesc": "输入你的 Nextcloud 服务器地址",
+      "urlPlaceholder": "https://cloud.example.com",
+      "testBtn": "测试连接",
+      "connectBtn": "连接到 Nextcloud",
+      "loginUrlLabel": "登录地址",
+      "loginUrlDesc": "复制此地址并在浏览器中打开以完成登录",
+      "copyUrlBtn": "复制地址",
+      "connected": "已连接",
+      "connectedAs": "已登录为 {{user}}",
+      "server": "服务器：{{url}}",
+      "syncNow": "立即同步",
+      "disconnect": "断开连接",
+      "testing": "测试中...",
+      "connecting": "连接中...",
+      "errorNoUrl": "请输入服务器地址",
+      "initializing": "初始化中...",
+      "startingFlow": "正在启动 Nextcloud 登录流程...",
+      "waitingLogin": "等待登录……请在浏览器中打开上方地址",
+      "selectedCopyHint": "已选中 - 使用 Ctrl+C 复制",
+      "syncing": "正在与 Nextcloud 同步...",
+      "disconnectConfirm": "确定要断开与 Nextcloud 的连接吗？",
+      "syncSkipped": "已跳过同步（同步已在进行中）",
+      "syncComplete": "✓ 同步完成！已上传 {{uploadedNotebooks}} 个笔记本、{{uploadedNotes}} 篇笔记。已下载 {{downloadedNotebooks}} 个笔记本、{{downloadedNotes}} 篇笔记。",
+      "syncConflictsDetected": " ⚠️ 检测到 {{count}} 个冲突。",
+      "syncFailed": "✗ 同步失败：{{message}}"
+    },
+    "recognition": {
+      "statusLabel": "状态",
+      "localActive": "本地识别已启用",
+      "notRunning": "识别服务未运行",
+      "windowsOnly": "手写识别功能仅在 Windows 应用中可用。",
+      "languageLabel": "语言",
+      "languageDesc": "手写识别的目标语言",
+      "testBtn": "测试连接",
+      "testing": "测试中...",
+      "connecting": "连接中...",
+      "success": "✓ 连接成功（{{source}}）！",
+      "errorStatus": "✗ 服务器返回 {{status}}",
+      "errorFailed": "✗ 连接失败：{{message}}",
+      "notConfiguredError": "✗ 识别服务未运行",
+      "localSidecar": "本地服务",
+      "languages": {
+        "en-US": "英语（美国）",
+        "de-DE": "德语",
+        "fr-FR": "法语",
+        "es-ES": "西班牙语",
+        "it-IT": "意大利语",
+        "ja-JP": "日语",
+        "zh-CN": "中文（简体）"
+      }
+    },
+    "logging": {
+      "logLevel": "日志级别",
+      "logLevelDesc": "设置日志记录的最低严重级别",
+      "debug": "调试（详细）",
+      "info": "信息",
+      "warning": "警告（默认）",
+      "error": "错误（最简）",
+      "sessionLogs": "会话日志",
+      "sessionLogsDesc": "查看此会话的内存日志",
+      "viewLogs": "查看日志",
+      "logsTitle": "调试日志（{{count}} 条）",
+      "logsIntro": "本次应用运行的会话日志：",
+      "copyLogs": "复制到剪贴板",
+      "clearLogs": "清除日志",
+      "copied": "✓ 已复制！",
+      "clearConfirm": "确定要清除所有调试日志吗？",
+      "noLogs": "此会话中没有可用日志。"
+    },
+    "dangerZone": {
+      "resetPassword": "重置主密码",
+      "resetPasswordDesc": "清除主密码和加密密钥。你需要重新设置密码。",
+      "resetPasswordBtn": "重置主密码",
+      "resetPasswordConfirmTitle": "重置主密码",
+      "resetPasswordConfirmMsg": "⚠️ 此操作将清除你的主密码和加密密钥。<br><br>重置后，你需要设置新的主密码才能使用加密功能。<br><br><strong>注意：</strong>已加密的笔记将保持加密状态，且无法在没有原密码的情况下解密。",
+      "resetPasswordConfirmBtn": "重置密码",
+      "resetPasswordSuccessTitle": "主密码已重置",
+      "resetPasswordSuccessMsg": "✓ 主密码已清除。你现在可以通过启用加密来设置新密码。",
+      "purgeLocal": "清除本地数据",
+      "purgeLocalDesc": "清除此设备上的所有本地笔记本和笔记。",
+      "purgeLocalBtn": "清除本地数据",
+      "purgeConfirmTitle": "清除本地数据",
+      "purgeConfirmMsg": "⚠️ 危险操作：此操作将删除此设备上的所有本地笔记本和笔记！<br><br>包括：<ul><li>所有笔记本和笔记</li><li>所有已删除项目（回收站）</li><li>本地同步历史</li></ul>此操作无法撤销。你确定要继续吗？",
+      "purgeConfirmBtn": "清除全部",
+      "purging": "清除中...",
+      "purgingStatus": "正在清除本地数据...",
+      "purgeSuccessStatus": "✓ 本地数据已成功清除！点击“立即同步”从服务器下载数据。",
+      "purgeSuccessStatusOffline": "✓ 本地数据已成功清除！",
+      "purgeSuccessTitle": "清除成功",
+      "purgeSuccessMsgConnected": "本地数据已成功清除！<br><br>后续步骤：<ol><li>点击“立即同步”从 Nextcloud 下载所有数据</li><li>等待同步完成</li><li>你的笔记将从服务器恢复</li></ol>",
+      "purgeSuccessMsgOffline": "本地数据已成功清除！",
+      "purgeFailedStatus": "✗ 清除失败：{{message}}",
+      "purgeFailedTitle": "清除失败",
+      "purgeFailedMsg": "清除失败：{{message}}",
+      "warningConnected": "⚠️ 此操作将删除所有本地数据，包括笔记本、笔记和同步历史。如果你已连接 Nextcloud，可通过再次同步恢复数据。未同步的更改将永久丢失。",
+      "warningDisconnected": "⚠️ 此操作将删除所有本地数据，包括笔记本、笔记和同步历史。此操作不可撤销。"
+    },
+    "about": {
+      "description": "一款支持手写笔记、文本和绘图的笔记应用。",
+      "version": "版本：{{version}}",
+      "licenses": "许可信息"
+    },
+    "encryption": {
+      "enabledLocalTitle": "加密已启用",
+      "enabledLocalMsg": "✓ 主密码已创建，本地数据加密已启用。新笔记将被加密。",
+      "disabledLocalMsg": "本地数据加密已禁用。已加密的笔记将保持加密状态。",
+      "updatedTitle": "加密设置已更新"
+    }
+  },
+  "modals": {
+    "close": "关闭",
+    "createNotebook": {
+      "title": "创建笔记本",
+      "titleLabel": "标题 *",
+      "titlePlaceholder": "输入笔记本标题",
+      "descLabel": "描述",
+      "descPlaceholder": "可选描述",
+      "colorLabel": "颜色",
+      "colors": {
+        "Blue": "蓝色",
+        "Green": "绿色",
+        "Purple": "紫色",
+        "Red": "红色",
+        "Orange": "橙色",
+        "Pink": "粉色"
+      }
+    },
+    "createNote": {
+      "title": "创建笔记",
+      "titleLabel": "标题 *",
+      "titlePlaceholder": "输入笔记标题",
+      "hintQuick": "此笔记将作为快速笔记创建（不属于任何笔记本）。",
+      "hintNotebook": "此笔记将创建在 <strong>{{notebook}}</strong> 中。"
+    },
+    "editNote": {
+      "title": "编辑笔记"
+    },
+    "editNotebook": {
+      "title": "编辑笔记本"
+    },
+    "noteProperties": {
+      "title": "笔记属性",
+      "noteId": "笔记 ID",
+      "notebookId": "笔记本 ID",
+      "version": "笔记版本",
+      "modified": "修改时间",
+      "created": "创建时间",
+      "synced": "同步状态",
+      "syncedYes": "已同步",
+      "syncedNo": "仅本地",
+      "lastEtag": "上次同步 ETag",
+      "deleted": "删除状态",
+      "deletedYes": "在回收站中",
+      "deletedNo": "正常",
+      "noValue": "无",
+      "closeBtn": "关闭"
+    },
+    "conflict": {
+      "title": "同步冲突：{{title}}",
+      "message": "此笔记在本设备和服务器上均已被修改。请选择要保留的版本。",
+      "local": "本地版本",
+      "remote": "远程版本",
+      "modified": "修改时间：{{date}}",
+      "strokes": "笔画数：{{count}}",
+      "keepLocal": "保留本地版本",
+      "keepRemote": "保留远程版本",
+      "noContent": "<i>无文本内容</i>"
+    },
+    "errors": {
+      "titleRequired": "标题为必填项"
+    }
+  },
+  "auth": {
+    "setup": {
+      "titleMigration": "🔒 保护你的数据",
+      "titleNew": "🔒 创建主密码",
+      "migrationHeading": "我们正在提升你的安全性！",
+      "migrationDesc": "为了通过加密保护你的数据，请创建一个主密码。你现有的数据将自动加密。",
+      "description": "你的主密码用于加密所有数据。请选择一个你能记住的强密码。",
+      "passwordLabel": "主密码",
+      "passwordPlaceholder": "输入主密码",
+      "confirmLabel": "确认密码",
+      "confirmPlaceholder": "重新输入密码",
+      "hintLabel": "密码提示（可选）",
+      "hintPlaceholder": "例如：第一只宠物 + 出生年份",
+      "hintDesc": "帮助你记住密码的提示，不要设置得太明显！",
+      "warning": "<strong>⚠️ 重要提示：</strong>主密码一旦遗忘将无法恢复。请务必牢记或妥善保存。",
+      "cancelBtn": "取消",
+      "confirmBtnMigration": "加密并继续",
+      "confirmBtnNew": "创建主密码",
+      "settingUp": "设置中..."
+    },
+    "unlock": {
+      "title": "🔒 解锁 NoteBerg",
+      "description": "输入主密码以解锁应用",
+      "passwordLabel": "主密码",
+      "passwordPlaceholder": "输入密码",
+      "hint": "提示：{{hint}}",
+      "unlockBtn": "解锁",
+      "biometricBtn": "使用{{method}}解锁",
+      "unlocking": "解锁中..."
+    },
+    "strength": {
+      "enterPassword": "输入密码",
+      "veryWeak": "非常弱",
+      "weak": "弱",
+      "fair": "一般",
+      "good": "良好",
+      "strong": "强",
+      "veryStrong": "非常强"
+    },
+    "errors": {
+      "enterPassword": "请输入主密码",
+      "tooShort": "密码长度至少为 8 个字符",
+      "mismatch": "两次输入的密码不一致",
+      "tooWeak": "密码强度过低，请选择更强的密码。",
+      "wrongPassword": "密码错误，请重试。",
+      "biometricFailed": "生物识别认证失败，请使用密码。",
+      "biometricUnavailable": "生物识别解锁不可用，请使用密码。",
+      "setupFailed": "主密码设置失败"
+    }
+  },
+  "footer": {
+    "syncing": "同步中…",
+    "syncClickHint": "未同步 · 点击立即同步",
+    "notConnected": "未连接到 Nextcloud",
+    "lastSyncedTooltip": "上次同步于 {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
+    "syncFailedTooltip": "同步失败：{{error}}",
+    "unknownError": "未知错误",
+    "recognitionRunning": "手写识别运行中…"
+  },
+  "breadcrumb": {
+    "home": "主页",
+    "rename": "重命名",
+    "save": "保存"
+  },
+  "toolbar": {
+    "modes": {
+      "pan": "平移模式",
+      "draw": "绘制模式",
+      "eraser": "橡皮擦模式",
+      "lasso": "套索选择",
+      "text": "文本模式"
+    },
+    "actions": {
+      "undo": "撤销 (Ctrl+Z)",
+      "redo": "重做 (Ctrl+Y)",
+      "insert": "插入",
+      "options": "选项"
+    },
+    "insert": {
+      "image": "插入图片",
+      "camera": "拍照",
+      "pdf": "插入 PDF",
+      "space": "插入垂直空白"
+    },
+    "background": {
+      "label": "背景",
+      "none": "无",
+      "ruledNarrow": "横线 - 窄",
+      "ruledMedium": "横线 - 中",
+      "ruledWide": "横线 - 宽",
+      "gridSmall": "网格 - 小",
+      "gridMedium": "网格 - 中",
+      "gridLarge": "网格 - 大"
+    },
+    "exportPdf": "导出 PDF",
+    "deleteNote": "删除笔记",
+    "penDialog": {
+      "lineWidth": "线宽：",
+      "color": "颜色",
+      "colorTitle": "颜色 {{num}}",
+      "expand": "展开设置",
+      "collapse": "收起",
+      "savePreset": "将当前设置保存到此预设"
+    },
+    "tasks": {
+      "selectStrokes": "点击以选择任务笔画"
+    },
+    "eraser": {
+      "strokeEraser": "笔画橡皮擦",
+      "partEraser": "局部橡皮擦",
+      "highlighterOnly": "仅擦除荧光笔",
+      "size": "大小"
+    }
+  },
+  "licenses": {
+    "title": "开源许可证",
+    "intro": "NoteBerg 的构建离不开以下优秀的开源项目：",
+    "viewLicense": "查看许可证",
+    "close": "关闭"
+  },
+  "canvas": {
+    "selection": {
+      "copy": "复制",
+      "markAsTask": "标记为任务",
+      "removeTask": "取消任务标记",
+      "delete": "删除"
+    },
+    "media": {
+      "select": "选择",
+      "crop": "裁剪",
+      "sendToFront": "置于顶层",
+      "sendToBack": "置于底层",
+      "delete": "删除"
+    },
+    "pdf": {
+      "delete": "删除 PDF",
+      "deleteConfirmTitle": "删除 PDF",
+      "deleteConfirmMsg": "确定要移除此 PDF 文档吗？这将移除所有页面。",
+      "exportError": "PDF 导出失败",
+      "exportProgressTitle": "正在导出 PDF",
+      "exportProgressPage": "正在导出第 {{current}} / {{total}} 页...",
+      "importProgressTitle": "正在导入 PDF",
+      "importProgressUpload": "正在保存 PDF 文件...",
+      "importProgressPage": "正在读取第 {{current}} / {{total}} 页...",
+      "importProgressSaving": "正在上传文件 {{current}} / {{total}}...",
+      "importProgressFinalizing": "正在完成..."
+    },
+    "textSelection": {
+      "cut": "剪切",
+      "copy": "复制",
+      "paste": "粘贴"
+    },
+    "crop": {
+      "simpleCrop": "简单裁剪",
+      "perspective": "透视校正",
+      "apply": "应用",
+      "cancel": "取消",
+      "normalizeLighting": "均衡光照"
+    }
+  },
+  "recycleBin": {
+    "notebook": "笔记本",
+    "note": "笔记",
+    "deletedOn": "删除于 {{date}}",
+    "restoreTitle": "恢复",
+    "purgeTitle": "彻底删除",
+    "restore": "恢复",
+    "purge": "彻底删除",
+    "emptyNotebooks": "没有已删除的笔记本",
+    "emptyNotes": "没有已删除的笔记",
+    "emptyTitle": "回收站是空的",
+    "emptyDesc": "已删除的笔记本和笔记会显示在这里。",
+    "notebooksCount": "笔记本（{{count}}）",
+    "notesCount": "笔记（{{count}}）"
+  },
+  "soundDialog": {
+    "trigger": "录音",
+    "title": "录音",
+    "close": "关闭",
+    "resume": "继续",
+    "pause": "暂停",
+    "stopRecording": "停止录音",
+    "newRecording": "新建录音",
+    "importAudioFile": "导入音频文件",
+    "noRecordings": "暂无录音。",
+    "delete": "删除",
+    "deleteRecordingTitle": "删除录音",
+    "deleteRecordingMessage": "确定要删除此录音吗？",
+    "errorGeneric": "无法开始录音。",
+    "errorNoDevice": "未找到音频设备，请连接麦克风。",
+    "errorPermissionDenied": "麦克风访问被拒绝。"
+  },
+  "noteNavigator": {
+    "toggle": "导航器",
+    "collapse": "收起",
+    "previous": "上一个",
+    "next": "下一个"
+  }
+}

@@ -1,0 +1,522 @@
+{
+  "common": {
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "close": "Cerrar",
+    "delete": "Eliminar",
+    "restore": "Restaurar",
+    "save": "Guardar",
+    "ok": "OK",
+    "loading": "Cargando...",
+    "error": "Error",
+    "untitled": "Sin título",
+    "home": "Inicio",
+    "rename": "Renombrar",
+    "create": "Crear",
+    "none": "Ninguno",
+    "capture": "Capturar",
+    "justNow": "ahora mismo",
+    "minutesAgo": "hace {{count}} min",
+    "hoursAgo": "hace {{count}} h",
+    "daysAgo": "hace {{count}} d"
+  },
+  "overview": {
+    "tabs": {
+      "notes": "Notas",
+      "search": "Buscar",
+      "markers": "Marcadores",
+      "recycleBin": "Papelera"
+    },
+    "sections": {
+      "notebooks": "Cuadernos",
+      "quickNotes": "Notas rápidas",
+      "notes": "Notas",
+      "tasks": "Tareas"
+    },
+    "actions": {
+      "newNotebook": "+ Cuaderno",
+      "newQuickNote": "+ Nota rápida",
+      "newNote": "+ Nota"
+    },
+    "empty": {
+      "noNotebooks": "Todavía no hay cuadernos. ¡Crea tu primer cuaderno!",
+      "noQuickNotes": "Todavía no hay notas rápidas. Crea una nota fuera de cualquier cuaderno.",
+      "noNotesInNotebook": "Todavía no hay notas en este cuaderno.",
+      "noTasks": "No se encontraron tareas."
+    },
+    "search": {
+      "placeholder": "Buscar notas...",
+      "button": "Buscar",
+      "searching": "Buscando...",
+      "noResults": "No se encontraron notas que coincidan con tu búsqueda.",
+      "clearTitle": "Borrar búsqueda",
+      "foundInText": "Encontrado en el texto",
+      "foundInHandwriting": "Encontrado en la escritura a mano",
+      "foundInPdf": "Encontrado en el PDF",
+      "noContent": "Sin contenido"
+    },
+    "tasks": {
+      "openCount_one": "{{count}} pendiente",
+      "openCount_other": "{{count}} pendientes",
+      "showCompleted_one": "Mostrar {{count}} tarea completada",
+      "showCompleted_other": "Mostrar {{count}} tareas completadas",
+      "hideCompleted_one": "Ocultar {{count}} tarea completada",
+      "hideCompleted_other": "Ocultar {{count}} tareas completadas",
+      "textTask": "Tarea de texto",
+      "strokeTask": "Tarea manuscrita",
+      "selectStrokes": "Haz clic para seleccionar los trazos de la tarea",
+      "showAsText": "Mostrar tareas como texto",
+      "showAsStrokes": "Mostrar tareas como escritura a mano"
+    },
+    "notebook": {
+      "noDescription": "Sin descripción",
+      "deleteTitle": "Eliminar cuaderno",
+      "optionsTitle": "Opciones del cuaderno",
+      "newNote": "+ Nota",
+      "noteCount_one": "{{count}} nota",
+      "noteCount_other": "{{count}} notas"
+    },
+    "delete": {
+      "notebookTitle": "Eliminar cuaderno",
+      "notebookMessage": "¿Seguro que deseas eliminar \"{{title}}\"? Esto también eliminará todas las notas de este cuaderno.",
+      "noteTitle": "Eliminar nota",
+      "noteMessage": "¿Seguro que deseas eliminar \"{{title}}\"?"
+    },
+    "noteOptions": {
+      "title": "Opciones",
+      "edit": "Editar",
+      "moveCopy": "Mover / Copiar",
+      "delete": "Eliminar"
+    },
+    "notebookOptions": {
+      "edit": "Editar",
+      "delete": "Eliminar"
+    },
+    "moveCopy": {
+      "title": "Mover / Copiar",
+      "move": "Mover",
+      "copy": "Copiar",
+      "targetLabel": "Seleccionar destino",
+      "quickNotes": "Notas rápidas",
+      "current": "actual",
+      "apply": "Aplicar"
+    },
+    "loading": "Cargando...",
+    "errorTab": "Error al cargar la pestaña: {{message}}",
+    "errorRender": "Error: {{message}}"
+  },
+  "settings": {
+    "title": "Configuración",
+    "sections": {
+      "appearance": "Apariencia",
+      "language": "Idioma",
+      "security": "Seguridad",
+      "nextcloud": "Sincronización con Nextcloud",
+      "recognition": "Reconocimiento",
+      "logging": "Registro",
+      "dangerZone": "Zona de peligro",
+      "about": "Acerca de"
+    },
+    "appearance": {
+      "theme": "Tema",
+      "themeDesc": "Elige tu esquema de colores preferido",
+      "light": "Claro",
+      "dark": "Oscuro",
+      "cardSize": "Tamaño de las tarjetas",
+      "cardSizeDesc": "Establece el tamaño de las tarjetas de notas en la vista general",
+      "cardSizeSmall": "Pequeño",
+      "cardSizeMedium": "Mediano",
+      "cardSizeLarge": "Grande"
+    },
+    "language": {
+      "label": "Idioma de la interfaz",
+      "desc": "Selecciona el idioma de la interfaz de la aplicación",
+      "en": "Inglés",
+      "de": "Alemán",
+      "fr": "Francés",
+      "es": "Español",
+      "it": "Italiano",
+      "zh": "Chino",
+      "pt": "Portugués",
+      "ja": "Japonés",
+      "ko": "Coreano"
+    },
+    "security": {
+      "encryptLocal": "Cifrar datos locales",
+      "encryptLocalDesc": "Cifrar las notas almacenadas localmente en este dispositivo"
+    },
+    "nextcloud": {
+      "connectLabel": "Conectar con Nextcloud",
+      "connectDesc": "Usa el flujo de inicio de sesión de Nextcloud para conectar tu cuenta de forma segura",
+      "urlLabel": "URL del servidor Nextcloud",
+      "urlDesc": "Introduce la dirección de tu servidor Nextcloud",
+      "urlPlaceholder": "https://cloud.example.com",
+      "testBtn": "Probar conexión",
+      "connectBtn": "Conectar con Nextcloud",
+      "loginUrlLabel": "URL de inicio de sesión",
+      "loginUrlDesc": "Copia y abre esta URL en tu navegador para completar el inicio de sesión",
+      "copyUrlBtn": "Copiar URL",
+      "connected": "Conectado",
+      "connectedAs": "Sesión iniciada como {{user}}",
+      "server": "Servidor: {{url}}",
+      "syncNow": "Sincronizar ahora",
+      "disconnect": "Desconectar",
+      "testing": "Probando...",
+      "connecting": "Conectando...",
+      "errorNoUrl": "Introduce una URL de servidor",
+      "initializing": "Inicializando...",
+      "startingFlow": "Iniciando el flujo de inicio de sesión de Nextcloud...",
+      "waitingLogin": "Esperando inicio de sesión... Abre la URL de arriba en tu navegador",
+      "selectedCopyHint": "Seleccionado - usa Ctrl+C",
+      "syncing": "Sincronizando con Nextcloud...",
+      "disconnectConfirm": "¿Seguro que deseas desconectarte de Nextcloud?",
+      "syncSkipped": "Sincronización omitida (ya en curso)",
+      "syncComplete": "✓ ¡Sincronización completa! Subidos {{uploadedNotebooks}} cuadernos, {{uploadedNotes}} notas. Descargados {{downloadedNotebooks}} cuadernos, {{downloadedNotes}} notas.",
+      "syncConflictsDetected": " ⚠️ Se detectaron {{count}} conflictos.",
+      "syncFailed": "✗ Error de sincronización: {{message}}"
+    },
+    "recognition": {
+      "statusLabel": "Estado",
+      "localActive": "Reconocimiento local activo",
+      "notRunning": "El servicio de reconocimiento no está en ejecución",
+      "windowsOnly": "El reconocimiento de escritura a mano solo está disponible en la aplicación de Windows.",
+      "languageLabel": "Idioma",
+      "languageDesc": "Idioma de destino para el reconocimiento de escritura a mano",
+      "testBtn": "Probar conexión",
+      "testing": "Probando...",
+      "connecting": "Conectando...",
+      "success": "✓ ¡Conexión exitosa ({{source}})!",
+      "errorStatus": "✗ El servidor devolvió {{status}}",
+      "errorFailed": "✗ Error de conexión: {{message}}",
+      "notConfiguredError": "✗ El servicio de reconocimiento no está en ejecución",
+      "localSidecar": "servicio local",
+      "languages": {
+        "en-US": "Inglés (EE. UU.)",
+        "de-DE": "Alemán",
+        "fr-FR": "Francés",
+        "es-ES": "Español",
+        "it-IT": "Italiano",
+        "ja-JP": "Japonés",
+        "zh-CN": "Chino (simplificado)"
+      }
+    },
+    "logging": {
+      "logLevel": "Nivel de registro",
+      "logLevelDesc": "Establecer el nivel mínimo de gravedad para el registro",
+      "debug": "Depuración (Detallado)",
+      "info": "Información",
+      "warning": "Advertencia (Predeterminado)",
+      "error": "Error (Mínimo)",
+      "sessionLogs": "Registros de la sesión",
+      "sessionLogsDesc": "Ver los registros en memoria de esta sesión",
+      "viewLogs": "Ver registros",
+      "logsTitle": "Registros de depuración ({{count}} entradas)",
+      "logsIntro": "Registros de sesión de esta ejecución de la aplicación:",
+      "copyLogs": "Copiar al portapapeles",
+      "clearLogs": "Borrar registros",
+      "copied": "✓ ¡Copiado!",
+      "clearConfirm": "¿Seguro que deseas borrar todos los registros de depuración?",
+      "noLogs": "No hay registros disponibles en esta sesión."
+    },
+    "dangerZone": {
+      "resetPassword": "Restablecer la contraseña maestra",
+      "resetPasswordDesc": "Borra la contraseña maestra y las claves de cifrado. Deberás establecer una nueva contraseña.",
+      "resetPasswordBtn": "Restablecer la contraseña maestra",
+      "resetPasswordConfirmTitle": "Restablecer la contraseña maestra",
+      "resetPasswordConfirmMsg": "⚠️ Esto borrará tu contraseña maestra y las claves de cifrado.<br><br>Después del restablecimiento, deberás establecer una nueva contraseña maestra para usar el cifrado.<br><br><strong>Nota:</strong> las notas cifradas seguirán cifradas y no podrán descifrarse sin la contraseña original.",
+      "resetPasswordConfirmBtn": "Restablecer contraseña",
+      "resetPasswordSuccessTitle": "Contraseña maestra restablecida",
+      "resetPasswordSuccessMsg": "✓ Se ha borrado la contraseña maestra. Ahora puedes establecer una nueva contraseña activando el cifrado.",
+      "purgeLocal": "Purgar datos locales",
+      "purgeLocalDesc": "Elimina TODOS los cuadernos y notas locales de este dispositivo.",
+      "purgeLocalBtn": "Purgar datos locales",
+      "purgeConfirmTitle": "Purgar datos locales",
+      "purgeConfirmMsg": "⚠️ PELIGRO: Esto ELIMINARÁ TODOS los cuadernos y notas locales de este dispositivo.<br><br>Esto incluye:<ul><li>Todos los cuadernos y notas</li><li>Todos los elementos eliminados (papelera)</li><li>El historial de sincronización local</li></ul>Esta acción no se puede deshacer. ¿Estás absolutamente seguro de que deseas continuar?",
+      "purgeConfirmBtn": "Purgar todo",
+      "purging": "Purgando...",
+      "purgingStatus": "Purgando datos locales...",
+      "purgeSuccessStatus": "✓ ¡Datos locales purgados correctamente! Haz clic en \"Sincronizar ahora\" para descargar desde el servidor.",
+      "purgeSuccessStatusOffline": "✓ ¡Datos locales purgados correctamente!",
+      "purgeSuccessTitle": "Purga exitosa",
+      "purgeSuccessMsgConnected": "¡Datos locales purgados correctamente!<br><br>Próximos pasos:<ol><li>Haz clic en \"Sincronizar ahora\" para descargar todos los datos desde Nextcloud</li><li>Espera a que finalice la sincronización</li><li>Tus notas se restaurarán desde el servidor</li></ol>",
+      "purgeSuccessMsgOffline": "¡Datos locales purgados correctamente!",
+      "purgeFailedStatus": "✗ Error al purgar: {{message}}",
+      "purgeFailedTitle": "Error al purgar",
+      "purgeFailedMsg": "Error al purgar: {{message}}",
+      "warningConnected": "⚠️ Esta acción eliminará todos los datos locales, incluyendo cuadernos, notas e historial de sincronización. Si estás conectado a Nextcloud, podrás restaurar tus datos sincronizando de nuevo. Los cambios no sincronizados se perderán permanentemente.",
+      "warningDisconnected": "⚠️ Esta acción eliminará todos los datos locales, incluyendo cuadernos, notas e historial de sincronización. Esta acción es permanente y no se puede deshacer."
+    },
+    "about": {
+      "description": "Una aplicación de notas compatible con notas manuscritas, texto y dibujos.",
+      "version": "Versión: {{version}}",
+      "licenses": "Información de licencias"
+    },
+    "encryption": {
+      "enabledLocalTitle": "Cifrado activado",
+      "enabledLocalMsg": "✓ Contraseña maestra creada y cifrado de datos locales activado. Las notas nuevas se cifrarán.",
+      "disabledLocalMsg": "Cifrado de datos locales desactivado. Las notas ya cifradas permanecen cifradas.",
+      "updatedTitle": "Configuración de cifrado actualizada"
+    }
+  },
+  "modals": {
+    "close": "Cerrar",
+    "createNotebook": {
+      "title": "Crear cuaderno",
+      "titleLabel": "Título *",
+      "titlePlaceholder": "Introduce el título del cuaderno",
+      "descLabel": "Descripción",
+      "descPlaceholder": "Descripción opcional",
+      "colorLabel": "Color",
+      "colors": {
+        "Blue": "Azul",
+        "Green": "Verde",
+        "Purple": "Morado",
+        "Red": "Rojo",
+        "Orange": "Naranja",
+        "Pink": "Rosa"
+      }
+    },
+    "createNote": {
+      "title": "Crear nota",
+      "titleLabel": "Título *",
+      "titlePlaceholder": "Introduce el título de la nota",
+      "hintQuick": "Esto se creará como una nota rápida (fuera de cualquier cuaderno).",
+      "hintNotebook": "Esta nota se creará en <strong>{{notebook}}</strong>."
+    },
+    "editNote": {
+      "title": "Editar nota"
+    },
+    "editNotebook": {
+      "title": "Editar cuaderno"
+    },
+    "noteProperties": {
+      "title": "Propiedades de la nota",
+      "noteId": "ID de la nota",
+      "notebookId": "ID del cuaderno",
+      "version": "Versión de la nota",
+      "modified": "Nota modificada",
+      "created": "Nota creada",
+      "synced": "Estado de sincronización",
+      "syncedYes": "Sincronizada",
+      "syncedNo": "Solo local",
+      "lastEtag": "Último ETag de sincronización",
+      "deleted": "Estado de eliminación",
+      "deletedYes": "En la papelera",
+      "deletedNo": "Activa",
+      "noValue": "Ninguno",
+      "closeBtn": "Cerrar"
+    },
+    "conflict": {
+      "title": "Conflicto de sincronización: {{title}}",
+      "message": "Esta nota se ha modificado tanto en este dispositivo como en el servidor. Elige qué versión conservar.",
+      "local": "Versión local",
+      "remote": "Versión remota",
+      "modified": "Modificada: {{date}}",
+      "strokes": "Trazos: {{count}}",
+      "keepLocal": "Conservar la local",
+      "keepRemote": "Conservar la remota",
+      "noContent": "<i>Sin contenido de texto</i>"
+    },
+    "errors": {
+      "titleRequired": "El título es obligatorio"
+    }
+  },
+  "auth": {
+    "setup": {
+      "titleMigration": "🔒 Protege tus datos",
+      "titleNew": "🔒 Crear contraseña maestra",
+      "migrationHeading": "¡Estamos mejorando tu seguridad!",
+      "migrationDesc": "Para proteger tus datos con cifrado, crea una contraseña maestra. Tus datos existentes se cifrarán automáticamente.",
+      "description": "Tu contraseña maestra cifra todos tus datos. Elige una contraseña segura que puedas recordar.",
+      "passwordLabel": "Contraseña maestra",
+      "passwordPlaceholder": "Introduce la contraseña maestra",
+      "confirmLabel": "Confirmar contraseña",
+      "confirmPlaceholder": "Vuelve a introducir la contraseña",
+      "hintLabel": "Pista de la contraseña (opcional)",
+      "hintPlaceholder": "p. ej., primera mascota + año de nacimiento",
+      "hintDesc": "Una pista para ayudarte a recordar tu contraseña. ¡No la hagas demasiado obvia!",
+      "warning": "<strong>⚠️ Importante:</strong> tu contraseña maestra no se puede recuperar si la olvidas. Asegúrate de recordarla o guardarla de forma segura.",
+      "cancelBtn": "Cancelar",
+      "confirmBtnMigration": "Cifrar y continuar",
+      "confirmBtnNew": "Crear contraseña maestra",
+      "settingUp": "Configurando..."
+    },
+    "unlock": {
+      "title": "🔒 Desbloquear NoteBerg",
+      "description": "Introduce tu contraseña maestra para desbloquear la aplicación",
+      "passwordLabel": "Contraseña maestra",
+      "passwordPlaceholder": "Introduce la contraseña",
+      "hint": "Pista: {{hint}}",
+      "unlockBtn": "Desbloquear",
+      "biometricBtn": "Desbloquear con {{method}}",
+      "unlocking": "Desbloqueando..."
+    },
+    "strength": {
+      "enterPassword": "Introduce la contraseña",
+      "veryWeak": "Muy débil",
+      "weak": "Débil",
+      "fair": "Aceptable",
+      "good": "Buena",
+      "strong": "Fuerte",
+      "veryStrong": "Muy fuerte"
+    },
+    "errors": {
+      "enterPassword": "Introduce una contraseña maestra",
+      "tooShort": "La contraseña debe tener al menos 8 caracteres",
+      "mismatch": "Las contraseñas no coinciden",
+      "tooWeak": "La contraseña es demasiado débil. Elige una contraseña más segura.",
+      "wrongPassword": "Contraseña incorrecta. Inténtalo de nuevo.",
+      "biometricFailed": "Error en la autenticación biométrica. Usa tu contraseña.",
+      "biometricUnavailable": "Desbloqueo biométrico no disponible. Usa tu contraseña.",
+      "setupFailed": "Error al configurar la contraseña maestra"
+    }
+  },
+  "footer": {
+    "syncing": "Sincronizando…",
+    "syncClickHint": "No sincronizado · Haz clic para sincronizar ahora",
+    "notConnected": "No conectado a Nextcloud",
+    "lastSyncedTooltip": "Última sincronización {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
+    "syncFailedTooltip": "Error de sincronización: {{error}}",
+    "unknownError": "error desconocido",
+    "recognitionRunning": "Reconocimiento de escritura en curso…"
+  },
+  "breadcrumb": {
+    "home": "Inicio",
+    "rename": "Renombrar",
+    "save": "Guardar"
+  },
+  "toolbar": {
+    "modes": {
+      "pan": "Desplazar",
+      "draw": "Dibujar",
+      "eraser": "Borrador",
+      "lasso": "Lazo",
+      "text": "Texto"
+    },
+    "actions": {
+      "undo": "Deshacer (Ctrl+Z)",
+      "redo": "Rehacer (Ctrl+Y)",
+      "insert": "Insertar",
+      "options": "Opciones"
+    },
+    "insert": {
+      "image": "Insertar imagen",
+      "camera": "Tomar foto",
+      "pdf": "Insertar PDF",
+      "space": "Insertar espacio vertical"
+    },
+    "background": {
+      "label": "Fondo",
+      "none": "Ninguno",
+      "ruledNarrow": "Rayado - Estrecho",
+      "ruledMedium": "Rayado - Medio",
+      "ruledWide": "Rayado - Ancho",
+      "gridSmall": "Cuadrícula - Pequeña",
+      "gridMedium": "Cuadrícula - Media",
+      "gridLarge": "Cuadrícula - Grande"
+    },
+    "exportPdf": "Exportar PDF",
+    "deleteNote": "Eliminar",
+    "penDialog": {
+      "lineWidth": "Grosor de línea: ",
+      "color": "Color",
+      "colorTitle": "Color {{num}}",
+      "expand": "Expandir configuración",
+      "collapse": "Contraer",
+      "savePreset": "Guardar configuración actual en este preajuste"
+    },
+    "tasks": {
+      "selectStrokes": "Haz clic para seleccionar los trazos de la tarea"
+    },
+    "eraser": {
+      "strokeEraser": "Borrador de trazos",
+      "partEraser": "Borrador parcial",
+      "highlighterOnly": "Borrar solo resaltadores",
+      "size": "Tamaño"
+    }
+  },
+  "licenses": {
+    "title": "Licencias de código abierto",
+    "intro": "NoteBerg está desarrollado con la ayuda de estos increíbles proyectos de código abierto:",
+    "viewLicense": "Ver licencia",
+    "close": "Cerrar"
+  },
+  "canvas": {
+    "selection": {
+      "copy": "Copiar",
+      "markAsTask": "Marcar como tarea",
+      "removeTask": "Quitar tarea",
+      "delete": "Eliminar"
+    },
+    "media": {
+      "select": "Seleccionar",
+      "crop": "Recortar",
+      "sendToFront": "Al frente",
+      "sendToBack": "Al fondo",
+      "delete": "Eliminar"
+    },
+    "pdf": {
+      "delete": "Eliminar PDF",
+      "deleteConfirmTitle": "Eliminar PDF",
+      "deleteConfirmMsg": "¿Seguro que deseas eliminar el documento PDF? Esto eliminará todas las páginas.",
+      "exportError": "Error al exportar el PDF",
+      "exportProgressTitle": "Exportando PDF",
+      "exportProgressPage": "Exportando página {{current}} de {{total}} ...",
+      "importProgressTitle": "Importando PDF",
+      "importProgressUpload": "Guardando archivo PDF ...",
+      "importProgressPage": "Leyendo página {{current}} de {{total}} ...",
+      "importProgressSaving": "Subiendo archivo {{current}} de {{total}} ...",
+      "importProgressFinalizing": "Finalizando ..."
+    },
+    "textSelection": {
+      "cut": "Cortar",
+      "copy": "Copiar",
+      "paste": "Pegar"
+    },
+    "crop": {
+      "simpleCrop": "Recorte simple",
+      "perspective": "Perspectiva",
+      "apply": "Aplicar",
+      "cancel": "Cancelar",
+      "normalizeLighting": "Normalizar iluminación"
+    }
+  },
+  "recycleBin": {
+    "notebook": "Cuaderno",
+    "note": "Nota",
+    "deletedOn": "Eliminado el {{date}}",
+    "restoreTitle": "Restaurar",
+    "purgeTitle": "Eliminar permanentemente",
+    "restore": "Restaurar",
+    "purge": "Purgar",
+    "emptyNotebooks": "No hay cuadernos eliminados",
+    "emptyNotes": "No hay notas eliminadas",
+    "emptyTitle": "La papelera está vacía",
+    "emptyDesc": "Los cuadernos y notas eliminados aparecerán aquí.",
+    "notebooksCount": "Cuadernos ({{count}})",
+    "notesCount": "Notas ({{count}})"
+  },
+  "soundDialog": {
+    "trigger": "Grabaciones",
+    "title": "Grabaciones",
+    "close": "Cerrar",
+    "resume": "Reanudar",
+    "pause": "Pausar",
+    "stopRecording": "Detener grabación",
+    "newRecording": "Nueva grabación",
+    "importAudioFile": "Importar archivo de audio",
+    "noRecordings": "Aún no hay grabaciones.",
+    "delete": "Eliminar",
+    "deleteRecordingTitle": "Eliminar grabación",
+    "deleteRecordingMessage": "¿Seguro que deseas eliminar esta grabación?",
+    "errorGeneric": "No se pudo iniciar la grabación.",
+    "errorNoDevice": "No se encontró ningún dispositivo de audio. Conecta un micrófono.",
+    "errorPermissionDenied": "Acceso al micrófono denegado."
+  },
+  "noteNavigator": {
+    "toggle": "Navegador",
+    "collapse": "Contraer",
+    "previous": "Anterior",
+    "next": "Siguiente"
+  }
+}
