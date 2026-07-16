@@ -52,7 +52,7 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 - 🖥️ Desktop app — Windows, macOS, Linux not tested so far
 - 📱 Mobile app — Android, iOS not tested so far
 - 🌐 Nextcloud app — available in the [Nextcloud App Store](https://apps.nextcloud.com/apps/noteberg)
-- 🔡 Internationalization — English, German
+- 🔡 Internationalization — English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Chinese
 
 ## Security
 

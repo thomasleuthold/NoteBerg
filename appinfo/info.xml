@@ -39,7 +39,7 @@
 ### UI
 - Dark mode / light mode with system preference detection
 - Background patterns — ruled lines and grid
-- Internationalization — English, German
+- Internationalization — English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Chinese
 
 ### Data & Privacy
 - All note data is stored exclusively on your own Nextcloud server — no third-party services or telemetry

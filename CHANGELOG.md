@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.35] - 2026-07-16
+
+### Added
+- **Localization**: added Spanish, French, Italian, Japanese, Korean, Portuguese, and Chinese translations, bringing the UI to 9 supported languages (English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Chinese)
+- **Nextcloud UI**: locale now falls back to English for languages without a translation instead of reporting an unrecognized language as active
+
+### Changed
+- Closed remaining localization gaps — recycle bin, sound recorder dialog, note navigator, and camera capture/cancel buttons were still hard-coded in English and are now fully translatable
+- **Nextcloud**: refined CSS overrides so NC's global button/tab padding reset no longer clashes with the app's own styling
+- **Nextcloud**: right-click context menu suppression is now scoped to the app's own area, so the rest of the Nextcloud page keeps its native browser context menu
+
 ## [0.5.34] - 2026-07-14
 
 ### Added
