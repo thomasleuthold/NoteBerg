@@ -44,7 +44,7 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 - ⚡ Background sync with change detection
 
 ### Security & Encryption
-- 🔐 Optional master password with PBKDF2 (100,000 iterations) + AES-256-GCM encryption
+- 🔐 Optional master password with PBKDF2 (600,000 iterations) + AES-256-GCM encryption
 - 🔒 Optional encryption for local data
 
 ### UI & Platform
@@ -61,7 +61,7 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 Current security implementation:
 
 - **Nextcloud credentials** (server URL, username, app password) are stored using the native OS keychain — Windows Credential Manager on desktop, Android Keystore on Android. They are never stored in plaintext.
-- **Master password** (optional) protects local note data with PBKDF2 (100,000 iterations) + AES-256-GCM encryption. The master password itself is stored in the OS keychain.
+- **Master password** (optional) protects local note data with PBKDF2 (600,000 iterations) + AES-256-GCM encryption. The master password itself is stored in the OS keychain.
 - The app was built largely via **AI-assisted development** and has evolved through many iterations including testing, but has not undergone a formal security audit. Bugs in the encryption or key management code may exist.
 - Nextcloud sync uses Login Flow v2, which always generates a dedicated app password — your main Nextcloud password is never entered into or stored by the app.
 

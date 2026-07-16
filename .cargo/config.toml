@@ -1,0 +1,9 @@
+# Use MSVC toolchain for Windows desktop builds.
+# Android builds use their own NDK toolchain via `tauri android build` and must NOT have
+# a global [build] target override — the Tauri Android build system passes the correct
+# target triple (aarch64-linux-android etc.) explicitly, which this would override.
+[target.x86_64-pc-windows-gnu]
+linker = "rust-lld"
+
+[target.x86_64-pc-windows-msvc]
+# Default Windows desktop target — set via `rustup default stable-x86_64-pc-windows-msvc`

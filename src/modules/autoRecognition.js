@@ -2,12 +2,12 @@
  * Auto Recognition Module
  * Handles background handwriting recognition scheduling.
  *
- * On Windows, a local sidecar recognition service is auto-started by Tauri.
- * On other platforms, a user-configured fallback URL is used.
+ * A local sidecar recognition service is auto-started by Tauri on Windows.
+ * Recognition is unavailable on all other platforms.
  */
 
 import { fetch } from "@tauri-apps/plugin-http";
-import { getAllNotes, getNote, getSetting, setSetting, updateNote } from "./storage.js";
+import { getAllNotes, getNote, getSetting, updateNote } from "./storage.js";
 
 // Configuration
 const RECOGNITION_DEBOUNCE_MS = 2500; // 2.5 seconds inactivity
@@ -18,14 +18,12 @@ let recognitionTimer = null;
 let cachedRecognitionUrl = null;
 
 /**
- * Resolve the recognition service URL.
- * Prefers local sidecar (via Tauri command), falls back to user-configured URL.
+ * Resolve the recognition service URL from the local Tauri sidecar (Windows only).
  * @returns {Promise<string|null>} Base URL or null if unavailable
  */
 async function resolveRecognitionUrl() {
   if (cachedRecognitionUrl !== null) return cachedRecognitionUrl || null;
 
-  // 1. Try local sidecar (set by Rust on Windows)
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const sidecarUrl = await invoke("get_recognition_url");
@@ -38,22 +36,7 @@ async function resolveRecognitionUrl() {
     // Not in Tauri environment or command not available
   }
 
-  // 2. Fall back to user-configured URL
-  // Migrate old setting key if present
-  const legacyUrl = await getSetting("recognition_url");
-  if (legacyUrl) {
-    await setSetting("recognition_fallback_url", legacyUrl);
-    await setSetting("recognition_url", null);
-  }
-
-  const fallbackUrl = (await getSetting("recognition_fallback_url")) || "";
-  cachedRecognitionUrl = fallbackUrl;
-
-  if (fallbackUrl) {
-    console.log(`[Recognition] Using fallback URL: ${fallbackUrl}`);
-    return fallbackUrl;
-  }
-
+  cachedRecognitionUrl = "";
   console.log("[Recognition] No recognition service available");
   return null;
 }

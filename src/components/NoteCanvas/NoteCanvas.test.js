@@ -102,32 +102,34 @@ vi.mock("./MediaOverlay.js");
 vi.mock("./NoteToolbar.js");
 vi.mock("./StrokeManager.js");
 vi.mock("./HistoryManager.js");
-vi.mock("./PdfTextLayerManager.js", () => ({
-  PdfTextLayerManager: vi.fn().mockImplementation(() => ({
-    update: vi.fn(),
-    setMode: vi.fn(),
-    destroy: vi.fn(),
-    refresh: vi.fn(),
-    onPageRemoved: vi.fn(),
-    highlightSearchTerms: vi.fn(),
-    clearHighlights: vi.fn(),
-  })),
-}));
-vi.mock("./TextEditorLayer.js", () => ({
-  TextEditorLayer: vi.fn().mockImplementation(() => ({
-    init: vi.fn(),
-    update: vi.fn(),
-    setMode: vi.fn(),
-    setContentHeight: vi.fn(),
-    getContent: vi.fn(() => ""),
-    forceSave: vi.fn(),
-    destroy: vi.fn(),
-    highlightSearchTerms: vi.fn(),
-    clearHighlights: vi.fn(),
-    renderTaskCheckboxes: vi.fn(),
-    cleanupOrphanedTextTasks: vi.fn(),
-  })),
-}));
+vi.mock("./PdfTextLayerManager.js", () => {
+  class PdfTextLayerManagerMock {
+    update = vi.fn();
+    setMode = vi.fn();
+    destroy = vi.fn();
+    refresh = vi.fn();
+    onPageRemoved = vi.fn();
+    highlightSearchTerms = vi.fn();
+    clearHighlights = vi.fn();
+  }
+  return { PdfTextLayerManager: PdfTextLayerManagerMock };
+});
+vi.mock("./TextEditorLayer.js", () => {
+  class TextEditorLayerMock {
+    init = vi.fn();
+    update = vi.fn();
+    setMode = vi.fn();
+    setContentHeight = vi.fn();
+    getContent = vi.fn(() => "");
+    forceSave = vi.fn();
+    destroy = vi.fn();
+    highlightSearchTerms = vi.fn();
+    clearHighlights = vi.fn();
+    renderTaskCheckboxes = vi.fn();
+    cleanupOrphanedTextTasks = vi.fn();
+  }
+  return { TextEditorLayer: TextEditorLayerMock };
+});
 
 // Mock global window events
 window.scrollTo = vi.fn();
@@ -157,9 +159,9 @@ describe("NoteCanvas Class", () => {
 
     const { MediaManager } = await import("./MediaManager.js");
     let mediaManagerItems;
-    MediaManager.mockImplementation((_noteId, media) => {
+    MediaManager.mockImplementation(function (_noteId, media) {
       mediaManagerItems = media;
-      return {
+      Object.assign(this, {
         setOnImageLoaded: vi.fn(),
         setItems: vi.fn((items) => {
           mediaManagerItems = items;
@@ -189,11 +191,11 @@ describe("NoteCanvas Class", () => {
         hitTest: vi.fn(() => null),
         getImage: vi.fn(),
         destroy: vi.fn(),
-      };
+      });
     });
 
     const { VirtualScroller } = await import("./VirtualScroller.js");
-    VirtualScroller.mockImplementation(() => {
+    VirtualScroller.mockImplementation(function () {
       const viewportElement = document.createElement("div");
       viewportElement.getBoundingClientRect = vi.fn(() => ({
         left: 0,
@@ -201,7 +203,7 @@ describe("NoteCanvas Class", () => {
         width: 800,
         height: 600,
       }));
-      return {
+      Object.assign(this, {
         getViewportSize: () => ({ width: 800, height: 600 }),
         getViewportElement: () => viewportElement,
         setContentSize: vi.fn(),
@@ -211,43 +213,47 @@ describe("NoteCanvas Class", () => {
         setZoom: vi.fn(),
         scrollBy: vi.fn(),
         destroy: vi.fn(),
-        container: document.createElement("div"), // Mock container for reflow access
-      };
+        container: document.createElement("div"),
+      });
     });
 
     const { InputHandler } = await import("./InputHandler.js");
-    InputHandler.mockImplementation(() => ({
-      isDrawing: false,
-      getContentCoordinates: vi.fn(() => ({ x: 0, y: 0 })),
-      destroy: vi.fn(),
-    }));
+    InputHandler.mockImplementation(function () {
+      Object.assign(this, {
+        isDrawing: false,
+        getContentCoordinates: vi.fn(() => ({ x: 0, y: 0 })),
+        destroy: vi.fn(),
+      });
+    });
 
     const { CanvasRenderer } = await import("./CanvasRenderer.js");
-    CanvasRenderer.mockImplementation(() => ({
-      setData: vi.fn(),
-      setSpatialIndex: vi.fn(),
-      setMediaManager: vi.fn(),
-      setContentSize: vi.fn(),
-      resize: vi.fn(),
-      render: vi.fn(),
-      drawDirectStroke: vi.fn(),
-      drawEraserCursor: vi.fn(),
-      drawLassoTrail: vi.fn(),
-      clearOverlay: vi.fn(),
-      forceRedraw: vi.fn(),
-      setZoom: vi.fn(),
-      setSelectedStrokes: vi.fn(),
-      setSelectedMedia: vi.fn(),
-      setLineSeparators: vi.fn(),
-      selectionBounds: null,
-      selectedStrokeIndices: new Set(),
-      lineSeparators: [],
-      lineIndentLevels: [],
-      destroy: vi.fn(),
-    }));
+    CanvasRenderer.mockImplementation(function () {
+      Object.assign(this, {
+        setData: vi.fn(),
+        setSpatialIndex: vi.fn(),
+        setMediaManager: vi.fn(),
+        setContentSize: vi.fn(),
+        resize: vi.fn(),
+        render: vi.fn(),
+        drawDirectStroke: vi.fn(),
+        drawEraserCursor: vi.fn(),
+        drawLassoTrail: vi.fn(),
+        clearOverlay: vi.fn(),
+        forceRedraw: vi.fn(),
+        setZoom: vi.fn(),
+        setSelectedStrokes: vi.fn(),
+        setSelectedMedia: vi.fn(),
+        setLineSeparators: vi.fn(),
+        selectionBounds: null,
+        selectedStrokeIndices: new Set(),
+        lineSeparators: [],
+        lineIndentLevels: [],
+        destroy: vi.fn(),
+      });
+    });
 
     const { SpatialIndex } = await import("./SpatialIndex.js");
-    SpatialIndex.mockImplementation(() => {
+    SpatialIndex.mockImplementation(function () {
       const strokeBounds = new Map();
       return {
         strokeBounds,
@@ -278,9 +284,9 @@ describe("NoteCanvas Class", () => {
     });
 
     const { StrokeManager } = await import("./StrokeManager.js");
-    StrokeManager.mockImplementation((_noteId, strokes) => ({
-      currentStroke: null,
-      startStroke: vi.fn(function (props) {
+    StrokeManager.mockImplementation(function (_noteId, strokes) {
+      this.currentStroke = null;
+      this.startStroke = vi.fn(function (props) {
         this.currentStroke = {
           ...props,
           id: `s-${strokes.length}`,
@@ -289,15 +295,15 @@ describe("NoteCanvas Class", () => {
           pressure: [props.pressure],
         };
         return this.currentStroke;
-      }),
-      addPoints: vi.fn(function (points) {
+      });
+      this.addPoints = vi.fn(function (points) {
         points.forEach((p) => {
           this.currentStroke.x.push(p.x);
           this.currentStroke.y.push(p.y);
         });
         return this.currentStroke;
-      }),
-      endStroke: vi.fn(function () {
+      });
+      this.endStroke = vi.fn(function () {
         const stroke = this.currentStroke;
         if (stroke) {
           if (!stroke._keep) strokes.push(stroke);
@@ -305,26 +311,26 @@ describe("NoteCanvas Class", () => {
           return stroke;
         }
         return null;
-      }),
-      cancelCurrentStroke: vi.fn(function () {
+      });
+      this.cancelCurrentStroke = vi.fn(function () {
         if (this.currentStroke) this.currentStroke._keep = false;
         this.currentStroke = null;
-      }),
-      markDirty: vi.fn(),
-      saveMedia: vi.fn(),
-      forceSave: vi.fn(),
-      destroy: vi.fn(),
-    }));
+      });
+      this.markDirty = vi.fn();
+      this.saveMedia = vi.fn();
+      this.forceSave = vi.fn();
+      this.destroy = vi.fn();
+    });
 
     const { HistoryManager } = await import("./HistoryManager.js");
-    HistoryManager.mockImplementation(() => ({
-      push: vi.fn(),
-      undo: vi.fn(),
-      redo: vi.fn(),
-      setNoteCanvas: vi.fn(),
-      destroy: vi.fn(),
-      clear: vi.fn(),
-    }));
+    HistoryManager.mockImplementation(function () {
+      this.push = vi.fn();
+      this.undo = vi.fn();
+      this.redo = vi.fn();
+      this.setNoteCanvas = vi.fn();
+      this.destroy = vi.fn();
+      this.clear = vi.fn();
+    });
 
     noteCanvas = new NoteCanvas(container);
   });
@@ -446,7 +452,9 @@ describe("NoteCanvas Class", () => {
 
       noteCanvas._onStrokeEnd();
       expect(noteCanvas.strokeManager.endStroke).toHaveBeenCalled();
-      expect(noteCanvas.historyManager.push).toHaveBeenCalled();
+      expect(noteCanvas.historyManager.push).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).DrawStrokeCommand),
+      );
     });
   });
 
@@ -494,7 +502,10 @@ describe("NoteCanvas Class", () => {
 
       noteCanvas._onStrokeEnd();
 
-      expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenCalled();
+      expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenCalledWith(
+        new Set([0]),
+        expect.objectContaining({ minX: expect.any(Number) }),
+      );
     });
   });
 
@@ -566,7 +577,94 @@ describe("NoteCanvas Class", () => {
       await noteCanvas.insertImage("picker");
 
       expect(noteCanvas.mediaManager.addItem).toHaveBeenCalled();
-      expect(noteCanvas.historyManager.push).toHaveBeenCalled();
+      expect(noteCanvas.historyManager.push).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).InsertMediaCommand),
+      );
+    });
+  });
+
+  describe("Hit-detection geometry", () => {
+    // These are pure functions on the instance (no note load needed). The
+    // Eraser/Lasso interaction tests above stub them out to test wiring —
+    // these test the actual math those stubs bypass.
+
+    describe("_strokeIntersectsCircle", () => {
+      it("returns true when a stroke point lies inside the circle", () => {
+        const stroke = { x: [0, 50, 100], y: [0, 50, 100] };
+        expect(noteCanvas._strokeIntersectsCircle(stroke, 50, 50, 10)).toBe(true);
+      });
+
+      it("returns false when no stroke point is within the radius", () => {
+        const stroke = { x: [0, 100], y: [0, 100] };
+        expect(noteCanvas._strokeIntersectsCircle(stroke, 50, 50, 10)).toBe(false);
+      });
+
+      it("treats a point exactly on the circle boundary as intersecting", () => {
+        const stroke = { x: [10], y: [0] }; // distance from (0,0) is exactly 10
+        expect(noteCanvas._strokeIntersectsCircle(stroke, 0, 0, 10)).toBe(true);
+      });
+
+      it("returns false for an empty stroke", () => {
+        const stroke = { x: [], y: [] };
+        expect(noteCanvas._strokeIntersectsCircle(stroke, 0, 0, 100)).toBe(false);
+      });
+    });
+
+    describe("_isPointInPolygon", () => {
+      const square = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      it("returns true for a point inside the polygon", () => {
+        expect(noteCanvas._isPointInPolygon({ x: 50, y: 50 }, square)).toBe(true);
+      });
+
+      it("returns false for a point outside the polygon", () => {
+        expect(noteCanvas._isPointInPolygon({ x: 150, y: 50 }, square)).toBe(false);
+      });
+
+      it("returns false for a point inside the carved-out notch of a concave polygon", () => {
+        // C-shaped polygon: a square with a rectangular bite taken out of the right side.
+        const concave = [
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+          { x: 100, y: 40 },
+          { x: 50, y: 40 },
+          { x: 50, y: 60 },
+          { x: 100, y: 60 },
+          { x: 100, y: 100 },
+          { x: 0, y: 100 },
+        ];
+        expect(noteCanvas._isPointInPolygon({ x: 90, y: 50 }, concave)).toBe(false); // in the bite
+        expect(noteCanvas._isPointInPolygon({ x: 30, y: 50 }, concave)).toBe(true); // solid area
+      });
+    });
+
+    describe("_isStrokeFullyInPolygon", () => {
+      const square = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ];
+
+      it("returns true when every point of the stroke is inside the polygon", () => {
+        const stroke = { x: [10, 50, 90], y: [10, 50, 90] };
+        expect(noteCanvas._isStrokeFullyInPolygon(stroke, square)).toBe(true);
+      });
+
+      it("returns false when any single point falls outside the polygon", () => {
+        const stroke = { x: [10, 50, 150], y: [10, 50, 50] }; // last point is outside
+        expect(noteCanvas._isStrokeFullyInPolygon(stroke, square)).toBe(false);
+      });
+
+      it("returns true for a stroke with no points (vacuously true)", () => {
+        const stroke = { x: [], y: [] };
+        expect(noteCanvas._isStrokeFullyInPolygon(stroke, square)).toBe(true);
+      });
     });
   });
 
@@ -666,6 +764,87 @@ describe("NoteCanvas Class", () => {
 
       expect(noteCanvas.renderer.resize).toHaveBeenCalledWith(1000, 800);
       expect(noteCanvas.renderer.render).toHaveBeenCalled();
+    });
+  });
+
+  // Coalescing media-save: rapid calls must collapse to one in-flight run plus at
+  // most one trailing run, so concurrent WebDAV PUTs can't collide (423 Locked).
+  // We borrow the real _saveMediaChanges onto a fake `this` with a controllable
+  // _runMediaSave, so the test exercises production code without a full instance.
+  describe("_saveMediaChanges coalescing", () => {
+    function makeCtx() {
+      let resolveRun;
+      const ctx = {
+        noteId: "n1",
+        mediaManager: {},
+        noteData: {},
+        _mediaSaveRunning: null,
+        _mediaSaveDirty: false,
+        _mediaSaveProgress: null,
+        runCalls: [],
+        // One pending run at a time; the test resolves it via releaseRun()
+        _runMediaSave: vi.fn(function (progress) {
+          ctx.runCalls.push(progress ?? null);
+          return new Promise((r) => {
+            resolveRun = r;
+          });
+        }),
+        save: NoteCanvas.prototype._saveMediaChanges,
+      };
+      ctx.releaseRun = async () => {
+        const r = resolveRun;
+        resolveRun = null;
+        r();
+        await Promise.resolve(); // let the runner loop advance
+        await Promise.resolve();
+      };
+      return ctx;
+    }
+
+    it("runs a single save when called once", async () => {
+      const ctx = makeCtx();
+      const p = ctx.save();
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
+      await ctx.releaseRun();
+      await p;
+      expect(ctx.runCalls).toHaveLength(1);
+      expect(ctx._mediaSaveRunning).toBeNull();
+    });
+
+    it("collapses a burst of calls into one in-flight + one trailing run", async () => {
+      const ctx = makeCtx();
+      const p1 = ctx.save(); // starts run #1
+      const p2 = ctx.save(); // flags dirty
+      const p3 = ctx.save(); // still just dirty
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
+
+      await ctx.releaseRun(); // run #1 finishes → dirty → trailing run #2 starts
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(2);
+
+      await ctx.releaseRun(); // run #2 finishes, not dirty → done
+      await Promise.all([p1, p2, p3]);
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(2); // never a 3rd
+      expect(ctx._mediaSaveRunning).toBeNull();
+    });
+
+    it("passes a progress callback to an executed run", async () => {
+      const ctx = makeCtx();
+      const onProgress = vi.fn();
+      const p = ctx.save(onProgress);
+      await ctx.releaseRun();
+      await p;
+      expect(ctx.runCalls[0]).toBe(onProgress);
+    });
+
+    it("stops the trailing run once the note is closed (noteId nulled)", async () => {
+      const ctx = makeCtx();
+      const p1 = ctx.save();
+      ctx.save(); // flag dirty
+      ctx.noteId = null; // simulate destroy() during the in-flight run
+      await ctx.releaseRun(); // run #1 ends; loop guard sees noteId null → no trailing
+      await p1;
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
+      expect(ctx._mediaSaveRunning).toBeNull();
     });
   });
 });

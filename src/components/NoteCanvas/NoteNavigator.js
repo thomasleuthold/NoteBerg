@@ -98,7 +98,7 @@ export class NoteNavigator {
 
   _navigateTo(index) {
     const subject = this._currentSubject();
-    if (!subject || !subject.items[index]) return;
+    if (!subject?.items[index]) return;
     this.onNavigate(subject.items[index].y, subject.key, subject.items[index]);
   }
 

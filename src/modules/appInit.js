@@ -85,19 +85,3 @@ export async function initializeApp() {
     throw error;
   }
 }
-
-/**
- * Listen for app lock events and auto-unlock from keyring
- */
-export function setupAppLockListener() {
-  window.addEventListener("app-locked", async (event) => {
-    console.log("[AppInit] App locked:", event.detail);
-    console.log("[AppInit] Auto-unlocking from keyring after lock event...");
-    const unlocked = await autoUnlockFromKeyring();
-    if (unlocked) {
-      console.log("[AppInit] Successfully auto-unlocked after lock event");
-    } else {
-      console.error("[AppInit] Failed to auto-unlock after lock event");
-    }
-  });
-}

@@ -190,33 +190,6 @@
   color: var(--text-primary);
 }
 
-/* Card Delete Button */
-:is(body, #app) .card-delete-btn {
-  position: absolute;
-  top: var(--spacing-sm);
-  right: var(--spacing-sm);
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  opacity: 0.6;
-  transition: all var(--transition-fast);
-  z-index: 10;
-  color: var(--color-danger);
-}
-
-.card-delete-btn:hover {
-  background-color: var(--color-danger);
-  color: var(--text-inverse);
-  border-color: var(--color-danger);
-  box-shadow: var(--shadow-sm);
-}
-
 /* Card Options Button (three-dots) */
 :is(body, #app) .card-options-btn {
   position: absolute;
@@ -270,7 +243,10 @@
   border: none;
   cursor: pointer;
   font-size: 0.875rem;
-  font-family: inherit;
+  /* The menu is appended to <body>, outside #app, so `inherit` would resolve to
+     the browser default font. Use the app font var explicitly. Scoped to our own
+     class — does not affect the NC app. */
+  font-family: var(--font-family);
   color: var(--text-primary);
 }
 
@@ -278,7 +254,9 @@
   background-color: var(--bg-secondary);
 }
 
-.note-options-menu__item--danger {
+/* Match the base rule's specificity (:is(body, #app) ...) so the danger color
+   is not overridden by the base `color: var(--text-primary)` above. */
+:is(body, #app) .note-options-menu__item--danger {
   color: var(--color-danger);
 }
 
@@ -389,10 +367,6 @@
   box-shadow: var(--shadow-md);
 }
 
-.notebook-card:hover .card-delete-btn {
-  opacity: 1;
-}
-
 .notebook-card-header {
   display: flex;
   align-items: center;
@@ -455,7 +429,9 @@
   opacity: 0.6;
 }
 
-.card-new-note-btn:hover {
+/* Match the base rule's specificity (:is(body, #app) ...) so the hover
+   background is not overridden by the base `background-color` above. */
+:is(body, #app) .card-new-note-btn:hover {
   background-color: var(--color-primary-hover);
 }
 
@@ -479,10 +455,6 @@
   background-color: var(--bg-tertiary);
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
-}
-
-.note-card:hover .card-delete-btn {
-  opacity: 1;
 }
 
 /* Overview Search */
@@ -634,24 +606,9 @@
   background: var(--bg-primary);
 }
 
-.preview-card .card-delete-btn {
-  position: static;
-  padding: 4px;
-  opacity: 1;
-}
-
 .preview-no-content {
   padding: 12px;
   font-style: italic;
-}
-
-/* Thumbnail image (fast path — replaces canvas/scaler for stored thumbnails) */
-.note-preview-img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top;
 }
 
 /* Preview Scaler */
@@ -673,6 +630,26 @@
   height: 500px;
   display: block;
   z-index: 0;
+}
+
+.note-preview-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: note-preview-spin 0.7s linear infinite;
+  z-index: 2;
+}
+
+@keyframes note-preview-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .preview-scaler .text-editor {
@@ -730,6 +707,10 @@
   justify-content: center;
   z-index: 1000;
   animation: fadeIn 0.2s ease-in-out;
+  /* Modals are appended to <body>, outside #app, so they don't inherit the
+     app font. Set it on our own overlay class so the whole dialog matches the
+     rest of the app. Scoped to .modal-overlay — does not affect the NC app. */
+  font-family: var(--font-family);
 }
 
 .modal-overlay.modal-closing {

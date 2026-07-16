@@ -152,16 +152,16 @@
     0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
 
-.note-canvas-toolbar__button--active {
-  background-color: var(--bg-tertiary, #d3ddee);
-  color: var(--text-primary, #1e293b);
+:is(body, #app) .note-canvas-toolbar__button--active {
+  background-color: var(--color-primary, #3b82f6);
+  color: #ffffff;
   border-color: var(--color-primary, #3b82f6);
   transform: scale(1.1);
   box-shadow: 0 5px 7px -3px rgba(59, 130, 246, 0.4);
 }
 
-.note-canvas-toolbar__button--active:hover {
-  transform: scale(1.1);
+:is(body, #app) .note-canvas-toolbar__button--active:hover {
+  transform: scale(1.1) translateY(-2px);
   box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.4);
 }
 
@@ -256,38 +256,37 @@
   z-index: 15;
 }
 
-.note-canvas__task-checkbox {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox {
   position: absolute;
   width: 22px;
   height: 22px;
   pointer-events: auto;
   cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
   border: 2px solid var(--color-primary, #3b82f6);
   border-radius: 4px;
   background: var(--bg-primary, white);
   margin: 0;
   padding: 0;
+  box-sizing: border-box;
 }
 
-.note-canvas__task-checkbox:checked {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[aria-checked="true"] {
   background: var(--color-primary, #3b82f6);
   border-color: var(--color-primary, #3b82f6);
 }
 
-.note-canvas__task-checkbox:checked::after {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[aria-checked="true"]::after {
   content: "";
   display: block;
-  width: 6px;
-  height: 10px;
+  width: 27%;
+  height: 45%;
   border: solid white;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
-  margin: 1px auto 0;
+  margin: 10% auto 0;
 }
 
-.note-canvas__task-checkbox:hover {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox:hover {
   transform: scale(1.1);
 }
 
@@ -814,8 +813,13 @@
   background-color: var(--bg-secondary);
 }
 
-.note-canvas-toolbar__option-btn--active {
-  background-color: var(--bg-hover);
+:is(body, #app) .note-canvas-toolbar__option-btn--active {
+  background-color: var(--color-primary, #3b82f6);
+  color: #ffffff;
+}
+
+:is(body, #app) .note-canvas-toolbar__option-btn--active:hover {
+  background-color: var(--color-primary, #3b82f6);
 }
 
 .note-canvas-toolbar__separator {
@@ -826,24 +830,26 @@
 
 :is(body, #app) .note-canvas-toolbar__delete-btn {
   width: 100%;
-  padding: 8px;
-  background: var(--color-danger);
-  color: white;
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--color-danger);
   border: none;
   border-radius: 4px;
   cursor: pointer;
   font-weight: 500;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
   font-family: inherit;
   font-size: 0.875rem;
   transition: background-color 0.2s;
+  text-align: left;
+  white-space: nowrap;
+  min-height: 0;
 }
 
-.note-canvas-toolbar__delete-btn:hover {
-  background-color: #dc2626;
+:is(body, #app) .note-canvas-toolbar__delete-btn:hover {
+  background-color: var(--bg-secondary);
 }
 
 /* ==========================================================================
@@ -995,6 +1001,27 @@
 .crop-mode-btn {
   background: #e5e7eb;
   color: #374151;
+}
+
+.crop-normalize-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #e5e7eb;
+  border-radius: 4px;
+  font-weight: 600;
+  color: #374151;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.crop-normalize-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #3b82f6;
 }
 
 /* Recycle Bin Styles */
@@ -1226,19 +1253,28 @@
 }
 
 /* ===== Text task checkbox (replaces CHECKBOX_STYLE constant) ===== */
-.task-text-checkbox {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
+.note-canvas__text-editor-layer .task-text-checkbox {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  line-height: 1 !important;
   vertical-align: middle;
   margin-right: 6px;
   user-select: none;
   cursor: pointer;
   border: 1px solid currentColor;
   border-radius: 3px;
+  box-sizing: content-box !important;
+  flex-shrink: 0 !important;
 }
 
-.task-text-checkbox--checked {
+.note-canvas__text-editor-layer .task-text-checkbox--checked {
   background-color: var(--color-primary);
   border-color: var(--color-primary);
 }

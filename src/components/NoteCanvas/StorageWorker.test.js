@@ -49,6 +49,7 @@ describe("StorageWorker", () => {
     };
     mockDb = {
       get: vi.fn(),
+      put: vi.fn(),
       transaction: vi.fn(() => mockTx),
     };
     openDB.mockResolvedValue(mockDb);
@@ -190,12 +191,9 @@ describe("StorageWorker", () => {
     );
   });
 
-  it("should handle SAVE_PRESETS", async () => {
-    const indexEntry = { id: "note-1", version: 1 };
+  it("should handle SAVE_PRESETS without bumping version or clearing synced", async () => {
     const contentEntry = { id: "note-1", penPresets: [] };
-
-    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
-    mockContentStore.get.mockResolvedValue({ ...contentEntry });
+    mockDb.get.mockResolvedValue({ ...contentEntry });
 
     const data = {
       type: "SAVE_PRESETS",
@@ -206,47 +204,14 @@ describe("StorageWorker", () => {
     await workerHandler({ data });
     await flushPromises();
 
-    expect(mockContentStore.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        penPresets: [{ color: "red" }],
-      }),
+    // Presets are UI preferences: only the content record is written.
+    expect(mockDb.put).toHaveBeenCalledWith(
+      "noteContent",
+      expect.objectContaining({ penPresets: [{ color: "red" }] }),
     );
-    expect(mockNotesStore.put).toHaveBeenCalledWith(
-      expect.objectContaining({ version: 2, synced: false }),
-    );
-  });
-
-  it("should handle SAVE_THUMBNAIL — writes thumbnail to noteContent only, does NOT bump version or set synced", async () => {
-    // Thumbnails are UI-only metadata. Bumping version/synced causes the note to be
-    // re-uploaded on every sync cycle, which triggers a download on other devices,
-    // which saves the note, regenerates the thumbnail, bumps version again → oscillation.
-    const indexEntry = { id: "note-1", version: 1, encrypted: false };
-    const contentEntry = { id: "note-1", strokes: [] };
-    mockNotesStore.get.mockResolvedValue({ ...indexEntry });
-    mockContentStore.get.mockResolvedValue({ ...contentEntry });
-
-    const data = {
-      type: "SAVE_THUMBNAIL",
-      noteId: "note-1",
-      thumbnail: "data:image/jpeg;base64,/9j/abc",
-    };
-
-    await workerHandler({ data });
-    await flushPromises();
-
-    // Content store MUST be updated with thumbnail
-    expect(mockContentStore.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        thumbnail: "data:image/jpeg;base64,/9j/abc",
-      }),
-    );
-    // Index store MUST NOT bump version or set synced=false
-    expect(mockNotesStore.put).toHaveBeenCalledWith(expect.not.objectContaining({ synced: false }));
-    expect(mockNotesStore.put).toHaveBeenCalledWith(
-      expect.objectContaining({ version: 1 }), // version unchanged
-    );
-    // Transaction must use both stores
-    expect(mockDb.transaction).toHaveBeenCalledWith(["notes", "noteContent"], "readwrite");
+    // No index write — a preset-only change must not mark the note unsynced
+    // (that used to re-upload the whole note JSON for a pen color change).
+    expect(mockNotesStore.put).not.toHaveBeenCalled();
   });
 
   it("should handle SAVE_TASKS", async () => {

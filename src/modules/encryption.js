@@ -5,13 +5,20 @@
  * Uses PBKDF2 for key derivation and AES-GCM for encryption.
  *
  * Security Design:
- * - PBKDF2 with SHA-256, 100,000 iterations for key derivation
+ * - PBKDF2 with SHA-256, 600,000 iterations for new key derivations
+ *   (legacy configs keep their stored iteration count — see encryption_config)
  * - AES-GCM with 256-bit keys for encryption
  * - Random 12-byte IV per encryption operation
  * - Random 16-byte salt for each user
  */
 
-const PBKDF2_ITERATIONS = 100000;
+// Default for NEW key derivations (OWASP guidance for PBKDF2-SHA256).
+// Existing users keep the iteration count stored in their encryption_config —
+// callers MUST pass it explicitly or their key/hash won't match.
+const PBKDF2_ITERATIONS = 600000;
+// Iteration count used before the default was raised; fallback for configs
+// that predate the stored `iterations` field.
+export const LEGACY_PBKDF2_ITERATIONS = 100000;
 const SALT_LENGTH = 16; // 128 bits
 const IV_LENGTH = 12; // 96 bits (recommended for AES-GCM)
 const KEY_LENGTH = 256; // 256 bits
@@ -64,9 +71,12 @@ function base64ToBuffer(base64) {
  * Derive an encryption key from a password using PBKDF2
  * @param {string} password - User's master password
  * @param {Uint8Array} salt - Salt for key derivation
+ * @param {number} [iterations] - Iteration count. Pass the value stored in the
+ *   user's encryption_config for existing setups; defaults to the current
+ *   PBKDF2_ITERATIONS for new key derivations.
  * @returns {Promise<CryptoKey>} 256-bit AES-GCM key
  */
-export async function deriveKeyFromPassword(password, salt) {
+export async function deriveKeyFromPassword(password, salt, iterations = PBKDF2_ITERATIONS) {
   try {
     // Convert password to ArrayBuffer
     const encoder = new TextEncoder();
@@ -82,7 +92,7 @@ export async function deriveKeyFromPassword(password, salt) {
       {
         name: "PBKDF2",
         salt: salt,
-        iterations: PBKDF2_ITERATIONS,
+        iterations,
         hash: "SHA-256",
       },
       baseKey,
@@ -90,7 +100,7 @@ export async function deriveKeyFromPassword(password, salt) {
         name: "AES-GCM",
         length: KEY_LENGTH,
       },
-      true, // Extractable (for future export if needed)
+      false, // Not extractable — nothing exports the key; workers receive it via structured clone
       ["encrypt", "decrypt"],
     );
 
@@ -174,59 +184,6 @@ export async function decryptData(encryptedData, ivBase64, key) {
   } catch (error) {
     console.error("[Encryption] Failed to decrypt data:", error);
     throw new Error("Failed to decrypt data - incorrect password or corrupted data");
-  }
-}
-
-/**
- * Hash a password for verification purposes (NOT for encryption)
- * This creates a hash that can be stored to verify the password later
- * @param {string} password - Password to hash
- * @param {Uint8Array} salt - Salt for hashing
- * @returns {Promise<string>} Base64 hash
- */
-export async function hashPassword(password, salt) {
-  try {
-    const encoder = new TextEncoder();
-    const passwordBuffer = encoder.encode(password);
-
-    // Import password as a key
-    const baseKey = await crypto.subtle.importKey("raw", passwordBuffer, "PBKDF2", false, [
-      "deriveBits",
-    ]);
-
-    // Derive bits (not a key) for hashing
-    const hashBits = await crypto.subtle.deriveBits(
-      {
-        name: "PBKDF2",
-        salt: salt,
-        iterations: PBKDF2_ITERATIONS,
-        hash: "SHA-256",
-      },
-      baseKey,
-      256, // 256 bits
-    );
-
-    return bufferToBase64(hashBits);
-  } catch (error) {
-    console.error("[Encryption] Failed to hash password:", error);
-    throw new Error("Failed to hash password");
-  }
-}
-
-/**
- * Verify a password against a stored hash
- * @param {string} password - Password to verify
- * @param {string} storedHash - Base64 stored hash
- * @param {Uint8Array} salt - Salt used for original hash
- * @returns {Promise<boolean>} True if password matches
- */
-export async function verifyPassword(password, storedHash, salt) {
-  try {
-    const computedHash = await hashPassword(password, salt);
-    return computedHash === storedHash;
-  } catch (error) {
-    console.error("[Encryption] Failed to verify password:", error);
-    return false;
   }
 }
 

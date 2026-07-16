@@ -2,21 +2,34 @@
 \OCP\Util::addStyle('noteberg', 'noteberg-styles');
 
 // Detect Nextcloud dark mode server-side via OCP public API.
-$isDark = false;
+// NC 29+ stores the preference in the 'core' app under key 'theme' (value 'dark').
+// Older NC used the 'accessibility' app. We check both for compatibility.
+// We only emit 'dark' when certain — otherwise emit '' so the JS body-attribute
+// check (data-theme-dark) can make the final call at runtime.
+$initialTheme = '';
 try {
     $userId = \OCP\Server::get(\OCP\IUserSession::class)->getUser()?->getUID();
     if ($userId) {
         $config = \OCP\Server::get(\OCP\IConfig::class);
-        $accessibilityTheme = $config->getUserValue($userId, 'accessibility', 'theme', '');
-        $isDark = ($accessibilityTheme === 'dark' || $accessibilityTheme === 'highcontrast');
-        if (!$isDark) {
-            $isDark = $config->getUserValue($userId, 'accessibility', 'darkmode', '0') === '1';
+        // NC 29+ (core app)
+        $coreTheme = $config->getUserValue($userId, 'core', 'theme', '');
+        if ($coreTheme === 'dark' || $coreTheme === 'dark-highcontrast') {
+            $initialTheme = 'dark';
+        } elseif ($coreTheme === 'light' || $coreTheme === 'light-highcontrast') {
+            $initialTheme = 'light';
+        } else {
+            // NC ≤28 fallback (accessibility app)
+            $accessibilityTheme = $config->getUserValue($userId, 'accessibility', 'theme', '');
+            if ($accessibilityTheme === 'dark' || $accessibilityTheme === 'highcontrast') {
+                $initialTheme = 'dark';
+            } elseif ($config->getUserValue($userId, 'accessibility', 'darkmode', '0') === '1') {
+                $initialTheme = 'dark';
+            }
         }
     }
 } catch (\Exception $e) {
-    // Ignore — default to light
+    // Ignore — JS runtime detection will handle it
 }
-$initialTheme = $isDark ? 'dark' : 'light';
 ?>
 <style>
   /* NC sets #content { position:fixed; margin-top:var(--header-height);

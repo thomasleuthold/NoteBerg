@@ -66,6 +66,7 @@
     "notebook": {
       "noDescription": "Keine Beschreibung",
       "deleteTitle": "Notizbuch löschen",
+      "optionsTitle": "Notizbuch-Optionen",
       "newNote": "+ Neue Notiz",
       "noteCount_one": "{{count}} Notiz",
       "noteCount_other": "{{count}} Notizen"
@@ -78,7 +79,12 @@
     },
     "noteOptions": {
       "title": "Optionen",
+      "edit": "Bearbeiten",
       "moveCopy": "Verschieben / Kopieren",
+      "delete": "Löschen"
+    },
+    "notebookOptions": {
+      "edit": "Bearbeiten",
       "delete": "Löschen"
     },
     "moveCopy": {
@@ -156,11 +162,8 @@
     "recognition": {
       "statusLabel": "Status",
       "localActive": "Lokale Erkennung aktiv",
-      "externalService": "Externer Dienst wird verwendet",
-      "notConfigured": "Kein Erkennungsdienst konfiguriert",
-      "fallbackUrlLabel": "Ausweich-URL für Handschrifterkennung",
-      "fallbackUrlDesc": "Wird verwendet, wenn die lokale Erkennung nicht verfügbar ist (Nicht-Windows-Plattformen)",
-      "fallbackUrlPlaceholder": "http://example.com:5000",
+      "notRunning": "Erkennungsdienst läuft nicht",
+      "windowsOnly": "Handschrifterkennung ist nur in der Windows-App verfügbar.",
       "languageLabel": "Sprache",
       "languageDesc": "Zielsprache für die Handschrifterkennung",
       "testBtn": "Verbindung testen",
@@ -169,9 +172,8 @@
       "success": "✓ Verbindung erfolgreich ({{source}})!",
       "errorStatus": "✗ Server gab {{status}} zurück",
       "errorFailed": "✗ Verbindung fehlgeschlagen: {{message}}",
-      "notConfiguredError": "✗ Kein Erkennungsdienst konfiguriert",
+      "notConfiguredError": "✗ Erkennungsdienst läuft nicht",
       "localSidecar": "lokaler Dienst",
-      "externalServiceLabel": "externer Dienst",
       "languages": {
         "en-US": "Englisch (US)",
         "de-DE": "Deutsch",
@@ -264,6 +266,12 @@
       "titlePlaceholder": "Notiztitel eingeben",
       "hintQuick": "Diese wird als Schnellnotiz erstellt (nicht in einem Notizbuch).",
       "hintNotebook": "Diese Notiz wird in <strong>{{notebook}}</strong> erstellt."
+    },
+    "editNote": {
+      "title": "Notiz bearbeiten"
+    },
+    "editNotebook": {
+      "title": "Notizbuch bearbeiten"
     },
     "noteProperties": {
       "title": "Notizeigenschaften",
@@ -425,6 +433,7 @@
       "delete": "Löschen"
     },
     "media": {
+      "select": "Auswählen",
       "crop": "Zuschneiden",
       "sendToFront": "In den Vordergrund",
       "sendToBack": "In den Hintergrund",
@@ -440,7 +449,8 @@
       "importProgressTitle": "PDF wird importiert",
       "importProgressUpload": "PDF-Datei wird gespeichert ...",
       "importProgressPage": "Seite {{current}} von {{total}} wird gelesen ...",
-      "importProgressSaving": "Datei {{current}} von {{total}} wird hochgeladen ..."
+      "importProgressSaving": "Datei {{current}} von {{total}} wird hochgeladen ...",
+      "importProgressFinalizing": "Wird abgeschlossen ..."
     },
     "textSelection": {
       "cut": "Ausschneiden",
@@ -448,10 +458,11 @@
       "paste": "Einfügen"
     },
     "crop": {
-      "simpleCrop": "Einfacher Zuschnitt",
+      "simpleCrop": "Zuschnitt",
       "perspective": "Perspektive",
       "apply": "Anwenden",
-      "cancel": "Abbrechen"
+      "cancel": "Abbrechen",
+      "normalizeLighting": "Beleuchtung normalisieren"
     }
   },
   "recycleBin": {

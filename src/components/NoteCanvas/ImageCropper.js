@@ -99,6 +99,15 @@ export class ImageCropper {
     const controls = document.createElement("div");
     controls.className = "crop-controls";
 
+    const normalizeLabel = document.createElement("label");
+    normalizeLabel.className = "crop-normalize-label";
+    const normalizeCheckbox = document.createElement("input");
+    normalizeCheckbox.type = "checkbox";
+    normalizeCheckbox.className = "crop-normalize-checkbox";
+    normalizeCheckbox.id = "crop-normalize-checkbox";
+    normalizeLabel.appendChild(normalizeCheckbox);
+    normalizeLabel.appendChild(document.createTextNode(t("canvas.crop.normalizeLighting")));
+
     const applyBtn = document.createElement("button");
     applyBtn.textContent = t("canvas.crop.apply");
     applyBtn.className = "crop-btn crop-apply-btn";
@@ -109,6 +118,7 @@ export class ImageCropper {
     cancelBtn.className = "crop-btn crop-cancel-btn";
     cancelBtn.onclick = () => this._close(null);
 
+    controls.appendChild(normalizeLabel);
     controls.appendChild(cancelBtn);
     controls.appendChild(applyBtn);
 
@@ -181,18 +191,26 @@ export class ImageCropper {
   async _applyCrop() {
     const mode = this.overlay.dataset.cropMode;
     const imgRect = this.imageElement.getBoundingClientRect();
-    let blob = null;
+    const normalize = this.overlay.querySelector("#crop-normalize-checkbox").checked;
+    let canvas = null;
 
     if (mode === "perspective") {
-      blob = await this._applyPerspectiveCorrection(imgRect);
+      canvas = await this._applyPerspectiveCorrectionToCanvas(imgRect);
     } else {
-      blob = await this._applySimpleCrop(imgRect);
+      canvas = await this._applySimpleCropToCanvas(imgRect);
     }
 
+    if (normalize) {
+      this._normalizeLighting(canvas);
+    }
+
+    // 0.95: this is already the 3rd JPEG generation (camera → import → crop),
+    // and flattened pages are mostly white so the size cost is small
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
     this._close(blob);
   }
 
-  async _applySimpleCrop(imgRect) {
+  async _applySimpleCropToCanvas(imgRect) {
     const cropArea = this.overlay.querySelector("#crop-area");
     const cropRect = cropArea.getBoundingClientRect();
 
@@ -221,10 +239,10 @@ export class ImageCropper {
       cropHeight,
     );
 
-    return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    return canvas;
   }
 
-  async _applyPerspectiveCorrection(imgRect) {
+  async _applyPerspectiveCorrectionToCanvas(imgRect) {
     const perspectiveArea = this.overlay.querySelector("#perspective-area");
     const corners = {};
     perspectiveArea.querySelectorAll(".perspective-corner").forEach((corner) => {
@@ -276,7 +294,7 @@ export class ImageCropper {
       perspT = PerspT(srcCorners, dstCorners);
     } catch (e) {
       console.error("[ImageCropper] Failed to create perspective transform:", e);
-      return this._applySimpleCrop(imgRect); // Fallback to simple crop
+      return this._applySimpleCropToCanvas(imgRect); // Fallback to simple crop
     }
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(outputWidth);
@@ -294,14 +312,50 @@ export class ImageCropper {
     const outputImageData = ctx.createImageData(canvas.width, canvas.height);
     const outputData = outputImageData.data;
 
+    const srcW = srcCanvas.width;
+    const srcH = srcCanvas.height;
+
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
         const srcPoint = perspT.transformInverse(x, y);
-        const srcX = Math.round(srcPoint[0]);
-        const srcY = Math.round(srcPoint[1]);
+        const sx = srcPoint[0];
+        const sy = srcPoint[1];
 
-        if (srcX >= 0 && srcX < srcCanvas.width && srcY >= 0 && srcY < srcCanvas.height) {
-          const srcIndex = (srcY * srcCanvas.width + srcX) * 4;
+        // Bilinear interpolation: sample the 4 surrounding pixels weighted
+        // by the fractional position (nearest-neighbor produces jagged text)
+        const x0 = Math.floor(sx);
+        const y0 = Math.floor(sy);
+
+        if (x0 >= 0 && x0 < srcW - 1 && y0 >= 0 && y0 < srcH - 1) {
+          const fx = sx - x0;
+          const fy = sy - y0;
+          const w00 = (1 - fx) * (1 - fy);
+          const w10 = fx * (1 - fy);
+          const w01 = (1 - fx) * fy;
+          const w11 = fx * fy;
+
+          const i00 = (y0 * srcW + x0) * 4;
+          const i10 = i00 + 4;
+          const i01 = i00 + srcW * 4;
+          const i11 = i01 + 4;
+          const dstIndex = (y * canvas.width + x) * 4;
+
+          outputData[dstIndex] =
+            srcData[i00] * w00 + srcData[i10] * w10 + srcData[i01] * w01 + srcData[i11] * w11;
+          outputData[dstIndex + 1] =
+            srcData[i00 + 1] * w00 +
+            srcData[i10 + 1] * w10 +
+            srcData[i01 + 1] * w01 +
+            srcData[i11 + 1] * w11;
+          outputData[dstIndex + 2] =
+            srcData[i00 + 2] * w00 +
+            srcData[i10 + 2] * w10 +
+            srcData[i01 + 2] * w01 +
+            srcData[i11 + 2] * w11;
+          outputData[dstIndex + 3] = 255;
+        } else if (x0 >= 0 && x0 < srcW && y0 >= 0 && y0 < srcH) {
+          // Edge pixels: fall back to nearest-neighbor
+          const srcIndex = (y0 * srcW + x0) * 4;
           const dstIndex = (y * canvas.width + x) * 4;
           outputData[dstIndex] = srcData[srcIndex];
           outputData[dstIndex + 1] = srcData[srcIndex + 1];
@@ -312,7 +366,69 @@ export class ImageCropper {
     }
 
     ctx.putImageData(outputImageData, 0, 0);
-    return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    return canvas;
+  }
+
+  _normalizeLighting(canvas) {
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // Blur a downscaled copy to estimate the background illumination.
+    // Working at 1/4 resolution keeps it fast while preserving the slow gradient.
+    const scale = 0.25;
+    const bw = Math.max(1, Math.round(w * scale));
+    const bh = Math.max(1, Math.round(h * scale));
+
+    const blurCanvas = document.createElement("canvas");
+    blurCanvas.width = bw;
+    blurCanvas.height = bh;
+    const blurCtx = blurCanvas.getContext("2d");
+
+    // Draw downscaled
+    blurCtx.drawImage(canvas, 0, 0, bw, bh);
+
+    // Apply a strong blur to wash out all text, leaving only illumination gradient.
+    // blur radius relative to the downscaled size — ~15% of the shorter side works well.
+    const blurRadius = Math.round(Math.min(bw, bh) * 0.15);
+    blurCtx.filter = `blur(${blurRadius}px)`;
+    blurCtx.drawImage(blurCanvas, 0, 0);
+    blurCtx.filter = "none";
+
+    // Read both images at full resolution by scaling the blurred map back up
+    const bgCanvas = document.createElement("canvas");
+    bgCanvas.width = w;
+    bgCanvas.height = h;
+    const bgCtx = bgCanvas.getContext("2d");
+    bgCtx.drawImage(blurCanvas, 0, 0, w, h);
+
+    const srcData = ctx.getImageData(0, 0, w, h);
+    const bgData = bgCtx.getImageData(0, 0, w, h);
+    const pixels = srcData.data;
+    const bg = bgData.data;
+
+    // Contrast curve applied after normalization. Dark text bleeds into the
+    // blurred background estimate and gets brightened by the division, so
+    // re-darken the midtones: white point at 235 (everything above → 255)
+    // and a gamma of 1.4 to pull text back toward black.
+    const contrastLUT = new Uint8ClampedArray(256);
+    const whitePoint = 235;
+    const gamma = 1.4;
+    for (let v = 0; v < 256; v++) {
+      const normalized = Math.min(1, v / whitePoint);
+      contrastLUT[v] = Math.round(normalized ** gamma * 255);
+    }
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      // Use max-channel background brightness to avoid colour casts
+      const bgBright = Math.max(bg[i], bg[i + 1], bg[i + 2], 1);
+      pixels[i] = contrastLUT[Math.min(255, Math.round((pixels[i] / bgBright) * 255))];
+      pixels[i + 1] = contrastLUT[Math.min(255, Math.round((pixels[i + 1] / bgBright) * 255))];
+      pixels[i + 2] = contrastLUT[Math.min(255, Math.round((pixels[i + 2] / bgBright) * 255))];
+      // alpha unchanged
+    }
+
+    ctx.putImageData(srcData, 0, 0);
   }
 
   _initCropAreaDrag(cropArea, img) {

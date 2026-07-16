@@ -181,28 +181,6 @@ input:disabled + .toggle-slider {
   opacity: 0.5;
 }
 
-/* ===== Breadcrumb editable items ===== */
-.breadcrumb-item--editable {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-:is(body, #app) .breadcrumb-edit-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  padding: 4px;
-}
-
-.breadcrumb-edit-input {
-  font: inherit;
-  min-width: 100px;
-}
-
 /* ===== Recognition indicator ===== */
 .recognition-indicator {
   display: none;

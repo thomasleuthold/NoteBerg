@@ -4,9 +4,20 @@
  */
 
 import { recognizeUnprocessedNotes } from "./autoRecognition.js";
-import { isAuthenticated } from "./nextcloudSync.js";
-import { getNoteIndex } from "./storage.js";
+import { hasRemoteChanges, isAuthenticated } from "./nextcloudSync.js";
+import { getAllNotesForSync, getNoteIndex } from "./storage.js";
 import { getIsSyncing, performSync } from "./sync.js";
+
+/**
+ * Local note index for one notebook (or quick notes), INCLUDING soft-deleted notes.
+ * hasRemoteChanges compares etags per note id — a soft-deleted note still has its
+ * JSON (and etag) on the server, so excluding it would make every remote file look
+ * "changed" and trigger a full sync on every note/notebook open.
+ */
+async function getLocalNotesForChangeCheck(notebookId) {
+  const allNotes = await getAllNotesForSync();
+  return allNotes.filter((n) => (n.notebookId ?? null) === (notebookId ?? null));
+}
 
 // Configuration
 const INACTIVITY_TIMEOUT = 30000; // 30 seconds of inactivity before syncing
@@ -143,6 +154,60 @@ export async function syncOnNotebookCreate(notebookId) {
 }
 
 /**
+ * Check for remote changes when a notebook is opened, and sync if needed.
+ * @param {string} notebookId - The notebook being opened
+ */
+export async function syncOnNotebookOpen(notebookId) {
+  if (!(await isAuthenticated())) return;
+  if (getIsSyncing()) return;
+
+  try {
+    const localNotes = await getLocalNotesForChangeCheck(notebookId);
+    const changed = await hasRemoteChanges(notebookId, localNotes);
+    if (!changed) return;
+
+    console.log(
+      `Auto-sync: Remote changes detected on notebook open (notebook ${notebookId}), syncing...`,
+    );
+    lastSyncTime = Date.now();
+    await performSync({ silent: true, skipConflictResolution: true });
+  } catch (e) {
+    console.warn("Auto-sync: syncOnNotebookOpen failed:", e);
+  }
+}
+
+/**
+ * Check for remote changes when a note is opened, and sync if needed.
+ * Uses a cheap Depth:1 PROPFIND against the notebook's notes folder — no content downloaded.
+ * If remote changes are found, runs a full silent sync (the footer spinner activates automatically).
+ * @param {string} noteId - The note being opened
+ * @param {string|null} notebookId - Its notebook (null = quick note). If undefined, looks up from local index.
+ */
+export async function syncOnNoteOpen(noteId) {
+  if (!(await isAuthenticated())) return;
+  if (getIsSyncing()) return;
+
+  try {
+    // notebookId may be omitted from navigate params — always look it up from the local index
+    // so we check the right folder on the server (notebook notes vs quick notes).
+    const noteIndex = await getNoteIndex(noteId);
+    const resolvedNotebookId = noteIndex?.notebookId ?? null;
+
+    const localNotes = await getLocalNotesForChangeCheck(resolvedNotebookId);
+    const changed = await hasRemoteChanges(resolvedNotebookId, localNotes);
+    if (!changed) return;
+
+    console.log(
+      `Auto-sync: Remote changes detected on note open (notebook ${resolvedNotebookId}), syncing...`,
+    );
+    lastSyncTime = Date.now();
+    await performSync({ silent: true, skipConflictResolution: true });
+  } catch (e) {
+    console.warn("Auto-sync: syncOnNoteOpen failed:", e);
+  }
+}
+
+/**
  * Sync on app startup
  * Uses smart conflict resolution - prefers the version with newer timestamp.
  * On Windows, also triggers handwriting recognition for notes that were edited
@@ -190,6 +255,15 @@ export function initAutoSync() {
   syncOnAppStart();
 
   // Listen for note/notebook events
+  window.addEventListener("navigate", (e) => {
+    const { mode, params } = e.detail ?? {};
+    if (mode === "notebook" && params?.noteId) {
+      syncOnNoteOpen(params.noteId, params.notebookId);
+    } else if (mode === "overview" && params?.notebookId) {
+      syncOnNotebookOpen(params.notebookId);
+    }
+  });
+
   window.addEventListener("note-created", (e) => {
     if (e.detail?.noteId) {
       syncOnNoteCreate(e.detail.noteId);

@@ -9,6 +9,9 @@
 import { fetch as _tauriFetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { APP_NAME, APP_VERSION } from "../config.js";
+import { decryptObject } from "./encryption.js";
+import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
+import { extFromMime, mimeFromExt } from "./mime.js";
 import {
   getSecureCredential as _tauriGetSecureCredential,
   deleteSecureCredential,
@@ -48,42 +51,30 @@ import {
   createEmptyTombstone,
 } from "./tombstones.js";
 
-// ─── Injectable HTTP / credential providers ───────────────────────────────────
-// Defaults to the real Tauri implementations. SyncWorker overrides these with
-// worker-safe shims via configureHttpProvider() before running any sync logic.
-let _fetch = _tauriFetch;
-let _getSecureCredential = _tauriGetSecureCredential;
-
-/**
- * Override the fetch implementation and credential reader used by this module.
- * Called by SyncWorker.js to inject worker-safe shims (no Tauri IPC needed).
- * @param {Function} fetchFn         — drop-in for fetch()
- * @param {Function} getCredentialFn — drop-in for getSecureCredential(key)
- */
-export function configureHttpProvider(fetchFn, getCredentialFn) {
-  _fetch = fetchFn;
-  _getSecureCredential = getCredentialFn;
-}
+// ─── HTTP / credential providers ──────────────────────────────────────────────
+// The real Tauri implementations. (Previously these were injectable for an
+// off-thread SyncWorker that no longer exists.)
+const _fetch = _tauriFetch;
+const _getSecureCredential = _tauriGetSecureCredential;
 
 const NEXTCLOUD_STORAGE_KEY = "nextcloud_credentials";
 const LEGACY_STORAGE_KEY = "nextcloud_credentials"; // Same key used in localStorage
 
-// Mime type mapping for file extensions
-const MIME_TYPES = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/gif": ".gif",
-  "image/webp": ".webp",
-  "image/svg+xml": ".svg",
-  "application/pdf": ".pdf",
-  "audio/webm": ".webm",
-  "audio/webm;codecs=opus": ".webm",
-  "audio/ogg": ".ogg",
-  "audio/mp4": ".m4a",
-};
-
-function getExtensionFromMime(mimeType) {
-  return MIME_TYPES[mimeType] || ".bin";
+/**
+ * Build a Basic Auth header value that is safe for non-Latin1 credentials.
+ * `btoa()` throws on characters outside Latin1; this encodes via TextEncoder first.
+ */
+function basicAuth(loginName, appPassword) {
+  const raw = `${loginName}:${appPassword}`;
+  try {
+    return `Basic ${btoa(raw)}`;
+  } catch (_e) {
+    // Fallback: encode each code-point via percent-encoding then btoa
+    const bytes = new TextEncoder().encode(raw);
+    let latin1 = "";
+    for (const b of bytes) latin1 += String.fromCharCode(b);
+    return `Basic ${btoa(latin1)}`;
+  }
 }
 
 // Helper for batching promises
@@ -106,9 +97,6 @@ async function runInBatches(items, batchSize, fn) {
 async function decryptNoteLocally(note) {
   if (!note.encrypted) return note;
 
-  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
-  const { decryptObject } = await import("./encryption.js");
-
   if (!isAppUnlocked()) {
     throw new Error("Cannot upload encrypted note - app is locked");
   }
@@ -129,9 +117,6 @@ async function decryptNoteLocally(note) {
     recognition: isBlob(note.recognition)
       ? await decryptObject(note.recognition, key)
       : note.recognition,
-    thumbnail: isBlob(note.thumbnail)
-      ? await decryptObject(note.thumbnail, key)
-      : (note.thumbnail ?? null),
     encrypted: undefined,
   };
 }
@@ -170,9 +155,6 @@ async function decryptNoteFromNextcloud(note) {
     v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
 
   if (isEncryptedBlob(decryptedNote.recordings) || isEncryptedBlob(decryptedNote.media)) {
-    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
-    const { decryptObject } = await import("./encryption.js");
-
     if (isAppUnlocked()) {
       const key = getEncryptionKey();
 
@@ -354,7 +336,6 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     }
 
     console.log("Init response status:", initResponse.status);
-    console.log("Init response headers:", initResponse.headers);
 
     if (!initResponse.ok) {
       const errorText = await initResponse.text();
@@ -364,8 +345,10 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
       );
     }
 
+    // SECURITY: never log the response body or parsed data — it contains the
+    // poll token, which lets anyone reading the log obtain the app password
+    // while the login flow is open (~20 min).
     const responseText = await initResponse.text();
-    console.log("Init response body:", responseText);
 
     if (!responseText || responseText.trim() === "") {
       console.error("Empty response from server");
@@ -377,16 +360,13 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
       initData = JSON.parse(responseText);
     } catch (e) {
       console.error("Failed to parse init response as JSON:", e);
-      console.error("Response text was:", responseText);
       throw new Error(`Invalid JSON response from server: ${e.message}`);
     }
-
-    console.log("Parsed init data:", initData);
 
     const { poll, login } = initData;
 
     if (!poll || !login) {
-      console.error("Missing required fields in response:", { poll, login });
+      console.error("Invalid login flow response - missing poll or login");
       throw new Error("Invalid login flow response - missing poll or login");
     }
 
@@ -395,15 +375,11 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     const endpoint = poll.endpoint;
 
     if (!token || !endpoint) {
-      console.error("Missing token or endpoint in poll object:", poll);
+      console.error("Invalid poll response - missing token or endpoint");
       throw new Error("Invalid poll response - missing token or endpoint");
     }
 
-    console.log("Login Flow initialized:", {
-      endpoint,
-      token: `${token.substring(0, 10)}...`,
-      login,
-    });
+    console.log("Login Flow initialized, poll endpoint:", endpoint);
 
     // Step 2: Provide login URL to callback (for UI display)
     if (onLoginUrlReady) {
@@ -411,7 +387,7 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
     }
 
     // Step 3: Try to open login page in default browser
-    console.log("Opening login page in browser:", login);
+    console.log("Opening login page in browser...");
     try {
       await openUrl(login);
       console.log("Browser opened successfully");
@@ -515,7 +491,7 @@ async function createFolder(path) {
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
-  const authHeader = `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`;
+  const authHeader = basicAuth(creds.loginName, creds.appPassword);
 
   const response = await _fetch(webdavUrl, {
     method: "MKCOL",
@@ -540,15 +516,25 @@ async function createFolder(path) {
 /**
  * Upload a file to Nextcloud using WebDAV
  * Uses X-OC-Mtime to set the modification time to match local file
+ * @param {string|null} etag - If set, sent as If-Match so a concurrent remote
+ *   change fails the upload (412) instead of being overwritten.
+ * @param {boolean} options.requireAbsent - Send If-None-Match: * so the upload
+ *   fails (412) if the file already exists (used for tombstone creation races).
  */
-async function uploadFile(path, content, mtime = null, etag = null) {
+async function uploadFile(
+  path,
+  content,
+  mtime = null,
+  etag = null,
+  { requireAbsent = false } = {},
+) {
   const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
   const headers = {
-    Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+    Authorization: basicAuth(creds.loginName, creds.appPassword),
     "Content-Type": "application/json",
     "Cache-Control": "no-cache",
     Pragma: "no-cache",
@@ -562,28 +548,23 @@ async function uploadFile(path, content, mtime = null, etag = null) {
   // Use ETag to prevent overwriting changes (If-Match)
   if (etag) {
     headers["If-Match"] = `"${etag}"`;
+  } else if (requireAbsent) {
+    headers["If-None-Match"] = "*";
   }
 
-  let response = await _fetch(webdavUrl, {
+  const response = await _fetch(webdavUrl, {
     method: "PUT",
     headers,
     body: content,
   });
 
   if (response.status === 412) {
-    console.warn(`[NextcloudSync] 412 Conflict detected for ${path}. Forcing overwrite.`);
-
-    // Remove If-Match to force overwrite (Brute force resolution)
-    if (headers["If-Match"]) {
-      delete headers["If-Match"];
-    }
-
-    // Retry upload without the version check
-    response = await _fetch(webdavUrl, {
-      method: "PUT",
-      headers,
-      body: content,
-    });
+    // Remote changed since our last sync. Do NOT force-overwrite — fail this
+    // upload so the item stays synced=false and the next sync cycle downloads
+    // the remote version, merges, and re-uploads.
+    const err = new Error(`Upload conflict (412) for ${path} — remote changed since last sync`);
+    err.status = 412;
+    throw err;
   }
 
   if (!response.ok && response.status !== 201 && response.status !== 204) {
@@ -628,7 +609,7 @@ async function downloadFile(path, asBinary = false) {
   const response = await _fetch(webdavUrl, {
     method: "GET",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
     },
@@ -662,13 +643,21 @@ async function syncNoteMedia(note) {
   // When the note is locally encrypted, media is stored as an encrypted blob —
   // media files were already uploaded when the note was last synced unencrypted,
   // and the encrypted payload references them by fileId inside the blob.
-  if (note.media !== undefined && !Array.isArray(note.media)) return;
+  if (note.media !== undefined && !Array.isArray(note.media)) return true;
   const hasRecordings = Array.isArray(note.recordings) && note.recordings.length > 0;
-  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return true;
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
 
-  // Ensure media folder exists
+  // Ensure the full folder chain exists. createFolder(mediaFolder) gets a
+  // 409 Conflict if any parent is missing, so we create parents first.
+  // createFolder handles 405 (already exists) so these calls are always safe.
+  if (note.notebookId) {
+    await createFolder(getNotebookFolder(note.notebookId));
+    await createFolder(getNotebookNotesFolder(note.notebookId));
+  } else {
+    await createFolder(`${ROOT_FOLDER}/quickNotes`);
+  }
   await createFolder(mediaFolder);
 
   // Get list of existing files on server to avoid unnecessary uploads
@@ -680,17 +669,25 @@ async function syncNoteMedia(note) {
   }
   const remoteNames = new Set(remoteFiles.map((f) => f.name));
 
-  // Prepare upload tasks for items that need uploading
+  // Prepare upload tasks for items that need uploading.
+  // Deduplicate by fileId up front — pdf-page items all share the same fileId
+  // (the PDF binary), so we must not fetch/upload it 500 times.
   const uploadTasks = [];
-  const processedIds = new Set(); // Track processed IDs to avoid duplicates (e.g. multiple PDF pages)
-
-  // Collect all file IDs (media items + pdfSource + recordings)
-  const itemsToSync = [...(note.media || [])];
-  if (note.pdfSource) {
+  const seenIds = new Set();
+  const itemsToSync = [];
+  for (const item of note.media || []) {
+    if (item.fileId && !seenIds.has(item.fileId)) {
+      seenIds.add(item.fileId);
+      itemsToSync.push(item);
+    }
+  }
+  if (note.pdfSource && !seenIds.has(note.pdfSource)) {
+    seenIds.add(note.pdfSource);
     itemsToSync.push({ fileId: note.pdfSource, id: "pdf-source" });
   }
   for (const rec of note.recordings || []) {
-    if (!rec.deleted && rec.fileId) {
+    if (!rec.deleted && rec.fileId && !seenIds.has(rec.fileId)) {
+      seenIds.add(rec.fileId);
       itemsToSync.push({ fileId: rec.fileId, id: rec.id });
     }
   }
@@ -698,9 +695,6 @@ async function syncNoteMedia(note) {
   for (const item of itemsToSync) {
     const fileId = item.fileId;
     if (!fileId) continue;
-
-    if (processedIds.has(fileId)) continue;
-    processedIds.add(fileId);
 
     // Get file from local storage
     const blob = await getFile(fileId);
@@ -710,7 +704,7 @@ async function syncNoteMedia(note) {
     }
 
     // Determine filename
-    const ext = getExtensionFromMime(blob.type);
+    const ext = extFromMime(blob.type);
     const filename = `${fileId}${ext}`;
 
     // Queue upload if not exists on server
@@ -722,17 +716,24 @@ async function syncNoteMedia(note) {
   // Upload in parallel batches
   if (uploadTasks.length > 0) {
     const MEDIA_UPLOAD_CONCURRENCY = 3;
-    await runInBatches(uploadTasks, MEDIA_UPLOAD_CONCURRENCY, async (task) => {
-      try {
-        console.log(`[Sync] Uploading media file: ${task.filename}`);
-        await uploadFile(task.path, task.blob);
-        return { success: true, filename: task.filename };
-      } catch (error) {
-        console.error(`[Sync] Failed to upload media file ${task.filename}:`, error);
-        return { success: false, filename: task.filename, error };
-      }
-    });
+    const uploadResults = await runInBatches(
+      uploadTasks,
+      MEDIA_UPLOAD_CONCURRENCY,
+      async (task) => {
+        try {
+          console.log(`[Sync] Uploading media file: ${task.filename}`);
+          await uploadFile(task.path, task.blob);
+          return { success: true, filename: task.filename };
+        } catch (error) {
+          console.error(`[Sync] Failed to upload media file ${task.filename}:`, error);
+          return { success: false, filename: task.filename, error };
+        }
+      },
+    );
+    const anyFailed = uploadResults.some((r) => !r.success);
+    if (anyFailed) return false;
   }
+  return true;
 }
 
 /**
@@ -797,35 +798,47 @@ async function cleanupOrphanedMedia(note) {
 }
 
 /**
- * Download media files for a note
- * Ensures all binary files referenced in the note are downloaded to local storage.
+ * Download media files for a note that are missing locally.
+ * Returns a Set of fileIds that were expected but not found on the server,
+ * so callers can mark the note for re-upload (self-healing).
  */
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
-  if (note.media !== undefined && !Array.isArray(note.media)) return;
+  if (note.media !== undefined && !Array.isArray(note.media)) return new Set();
   const hasRecordings = Array.isArray(note.recordings) && note.recordings.some((r) => !r.deleted);
-  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) return;
+
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings)
+    return new Set();
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
-  const processedIds = new Set();
 
-  // Collect all file IDs (media items + pdfSource + recordings)
-  const itemsToDownload = [...(note.media || [])];
-  if (note.pdfSource) {
+  // Collect unique file IDs (media items + pdfSource + recordings).
+  // pdf-page items all share the same fileId (the PDF binary) — deduplicate
+  // up front so we never iterate 500 items to do a single checkFileExists.
+  const seenIds = new Set();
+  const itemsToDownload = [];
+  for (const item of note.media || []) {
+    if (item.fileId && !seenIds.has(item.fileId)) {
+      seenIds.add(item.fileId);
+      itemsToDownload.push(item);
+    }
+  }
+  if (note.pdfSource && !seenIds.has(note.pdfSource)) {
+    seenIds.add(note.pdfSource);
     itemsToDownload.push({ fileId: note.pdfSource });
   }
   for (const rec of note.recordings || []) {
-    if (!rec.deleted && rec.fileId) {
+    if (!rec.deleted && rec.fileId && !seenIds.has(rec.fileId)) {
+      seenIds.add(rec.fileId);
       itemsToDownload.push({ fileId: rec.fileId });
     }
   }
 
+  const missingOnServer = new Set();
+
   for (const item of itemsToDownload) {
     const fileId = item.fileId;
     if (!fileId) continue;
-
-    if (processedIds.has(fileId)) continue;
-    processedIds.add(fileId);
 
     // Check if file exists locally
     const existing = await checkFileExists(fileId);
@@ -839,7 +852,7 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
         remoteFiles = await listFiles(mediaFolder);
       } catch (e) {
         console.warn(`[Sync] Failed to list media folder ${mediaFolder}:`, e);
-        return; // Stop if folder doesn't exist
+        return missingOnServer; // Stop if folder doesn't exist
       }
     }
 
@@ -851,15 +864,18 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
       if (content) {
         // Infer mime type from extension
         const ext = remoteFile.name.substring(remoteFile.name.lastIndexOf("."));
-        const mimeType =
-          Object.keys(MIME_TYPES).find((key) => MIME_TYPES[key] === ext) ||
-          "application/octet-stream";
-
-        const blob = new Blob([content], { type: mimeType });
+        const blob = new Blob([content], { type: mimeFromExt(ext) });
         await saveFile(blob, fileId);
       }
+    } else {
+      console.warn(
+        `[Sync] Media file ${fileId} not found in remote folder ${mediaFolder} (${remoteFiles.length} file(s) listed) — note ${note.id} needs re-upload`,
+      );
+      missingOnServer.add(fileId);
     }
   }
+
+  return missingOnServer;
 }
 
 /**
@@ -875,7 +891,7 @@ async function fetchRemoteState() {
   const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
       Depth: "infinity", // Get everything recursively
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -884,6 +900,15 @@ async function fetchRemoteState() {
 
   if (response.status === 404) {
     return []; // Root folder doesn't exist
+  }
+
+  // Stock Nextcloud ships with `dav.propfind.depth_infinity` disabled and answers
+  // Depth: infinity with 400 — fall back to walking the tree with Depth: 1.
+  if (response.status === 400 || response.status === 403 || response.status === 501) {
+    console.warn(
+      `[Sync] PROPFIND Depth: infinity rejected (${response.status}) — falling back to per-folder listing`,
+    );
+    return fetchRemoteStateShallow();
   }
 
   if (!response.ok) {
@@ -910,6 +935,41 @@ async function fetchRemoteState() {
 }
 
 /**
+ * Fallback for servers that reject PROPFIND Depth: infinity.
+ * Walks the known folder layout with Depth: 1 requests:
+ *   /NoteBerg/notebooks            → global tombstone + notebook folders
+ *   /NoteBerg/notebooks/{id}       → _notebook.json, _tombstones.json
+ *   /NoteBerg/notebooks/{id}/notes → note JSONs
+ *   /NoteBerg/quickNotes           → quick note JSONs + tombstone
+ * Media folders are intentionally NOT walked — downloadNoteMedia lists them on
+ * demand for notes that are missing binaries. The only degradation is that the
+ * missing-media check for *unchanged* notes is skipped in this mode.
+ */
+async function fetchRemoteStateShallow() {
+  const items = [];
+  const addFiles = (folder, files) => {
+    for (const f of files) {
+      items.push({ ...f, path: `${folder}/${f.name}` });
+    }
+  };
+
+  const notebooksFolder = `${ROOT_FOLDER}/notebooks`;
+  addFiles(notebooksFolder, await listFiles(notebooksFolder));
+
+  const notebookFolders = await listFolders(notebooksFolder);
+  await runInBatches(notebookFolders, 5, async (nb) => {
+    const nbFolder = `${notebooksFolder}/${nb.name}`;
+    addFiles(nbFolder, await listFiles(nbFolder));
+    addFiles(`${nbFolder}/notes`, await listFiles(`${nbFolder}/notes`));
+  });
+
+  const quickNotesFolder = `${ROOT_FOLDER}/quickNotes`;
+  addFiles(quickNotesFolder, await listFiles(quickNotesFolder));
+
+  return items;
+}
+
+/**
  * List files in a folder using WebDAV PROPFIND
  */
 export async function listFiles(path) {
@@ -921,7 +981,7 @@ export async function listFiles(path) {
   const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
       Depth: "1",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -941,6 +1001,35 @@ export async function listFiles(path) {
 }
 
 /**
+ * Check whether the server has note changes that the local client hasn't seen yet.
+ * Uses a single Depth:1 PROPFIND against the notebook's notes folder — cheap, no content download.
+ * @param {string|null} notebookId - Notebook to check, or null for quick notes
+ * @param {Array<{id: string, lastSyncedEtag: string|null}>} localNotes - Local note index stubs
+ * @returns {Promise<boolean>} true if at least one remote note etag differs from local
+ */
+export async function hasRemoteChanges(notebookId, localNotes) {
+  if (!(await isAuthenticated())) return false;
+
+  try {
+    const folder = notebookId ? getNotebookNotesFolder(notebookId) : `${ROOT_FOLDER}/quickNotes`;
+
+    const remoteFiles = await listFiles(folder);
+    const localEtagMap = new Map(localNotes.map((n) => [n.id, n.lastSyncedEtag]));
+
+    for (const file of remoteFiles) {
+      if (!file.name.endsWith(".json")) continue;
+      const noteId = file.name.slice(0, -5);
+      // undefined !== etag catches new remote notes local doesn't know about
+      if (localEtagMap.get(noteId) !== file.etag) return true;
+    }
+    return false;
+  } catch (e) {
+    console.warn("[Sync] hasRemoteChanges check failed, assuming no changes:", e);
+    return false;
+  }
+}
+
+/**
  * List folders in a folder using WebDAV PROPFIND
  */
 export async function listFolders(path) {
@@ -952,7 +1041,7 @@ export async function listFolders(path) {
   const response = await _fetch(webdavUrl, {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
       Depth: "1",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -1029,7 +1118,7 @@ function parseWebDAVResponse(rawXml, includeCollections = false) {
       href,
       isCollection,
       lastModified: lastModified ? new Date(lastModified).getTime() : null,
-      etag: etag?.replace(/"/g, ""),
+      etag: etag?.replace(/&quot;/g, "").replace(/"/g, ""),
     });
   }
 
@@ -1048,7 +1137,7 @@ async function deleteFile(path) {
   const response = await _fetch(webdavUrl, {
     method: "DELETE",
     headers: {
-      Authorization: `Basic ${btoa(`${creds.loginName}:${creds.appPassword}`)}`,
+      Authorization: basicAuth(creds.loginName, creds.appPassword),
     },
   });
 
@@ -1061,6 +1150,90 @@ async function deleteFile(path) {
   }
 
   return true;
+}
+
+/**
+ * Read-modify-write a remote tombstone with optimistic concurrency.
+ * Re-reads the tombstone and re-applies `mutate` on every attempt, uploading
+ * with If-Match (or If-None-Match: * when creating) so a concurrent writer on
+ * another device causes a 412 retry instead of having its entries silently
+ * overwritten (lost entries make deleted notes resurrect).
+ * A tombstone that exists but fails to parse aborts the operation — replacing
+ * it with an empty one would wipe the deletion history.
+ * @param {string} tombstonePath
+ * @param {Function} mutate - (tombstone) => void, applied to the freshly-read tombstone
+ */
+async function updateRemoteTombstone(tombstonePath, mutate) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    const { content, etag } = await downloadFile(tombstonePath);
+    const tombstone = content ? JSON.parse(content) : createEmptyTombstone();
+    mutate(tombstone);
+    cleanupOldTombstones(tombstone);
+    try {
+      await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2), null, etag, {
+        requireAbsent: !etag,
+      });
+      return;
+    } catch (e) {
+      if (e.status !== 412 || attempt >= MAX_ATTEMPTS) throw e;
+      // Lost the race against another device — re-read and retry
+      console.warn(`[Sync] Tombstone ${tombstonePath} changed concurrently, retrying update`);
+    }
+  }
+}
+
+/**
+ * Purge a batch of items remotely: delete files FIRST, then record the ids in
+ * the tombstone, then clean up local stubs — each step only for items whose
+ * deletion succeeded (prevents data loss if the tombstone write succeeds but
+ * the deletion fails). Shared by syncNotebooks and syncNotes.
+ * @returns {Array} per-item results tagged with action:"purge"
+ */
+async function purgeRemoteItems(
+  items,
+  { deleteRemote, tombstonePath, addTombstone, cleanupLocal },
+) {
+  const deleteResults = await runInBatches(items, 5, async (item) => {
+    try {
+      await deleteRemote(item);
+      return { success: true, id: item.id, action: "purge" };
+    } catch (e) {
+      console.error(`[Sync] Failed to delete purged item ${item.id}:`, e);
+      return { success: false, id: item.id, error: e.message, action: "purge" };
+    }
+  });
+
+  const succeeded = deleteResults.filter((r) => r.success);
+  if (succeeded.length > 0) {
+    await updateRemoteTombstone(tombstonePath, (tombstone) => {
+      for (const r of succeeded) addTombstone(tombstone, r.id);
+    });
+    for (const r of succeeded) await cleanupLocal(r.id);
+  }
+  return deleteResults;
+}
+
+/**
+ * Aggregate per-item batch results into the summary shape returned by
+ * syncNotebooks/syncNotes. Successful purges count neither as uploads nor failures.
+ */
+async function aggregateSyncResults(batchResults) {
+  const results = { uploaded: 0, failed: 0, errors: [], uploadedIds: [], metadata: {} };
+  for (const res of batchResults) {
+    if (!res.success) {
+      results.failed++;
+      results.errors.push({ id: res.id, error: res.error });
+      continue;
+    }
+    if (res.action === "purge") continue;
+    results.uploaded++;
+    results.uploadedIds.push(res.id);
+    results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+    // Clear previousNotebookId now that the move has been synced to Nextcloud
+    if (res.hadPreviousLocation) await clearNoteMoveFlag(res.id);
+  }
+  return results;
 }
 
 /**
@@ -1077,7 +1250,7 @@ async function ensureHierarchicalStructure() {
  * Sync notebooks to Nextcloud (hierarchical structure)
  */
 export async function syncNotebooks(notebooks) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -1089,50 +1262,22 @@ export async function syncNotebooks(notebooks) {
   const activeNotebooks = notebooks.filter((n) => !n.purged);
   const purgedResults = [];
 
-  // Process purged notebooks: Delete files FIRST, then update tombstone
-  // This prevents data loss if tombstone succeeds but deletion fails
   if (purgedNotebooks.length > 0) {
     try {
-      // Step 1: Attempt to delete remote folders first
-      const deleteResults = await runInBatches(purgedNotebooks, 5, async (notebook) => {
-        try {
-          console.log(`[Sync] Deleting remote notebook ${notebook.id}`);
-          await deleteRemoteNotebook(notebook.id);
-          return { success: true, id: notebook.id, action: "purge" };
-        } catch (e) {
-          console.error(`[Sync] Failed to delete remote notebook ${notebook.id}:`, e);
-          return { success: false, id: notebook.id, error: e.message, action: "purge" };
-        }
-      });
-
-      // Step 2: Only add successfully deleted notebooks to tombstone
-      const successfullyDeleted = deleteResults.filter((r) => r.success);
-
-      if (successfullyDeleted.length > 0) {
-        const tombstonePath = getGlobalNotebookTombstonePath();
-        let tombstone;
-        try {
-          const { content } = await downloadFile(tombstonePath);
-          tombstone = content ? JSON.parse(content) : createEmptyTombstone();
-        } catch (e) {
-          console.warn(`[Sync] Could not download global tombstone, creating new.`, e);
-          tombstone = createEmptyTombstone();
-        }
-
-        for (const result of successfullyDeleted) {
-          tombstone = addNotebookTombstone(tombstone, result.id);
-        }
-
-        await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
-
-        // Step 3: Clean up local stubs only for successful deletions
-        for (const result of successfullyDeleted) {
-          await permanentlyDeleteNotesInNotebook(result.id);
-          await permanentlyDeleteNotebook(result.id);
-        }
-      }
-
-      purgedResults.push(...deleteResults);
+      purgedResults.push(
+        ...(await purgeRemoteItems(purgedNotebooks, {
+          deleteRemote: (nb) => {
+            console.log(`[Sync] Deleting remote notebook ${nb.id}`);
+            return deleteRemoteNotebook(nb.id);
+          },
+          tombstonePath: getGlobalNotebookTombstonePath(),
+          addTombstone: addNotebookTombstone,
+          cleanupLocal: async (id) => {
+            await permanentlyDeleteNotesInNotebook(id);
+            await permanentlyDeleteNotebook(id);
+          },
+        })),
+      );
     } catch (error) {
       console.error("[Sync] Failed to process purged notebooks:", error);
     }
@@ -1172,38 +1317,14 @@ export async function syncNotebooks(notebooks) {
     }
   });
 
-  const batchResults = [...purgedResults, ...uploadResults];
-
-  const results = {
-    uploaded: 0,
-    failed: 0,
-    errors: [],
-    uploadedIds: [],
-    metadata: {},
-  };
-
-  for (const res of batchResults) {
-    if (res.success) {
-      // Only count as uploaded if it wasn't a purge action
-      if (res.action !== "purge") {
-        results.uploaded++;
-        results.uploadedIds.push(res.id);
-        results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
-      }
-    } else {
-      results.failed++;
-      results.errors.push({ id: res.id, error: res.error });
-    }
-  }
-
-  return results;
+  return aggregateSyncResults([...purgedResults, ...uploadResults]);
 }
 
 /**
  * Sync notes to Nextcloud (hierarchical structure)
  */
 export async function syncNotes(notes) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -1227,57 +1348,26 @@ export async function syncNotes(notes) {
 
     for (const [key, groupNotes] of Object.entries(byNotebook)) {
       const notebookId = key === "quickNotes" ? null : key;
+      const tombstonePath = notebookId
+        ? getNotebookTombstonePath(notebookId)
+        : getQuickNotesTombstonePath();
 
       try {
-        // Step 1: Delete files first (before updating tombstone)
-        const deleteResults = await runInBatches(groupNotes, 5, async (note) => {
-          try {
-            const notePath = getNotePath(note.id, note.notebookId);
-            const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
-
-            await deleteFile(notePath);
-            await deleteFile(mediaFolder).catch(() => {}); // Ignore if folder doesn't exist
-
-            return { success: true, id: note.id, action: "purge" };
-          } catch (e) {
-            console.error(`[Sync] Failed to delete purged note files ${note.id}:`, e);
-            return { success: false, id: note.id, error: e.message, action: "purge" };
-          }
-        });
-
-        // Step 2: Only add successfully deleted notes to tombstone
-        const successfullyDeleted = deleteResults.filter((r) => r.success);
-
-        if (successfullyDeleted.length > 0) {
-          const tombstonePath = notebookId
-            ? getNotebookTombstonePath(notebookId)
-            : getQuickNotesTombstonePath();
-
-          let tombstone;
-          try {
-            const { content: tombstoneContent } = await downloadFile(tombstonePath);
-            tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
-          } catch (e) {
-            console.warn(`[Sync] Could not download tombstone ${tombstonePath}, creating new.`, e);
-            tombstone = createEmptyTombstone();
-          }
-
-          // Add only successfully deleted notes to tombstone
-          for (const result of successfullyDeleted) {
-            tombstone = addNoteTombstone(tombstone, result.id);
-          }
-
-          // Upload updated tombstone
-          await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
-
-          // Step 3: Clean up local stubs only for successful deletions
-          for (const result of successfullyDeleted) {
-            await permanentlyDeleteNote(result.id);
-            console.log(`[Sync] Purged note ${result.id} completely`);
-          }
-        }
-
-        purgedResults.push(...deleteResults);
+        purgedResults.push(
+          ...(await purgeRemoteItems(groupNotes, {
+            deleteRemote: async (note) => {
+              await deleteFile(getNotePath(note.id, note.notebookId));
+              // Ignore if media folder doesn't exist
+              await deleteFile(getNoteMediaFolder(note.id, note.notebookId)).catch(() => {});
+            },
+            tombstonePath,
+            addTombstone: addNoteTombstone,
+            cleanupLocal: async (id) => {
+              await permanentlyDeleteNote(id);
+              console.log(`[Sync] Purged note ${id} completely`);
+            },
+          })),
+        );
       } catch (error) {
         console.error(`[Sync] Failed to process purged notes group for ${key}:`, error);
         // Mark all in group as failed
@@ -1322,18 +1412,18 @@ export async function syncNotes(notes) {
         await deleteFile(oldMediaFolder).catch(() => {});
       });
 
-      // Write tombstone once for the whole group (serial — no race)
-      let tombstone;
+      // Write tombstone once for the whole group. If this fails the move still
+      // completes (note uploads to its new location); only the old-location
+      // cleanup marker is missing, so log and continue rather than abort the sync.
       try {
-        const { content } = await downloadFile(tombstonePath);
-        tombstone = content ? JSON.parse(content) : createEmptyTombstone();
-      } catch {
-        tombstone = createEmptyTombstone();
+        await updateRemoteTombstone(tombstonePath, (tombstone) => {
+          for (const note of groupNotes) {
+            addNoteTombstone(tombstone, note.id);
+          }
+        });
+      } catch (e) {
+        console.error(`[Sync] Failed to write move tombstone ${tombstonePath}:`, e);
       }
-      for (const note of groupNotes) {
-        tombstone = addNoteTombstone(tombstone, note.id);
-      }
-      await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
 
       console.log(
         `[Sync] Cleaned up ${groupNotes.length} moved note(s) from ${key}: ${groupNotes.map((n) => n.id).join(", ")}`,
@@ -1346,7 +1436,8 @@ export async function syncNotes(notes) {
       // Get the correct path based on whether note is in a notebook or is a quick note
       const path = getNotePath(note.id, note.notebookId);
 
-      console.log(`Uploading note ${note.id} (${note.title}) to ${path}`);
+      // Log id/path only — never the title (note content must not leak to logs).
+      console.log(`Uploading note ${note.id} to ${path}`);
 
       const syncedNote = {
         ...note,
@@ -1358,17 +1449,22 @@ export async function syncNotes(notes) {
       // decryptNoteLocally is a no-op when note.encrypted is falsy.
       const decryptedNote = await decryptNoteLocally(syncedNote);
 
-      // Sync media files (upload binaries) — must use decrypted media array
-      await syncNoteMedia(decryptedNote);
+      // Sync media files (upload binaries) — must use decrypted media array.
+      // If any binary fails to upload, skip the note JSON so synced stays false
+      // and the next sync cycle retries (prevents NC from having a note JSON that
+      // references media files that don't exist on the server yet).
+      const mediaOk = await syncNoteMedia(decryptedNote);
+      if (!mediaOk) {
+        console.warn(`[Sync] Skipping JSON upload for note ${note.id} — media upload incomplete`);
+        return { success: false, id: note.id, error: "media upload incomplete" };
+      }
 
       // Clean up orphaned media files (deleted from note but still on server)
       await cleanupOrphanedMedia(decryptedNote);
 
-      // Decrypt local encryption before upload so Nextcloud always contains readable JSON
-      const encryptedNote = await decryptNoteLocally(syncedNote);
-
-      // Strip internal sync tracking fields before uploading
-      const noteForUpload = { ...encryptedNote };
+      // Strip internal sync tracking fields before uploading.
+      // decryptedNote is already plain — Nextcloud always receives readable JSON.
+      const noteForUpload = { ...decryptedNote };
       delete noteForUpload.lastSyncedEtag;
       delete noteForUpload.synced;
       delete noteForUpload.encrypted;
@@ -1383,6 +1479,7 @@ export async function syncNotes(notes) {
       const uploadEtag = note.previousNotebookId !== undefined ? null : note.lastSyncedEtag;
       const etag = await uploadFile(path, content, syncedNote.modified, uploadEtag);
       console.log(`Successfully uploaded note ${note.id}`);
+
       return {
         success: true,
         id: note.id,
@@ -1395,36 +1492,7 @@ export async function syncNotes(notes) {
     }
   });
 
-  const batchResults = [...purgedResults, ...uploadResults];
-
-  const results = {
-    uploaded: 0,
-    failed: 0,
-    errors: [],
-    uploadedIds: [],
-    metadata: {},
-  };
-
-  for (const res of batchResults) {
-    if (res.success) {
-      // Only count as uploaded if it wasn't a purge action
-      if (res.action !== "purge") {
-        results.uploaded++;
-        results.uploadedIds.push(res.id);
-        results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
-
-        // Clear previousNotebookId now that the move has been synced to Nextcloud
-        if (res.hadPreviousLocation) {
-          await clearNoteMoveFlag(res.id);
-        }
-      }
-    } else {
-      results.failed++;
-      results.errors.push({ id: res.id, error: res.error });
-    }
-  }
-
-  return results;
+  return aggregateSyncResults([...purgedResults, ...uploadResults]);
 }
 
 /**
@@ -1432,7 +1500,7 @@ export async function syncNotes(notes) {
  * Optimized to only download changed files based on ETags
  */
 export async function downloadAllData(localNotebooks = [], localNotes = []) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -1448,6 +1516,22 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
 
   // Step 1: Fetch all remote files in one request
   const remoteFiles = await fetchRemoteState();
+
+  // Index remote media files for efficient lookup.
+  // Map: noteId -> Array of { name, path }
+  const remoteMediaMap = new Map();
+  for (const file of remoteFiles) {
+    const parsed = parsePath(file.path);
+    if (parsed.type === "media" && parsed.noteId) {
+      if (!remoteMediaMap.has(parsed.noteId)) {
+        remoteMediaMap.set(parsed.noteId, []);
+      }
+      remoteMediaMap.get(parsed.noteId).push({
+        name: parsed.filename,
+        path: file.path,
+      });
+    }
+  }
 
   // Lists of items to download
   const notebooksToDownload = [];
@@ -1489,29 +1573,16 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
           // in which case fullSync logic handles it (local modified + remote unchanged = upload local).
         });
 
-        if (local.media && local.media.length > 0) {
+        if (
+          (local.media && local.media.length > 0) ||
+          (Array.isArray(local.recordings) && local.recordings.some((r) => !r.deleted && r.fileId))
+        ) {
           mediaCheckQueue.push(local);
         }
       }
     } else if (parsed.type === "tombstone") {
       // Always download tombstones for now (they are small and critical)
       tombstonesToDownload.push({ ...parsed, path: file.path });
-    }
-  }
-
-  // Index remote media files for efficient lookup
-  // Map: noteId -> Array of { name, path }
-  const remoteMediaMap = new Map();
-  for (const file of remoteFiles) {
-    const parsed = parsePath(file.path);
-    if (parsed.type === "media" && parsed.noteId) {
-      if (!remoteMediaMap.has(parsed.noteId)) {
-        remoteMediaMap.set(parsed.noteId, []);
-      }
-      remoteMediaMap.get(parsed.noteId).push({
-        name: parsed.filename,
-        path: file.path,
-      });
     }
   }
 
@@ -1538,6 +1609,10 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
   });
   notebooks.push(...downloadedNotebooks.filter((n) => n));
 
+  // IDs of notes whose media was missing on the server — these need a re-upload
+  // from the device that has the binaries locally, so we flag them synced=false.
+  const notesWithMissingMedia = new Set();
+
   // Download Notes
   const downloadedNotes = await runInBatches(notesToDownload, CONCURRENCY, async (item) => {
     try {
@@ -1547,8 +1622,8 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
         note._currentFileEtag = item.etag;
         const decrypted = await decryptNoteFromNextcloud(note);
 
-        // Download media files for this note
-        await downloadNoteMedia(decrypted, remoteMediaMap.get(decrypted.id));
+        const missing = await downloadNoteMedia(decrypted, remoteMediaMap.get(decrypted.id));
+        if (missing.size > 0) notesWithMissingMedia.add(decrypted.id);
 
         return decrypted;
       }
@@ -1567,10 +1642,11 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
     console.log(`[Sync] Checking media for ${mediaCheckQueue.length} unchanged notes...`);
     await runInBatches(mediaCheckQueue, CONCURRENCY, async (stub) => {
       const remoteMedia = remoteMediaMap.get(stub.id);
-      if (!remoteMedia || remoteMedia.length === 0) return; // no remote media, skip
+      if (!remoteMedia || remoteMedia.length === 0) return;
       const fullNote = await getRawNote(stub.id);
       if (!fullNote) return;
-      await downloadNoteMedia(fullNote, remoteMedia);
+      const missing = await downloadNoteMedia(fullNote, remoteMedia);
+      if (missing.size > 0) notesWithMissingMedia.add(stub.id);
     });
   }
 
@@ -1596,14 +1672,19 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
     if (t) tombstones.set(t.key, t.data);
   });
 
-  return { notebooks, notes, tombstones };
+  return { notebooks, notes, tombstones, remoteMediaMap, notesWithMissingMedia };
 }
 
 /**
- * Merge strokes while respecting deletions
- * Prioritizes strokes from the first array (priorityStrokes) in case of conflict
- * @param {Array} priorityStrokes - Strokes from the newer/priority version
- * @param {Array} secondaryStrokes - Strokes from the older/secondary version
+ * Merge strokes while respecting deletions.
+ * Strokes are stored and consumed in temporal order (the handwriting recognition
+ * backend depends on it), so the merge must preserve that order: the older side's
+ * strokes form the base (keeping their positions), the newer side overrides
+ * same-id strokes in place and appends its new strokes at the end. When every
+ * stroke carries a start timestamp (time[0]), the result is sorted by it so
+ * interleaved edits from two devices also end up in true temporal order.
+ * @param {Array} priorityStrokes - Strokes from the newer/priority version (wins conflicts)
+ * @param {Array} secondaryStrokes - Strokes from the older/secondary version (base order)
  * @param {Array} priorityDeleted - Deleted stroke IDs from priority version
  * @param {Array} secondaryDeleted - Deleted stroke IDs from secondary version
  * @returns {Object} Object with merged strokes and deletedStrokes arrays
@@ -1617,36 +1698,27 @@ function mergeStrokes(
   // Combine all deleted stroke IDs from both sides
   const allDeletedIds = new Set([...priorityDeleted, ...secondaryDeleted]);
 
-  // Create a map of stroke ID to stroke for deduplication
-  const strokesById = new Map();
+  // Legacy strokes without an id are keyed by their JSON serialization
+  const keyOf = (stroke) => stroke.id ?? JSON.stringify(stroke);
 
-  // Add priority strokes first (wins conflicts)
-  for (const stroke of priorityStrokes) {
-    if (stroke.id && !allDeletedIds.has(stroke.id)) {
-      strokesById.set(stroke.id, stroke);
-    } else if (!stroke.id) {
-      // Legacy stroke without ID - keep it for now (will be migrated)
-      strokesById.set(JSON.stringify(stroke), stroke);
-    }
+  // Older side first (base order), then newer side: Map.set on an existing key
+  // replaces the value but keeps the original insertion position, so same-id
+  // strokes take the newer content at the older position; new strokes append.
+  const strokesById = new Map();
+  for (const stroke of [...secondaryStrokes, ...priorityStrokes]) {
+    if (stroke.id && allDeletedIds.has(stroke.id)) continue;
+    strokesById.set(keyOf(stroke), stroke);
   }
 
-  // Add secondary strokes (only if not already present)
-  for (const stroke of secondaryStrokes) {
-    if (stroke.id) {
-      if (!allDeletedIds.has(stroke.id) && !strokesById.has(stroke.id)) {
-        strokesById.set(stroke.id, stroke);
-      }
-    } else {
-      // Legacy stroke without ID
-      const key = JSON.stringify(stroke);
-      if (!strokesById.has(key)) {
-        strokesById.set(key, stroke);
-      }
-    }
+  const merged = Array.from(strokesById.values());
+
+  // Sort by stroke start time when all strokes have one (legacy strokes may not)
+  if (merged.every((s) => typeof s.time?.[0] === "number")) {
+    merged.sort((a, b) => a.time[0] - b.time[0]);
   }
 
   return {
-    strokes: Array.from(strokesById.values()),
+    strokes: merged,
     deletedStrokes: Array.from(allDeletedIds),
   };
 }
@@ -1667,6 +1739,11 @@ export function attemptMerge(local, remote) {
   if (remote.tags !== undefined && !Array.isArray(remote.tags)) return null;
   if (local.media !== undefined && !Array.isArray(local.media)) return null;
   if (remote.media !== undefined && !Array.isArray(remote.media)) return null;
+
+  // Guard against a stub local: index says strokes exist but the content record wasn't loaded
+  // (e.g. StorageWorker write still in-flight). Merging with strokes=undefined would treat
+  // the local as empty and silently discard its strokes into the merged result.
+  if (local.strokes === undefined && local.hasStrokes) return null;
 
   // Determine which note is newer based on modification time
   const localIsNewer = local.modified >= remote.modified;
@@ -1741,7 +1818,7 @@ export function attemptMerge(local, remote) {
 
   const addRecordings = (items) => {
     for (const item of items) {
-      if (item.id && !allDeletedRecordings.has(item.fileId)) {
+      if (item.id && !item.deleted && !allDeletedRecordings.has(item.fileId)) {
         recordingsMap.set(item.id, item);
       }
     }
@@ -1753,6 +1830,10 @@ export function attemptMerge(local, remote) {
   // Merge tasks by ID, newer modified timestamp wins for individual tasks
   const localTasks = local.tasks || [];
   const remoteTasks = remote.tasks || [];
+  const allDeletedTaskIds = new Set([
+    ...(local.deletedTasks || []),
+    ...(remote.deletedTasks || []),
+  ]);
   const taskMap = new Map();
 
   // Add older first, then newer overwrites by ID
@@ -1767,6 +1848,8 @@ export function attemptMerge(local, remote) {
       taskMap.set(task.id, task);
     }
   }
+  // Remove tasks that were explicitly deleted on either side
+  for (const id of allDeletedTaskIds) taskMap.delete(id);
 
   // Construct the merged note.
   return {
@@ -1785,6 +1868,7 @@ export function attemptMerge(local, remote) {
     deletedRecordings: Array.from(allDeletedRecordings),
     tags: mergedTags,
     tasks: Array.from(taskMap.values()),
+    deletedTasks: Array.from(allDeletedTaskIds),
     deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
 
     formatVersion: newerNote.formatVersion, // Use format from newer note
@@ -1800,7 +1884,7 @@ export function attemptMerge(local, remote) {
  * Uses timestamp-based conflict resolution (newer wins)
  */
 export async function fullSync(localNotebooks, localNotes) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -1831,6 +1915,27 @@ export async function fullSync(localNotebooks, localNotes) {
   const notesToDelete = [];
   const noteEtagsToUpdate = []; // Notes whose etag changed on server but content is not newer
   const conflicts = { notebooks: [], notes: [] };
+
+  // Self-heal: notes whose media files were missing on the server need re-upload
+  // from whichever device holds the local binaries. Mark them synced=false so
+  // the note-classification loop below will queue them for upload.
+  if (remoteData.notesWithMissingMedia.size > 0) {
+    console.log(
+      `[Sync] ${remoteData.notesWithMissingMedia.size} note(s) have missing remote media — marking for re-upload: ${[...remoteData.notesWithMissingMedia].join(", ")}`,
+    );
+    for (const noteId of remoteData.notesWithMissingMedia) {
+      const stub = localNotes.find((n) => n.id === noteId);
+      if (stub && stub.synced !== false) {
+        await saveNote({ ...(await getFullNote(stub)), synced: false });
+      }
+    }
+    // Refresh localNotes map so the classification loop sees the updated synced flag.
+    for (const note of localNotes) {
+      if (remoteData.notesWithMissingMedia.has(note.id)) {
+        note.synced = false;
+      }
+    }
+  }
 
   // Create maps for quick lookup
   const localNotebookMap = new Map(localNotebooks.map((n) => [n.id, n]));
@@ -1880,7 +1985,18 @@ export async function fullSync(localNotebooks, localNotes) {
     const isModifiedRemotely = local.lastSyncedEtag !== remote.lastSyncedEtag;
 
     if (isModifiedLocally && isModifiedRemotely) {
-      conflicts.notebooks.push({ local, remote });
+      // Notebooks have no mergeable content (title/description/color only), so
+      // resolve modified-both-sides by last-write-wins instead of surfacing a
+      // conflict that nothing downstream resolves (which left the notebook
+      // permanently stuck unsynced).
+      if ((remote.modified || 0) > (local.modified || 0)) {
+        console.log(`[Sync] Notebook ${local.id} conflict → remote is newer, downloading`);
+        notebooksToDownload.push(remote);
+      } else {
+        // Local wins: upload using the remote's current etag as If-Match base
+        console.log(`[Sync] Notebook ${local.id} conflict → local is newer, uploading`);
+        notebooksToUpload.push({ ...local, lastSyncedEtag: remote.lastSyncedEtag });
+      }
     } else if (isModifiedLocally) {
       notebooksToUpload.push(local);
     } else if (isModifiedRemotely) {
@@ -1954,6 +2070,10 @@ export async function fullSync(localNotebooks, localNotes) {
     // Since we don't store lastSyncedEtag in Nextcloud JSON, we compare with _currentFileEtag
     const isModifiedRemotely = local.lastSyncedEtag !== remote._currentFileEtag;
 
+    console.log(
+      `[Sync:classify] note=${local.id} isModifiedLocally=${isModifiedLocally} isModifiedRemotely=${isModifiedRemotely} localEtag=${local.lastSyncedEtag} remoteEtag=${remote._currentFileEtag} local.modified=${local.modified} remote.modified=${remote.modified} local.version=${local.version} remote.version=${remote.version}`,
+    );
+
     if (isModifiedLocally && isModifiedRemotely) {
       const fullLocal = await getFullNote(local);
 
@@ -1961,10 +2081,12 @@ export async function fullSync(localNotebooks, localNotes) {
       // Treat as "local wins": upload the local version using the remote etag as the
       // If-Match base so the PUT succeeds even though remote changed.
       if (local.encrypted) {
+        console.log(`[Sync:classify] note=${local.id} → encrypted local-wins upload`);
         notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
       } else {
         const merged = attemptMerge(fullLocal, remote);
         if (merged) {
+          console.log(`[Sync:classify] note=${local.id} → merge succeeded, will upload merged`);
           // Use the remote's current file ETag for the upload to succeed via If-Match
           const mergedWithRemoteBase = { ...merged, lastSyncedEtag: remote._currentFileEtag };
           notesToUpload.push(mergedWithRemoteBase);
@@ -1974,10 +2096,12 @@ export async function fullSync(localNotebooks, localNotes) {
           // falsely trigger the race-condition detector in the post-sync download phase.
           await saveNote({ ...merged, synced: false });
         } else {
+          console.log(`[Sync:classify] note=${local.id} → merge failed, adding to conflicts`);
           conflicts.notes.push({ local: fullLocal, remote });
         }
       }
     } else if (isModifiedLocally) {
+      console.log(`[Sync:classify] note=${local.id} → local only modified, will upload`);
       notesToUpload.push(await getFullNote(local));
     } else if (isModifiedRemotely) {
       // Check if the remote version is actually not newer than our local version.
@@ -1987,19 +2111,65 @@ export async function fullSync(localNotebooks, localNotes) {
       // In both cases there is no real remote change: skip the download and just accept
       // the remote etag so the next PROPFIND comparison is correct.
       // The guard `!isModifiedLocally` ensures we only skip downloads when local is clean.
+      //
+      // NOTE: strict equality is intentional. `remote.modified` comes from the downloaded
+      // note JSON (millisecond precision), NOT the WebDAV mtime — in true oscillation the
+      // remote file IS our own upload, so the timestamps match exactly. A looser tolerance
+      // (remote.modified <= local.modified + 2000) was tried before and swallowed genuinely
+      // newer remote edits, causing stroke loss (commit e809876). Do not relax this.
       if (
         remote.modified &&
         local.modified &&
-        remote.modified <= local.modified + 2000 &&
+        remote.modified === local.modified &&
         !isModifiedLocally
       ) {
         console.log(
-          `[Sync] Note ${local.id}: remote etag changed but remote is not newer (remote.modified=${remote.modified}, local.modified=${local.modified}). Accepting remote etag without download.`,
+          `[Sync:classify] note=${local.id} → etag oscillation detected (remote.modified === local.modified = ${local.modified}). Accepting etag without download.`,
         );
-        noteEtagsToUpdate.push({ id: local.id, etag: remote._currentFileEtag });
+        noteEtagsToUpdate.push({
+          id: local.id,
+          etag: remote._currentFileEtag,
+          modified: local.modified,
+        });
+      } else if (
+        remote.version !== undefined &&
+        local.version !== undefined &&
+        remote.version < local.version
+      ) {
+        // Remote was edited from a stale base (remote.version < local.version).
+        // Even though local is clean (synced=true), a plain download would discard
+        // strokes that local uploaded in the interim. Merge instead.
+        console.log(
+          `[Sync:classify] note=${local.id} → stale-fork remote (remote.version=${remote.version} < local.version=${local.version}). Merging.`,
+        );
+        const fullLocal = await getFullNote(local);
+        if (local.encrypted) {
+          // Cannot merge encrypted notes — upload local with remote etag as base so
+          // the PUT succeeds; remote's edits will be lost (same as the encrypted path above).
+          notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
+        } else {
+          const merged = attemptMerge(fullLocal, remote);
+          if (merged) {
+            console.log(
+              `[Sync:classify] note=${local.id} → stale-fork merge succeeded, uploading merged`,
+            );
+            notesToUpload.push({ ...merged, lastSyncedEtag: remote._currentFileEtag });
+            await saveNote({ ...merged, synced: false });
+          } else {
+            console.log(
+              `[Sync:classify] note=${local.id} → stale-fork merge failed, adding to conflicts`,
+            );
+            conflicts.notes.push({ local: fullLocal, remote });
+          }
+        }
       } else {
+        console.log(
+          `[Sync:classify] note=${local.id} → remote modified (remote.modified=${remote.modified} vs local.modified=${local.modified}). Queuing download.`,
+        );
         notesToDownload.push(remote);
       }
+    } else {
+      console.log(`[Sync:classify] note=${local.id} → no changes, skipping`);
     }
   }
 
@@ -2078,7 +2248,7 @@ export async function fullSync(localNotebooks, localNotes) {
  * Delete remote notebook (marks in tombstone, doesn't actually delete folder yet)
  */
 export async function deleteRemoteNotebook(notebookId) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2102,7 +2272,7 @@ export async function deleteRemoteNotebook(notebookId) {
  * Delete remote note (marks in tombstone and deletes file)
  */
 export async function deleteRemoteNote(noteId, notebookId) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2114,15 +2284,10 @@ export async function deleteRemoteNote(noteId, notebookId) {
       ? getNotebookTombstonePath(notebookId)
       : getQuickNotesTombstonePath();
 
-    // Download current tombstone
-    const { content: tombstoneContent } = await downloadFile(tombstonePath);
-    let tombstone = tombstoneContent ? JSON.parse(tombstoneContent) : createEmptyTombstone();
-
-    // Add to tombstone
-    tombstone = addNoteTombstone(tombstone, noteId);
-
-    // Upload updated tombstone
-    await uploadFile(tombstonePath, JSON.stringify(tombstone, null, 2));
+    // Add to tombstone (etag-protected read-modify-write)
+    await updateRemoteTombstone(tombstonePath, (tombstone) => {
+      addNoteTombstone(tombstone, noteId);
+    });
 
     // Delete the actual note file
     await deleteFile(notePath);
@@ -2143,7 +2308,7 @@ export async function deleteRemoteNote(noteId, notebookId) {
  * Upload tombstone file for a notebook
  */
 export async function uploadTombstone(notebookId, tombstone) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2162,7 +2327,7 @@ export async function uploadTombstone(notebookId, tombstone) {
  * Download tombstone file for a notebook
  */
 export async function downloadTombstone(notebookId) {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2182,7 +2347,7 @@ export async function downloadTombstone(notebookId) {
  * Downloads all files from flat structure and re-uploads in hierarchical structure
  */
 export async function migrateToHierarchical() {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
@@ -2260,7 +2425,7 @@ export async function migrateToHierarchical() {
  * Also checks local storage version to avoid re-migration
  */
 export async function needsMigration() {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     return false;
   }
 
@@ -2298,7 +2463,7 @@ export async function needsMigration() {
  * Only call this after confirming migration was successful
  */
 export async function cleanupLegacyFiles() {
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 

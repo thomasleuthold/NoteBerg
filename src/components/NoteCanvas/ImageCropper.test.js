@@ -19,8 +19,12 @@ describe("ImageCropper", () => {
     Object.defineProperty(mockImage, "naturalWidth", { value: 100 });
     Object.defineProperty(mockImage, "naturalHeight", { value: 100 });
 
-    // Mock getBoundingClientRect
-    vi.spyOn(mockImage, "getBoundingClientRect").mockReturnValue({
+    // Mock getBoundingClientRect on ALL <img> elements, not just mockImage:
+    // ImageCropper.show() creates its own internal `this.imageElement` (a
+    // fresh <img>, not mockImage) that the crop-area drag math measures
+    // against — without this it reads 0x0 under jsdom and every drag clamps
+    // to (0,0) regardless of the actual pointer movement.
+    vi.spyOn(HTMLImageElement.prototype, "getBoundingClientRect").mockReturnValue({
       width: 100,
       height: 100,
       top: 0,
@@ -159,15 +163,29 @@ describe("ImageCropper", () => {
 
     const cropArea = document.getElementById("crop-area");
 
-    // Simulate drag start
-    fireEvent.pointerDown(cropArea, { clientX: 10, clientY: 10, pointerId: 1 });
+    // Simulate drag start (mouse, so the move handler's pen-hover guard
+    // `pressure === 0 && pointerType !== "mouse"` doesn't short-circuit it)
+    fireEvent.pointerDown(cropArea, {
+      clientX: 10,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
 
     // Simulate drag move
-    fireEvent.pointerMove(cropArea, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(cropArea, {
+      clientX: 20,
+      clientY: 20,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
 
-    // Verify position updated (style.left/top are set by logic)
-    expect(cropArea.style.left).toBeTruthy();
-    expect(cropArea.style.top).toBeTruthy();
+    // dx = clientX(20) - startX(10) = 10; dy = 10. jsdom doesn't compute layout,
+    // so offsetLeft/offsetTop/offsetWidth all read as 0 regardless of the inline
+    // style set on init, making startLeft/startTop 0 and the clamp upper bound
+    // imgRect.width (100). newLeft/newTop = max(0, min(0+10, 100)) = 10.
+    expect(cropArea.style.left).toBe("10px");
+    expect(cropArea.style.top).toBe("10px");
 
     fireEvent.pointerUp(document, { pointerId: 1 });
   });

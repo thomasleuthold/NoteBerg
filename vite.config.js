@@ -2,6 +2,51 @@ import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// Patch pdf.worker.mjs to inline jbig2_nowasm_fallback.js instead of loading
+// it via dynamic import(). NC and Android WebViews block dynamic module imports
+// that lack a CSP nonce / wasm-unsafe-eval, so we bake the fallback in.
+function inlinePdfjsJbig2FallbackPlugin() {
+  const workerPath = resolve(process.cwd(), 'node_modules/pdfjs-dist/build/pdf.worker.mjs');
+  const fallbackPath = resolve(process.cwd(), 'node_modules/pdfjs-dist/wasm/jbig2_nowasm_fallback.js');
+  return {
+    name: 'inline-pdfjs-jbig2-fallback',
+    enforce: 'pre',
+    load(id) {
+      // ?raw imports arrive here with the raw file ID + ?raw suffix.
+      // We intercept before Vite stringifies it so we can patch the source.
+      if (!id.includes('pdf.worker.mjs') || !id.endsWith('?raw')) return;
+      const workerSrc = readFileSync(workerPath, 'utf-8');
+      const fallbackSrc = readFileSync(fallbackPath, 'utf-8');
+      // Strip the ES module export — embed as a plain async function declaration.
+      const fallbackBody = fallbackSrc.replace(/^export default \w+;\s*$/m, '');
+      // Rename the exported function to avoid collision with pdf.js internals.
+      const fallbackBodyRenamed = fallbackBody.replace(
+        /^async function JBig2\b/m,
+        'async function __inlinedJBig2Fallback'
+      );
+      // Replace #getJsModule's dynamic import(path) with a call to the inlined fn.
+      const patched = workerSrc.replace(
+        /static async #getJsModule\(fallbackCallback\) \{[\s\S]*?fallbackCallback\(instance\);\s*\}/,
+        `static async #getJsModule(fallbackCallback) {
+    let instance = null;
+    try {
+      instance = await __inlinedJBig2Fallback();
+    } catch (e) {
+      warn(\`JBig2CCITTFaxImage#getJsModule (inlined): \${e}\`);
+    }
+    fallbackCallback(instance);
+  }`
+      );
+      if (patched === workerSrc) {
+        console.warn('[inline-pdfjs-jbig2-fallback] WARNING: #getJsModule pattern not found — patch not applied');
+      }
+      const patchedWorker = fallbackBodyRenamed + '\n' + patched;
+      // Return as ?raw: Vite expects `export default <string>`
+      return `export default ${JSON.stringify(patchedWorker)}`;
+    },
+  };
+}
+
 // For NC build: evaluate perspective-transform in Node at build time, emit a clean ES module.
 // NC's CSP has no unsafe-eval — we cannot use new Function() at browser runtime.
 // This plugin intercepts our shim file and replaces it with a statically-inlined version.
@@ -50,25 +95,33 @@ if (id.includes('perspective-transform-nc-inline')) {
 
 
 
-function getAppVersion() {
+/**
+ * Read the labeled version from package.json (single source of truth) and split
+ * it into a clean base version and a human pre-release stage.
+ *   "0.5.33-rc.4"  -> { version: "0.5.33", stage: "RC" }
+ *   "0.5.33-beta.1"-> { version: "0.5.33", stage: "Beta" }
+ *   "0.5.33"       -> { version: "0.5.33", stage: "" }
+ */
+function getAppVersionInfo() {
+  let raw = '0.0.0';
   try {
-    // Try tauri.conf.json first (source of truth for MSI/bundle)
-    const tauriConfigPath = resolve(process.cwd(), 'src-tauri', 'tauri.conf.json');
-    const content = readFileSync(tauriConfigPath, 'utf-8');
-    const config = JSON.parse(content);
-    // Handle Tauri v1 (package.version) and v2 (version)
-    return config.version || config.package?.version || '0.0.0';
+    const packagePath = resolve(process.cwd(), 'package.json');
+    raw = JSON.parse(readFileSync(packagePath, 'utf-8')).version || '0.0.0';
   } catch (e) {
-    // Fallback to package.json
-    try {
-      const packagePath = resolve(process.cwd(), 'package.json');
-      const content = readFileSync(packagePath, 'utf-8');
-      return JSON.parse(content).version || '0.0.0';
-    } catch (e2) {
-      return '0.0.0';
-    }
+    // fall through with default
   }
+
+  const match = raw.match(/^(\d+\.\d+\.\d+)(?:-([a-zA-Z]+)(?:\.\d+)?)?$/);
+  if (!match) return { version: raw, stage: '' };
+
+  const [, base, stageRaw = ''] = match;
+  const STAGE_LABELS = { rc: 'RC', beta: 'Beta', alpha: 'Alpha' };
+  const key = stageRaw.toLowerCase();
+  const stage = STAGE_LABELS[key] || (stageRaw ? stageRaw : '');
+  return { version: base, stage };
 }
+
+const appVersionInfo = getAppVersionInfo();
 
 const platform = process.env.VITE_PLATFORM || 'tauri';
 // Dev container uses /apps-extra/; production Nextcloud uses /apps/
@@ -79,6 +132,7 @@ const base = platform === 'nextcloud' ? ncBase : '/';
 export default defineConfig({
   plugins: [
     injectJQueryForTrumbowygPlugin(),
+    inlinePdfjsJbig2FallbackPlugin(),
     ...(platform === 'nextcloud' ? [patchPerspectiveTransformPlugin()] : []),
   ],
   base,
@@ -103,7 +157,8 @@ export default defineConfig({
     ],
   },
   define: {
-    'import.meta.env.VITE_APP_VERSION': JSON.stringify(getAppVersion()),
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersionInfo.version),
+    'import.meta.env.VITE_APP_STAGE': JSON.stringify(appVersionInfo.stage),
     'import.meta.env.VITE_PLATFORM': JSON.stringify(platform),
   },
   build: {
@@ -111,7 +166,7 @@ export default defineConfig({
     outDir: platform === 'nextcloud' ? '.' : 'dist',
     emptyOutDir: platform !== 'nextcloud', // never wipe the repo root
     // Tauri uses Chromium, so we can use modern features
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+    minify: !process.env.TAURI_DEBUG ? 'oxc' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: platform === 'nextcloud' ? {
       input: resolve(process.cwd(), 'src/main.js'),

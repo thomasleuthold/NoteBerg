@@ -8,8 +8,8 @@
  * Each message handler writes ONLY to the store(s) it needs:
  *   SAVE_STROKES     → noteContent (strokes) + notes (modified/version/synced/hasStrokes)
  *   SAVE_MEDIA       → noteContent (media)   + notes (modified/version/synced)
- *   SAVE_PRESETS     → noteContent (penPresets) + notes (modified/version/synced)
- *   SAVE_THUMBNAIL   → noteContent (thumbnail base64) only — does NOT touch notes index
+ *   SAVE_PRESETS     → noteContent (penPresets) only — no index bump, presets
+ *                      are UI preferences and must not trigger a re-upload
  *   SAVE_TASKS       → noteContent (tasks)   + notes (modified/version/synced)
  *   SAVE_CONTENT     → noteContent (content) + notes (modified/version/synced/hasContent)
  *   SAVE_RECORDINGS  → noteContent (recordings/deletedRecordings) + notes (modified/version/synced)
@@ -144,63 +144,29 @@ async function processMessage(e) {
   if (type === "SAVE_PRESETS") {
     const db = await getDB();
 
-    const tx = db.transaction(["notes", "noteContent"], "readwrite");
-    const notesStore = tx.objectStore("notes");
-    const contentStore = tx.objectStore("noteContent");
-
-    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
-
-    if (index && content) {
+    // Pen presets are per-note UI preferences — deliberately do NOT bump
+    // modified/version or clear synced: a preset-only change must not trigger a
+    // full note re-upload. Presets ride along with the next content/stroke save.
+    const content = await db.get("noteContent", noteId);
+    if (content) {
       content.penPresets = presets;
-
-      index.modified = Date.now();
-      index.version = (index.version || 0) + 1;
-      index.synced = false;
-
-      await Promise.all([notesStore.put(index), contentStore.put(content)]);
+      await db.put("noteContent", content);
     }
-
-    await tx.done;
-  }
-
-  if (type === "SAVE_THUMBNAIL") {
-    const { thumbnail } = e.data;
-    const db = await getDB();
-
-    const tx = db.transaction(["notes", "noteContent"], "readwrite");
-    const notesStore = tx.objectStore("notes");
-    const contentStore = tx.objectStore("noteContent");
-
-    const [index, content] = await Promise.all([notesStore.get(noteId), contentStore.get(noteId)]);
-
-    if (index && content) {
-      let thumbnailData = thumbnail;
-      if (index.encrypted && key) {
-        thumbnailData = await encryptObject(thumbnail, key);
-      }
-      content.thumbnail = thumbnailData;
-      // Do NOT update modified/version/synced — thumbnails are UI-only metadata.
-      // Bumping these fields causes the note to be re-uploaded on every sync,
-      // and the new modified timestamp triggers a download on the other device,
-      // which saves the note, generates a thumbnail, bumps modified again → infinite oscillation.
-      index.hasThumbnail = true;
-      await Promise.all([notesStore.put(index), contentStore.put(content)]);
-    }
-
-    await tx.done;
   }
 
   if (type === "SAVE_TASKS") {
-    const { tasks } = e.data;
+    const { tasks, deletedTasks } = e.data;
     const db = await getDB();
 
     const noteIndex = await db.get("notes", noteId);
     if (!noteIndex) return;
 
     let tasksData = tasks;
+    let deletedTasksData = deletedTasks || [];
     if (noteIndex.encrypted) {
       if (key) {
         tasksData = await encryptObject(tasks, key);
+        deletedTasksData = await encryptObject(deletedTasksData, key);
       } else {
         console.error("[StorageWorker] Cannot save encrypted tasks: Key missing");
         return;
@@ -215,6 +181,7 @@ async function processMessage(e) {
 
     if (index && content) {
       content.tasks = tasksData;
+      content.deletedTasks = deletedTasksData;
 
       index.modified = Date.now();
       index.version = (index.version || 0) + 1;

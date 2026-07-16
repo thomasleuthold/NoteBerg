@@ -53,7 +53,7 @@ android {
         }
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
-            isDebuggable = true
+            isDebuggable = false
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

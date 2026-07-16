@@ -44,8 +44,8 @@
 ### Data & Privacy
 - All note data is stored exclusively on your own Nextcloud server — no third-party services or telemetry
 - Note: uninstalling this app does not delete your note data from the server. Your notes remain in the /NoteBerg/ WebDAV folder and can be re-accessed by reinstalling the app. This is intentional — your data may also have been synced there by the NoteBerg desktop or mobile app.]]></description>
-	<version>0.5.30-alpha.4</version>
-	<release-date>2026-04-29</release-date>
+	<version>0.5.34-rc.1</version>
+	<release-date>2026-07-06</release-date>
 	<licence>MIT</licence>
 	<author mail="thomas_leuthold@hotmail.com">Thomas Leuthold</author>
 	<namespace>NoteBerg</namespace>
@@ -53,7 +53,7 @@
 	<category>organization</category>
 	<bugs>https://github.com/thomasleuthold/NoteBerg/issues</bugs>
 	<dependencies>
-		<nextcloud min-version="29" max-version="34"/>
+		<nextcloud min-version="30" max-version="35"/>
 	</dependencies>
 	<navigations>
 		<navigation>

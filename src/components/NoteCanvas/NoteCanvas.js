@@ -13,6 +13,7 @@ import { downloadPdfBytes, exportNoteToPdf } from "../../modules/pdfExport.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
+  cleanupNoteMedia,
   deleteFile,
   deleteNote,
   generateId,
@@ -222,6 +223,13 @@ export class NoteCanvas {
     this.transformState = null; // { mode: 'move'|'resize', handle, startX, startY, initialBounds, initialStrokes }
     this.strokesChanged = false; // Track if strokes have been modified
     this.mediaChanged = false; // Track if media has been modified
+    // Coalescing media-save state. Rapid edits (pointerup, insert, reorder) collapse
+    // into one in-flight save plus at most one trailing run, so concurrent WebDAV
+    // PUTs to the same media file can't collide (423 Locked) and cleanupNoteMedia
+    // never deletes a binary a newer edit just added.
+    this._mediaSaveRunning = null; // Promise of the active runner, or null
+    this._mediaSaveDirty = false; // A save was requested while the runner was busy
+    this._mediaSaveProgress = null; // onProgress cb for the next executed run
     this.textChanged = false; // Track if text content has been modified
     this.activeSearchQuery = null; // Track active search query for highlighting
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
@@ -255,6 +263,8 @@ export class NoteCanvas {
     this._onPointerDownNav = this._onPointerDownNav.bind(this);
     this._onPointerMoveNav = this._onPointerMoveNav.bind(this);
     this._onPointerUpNav = this._onPointerUpNav.bind(this);
+    this._onPointerMoveHover = this._onPointerMoveHover.bind(this);
+    this._onPointerLeaveHover = this._onPointerLeaveHover.bind(this);
     this._onStrokeStart = this._onStrokeStart.bind(this);
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
@@ -278,8 +288,11 @@ export class NoteCanvas {
     const currentStrokesCount = this.noteData.strokes?.length || 0;
     const freshStrokesCount = freshData.strokes?.length || 0;
 
-    // If local has MORE strokes than DB, we are ahead (unsaved changes). Do not reload.
-    if (currentStrokesCount > freshStrokesCount) {
+    // If local has MORE strokes than DB AND local is dirty (unsaved changes in progress),
+    // do not reload — we are ahead because the user is actively drawing.
+    // If freshData.synced === true, the DB reflects a downloaded server version and we must
+    // reload even if the count decreased (e.g. another device erased strokes).
+    if (currentStrokesCount > freshStrokesCount && freshData.synced === false) {
       return false;
     }
 
@@ -309,10 +322,17 @@ export class NoteCanvas {
     const inMemoryData = this.noteData;
 
     // --- MERGE STROKES ---
-    const dbStrokes = freshDataFromDB.strokes || [];
-    const memStrokes = inMemoryData.strokes || [];
-    const dbDeleted = new Set(freshDataFromDB.deletedStrokes || []);
-    const memDeleted = new Set(inMemoryData.deletedStrokes || []);
+    // Use Array.isArray so that encrypted blobs ({data,iv,version}) from notes that
+    // were uploaded by a native client with local encryption are treated as empty
+    // rather than thrown as "not iterable".
+    const dbStrokes = Array.isArray(freshDataFromDB.strokes) ? freshDataFromDB.strokes : [];
+    const memStrokes = Array.isArray(inMemoryData.strokes) ? inMemoryData.strokes : [];
+    const dbDeleted = new Set(
+      Array.isArray(freshDataFromDB.deletedStrokes) ? freshDataFromDB.deletedStrokes : [],
+    );
+    const memDeleted = new Set(
+      Array.isArray(inMemoryData.deletedStrokes) ? inMemoryData.deletedStrokes : [],
+    );
 
     const allDeletedIds = new Set([...dbDeleted, ...memDeleted]);
     const mergedStrokesMap = new Map();
@@ -339,8 +359,35 @@ export class NoteCanvas {
     // For now, we assume media and other properties are less likely to have
     // in-memory vs. DB conflicts during a drawing session. We prioritize
     // the DB version for these.
-    inMemoryData.media = freshDataFromDB.media || [];
-    inMemoryData.deletedMedia = freshDataFromDB.deletedMedia || [];
+    inMemoryData.media = Array.isArray(freshDataFromDB.media) ? freshDataFromDB.media : [];
+    inMemoryData.deletedMedia = Array.isArray(freshDataFromDB.deletedMedia)
+      ? freshDataFromDB.deletedMedia
+      : [];
+    // Merge tasks like strokes: union of local+remote, deletedTasks wins
+    const localDeletedTaskIds = new Set([
+      ...(Array.isArray(inMemoryData.deletedTasks) ? inMemoryData.deletedTasks : []),
+      ...(Array.isArray(freshDataFromDB.deletedTasks) ? freshDataFromDB.deletedTasks : []),
+    ]);
+    const mergedTasksMap = new Map();
+    [
+      ...(Array.isArray(inMemoryData.tasks) ? inMemoryData.tasks : []),
+      ...(Array.isArray(freshDataFromDB.tasks) ? freshDataFromDB.tasks : []),
+    ].forEach((t) => {
+      if (t.id) mergedTasksMap.set(t.id, t);
+    });
+    // Filter out deleted tasks and orphaned stroke tasks (strokes gone after merge)
+    const mergedActiveStrokeIds = new Set(finalStrokes.map((s) => s.id));
+    const mergedTasks = Array.from(mergedTasksMap.values()).filter((t) => {
+      if (localDeletedTaskIds.has(t.id)) return false;
+      if (t.type === "stroke") {
+        const alive = t.strokeIds.some((id) => mergedActiveStrokeIds.has(id));
+        if (!alive) localDeletedTaskIds.add(t.id);
+        return alive;
+      }
+      return true;
+    });
+    inMemoryData.tasks = mergedTasks;
+    inMemoryData.deletedTasks = Array.from(localDeletedTaskIds);
     inMemoryData.penPresets = freshDataFromDB.penPresets || inMemoryData.penPresets;
     inMemoryData.pdfSource = freshDataFromDB.pdfSource;
     inMemoryData.background = freshDataFromDB.background;
@@ -359,6 +406,9 @@ export class NoteCanvas {
     // Force redraw immediately to show updated state (we know we aren't drawing)
     this.renderer.forceRedraw();
     this._renderPdfControls();
+    this._saveTasks();
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
 
     // Clear history after sync (external changes invalidate undo commands)
     this.historyManager?.clear();
@@ -386,19 +436,14 @@ export class NoteCanvas {
       return;
     }
 
-    // Ensure strokes array exists and is shared across modules
-    if (!this.noteData.strokes) {
-      this.noteData.strokes = [];
-    }
-    if (!this.noteData.deletedStrokes) {
-      this.noteData.deletedStrokes = [];
-    }
-    if (!this.noteData.media) {
-      this.noteData.media = [];
-    }
-    if (!this.noteData.deletedMedia) {
-      this.noteData.deletedMedia = [];
-    }
+    // Ensure strokes array exists and is shared across modules.
+    // Use Array.isArray so a non-array (e.g. an encrypted blob from a native client
+    // that was synced without decryption) is treated as empty rather than iterated.
+    if (!Array.isArray(this.noteData.strokes)) this.noteData.strokes = [];
+    if (!Array.isArray(this.noteData.deletedStrokes)) this.noteData.deletedStrokes = [];
+    if (!Array.isArray(this.noteData.media)) this.noteData.media = [];
+    if (!Array.isArray(this.noteData.deletedMedia)) this.noteData.deletedMedia = [];
+    if (!Array.isArray(this.noteData.deletedTasks)) this.noteData.deletedTasks = [];
 
     // Initialize pen presets
     this.penPresets = this.noteData.penPresets || [
@@ -483,6 +528,7 @@ export class NoteCanvas {
       onCrop: (id) => this.cropSelectedMedia(id),
       onToFront: (id) => this.moveSelectedMediaToFront(id),
       onToBack: (id) => this.moveSelectedMediaToBack(id),
+      onSelect: (id) => this._selectMediaById(id),
     });
 
     // Initialize SelectionOverlay (3-dot menu for lasso selection)
@@ -611,6 +657,7 @@ export class NoteCanvas {
           this.currentPenColorIndex = colorIndex;
           this.currentPenType = type;
         },
+        getBackground: () => this.noteData.background || "none",
         onOptionsChange: async (action) => {
           if (action.type === "background") {
             this.noteData.background = action.value;
@@ -678,6 +725,19 @@ export class NoteCanvas {
    */
   async insertImage(source = "picker") {
     try {
+      // Capture viewport position BEFORE opening the file dialog.
+      // The browser can reset scroll position while the OS dialog is open,
+      // and the centering offset must be accounted for (canvas is centered when
+      // narrower than the viewport — scrollLeft alone gives the wrong content X).
+      const scrollLeft = this.scroller.getScrollLeft();
+      const scrollTop = this.scroller.getScrollTop();
+      const { width: viewportWidth, height: viewportHeight } = this.scroller.getViewportSize();
+      const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+      const offsetX =
+        scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+      const centerX = (scrollLeft + viewportWidth / 2 - offsetX) / this.zoomScale;
+      const centerY = (scrollTop + viewportHeight / 2) / this.zoomScale;
+
       let files = [];
       if (source === "camera") {
         const file = await captureFromCamera();
@@ -689,11 +749,6 @@ export class NoteCanvas {
       if (files.length === 0) {
         return;
       }
-
-      // Calculate center of viewport for insertion
-      const viewport = this.scroller.getViewportBounds();
-      const centerX = viewport.left + viewport.width / 2;
-      const centerY = viewport.top + viewport.height / 2;
 
       const insertedItems = [];
 
@@ -749,7 +804,8 @@ export class NoteCanvas {
 
       // Save changes
       await this._saveMediaChanges();
-      this.renderer.forceRedraw();
+      // destroy() may have run during the await (slow upload) — guard the renderer.
+      this.renderer?.forceRedraw();
 
       // Record undo command for inserted images
       if (insertedItems.length > 0) {
@@ -775,12 +831,14 @@ export class NoteCanvas {
       return;
     }
 
-    const progress = showProgressDialog(t("canvas.pdf.importProgressTitle"));
     this._pendingPdfImport = (async () => {
+      const file = await this._pickPdfFile();
+      if (!file) {
+        this._pendingPdfImport = null;
+        return;
+      }
+      const progress = showProgressDialog(t("canvas.pdf.importProgressTitle"));
       try {
-        const file = await this._pickPdfFile();
-        if (!file) return;
-
         const { pages, fileId } = await importPdf(file, (phase, current, total) => {
           if (phase === "upload") {
             progress.update(1, 1, t("canvas.pdf.importProgressUpload"));
@@ -815,14 +873,22 @@ export class NoteCanvas {
           }
 
           await this._saveMediaChanges((current, total) => {
+            // The last two steps are the note-JSON save and the orphan cleanup;
+            // the earlier steps are binary uploads. Label them accordingly so the
+            // dialog never freezes on the previous ("page N of N") message.
+            const isFinalizing = current > total - 2;
             progress.update(
               current,
               total,
-              t("canvas.pdf.importProgressSaving", { current, total }),
+              isFinalizing
+                ? t("canvas.pdf.importProgressFinalizing")
+                : t("canvas.pdf.importProgressSaving", { current, total }),
             );
           });
-          this.renderer.showA4PageBreaks = false;
-          this.renderer.forceRedraw();
+          if (this.renderer) {
+            this.renderer.showA4PageBreaks = false;
+            this.renderer.forceRedraw();
+          }
           this._renderPdfControls();
           this.historyManager?.push(new InsertMediaCommand(insertedPages, fileId));
 
@@ -989,13 +1055,19 @@ export class NoteCanvas {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "application/pdf";
-      input.onchange = (e) => {
-        if (e.target.files && e.target.files.length > 0) {
-          resolve(e.target.files[0]);
-        } else {
-          resolve(null);
-        }
+      let settled = false;
+      const done = (file) => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener("focus", onFocus);
+        resolve(file ?? null);
       };
+      // Fallback for platforms that fire neither cancel nor change on dismiss:
+      // resolve null on the next window focus after the picker closes.
+      const onFocus = () => setTimeout(() => done(null), 300);
+      window.addEventListener("focus", onFocus);
+      input.onchange = (e) => done(e.target.files?.[0]);
+      input.oncancel = () => done(null);
       input.click();
     });
   }
@@ -1389,11 +1461,22 @@ export class NoteCanvas {
           registerPendingUpload(r.fileId, uploadPromise);
           return uploadPromise;
         });
-      Promise.all(uploads).then(() =>
-        updateNote(this.noteId, { recordings, deletedRecordings }).catch((e) =>
+      const noteId = this.noteId;
+      Promise.all(uploads).then(async () => {
+        await updateNote(noteId, { recordings, deletedRecordings }).catch((e) =>
           console.error("[NoteCanvas] WebDAV recordings save failed:", e),
-        ),
-      );
+        );
+        // Remove server binaries for deleted recordings. Include media + pdfSource
+        // fileIds (saved via _saveMediaChanges) so we don't delete live media.
+        const validFileIds = [
+          ...recordings.filter((r) => !r.deleted).map((r) => r.fileId),
+          ...(this.noteData.media ?? []).map((i) => i.fileId),
+          this.noteData.pdfSource,
+        ].filter(Boolean);
+        await cleanupNoteMedia(noteId, notebookId, validFileIds).catch((e) =>
+          console.error("[NoteCanvas] WebDAV orphan recording cleanup failed:", e),
+        );
+      });
       return;
     }
 
@@ -1528,6 +1611,10 @@ export class NoteCanvas {
     viewport.addEventListener("pointerup", this._onPointerUpNav);
     viewport.addEventListener("pointercancel", this._onPointerUpNav);
     viewport.addEventListener("pointerleave", this._onPointerUpNav);
+
+    // Mouse hover affordance for images (shows the option button on hover)
+    viewport.addEventListener("pointermove", this._onPointerMoveHover);
+    viewport.addEventListener("pointerleave", this._onPointerLeaveHover);
 
     // Right-click paste menu (stopPropagation prevents the global window prevention in main.js)
     viewport.addEventListener("contextmenu", (e) => {
@@ -2227,6 +2314,92 @@ export class NoteCanvas {
    * Trigger long press action (select item)
    * @private
    */
+  /**
+   * Select a media item by id (used by the option menu's "Select" action).
+   * Promotes the image to the selected state so move/resize handles appear.
+   * @private
+   */
+  _selectMediaById(id) {
+    const item = this.mediaManager.getItems().find((i) => i.id === id);
+    if (!item) return;
+    this.selectedMediaId = item.id;
+    this.renderer.setSelectedMedia(item.id);
+    this._updateMediaOverlay();
+    if (this.strokeManager.currentStroke) {
+      this.strokeManager.cancelCurrentStroke();
+      this.renderer.forceRedraw();
+    }
+  }
+
+  /**
+   * Viewport pointermove: drive the image hover affordance (mouse only).
+   * @private
+   */
+  _onPointerMoveHover(e) {
+    if (e.pointerType !== "mouse") return;
+    // Coalesce to one hit-test per frame.
+    this._pendingHoverEvent = e;
+    if (this._hoverRafId) return;
+    this._hoverRafId = requestAnimationFrame(() => {
+      this._hoverRafId = null;
+      const ev = this._pendingHoverEvent;
+      this._pendingHoverEvent = null;
+      if (ev) this._updateMediaHover(ev);
+    });
+  }
+
+  /**
+   * Viewport pointerleave: drop the hover button when the mouse leaves the canvas.
+   * @private
+   */
+  _onPointerLeaveHover(e) {
+    if (e.pointerType !== "mouse") return;
+    if (this.mediaOverlay?.isHovering()) {
+      this.mediaOverlay.hide();
+    }
+  }
+
+  /**
+   * Update the mouse-hover option button for images. Mouse only — touch keeps
+   * long-press. Shows the ⋮ button on the image under the cursor so mouse users
+   * have a discoverable way to reach selection/actions.
+   * @private
+   */
+  _updateMediaHover(e) {
+    if (!this.mediaOverlay) return;
+    if (e.pointerType !== "mouse") return;
+    // Don't interfere while an image is selected or being dragged.
+    if (this.selectedMediaId || this.mediaDragState) return;
+
+    // Keep the button while the pointer is over the overlay itself.
+    if (this.mediaOverlay.containsTarget(e.target)) return;
+
+    const { x, y } = this.inputHandler.getContentCoordinates(e.clientX, e.clientY);
+    const hitItem = this.mediaManager.hitTest(x, y);
+
+    if (hitItem && hitItem.type !== "pdf-page") {
+      if (this.mediaOverlay.getActiveMediaId() !== hitItem.id || !this.mediaOverlay.isHovering()) {
+        const scrollLeft = this.scroller.getScrollLeft();
+        const scrollTop = this.scroller.getScrollTop();
+        const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+        const viewportWidth = this.scroller.getViewportSize().width;
+        const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+        const offsetX =
+          scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+        this.mediaOverlay.showForHover(
+          hitItem,
+          this.zoomScale,
+          scrollLeft,
+          scrollTop,
+          viewport,
+          offsetX,
+        );
+      }
+    } else if (this.mediaOverlay.isHovering()) {
+      this.mediaOverlay.hide();
+    }
+  }
+
   _triggerLongPress(item) {
     this.longPressTimer = null;
 
@@ -2405,21 +2578,43 @@ export class NoteCanvas {
    * @private
    */
   _updateMediaOverlay() {
-    if (this.selectedMediaId && this.mediaOverlay) {
-      const item = this.mediaManager.getItems().find((i) => i.id === this.selectedMediaId);
-      if (item) {
-        const scrollLeft = this.scroller.getScrollLeft();
-        const scrollTop = this.scroller.getScrollTop();
-        const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+    if (!this.mediaOverlay) return;
 
-        // Calculate offset (centering)
-        const viewportWidth = this.scroller.getViewportSize().width;
-        const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-        const offsetX =
-          scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+    // The overlay tracks either the selected image or (mouse only) the hovered one.
+    const trackedId = this.selectedMediaId || this.mediaOverlay.getActiveMediaId();
+    if (!trackedId) return;
 
-        this.mediaOverlay.show(item, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
-      }
+    const item = this.mediaManager.getItems().find((i) => i.id === trackedId);
+    if (!item) {
+      // Image gone (e.g. deleted) — drop a lingering hover button.
+      if (this.mediaOverlay.isHovering()) this.mediaOverlay.hide();
+      return;
+    }
+
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const viewport = this.scroller.getViewportElement().getBoundingClientRect();
+
+    // Calculate offset (centering)
+    const viewportWidth = this.scroller.getViewportSize().width;
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+
+    if (this.selectedMediaId) {
+      // show() is idempotent and (re)asserts the selected state + visibility.
+      this.mediaOverlay.show(item, this.zoomScale, scrollLeft, scrollTop, viewport, offsetX);
+    } else {
+      // Hover button is already visible (via showForHover); just keep it anchored
+      // to the image without changing the overlay's mode.
+      this.mediaOverlay.updatePosition(
+        item,
+        this.zoomScale,
+        scrollLeft,
+        scrollTop,
+        viewport,
+        offsetX,
+      );
     }
   }
 
@@ -2428,11 +2623,7 @@ export class NoteCanvas {
    * @private
    */
   _updateSelectionOverlay() {
-    // Determine which bounds to use: renderer selection (lasso) or task selection (non-lasso)
-    let bounds = this.renderer?.selectionBounds;
-    if (!bounds && this.selectedTaskId && this.taskSelectionBounds) {
-      bounds = this.taskSelectionBounds;
-    }
+    const bounds = this.renderer?.selectionBounds;
 
     if (!this.selectionOverlay?.isVisible && !bounds) return;
     if (!bounds) {
@@ -2523,6 +2714,18 @@ export class NoteCanvas {
       created: now,
       modified: now,
     }));
+
+    // Remove any existing stroke tasks that share strokes with the new ones (dedup guard)
+    const newStrokeIdSets = tasks.map((t) => new Set(t.strokeIds));
+    const displaced = this.noteData.tasks.filter(
+      (existing) =>
+        existing.type === "stroke" &&
+        newStrokeIdSets.some((s) => existing.strokeIds.some((id) => s.has(id))),
+    );
+    for (const t of displaced) {
+      if (!this.noteData.deletedTasks.includes(t.id)) this.noteData.deletedTasks.push(t.id);
+    }
+    this.noteData.tasks = this.noteData.tasks.filter((t) => !displaced.includes(t));
 
     for (const task of tasks) this.noteData.tasks.push(task);
     this._saveTasks();
@@ -2788,21 +2991,18 @@ export class NoteCanvas {
 
     this.selectedTaskId = taskId;
 
-    if (this.mode === "lasso") {
-      // In lasso mode: Select strokes in renderer (allows manipulation)
-      this.renderer.setSelectedStrokes(selectedIndices, bounds);
-      this.taskSelectionBounds = null;
-    } else {
-      // In non-lasso mode: Just show overlay, no renderer selection (prevents manipulation)
-      this.renderer.setSelectedStrokes(new Set(), null);
-      this.taskSelectionBounds = bounds;
-    }
+    this.renderer.setSelectedStrokes(selectedIndices, bounds);
+    this.taskSelectionBounds = null;
     this.selectionOverlay.setTaskMode(true);
     this._updateSelectionOverlay();
   }
 
   _removeTaskFromSelectedStrokes() {
     if (!this.selectedTaskId) return;
+    // Record deletion so sync can't restore it
+    if (!this.noteData.deletedTasks.includes(this.selectedTaskId)) {
+      this.noteData.deletedTasks.push(this.selectedTaskId);
+    }
     // Remove task (just delete it, strokes remain)
     this.noteData.tasks = this.noteData.tasks.filter((t) => t.id !== this.selectedTaskId);
     this._saveTasks();
@@ -2844,9 +3044,10 @@ export class NoteCanvas {
    */
   _saveTasks() {
     if (_IS_NEXTCLOUD) {
-      updateNote(this.noteId, { tasks: this.noteData.tasks }).catch((e) =>
-        console.error("[NoteCanvas] WebDAV tasks save failed:", e),
-      );
+      updateNote(this.noteId, {
+        tasks: this.noteData.tasks,
+        deletedTasks: this.noteData.deletedTasks,
+      }).catch((e) => console.error("[NoteCanvas] WebDAV tasks save failed:", e));
       return;
     }
     if (this.strokeManager?.worker) {
@@ -2862,6 +3063,7 @@ export class NoteCanvas {
         type: "SAVE_TASKS",
         noteId: this.noteId,
         tasks: this.noteData.tasks,
+        deletedTasks: this.noteData.deletedTasks,
         key,
       });
     }
@@ -2904,10 +3106,14 @@ export class NoteCanvas {
     );
 
     const before = this.noteData.tasks.length;
+    const deletedTasks = this.noteData.deletedTasks || [];
     this.noteData.tasks = this.noteData.tasks.filter((t) => {
       if (t.type !== "stroke") return true;
-      return t.strokeIds.some((id) => activeStrokeIds.has(id));
+      const orphaned = !t.strokeIds.some((id) => activeStrokeIds.has(id));
+      if (orphaned && !deletedTasks.includes(t.id)) deletedTasks.push(t.id);
+      return !orphaned;
     });
+    this.noteData.deletedTasks = deletedTasks;
 
     if (this.noteData.tasks.length !== before) {
       this._saveTasks();
@@ -2953,7 +3159,8 @@ export class NoteCanvas {
     // Note: We do NOT delete binary files on user delete action
     // This allows undo to restore the media. Files are cleaned up separately.
 
-    this.renderer.forceRedraw();
+    // destroy() may have run during the await — guard the renderer.
+    this.renderer?.forceRedraw();
   }
 
   /**
@@ -3038,10 +3245,47 @@ export class NoteCanvas {
   }
 
   /**
-   * Save media changes to storage
-   * @private
+   * Persist media changes, coalescing rapid calls.
+   *
+   * While a save is in flight, further calls just flag the state dirty; the
+   * active runner then performs exactly one trailing save after it finishes.
+   * Each run snapshots the *current* media state, so the trailing run always
+   * reflects the latest edits (and its cleanup uses up-to-date validFileIds).
+   *
+   * Returns a promise that resolves when a run covering this call has completed,
+   * so awaiting callers (e.g. PDF import) still block until their data is durable.
+   * @param {(current:number,total:number)=>void} [onProgress] - upload progress
+   *   for the run that actually executes (used by the PDF import dialog).
    */
-  async _saveMediaChanges(onProgress) {
+  _saveMediaChanges(onProgress) {
+    if (!this.noteId || !this.mediaManager || !this.noteData) return Promise.resolve();
+
+    if (onProgress) this._mediaSaveProgress = onProgress;
+
+    // A runner is already active — flag a trailing pass and ride its promise.
+    if (this._mediaSaveRunning) {
+      this._mediaSaveDirty = true;
+      return this._mediaSaveRunning;
+    }
+
+    // Start a runner that drains dirty passes, then clears itself.
+    this._mediaSaveRunning = (async () => {
+      try {
+        do {
+          this._mediaSaveDirty = false;
+          const progress = this._mediaSaveProgress;
+          this._mediaSaveProgress = null;
+          await this._runMediaSave(progress);
+        } while (this._mediaSaveDirty && this.noteId && this.mediaManager && this.noteData);
+      } finally {
+        this._mediaSaveRunning = null;
+      }
+    })();
+    return this._mediaSaveRunning;
+  }
+
+  /** Perform a single media-save pass (snapshot → upload → JSON → cleanup). */
+  async _runMediaSave(onProgress) {
     if (!this.noteId || !this.mediaManager || !this.noteData) return;
     // Capture IDs immediately — destroy() nulls this.noteId mid-async and would corrupt paths
     const noteId = this.noteId;
@@ -3074,31 +3318,48 @@ export class NoteCanvas {
         return true;
       });
       const hasPdfSource = !!noteData.pdfSource;
-      const totalUploads = uniqueMediaItems.length + (hasPdfSource ? 1 : 0) + 1;
-      let uploaded = 0;
+      // Phases reported to onProgress: each media upload, the PDF upload, the note
+      // JSON save, and the orphan cleanup. Report each phase BEFORE it starts so the
+      // dialog reflects the in-flight work (a large PDF upload is slow and otherwise
+      // leaves the label frozen on the previous phase). step is 1-based.
+      const totalSteps = uniqueMediaItems.length + (hasPdfSource ? 1 : 0) + 2;
+      let step = 0;
       for (const item of uniqueMediaItems) {
+        onProgress?.(++step, totalSteps);
         const blob = await getFile(item.fileId);
         if (blob) {
           await saveMediaForNote(blob, item.fileId, noteId, notebookId).catch((e) =>
             console.error("[NoteCanvas] WebDAV media upload failed:", item.fileId, e),
           );
         }
-        onProgress?.(++uploaded, totalUploads);
       }
       if (hasPdfSource) {
+        onProgress?.(++step, totalSteps);
         const pdfBlob = await getFile(noteData.pdfSource);
         if (pdfBlob) {
           await saveMediaForNote(pdfBlob, noteData.pdfSource, noteId, notebookId).catch((e) =>
             console.error("[NoteCanvas] WebDAV PDF upload failed:", e),
           );
         }
-        onProgress?.(++uploaded, totalUploads);
       }
+      onProgress?.(++step, totalSteps);
       await updateNote(noteId, {
         media: serializableMedia,
         deletedMedia: noteData.deletedMedia,
         pdfSource: noteData.pdfSource,
       }).catch((e) => console.error("[NoteCanvas] WebDAV media save failed:", e));
+
+      // Delete server binaries no longer referenced. Include recording fileIds
+      // (saved via a separate path) so we don't delete live recordings.
+      onProgress?.(++step, totalSteps);
+      const validFileIds = [
+        ...serializableMedia.map((i) => i.fileId),
+        noteData.pdfSource,
+        ...(noteData.recordings ?? []).filter((r) => !r.deleted).map((r) => r.fileId),
+      ].filter(Boolean);
+      await cleanupNoteMedia(noteId, notebookId, validFileIds).catch((e) =>
+        console.error("[NoteCanvas] WebDAV orphan media cleanup failed:", e),
+      );
     } else {
       // Use StrokeManager (which uses StorageWorker) to save media updates
       // This prevents race conditions between stroke saving and media saving
@@ -3992,11 +4253,12 @@ export class NoteCanvas {
     // In text mode, let mouse events pass through to the text editor (no pan, no media hit)
     if (this.mode === "text" && e.pointerType === "mouse") return;
 
-    // Deselect task if clicking outside
+    // Deselect task if clicking outside task UI or selection overlay
     const isTaskInteraction =
       e.target.closest &&
       (e.target.closest(".note-canvas__task-bounding-box") ||
-        e.target.closest(".note-canvas__task-checkbox"));
+        e.target.closest(".note-canvas__task-checkbox") ||
+        e.target.closest(".note-canvas__selection-overlay"));
 
     if (this.selectedTaskId && !isTaskInteraction) {
       this.renderer.setSelectedStrokes(new Set(), null);
@@ -4383,185 +4645,6 @@ export class NoteCanvas {
   }
 
   /**
-   * Generate and save a thumbnail for the current note
-   * Stores promise on instance so destroy() can wait for completion
-   * @private
-   */
-  _saveThumbnail() {
-    if (!this.noteId || !this.renderer || !this.noteData) return;
-    if (!_IS_NEXTCLOUD && !this.strokeManager?.worker) return;
-
-    // Capture all required state SYNCHRONOUSLY before any async work
-    const noteId = this.noteId;
-    const worker = this.strokeManager?.worker ?? null;
-
-    // 1. Create offscreen canvas and render strokes/media SYNCHRONOUSLY
-    // (must happen before destroy() nullifies the renderer)
-    const thumbWidth = 360;
-    const thumbHeight = 500;
-    const dpr = window.devicePixelRatio || 1;
-    const canvas = document.createElement("canvas");
-    canvas.width = thumbWidth * dpr;
-    canvas.height = thumbHeight * dpr;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    ctx.scale(dpr, dpr);
-    const { bgColor } = this.renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
-
-    // 2. Capture text editor element reference before it's destroyed
-    const editorElement = this.textEditorLayer?._editorElement ?? null;
-
-    // Store the promise so destroy() can wait for it
-    this._pendingThumbnailSave = this._doSaveThumbnail(
-      canvas,
-      noteId,
-      worker,
-      editorElement,
-      bgColor,
-    );
-  }
-
-  /**
-   * Render the HTML text editor content onto an existing canvas by drawing text directly.
-   * Parses the editor's DOM and draws each block element as wrapped text lines.
-   * This avoids SVG foreignObject (unreliable in Chromium blob URL context).
-   * @private
-   */
-  _drawTextOnCanvas(canvas, editorElement, bgColor = "#ffffff") {
-    try {
-      const ctx = canvas.getContext("2d");
-      const dpr = window.devicePixelRatio || 1;
-      const width = canvas.width / dpr;
-      const height = canvas.height / dpr;
-
-      // Choose text color that contrasts with the background
-      const isDarkBg = bgColor !== "#ffffff";
-      const textColor = isDarkBg ? "#e0e0e0" : "#111111";
-
-      // Read font metrics from the live editor element
-      const computed = window.getComputedStyle(editorElement);
-      const baseFontSize = Math.round(parseFloat(computed.fontSize) || 16);
-      const fontFamily = computed.fontFamily || "sans-serif";
-
-      const PADDING = 16;
-      const MAX_WIDTH = width - PADDING * 2;
-      let y = PADDING;
-
-      // Collect block-level segments from the editor DOM
-      const blocks = [];
-      for (const child of editorElement.childNodes) {
-        if (child.nodeType === Node.TEXT_NODE) {
-          const text = child.textContent.trim();
-          if (text) blocks.push({ text, tag: "p", bold: false, italic: false, size: baseFontSize });
-          continue;
-        }
-        if (!(child instanceof HTMLElement)) continue;
-        const tag = child.tagName.toLowerCase();
-        const text = child.textContent.replace(/\u200B/g, "").trim(); // strip zero-width spaces
-        if (!text) continue;
-
-        let bold = false;
-        let italic = false;
-        let size = baseFontSize;
-
-        if (tag === "h1") {
-          size = Math.round(baseFontSize * 1.7);
-          bold = true;
-        } else if (tag === "h2") {
-          size = Math.round(baseFontSize * 1.4);
-          bold = true;
-        } else if (tag === "h3") {
-          size = Math.round(baseFontSize * 1.15);
-          bold = true;
-        } else if (tag === "strong" || tag === "b") {
-          bold = true;
-        } else if (tag === "em" || tag === "i") {
-          italic = true;
-        }
-
-        // Check for inline bold/italic inside a block
-        if (!bold && child.querySelector("strong, b")) bold = true;
-        if (!italic && child.querySelector("em, i")) italic = true;
-
-        blocks.push({ text, tag, bold, italic, size });
-      }
-
-      for (const block of blocks) {
-        if (y >= height - PADDING) break;
-
-        const fontStr = `${block.italic ? "italic " : ""}${block.bold ? "bold " : ""}${block.size}px ${fontFamily}`;
-        ctx.font = fontStr;
-        ctx.fillStyle = textColor;
-
-        const lineHeight = Math.round(block.size * 1.45);
-        const afterParagraph = Math.round(block.size * 0.55);
-
-        // Word-wrap
-        const words = block.text.split(/\s+/);
-        let line = "";
-        for (const word of words) {
-          const test = line ? `${line} ${word}` : word;
-          if (ctx.measureText(test).width > MAX_WIDTH && line) {
-            ctx.fillText(line, PADDING, y + block.size);
-            y += lineHeight;
-            line = word;
-            if (y >= height - PADDING) break;
-          } else {
-            line = test;
-          }
-        }
-        if (line && y < height - PADDING) {
-          ctx.fillText(line, PADDING, y + block.size);
-          y += lineHeight;
-        }
-
-        y += afterParagraph;
-      }
-    } catch (err) {
-      console.warn("[NoteCanvas] Text overlay for thumbnail failed:", err);
-    }
-  }
-
-  /**
-   * Internal async implementation of thumbnail save
-   * All synchronous state is captured and passed as parameters
-   * @private
-   */
-  async _doSaveThumbnail(canvas, noteId, worker, editorElement = null, bgColor = "#ffffff") {
-    try {
-      // 3. Composite text editor content on top of the canvas snapshot
-      if (editorElement) {
-        this._drawTextOnCanvas(canvas, editorElement, bgColor);
-      }
-
-      // 4. Encode as base64 JPEG (synchronous)
-      const thumbnail = canvas.toDataURL("image/jpeg", 0.92);
-
-      // 5. Update in-memory data if still valid
-      if (this.noteData && this.noteId === noteId) {
-        this.noteData.thumbnail = thumbnail;
-      }
-
-      if (_IS_NEXTCLOUD) {
-        // No worker in NC build — save thumbnail directly via updateNote
-        await updateNote(noteId, { thumbnail }).catch((e) =>
-          console.error("[NoteCanvas] WebDAV thumbnail save failed:", e),
-        );
-      } else {
-        // Post to worker - this must happen before CLOSE is sent
-        worker.postMessage({
-          type: "SAVE_THUMBNAIL",
-          noteId: noteId,
-          thumbnail,
-        });
-      }
-    } catch (error) {
-      console.error("[NoteCanvas] Failed to save thumbnail:", error);
-    }
-  }
-
-  /**
    * Delete the imported PDF and all its pages
    */
   async deletePdf() {
@@ -4611,10 +4694,12 @@ export class NoteCanvas {
       deleteFile(sourceFileId).catch(() => {});
     }
 
-    this.renderer.showA4PageBreaks = true;
-    this.renderer.forceRedraw();
+    // destroy() may have run during the await — guard the renderer.
+    if (this.renderer) {
+      this.renderer.showA4PageBreaks = true;
+      this.renderer.forceRedraw();
+    }
     this._renderPdfControls();
-    this._saveThumbnail();
   }
 
   /**
@@ -4643,9 +4728,8 @@ export class NoteCanvas {
    */
   destroy() {
     // Step 1: Force-flush any pending content to the worker immediately.
-    // Text content must be flushed before the thumbnail save so the DB reflects the
-    // latest hasContent flag, and before recognition which reads DB content.
-    // Strokes must be flushed for the same reasons.
+    // Text content must be flushed before recognition (which reads DB content) so
+    // the DB reflects the latest hasContent flag. Strokes must be flushed too.
     this._pendingTextSave = null;
     if (this.textEditorLayer) {
       this.textEditorLayer.forceSave();
@@ -4657,7 +4741,7 @@ export class NoteCanvas {
     }
 
     // Step 2: Trigger handwriting recognition if strokes changed.
-    // Runs concurrently with thumbnail save — both are awaited before sync starts.
+    // Awaited (via the returned promise) before sync starts.
     let pendingRecognition = null;
     if (this.strokesChanged && this.noteId && this.noteData?.strokes) {
       const activeStrokes = this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted);
@@ -4666,16 +4750,6 @@ export class NoteCanvas {
           console.error("[NoteCanvas] Recognition failed:", e),
         );
       }
-    }
-
-    // Step 3: Save thumbnail if changes were made or if it's missing.
-    // Must happen before renderer is destroyed (uses renderer.renderSnapshot).
-    // Stores promise in _pendingThumbnailSave.
-    if (
-      (this.strokesChanged || this.mediaChanged || this.textChanged || !this.noteData?.thumbnail) &&
-      this.noteId
-    ) {
-      this._saveThumbnail();
     }
 
     // Cancel pending task render
@@ -4707,7 +4781,7 @@ export class NoteCanvas {
       }
     }
 
-    // Destroy modules (except strokeManager - must wait for thumbnail)
+    // Destroy modules (strokeManager last — it owns the worker CLOSE)
     if (this.renderer) {
       this.renderer.destroy();
       this.renderer = null;
@@ -4783,10 +4857,6 @@ export class NoteCanvas {
       this.recordingManager = null;
     }
 
-    // Destroy strokeManager after thumbnail save completes.
-    // forceSave() was already called at the top of destroy() to flush pending strokes.
-    // Here we only send CLOSE so the worker shuts down after processing its queue
-    // (which includes the SAVE_THUMBNAIL message posted by _doSaveThumbnail).
     const cleanupStrokeManager = () => {
       if (this.strokeManager) {
         this.strokeManager.destroy(); // sends CLOSE to worker
@@ -4796,6 +4866,10 @@ export class NoteCanvas {
 
     // Capture flags before clearing state
     const hadMediaChanges = this.mediaChanged;
+    // Capture any in-flight media save so close waits for it (and its trailing
+    // pass) to finish — otherwise a late WebDAV upload outlives destroy() and its
+    // post-save redraw dereferences the now-null renderer.
+    const pendingMediaSave = this._mediaSaveRunning;
 
     // Clear state
     this.noteId = null;
@@ -4807,26 +4881,19 @@ export class NoteCanvas {
       window.__noteCanvas = null;
     }
 
-    // Return promise that resolves when all async work (thumbnail + recognition) completes.
+    // Return promise that resolves when all async work (recognition) completes.
     // Resolves with { mediaChanged } so callers can decide whether to force a sync even
     // when the note's synced flag appears clean (the Web Worker may not have processed
     // SAVE_MEDIA yet when syncOnNoteClose reads the index store).
-    let pendingThumbnail;
-    if (this._pendingThumbnailSave) {
-      pendingThumbnail = this._pendingThumbnailSave
-        .then(cleanupStrokeManager)
-        .catch(cleanupStrokeManager);
-    } else {
-      cleanupStrokeManager();
-      pendingThumbnail = Promise.resolve();
-    }
+    cleanupStrokeManager();
 
-    // Wait for thumbnail save, recognition, stroke save, and any in-progress PDF import
-    const pending = [pendingThumbnail];
+    // Wait for recognition, stroke save, and any in-progress PDF import
+    const pending = [Promise.resolve()];
     if (pendingRecognition) pending.push(pendingRecognition);
     if (pendingStrokeSave) pending.push(pendingStrokeSave);
     if (pendingTextSave) pending.push(pendingTextSave);
     if (this._pendingPdfImport) pending.push(this._pendingPdfImport);
+    if (pendingMediaSave) pending.push(pendingMediaSave);
     return Promise.all(pending).then(() => ({ mediaChanged: hadMediaChanges }));
   }
 }

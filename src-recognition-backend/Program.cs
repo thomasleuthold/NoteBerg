@@ -40,26 +40,50 @@ if (portArgIndex >= 0 && portArgIndex + 1 < args.Length && int.TryParse(args[por
     port = cliPort;
 }
 
+// By default the service is a localhost-only sidecar: bind to loopback so stroke
+// data is not exposed to other hosts on the LAN. Operators running it as a shared
+// recognition server must opt in via ServerSettings:AllowRemote or --allow-remote.
+var allowRemote = builder.Configuration.GetValue<bool>("ServerSettings:AllowRemote")
+    || args.Contains("--allow-remote");
+
 if (port > 0)
 {
-    builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(port));
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        if (allowRemote)
+        {
+            options.ListenAnyIP(port);
+        }
+        else
+        {
+            options.ListenLocalhost(port);
+        }
+    });
 }
 
-// 3. Add CORS to allow requests from the Tauri frontend
-builder.Services.AddCors(options =>
+// 3. CORS: only needed when remote browsers/clients hit a shared server. For the
+// localhost sidecar the Tauri app calls it directly (no browser Origin enforcement),
+// so the permissive any-origin policy is confined to the AllowRemote case.
+if (allowRemote)
 {
-    options.AddDefaultPolicy(policy =>
+    builder.Services.AddCors(options =>
     {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        options.AddDefaultPolicy(policy =>
+        {
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        });
     });
-});
+}
 
 var app = builder.Build();
 
 app.UseSerilogRequestLogging();
-app.UseCors();
+if (allowRemote)
+{
+    app.UseCors();
+}
 
 // 4. Define the Recognition Endpoint
 app.MapPost("/recognize", async (HttpContext context, [FromBody] List<JsStroke> strokes, [FromQuery] string? language) =>
@@ -190,12 +214,13 @@ app.MapPost("/recognize", async (HttpContext context, [FromBody] List<JsStroke> 
     }
 });
 
-const string SERVICE_VERSION = "1.3.0";
+const string SERVICE_VERSION = "1.4.0";
 
 try
 {
     var portSource = portArgIndex >= 0 ? "CLI" : "config";
-    Log.Information("Starting Handwriting Recognition Service v{Version} on port {Port} (from {PortSource})", SERVICE_VERSION, port, portSource);
+    var binding = allowRemote ? "all interfaces (remote enabled)" : "localhost only";
+    Log.Information("Starting Handwriting Recognition Service v{Version} on port {Port} (from {PortSource}), binding: {Binding}", SERVICE_VERSION, port, portSource, binding);
     Log.Information("Running as user: {UserIdentity}", System.Security.Principal.WindowsIdentity.GetCurrent().Name);
     app.Run();
 }

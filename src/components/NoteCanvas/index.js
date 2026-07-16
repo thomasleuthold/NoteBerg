@@ -77,7 +77,6 @@ export function initNoteCanvasComponent() {
 
       if (noteId) {
         const destroyResult = await destroyPromise;
-        // Thumbnail has been saved to DB by now — refresh the overview so it picks it up.
         window.dispatchEvent(new CustomEvent("datachange"));
         syncOnNoteClose(noteId, { forceSync: destroyResult?.mediaChanged === true });
       }
@@ -86,7 +85,7 @@ export function initNoteCanvasComponent() {
 
   // Listen for data changes to refresh if current note was updated externally
   window.addEventListener("datachange", async () => {
-    if (!noteCanvasInstance || !noteCanvasInstance.noteId) return;
+    if (!noteCanvasInstance?.noteId) return;
 
     const noteId = noteCanvasInstance.noteId;
     const container = noteCanvasInstance.containerElement;
@@ -103,7 +102,9 @@ export function initNoteCanvasComponent() {
       return;
     }
 
-    if (container) {
+    if (noteCanvasInstance.isInitialized) {
+      await noteCanvasInstance.applyLiveUpdate();
+    } else if (container) {
       noteCanvasInstance.destroy();
       noteCanvasInstance = new NoteCanvas(container);
       await noteCanvasInstance.load(noteId);

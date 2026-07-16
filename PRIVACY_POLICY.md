@@ -1,13 +1,13 @@
 # Privacy Policy for NoteBerg
 
-**Last updated:** February 26, 2026
+**Last updated:** July 8, 2026
 
 **NoteBerg** is an open-source note-taking application designed with privacy as a core principle. This Privacy Policy explains how our app handles your information.
 
 ## 1. Data Storage and Ownership
 *   **Local Storage**: All your notes, drawings, and media are stored locally on your device.
 *   **Nextcloud Sync**: You can optionally synchronize your data with your own Nextcloud server. We do not operate a central sync server and **we do not have access to your data**.
-*   **Handwriting Recognition**: If you enable handwriting recognition, stroke data is sent to the recognition server URL you have configured. This service is self-hosted by you; we do not operate a recognition server and **we do not have access to your data**.
+*   **Handwriting Recognition**: On Windows, handwriting recognition runs entirely on your device via a bundled local service — stroke data never leaves your computer. On other platforms, handwriting recognition is not available.
 *   **Encryption**: The app supports client-side encryption. If enabled, your data is encrypted on your device using your master password before being uploaded to your Nextcloud server.
 
 ## 2. App Permissions
@@ -15,8 +15,7 @@ To provide its features, the app requires the following permissions:
 
 *   **Camera**: Used only when you explicitly choose to take a photo to insert into a note. These photos are stored with your notes. We do not collect, analyze, or share your camera data.
 *   **Microphone**: Used only when you explicitly choose to record audio to attach to a note. Recordings are stored locally with your notes. We do not collect, analyze, or share your audio data.
-*   **Network / Internet**: Used to communicate with the Nextcloud server and Handwriting Recognition server you have configured in Settings. No data is sent to any other third-party servers.
-*   **Biometric / Fingerprint** (Optional): Used locally to unlock the app if you enable this feature. Biometric data remains on your device and is not accessible to the app.
+*   **Network / Internet**: Used to communicate with the Nextcloud server you have configured in Settings. Handwriting recognition (Windows only) runs locally and does not use the network. No data is sent to any other third-party servers.
 
 ## 3. Analytics and Tracking
 **NoteBerg** contains **no tracking code**, advertisements, or third-party analytics (e.g., Google Analytics, Firebase). We do not collect usage data.

@@ -13,7 +13,7 @@ import {
   testConnection,
 } from "../modules/nextcloudSync.js";
 import { getSetting, purgeLocalData, setSetting } from "../modules/storage.js";
-import { performSync, resetSyncWorker } from "../modules/sync.js";
+import { performSync } from "../modules/sync.js";
 import { getTheme, setTheme } from "../modules/theme.js";
 import { showLicensesDialog } from "./licensesDialog.js";
 import { showAlertDialog, showConfirmDialog } from "./modals.js";
@@ -34,17 +34,15 @@ export async function renderSettings(container) {
 
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? false; // Default: disabled
-  // Migrate old recognition_url setting to recognition_fallback_url
-  const legacyRecognitionUrl = await getSetting("recognition_url");
-  if (legacyRecognitionUrl) {
-    await setSetting("recognition_fallback_url", legacyRecognitionUrl);
-    await setSetting("recognition_url", null);
-  }
-  const recognitionFallbackUrl = (await getSetting("recognition_fallback_url")) || "";
+  const { isMasterPasswordSet } = await import("../modules/masterPassword.js");
+  const masterPasswordSet = await isMasterPasswordSet();
   const recognitionLanguage = (await getSetting("recognition_language")) || "en-US";
   const currentLanguage = getCurrentLanguage();
 
-  // Check if local sidecar recognition is available
+  // Handwriting recognition is only available on Windows, via a bundled sidecar
+  const isWindows = /windows/i.test(navigator.userAgent);
+
+  // Check if the local sidecar recognition service is running
   let localRecognitionUrl = "";
   try {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -246,27 +244,16 @@ export async function renderSettings(container) {
       <div class="settings-section">
         <h3>${t("settings.sections.recognition")}</h3>
 
+        ${
+          isWindows
+            ? `
         <div class="setting-item">
           <div class="setting-label">
             <span class="setting-name">${t("settings.recognition.statusLabel")}</span>
             <span class="setting-description" id="recognition-mode-info">
-              ${hasLocalRecognition ? t("settings.recognition.localActive") : recognitionFallbackUrl ? t("settings.recognition.externalService") : t("settings.recognition.notConfigured")}
+              ${hasLocalRecognition ? t("settings.recognition.localActive") : t("settings.recognition.notRunning")}
             </span>
           </div>
-        </div>
-
-        <div class="setting-item">
-          <label for="recognition-fallback-url" class="setting-label">
-            <span class="setting-name">${t("settings.recognition.fallbackUrlLabel")}</span>
-            <span class="setting-description">${t("settings.recognition.fallbackUrlDesc")}</span>
-          </label>
-          <input
-            type="url"
-            id="recognition-fallback-url"
-            class="setting-control"
-            value="${recognitionFallbackUrl}"
-            placeholder="${t("settings.recognition.fallbackUrlPlaceholder")}"
-          />
         </div>
 
         <div class="setting-item">
@@ -283,6 +270,15 @@ export async function renderSettings(container) {
           <button id="test-recognition-btn" class="btn-secondary">${t("settings.recognition.testBtn")}</button>
           <span id="recognition-status" class="setting-note"></span>
         </div>
+        `
+            : `
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-description">${t("settings.recognition.windowsOnly")}</span>
+          </div>
+        </div>
+        `
+        }
       </div>
 
       <div class="settings-section">
@@ -313,13 +309,17 @@ export async function renderSettings(container) {
       <div class="settings-section">
         <h3 class="settings-section-heading--danger">${t("settings.sections.dangerZone")}</h3>
 
-        <div class="setting-item">
+        ${
+          masterPasswordSet
+            ? `<div class="setting-item">
           <div class="setting-label">
             <span class="setting-name">${t("settings.dangerZone.resetPassword")}</span>
             <span class="setting-description">${t("settings.dangerZone.resetPasswordDesc")}</span>
           </div>
           <button id="reset-master-password-btn" class="btn-secondary btn-warning">${t("settings.dangerZone.resetPasswordBtn")}</button>
-        </div>
+        </div>`
+            : ""
+        }
 
         <div class="setting-item">
           <div class="setting-label">
@@ -441,36 +441,22 @@ export async function renderSettings(container) {
 
   // Biometric authentication removed for performance - event listeners removed
 
-  // Recognition settings listeners
-  const recognitionFallbackUrlInput = container.querySelector("#recognition-fallback-url");
+  // Recognition settings listeners (Windows only)
   const recognitionLanguageSelect = container.querySelector("#recognition-language");
   const testRecognitionBtn = container.querySelector("#test-recognition-btn");
   const recognitionStatus = container.querySelector("#recognition-status");
-
-  recognitionFallbackUrlInput?.addEventListener("change", async () => {
-    let url = recognitionFallbackUrlInput.value.trim();
-    if (url.endsWith("/")) url = url.slice(0, -1);
-    await setSetting("recognition_fallback_url", url);
-    // Invalidate cached URL so next recognition uses the new value
-    const { invalidateRecognitionUrl } = await import("../modules/autoRecognition.js");
-    invalidateRecognitionUrl();
-    if (recognitionStatus) recognitionStatus.textContent = "";
-  });
 
   recognitionLanguageSelect?.addEventListener("change", async () => {
     await setSetting("recognition_language", recognitionLanguageSelect.value);
   });
 
   testRecognitionBtn?.addEventListener("click", async () => {
-    // Test whichever backend is active: sidecar first, then fallback URL
-    const testUrl =
-      localRecognitionUrl || recognitionFallbackUrlInput.value.trim().replace(/\/$/, "");
-    if (!testUrl) {
+    if (!localRecognitionUrl) {
       recognitionStatus.textContent = t("settings.recognition.notConfiguredError");
       recognitionStatus.style.color = "var(--color-error)";
       return;
     }
-    const apiUrl = `${testUrl}/recognize`;
+    const apiUrl = `${localRecognitionUrl}/recognize`;
 
     testRecognitionBtn.disabled = true;
     testRecognitionBtn.textContent = t("settings.recognition.testing");
@@ -486,10 +472,9 @@ export async function renderSettings(container) {
       });
 
       if (response.ok) {
-        const source = localRecognitionUrl
-          ? t("settings.recognition.localSidecar")
-          : t("settings.recognition.externalServiceLabel");
-        recognitionStatus.textContent = t("settings.recognition.success", { source });
+        recognitionStatus.textContent = t("settings.recognition.success", {
+          source: t("settings.recognition.localSidecar"),
+        });
         recognitionStatus.style.color = "var(--color-success)";
       } else {
         recognitionStatus.textContent = t("settings.recognition.errorStatus", {
@@ -700,8 +685,7 @@ export async function renderSettings(container) {
           };
         });
 
-        // Login successful — reset worker so it picks up the new credentials
-        resetSyncWorker();
+        // Login successful
         loginUrlContainer.style.display = "none";
         statusSpan.textContent = "✓ Connected successfully!";
         statusSpan.style.color = "var(--color-success)";
@@ -769,7 +753,6 @@ export async function renderSettings(container) {
     disconnectBtn?.addEventListener("click", async () => {
       if (confirm(t("settings.nextcloud.disconnectConfirm"))) {
         await clearCredentials();
-        resetSyncWorker();
 
         // Notify footer about auth change
         window.dispatchEvent(new CustomEvent("nextcloud-auth-changed"));

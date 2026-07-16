@@ -57,8 +57,43 @@ export function getLastSyncResult() {
   return lastSyncResult;
 }
 
-/** No-op: kept for API compatibility with callers that previously used syncWorkerClient. */
-export function resetSyncWorker() {}
+/**
+ * Remove stale pdf-page IDs from deletedMedia once the PDF is fully gone.
+ * pdf-page items accumulate in deletedMedia when a PDF is removed (500 entries
+ * for a 500-page PDF), but they have no independent binary — they share pdfSource.
+ * Once the note has no pdfSource and no active pdf-page items, those deletedMedia
+ * entries have served their merge-propagation purpose and can be dropped.
+ *
+ * Safe to drop only when we can prove ALL deletedMedia entries are pdf-page IDs:
+ * if the note never had any non-pdf-page media, every deletedMedia entry must be
+ * a pdf-page ID (since that's the only type that was ever deleted). If the note
+ * also had real images, we cannot distinguish their deleted IDs from pdf-page IDs
+ * and must leave deletedMedia untouched.
+ *
+ * Mutates the note object in place.
+ */
+function purgePdfPageDeletedMedia(note) {
+  if (!Array.isArray(note.deletedMedia) || note.deletedMedia.length === 0) return;
+  if (note.pdfSource) return;
+  if (!Array.isArray(note.media)) return;
+
+  const hasActivePdfPage = note.media.some((m) => m.type === "pdf-page" && !m.deleted);
+  if (hasActivePdfPage) return;
+
+  // Only purge when the note has never contained non-pdf-page media.
+  // note.media includes both active and soft-deleted items, so this covers
+  // notes that had images alongside the PDF.
+  const hasEverHadRealMedia = note.media.some((m) => m.type !== "pdf-page");
+  if (hasEverHadRealMedia) return;
+
+  const dropped = note.deletedMedia.length;
+  note.deletedMedia = [];
+  if (dropped > 0) {
+    console.log(
+      `[Sync] Purged ${dropped} stale pdf-page deletedMedia entries from note ${note.id}`,
+    );
+  }
+}
 
 /**
  * Perform a full sync
@@ -82,102 +117,117 @@ export async function performSync({
   notifySyncStatusChange();
 
   try {
-    console.log(`Sync: Starting ${silent ? "silent" : "manual"} sync...`);
+    // Conflict resolutions are saved locally, then a fresh pass picks them up as
+    // plain uploads. A bounded loop replaces the old self-recursion (which could
+    // re-enter indefinitely); after MAX_SYNC_PASSES whatever conflicts remain are
+    // reported via the sync-conflicts event below.
+    const MAX_SYNC_PASSES = 3;
+    let usePreferNewer = preferNewer;
+    let notebooks;
+    let notes;
+    let localNotebooksMap;
+    let localNotesMap;
+    let result;
 
-    const notebooks = await getAllNotebooksForSync();
-    // Fetch lightweight metadata only — no strokes, content, or media blobs.
-    // Full note content is lazy-loaded inside fullSync only for notes that need uploading or merging.
-    const notes = await getAllNoteMetadataForSync();
+    for (let pass = 1; ; pass++) {
+      console.log(`Sync: Starting ${silent ? "silent" : "manual"} sync (pass ${pass})...`);
 
-    // Debug: Show unsynced items count
-    if (!silent) {
-      const unsyncedNotebooks = notebooks.filter((n) => n.synced === false);
-      const unsyncedNotes = notes.filter((n) => n.synced === false);
-      console.log(
-        `Before sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`,
-      );
-    }
+      notebooks = await getAllNotebooksForSync();
+      // Fetch lightweight metadata only — no strokes, content, or media blobs.
+      // Full note content is lazy-loaded inside fullSync only for notes that need uploading or merging.
+      notes = await getAllNoteMetadataForSync();
 
-    // Create maps of original local state for race condition detection
-    const localNotebooksMap = new Map(notebooks.map((n) => [n.id, n]));
-    const localNotesMap = new Map(notes.map((n) => [n.id, n]));
-
-    // Pass copies of notes to fullSync to prevent any potential mutation of our local references
-    // which we need for updating status later.
-    const notesForSync = notes.map((n) => ({ ...n }));
-    const result = await fullSync(notebooks, notesForSync);
-
-    // Handle automatic timestamp-based conflict resolution (for app startup)
-    if (preferNewer && result.conflicts?.notes?.length > 0) {
-      for (const conflict of result.conflicts.notes) {
-        const localTime = conflict.local.modified || 0;
-        const remoteTime = conflict.remote.modified || 0;
-
-        if (remoteTime > localTime) {
-          // Remote is newer, use remote version
-          console.log(
-            `[Sync] Auto-resolving conflict for note ${conflict.local.id}: remote is newer (${new Date(remoteTime).toISOString()} > ${new Date(localTime).toISOString()})`,
-          );
-          await saveNote({
-            ...conflict.remote,
-            lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
-            synced: true,
-            _currentFileEtag: undefined, // Remove internal field
-          });
-        } else {
-          // Local is newer or same timestamp, keep local version
-          console.log(
-            `[Sync] Auto-resolving conflict for note ${conflict.local.id}: local is newer or equal (${new Date(localTime).toISOString()} >= ${new Date(remoteTime).toISOString()})`,
-          );
-          await saveNote({
-            ...conflict.local,
-            lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
-            synced: false,
-            version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
-            modified: Date.now(),
-          });
-        }
+      // Debug: Show unsynced items count
+      if (!silent) {
+        const unsyncedNotebooks = notebooks.filter((n) => n.synced === false);
+        const unsyncedNotes = notes.filter((n) => n.synced === false);
+        console.log(
+          `Before sync - Unsynced: ${unsyncedNotebooks.length} notebooks, ${unsyncedNotes.length} notes`,
+        );
       }
-      // Re-trigger sync to process resolutions
-      isSyncing = false;
-      notifySyncStatusChange();
-      return await performSync({ silent, skipConflictResolution, preferNewer: false });
-    }
 
-    // Handle manual conflict resolution (only for manual syncs)
-    if (!skipConflictResolution && !silent && result.conflicts?.notes?.length > 0) {
-      for (const conflict of result.conflicts.notes) {
-        const choice = await showConflictResolutionDialog(conflict.local, conflict.remote);
-        if (choice === "local") {
-          // Keep local version - skip encryption as it's already in correct format
-          await saveNote(
-            {
+      // Create maps of original local state for race condition detection
+      localNotebooksMap = new Map(notebooks.map((n) => [n.id, n]));
+      localNotesMap = new Map(notes.map((n) => [n.id, n]));
+
+      // Pass copies of notes to fullSync to prevent any potential mutation of our local references
+      // which we need for updating status later.
+      const notesForSync = notes.map((n) => ({ ...n }));
+      result = await fullSync(notebooks, notesForSync);
+
+      const noteConflicts = result.conflicts?.notes ?? [];
+      if (noteConflicts.length === 0 || pass >= MAX_SYNC_PASSES) break;
+
+      // Automatic timestamp-based conflict resolution (for app startup)
+      if (usePreferNewer) {
+        for (const conflict of noteConflicts) {
+          const localTime = conflict.local.modified || 0;
+          const remoteTime = conflict.remote.modified || 0;
+
+          if (remoteTime > localTime) {
+            // Remote is newer, use remote version
+            console.log(
+              `[Sync] Auto-resolving conflict for note ${conflict.local.id}: remote is newer (${new Date(remoteTime).toISOString()} > ${new Date(localTime).toISOString()})`,
+            );
+            const remoteToSave = {
+              ...conflict.remote,
+              lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+              synced: true,
+              _currentFileEtag: undefined,
+              thumbnail: undefined, // local-only, never from NC
+            };
+            purgePdfPageDeletedMedia(remoteToSave);
+            await saveNote(remoteToSave);
+          } else {
+            // Local is newer or same timestamp, keep local version
+            console.log(
+              `[Sync] Auto-resolving conflict for note ${conflict.local.id}: local is newer or equal (${new Date(localTime).toISOString()} >= ${new Date(remoteTime).toISOString()})`,
+            );
+            await saveNote({
               ...conflict.local,
               lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
               synced: false,
               version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
               modified: Date.now(),
-            },
-            // Allow saveNote to handle encryption since we are working with decrypted data
-          );
-        } else {
-          // Use remote version - saveNote will handle local encryption
-          // Also update with current file etag for proper future sync tracking
-          await saveNote(
-            {
+            });
+          }
+        }
+        usePreferNewer = false;
+        continue; // re-run so resolutions upload
+      }
+
+      // Manual conflict resolution (only for manual syncs)
+      if (!skipConflictResolution && !silent) {
+        for (const conflict of noteConflicts) {
+          const choice = await showConflictResolutionDialog(conflict.local, conflict.remote);
+          if (choice === "local") {
+            // Keep local version — saveNote handles encryption of the decrypted data
+            await saveNote({
+              ...conflict.local,
+              lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
+              synced: false,
+              version: Math.max(conflict.local.version || 0, conflict.remote.version || 0) + 1,
+              modified: Date.now(),
+            });
+          } else {
+            // Use remote version — saveNote will handle local encryption.
+            // Also update with current file etag for proper future sync tracking.
+            const remoteToSave = {
               ...conflict.remote,
               lastSyncedEtag: conflict.remote._currentFileEtag || conflict.remote.lastSyncedEtag,
               synced: true,
-              _currentFileEtag: undefined, // Remove internal field
-            },
-            // Allow saveNote to handle encryption since we are working with decrypted data
-          );
+              _currentFileEtag: undefined,
+              thumbnail: undefined, // local-only, never from NC
+            };
+            purgePdfPageDeletedMedia(remoteToSave);
+            await saveNote(remoteToSave);
+          }
         }
+        continue; // re-run so resolutions upload
       }
-      // Re-trigger sync to process resolutions
-      isSyncing = false;
-      notifySyncStatusChange();
-      return await performSync({ silent, skipConflictResolution });
+
+      // Silent sync with conflicts and no resolution strategy — report them below
+      break;
     }
 
     // Update last sync result on success
@@ -211,18 +261,24 @@ export async function performSync({
       }
     }
 
+    // Pass the modified timestamp each note had when it was uploaded so
+    // updateNoteEtag won't flip synced=true over an edit made during the sync.
+    const uploadedModified = new Map((result.notesToUpload || []).map((n) => [n.id, n.modified]));
     for (const id of result.uploaded.notes.uploadedIds || []) {
       const etag = result.uploaded.notes.metadata?.[id]?.etag;
       if (etag) {
         // Patch only the index — avoids loading/decrypting/re-encrypting content.
-        await updateNoteEtag(id, etag);
+        await updateNoteEtag(id, etag, uploadedModified.get(id));
       } else {
         const index = await getNoteIndex(id);
-        if (index) await updateNoteEtag(id, index.lastSyncedEtag);
+        if (index) await updateNoteEtag(id, index.lastSyncedEtag, uploadedModified.get(id));
       }
     }
 
     // Save downloaded items
+    console.log(
+      `[Sync] fullSync returned: downloaded ${result.downloaded.notes.length} notes, ${result.downloaded.notebooks.length} notebooks; noteEtagsToUpdate=${result.noteEtagsToUpdate?.length ?? 0}; uploaded notes=${result.uploaded.notes.uploaded} notebooks=${result.uploaded.notebooks.uploaded}; conflicts notes=${result.conflicts?.notes?.length ?? 0}`,
+    );
     for (const notebook of result.downloaded.notebooks) {
       // Check for race condition: has local notebook changed since sync started?
       const currentLocalNotebook = await getNotebook(notebook.id);
@@ -247,10 +303,10 @@ export async function performSync({
     }
 
     for (const note of result.downloaded.notes) {
-      // Note is decrypted (plain text) from Nextcloud
-      // Remove internal _currentFileEtag and update lastSyncedEtag for tracking
-      const { _currentFileEtag, ...noteToSave } = note;
+      // Strip _currentFileEtag (internal) and thumbnail (legacy safety strip).
+      const { _currentFileEtag, thumbnail: _thumbnail, ...noteToSave } = note;
       noteToSave.lastSyncedEtag = _currentFileEtag || note.lastSyncedEtag;
+      purgePdfPageDeletedMedia(noteToSave);
       // Mark as synced: the downloaded version IS the server's version, so it should not
       // be re-uploaded on the next sync cycle (prevents oscillation when Nextcloud etags
       // differ between syncs due to server-side processing or multiple clients).
@@ -261,38 +317,51 @@ export async function performSync({
       const currentLocalIndex = await getNoteIndex(note.id);
       const originalLocalNote = localNotesMap.get(note.id);
 
+      console.log(
+        `[Sync:save] note=${note.id} currentLocal.modified=${currentLocalIndex?.modified} originalLocal.modified=${originalLocalNote?.modified} noteToSave.modified=${noteToSave.modified} currentLocal.version=${currentLocalIndex?.version} noteToSave.version=${noteToSave.version}`,
+      );
+
       if (
         currentLocalIndex &&
         originalLocalNote &&
         currentLocalIndex.modified !== originalLocalNote.modified
       ) {
-        console.warn(`[Sync] Race condition detected for note ${note.id}. Merging changes.`);
+        console.warn(
+          `[Sync:save] note=${note.id} → RACE CONDITION (local modified during sync). Attempting merge.`,
+        );
         // Only load full content now that we know a merge is actually needed.
         const currentLocal = await getNote(note.id);
         const merged = currentLocal ? attemptMerge(currentLocal, noteToSave) : null;
         if (merged) {
+          console.log(`[Sync:save] note=${note.id} → race merge succeeded, saving merged`);
           await saveNote(merged);
         } else {
           console.warn(
-            `[Sync] Merge failed for note ${note.id} (content conflict). Keeping local version.`,
+            `[Sync:save] note=${note.id} → race merge failed (text conflict). Keeping local version.`,
           );
         }
       } else if (
         currentLocalIndex &&
-        currentLocalIndex.version >= (noteToSave.version || 0) &&
-        currentLocalIndex.modified >= (noteToSave.modified || 0)
+        currentLocalIndex.version === (noteToSave.version || 0) &&
+        currentLocalIndex.modified === (noteToSave.modified || 0)
       ) {
         // Downloaded content is not newer than local — just update the etag silently.
-        await updateNoteEtag(note.id, noteToSave.lastSyncedEtag);
+        console.log(
+          `[Sync:save] note=${note.id} → version+modified identical (${currentLocalIndex.version}/${currentLocalIndex.modified}). Skipping save, updating etag only.`,
+        );
+        await updateNoteEtag(note.id, noteToSave.lastSyncedEtag, currentLocalIndex.modified);
       } else {
+        console.log(
+          `[Sync:save] note=${note.id} → saving downloaded note (version ${noteToSave.version}, modified ${noteToSave.modified})`,
+        );
         await saveNote(noteToSave);
       }
     }
 
     // Accept remote etag for notes whose server etag changed but content is not newer than local.
     // This silently updates lastSyncedEtag without downloading content or firing datachange.
-    for (const { id, etag } of result.noteEtagsToUpdate || []) {
-      await updateNoteEtag(id, etag);
+    for (const { id, etag, modified } of result.noteEtagsToUpdate || []) {
+      await updateNoteEtag(id, etag, modified);
     }
 
     // Process deletions (Remote deleted -> Local delete)

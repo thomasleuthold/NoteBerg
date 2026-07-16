@@ -4,6 +4,7 @@
  */
 
 import { t } from "../i18n/index.js";
+import { getIcon } from "../utils/icons.js";
 
 /**
  * Render a notebook card
@@ -24,10 +25,8 @@ export function renderNotebookCard(notebook, noteCount = 0) {
 
   return `
     <div class="notebook-card" data-notebook-id="${notebook.id}">
-      <button class="card-delete-btn" data-notebook-id="${notebook.id}" title="${t("overview.notebook.deleteTitle")}" aria-label="${t("overview.notebook.deleteTitle")}">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-        </svg>
+      <button class="card-options-btn" data-notebook-id="${notebook.id}" title="${t("overview.notebook.optionsTitle")}" aria-label="${t("overview.notebook.optionsTitle")}">
+        ${getIcon("moreVertical", 16)}
       </button>
       <div class="notebook-card-header">
         <div class="notebook-color-indicator" style="background-color: ${notebook.color}"></div>

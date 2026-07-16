@@ -20,7 +20,7 @@ import { initNoteCanvasComponent } from "./components/NoteCanvas/index.js";
 import { initOverview } from "./components/overviewMode.js";
 import { initRecycleBin } from "./components/recycleBinMode.js";
 import { initI18n } from "./i18n/index.js";
-import { initializeApp, setupAppLockListener } from "./modules/appInit.js";
+import { initializeApp } from "./modules/appInit.js";
 import { initBreadcrumb } from "./modules/breadcrumb.js";
 import { initFooter } from "./modules/footer.js";
 import { initRouter, navigateTo } from "./modules/router.js";
@@ -71,7 +71,6 @@ async function init() {
       const appInitStart = performance.now();
       await initializeApp();
       console.log(`App initialization took ${Math.round(performance.now() - appInitStart)}ms`);
-      setupAppLockListener();
     } catch (error) {
       console.error("Failed to initialize master password system:", error);
       document.body.innerHTML = `

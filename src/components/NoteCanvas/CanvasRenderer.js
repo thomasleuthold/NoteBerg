@@ -991,6 +991,8 @@ export class CanvasRenderer {
 
     if (fastMode) {
       this.ctx.imageSmoothingEnabled = false;
+    } else {
+      this.ctx.imageSmoothingQuality = "high";
     }
 
     const bufferBottom = this.bufferTop + this.bufferHeight;

@@ -28,7 +28,7 @@ You need to install several tools before you can build for Android.
      - ✅ **Android SDK Build-Tools** (latest version)
      - ✅ **Android SDK Command-line Tools (latest)** - This is important!
      - ✅ **Android SDK Platform-Tools**
-     - ✅ **NDK (Side by side)** - Install the latest version
+     - ✅ **NDK (Side by side)** - Install version **27.0.12077973** (pinned — see note below)
      - ✅ **Android Emulator** (optional, for testing without a device)
 
    - Click `Apply` and wait for installation to complete
@@ -36,8 +36,10 @@ You need to install several tools before you can build for Android.
 **Note**: If you don't see NDK or Command-line Tools:
 - Make sure `Show Package Details` is checked (bottom right corner)
 - Look for "NDK (Side by side)" - it should show multiple versions
-- Select the latest version number
+- Select version **27.0.12077973** specifically
 - Command-line Tools should show "Android SDK Command-line Tools (latest)"
+
+**Important — NDK version is pinned**: This project builds against NDK **27.0.12077973** (matching CI in `.github/workflows/build-android.yml` and `release.yml`). Do not install "the latest" NDK — newer versions (e.g. 29.x) are not what CI uses and may cause build/runtime issues.
 
 ### 2. Set Up Environment Variables
 
@@ -52,19 +54,18 @@ You need to install several tools before you can build for Android.
 3. **Browse to verify folders exist**:
    - Open File Explorer and go to your SDK location
    - You should see folders like: `build-tools`, `ndk`, `platform-tools`, `platforms`, `cmdline-tools`
-   - In `ndk` folder, note the version number (e.g., `29.0.14206865`)
+   - In `ndk` folder, you should see `27.0.12077973` (the pinned version)
    - In `build-tools` folder, note the version number (e.g., `36.1.0`)
 
 4. **Create/Update these variables** (User variables):
 
    ```
    ANDROID_HOME = C:\Users\YourUsername\AppData\Local\Android\Sdk
-   NDK_HOME = C:\Users\YourUsername\AppData\Local\Android\Sdk\ndk\29.0.14206865
+   NDK_HOME = C:\Users\YourUsername\AppData\Local\Android\Sdk\ndk\27.0.12077973
    ```
 
    Replace:
    - `YourUsername` with your actual Windows username
-   - `29.0.14206865` with your actual NDK version from step 3
 
 5. **Add to PATH** (User variables):
    - Click on `Path` → `Edit` → `New`, then add these three entries:
@@ -124,13 +125,13 @@ This will:
 - Set up Android project structure
 - Configure build files
 
-**Important**: `gen/android` is a **generated folder** — it is gitignored and will be wiped if you delete it or re-run `tauri android init`. Any manual customizations (signing config, custom Kotlin files) must be re-applied after reinitializing. See the sections below.
+**Important**: `gen/android` is a Tauri-generated folder, but in this repo it is **committed to git** (not gitignored) so that manual customizations — signing config in `build.gradle.kts`, `PdfSavePlugin.kt` — persist without needing to be reapplied. Only build output and local machine-specific files are gitignored: `app/build/`, `.gradle/`, `local.properties`, `key.properties`. In normal development you should **not** need to run `tauri android init` or touch these files — just check out the repo and build.
 
-**During initialization**, you'll be asked:
+**During initialization**, you'll be asked (only relevant if you do need to regenerate `gen/android` from scratch, e.g. after a Tauri major version upgrade):
 - **Package name**: Use `eu.noteberg.app`
 - **App name**: `NoteBerg`
 
-**If you change the bundle identifier** in `tauri.conf.json` or the package name in `Cargo.toml`, you must delete `gen/android` and re-run `tauri android init`, then reapply all manual customizations.
+**If you change the bundle identifier** in `tauri.conf.json` or the package name in `Cargo.toml`, you must delete `gen/android` and re-run `tauri android init`, then reapply the manual customizations described below (signing config, `PdfSavePlugin.kt`) and commit the regenerated folder.
 
 ### 2. Configure Android Permissions
 
@@ -142,15 +143,14 @@ Edit `src-tauri/capabilities/default.json` to ensure it includes Android:
   "platforms": ["windows", "macos", "linux", "android"],
   "permissions": [
     "core:default",
-    "http:default",
-    "shell:allow-open"
+    "http:default"
   ]
 }
 ```
 
 ## Signing the Release APK
 
-**Important**: `key.properties` is gitignored and must be recreated manually whenever `gen/android` is regenerated. Store your keystore file and passwords in a password manager.
+**Important**: `key.properties` is gitignored (it holds secrets) and must be created manually on each machine you build from. The signing config in `build.gradle.kts` that reads it is already committed — you only need to provide `key.properties` itself. Store your keystore file and passwords in a password manager.
 
 ### 1. Generate Keystore (one-time)
 
@@ -170,7 +170,7 @@ keytool -list -keystore onejournal-release.keystore -storepass YOUR_PASSWORD
 
 ### 2. Create key.properties
 
-Create `src-tauri/gen/android/key.properties` (gitignored, must be recreated after each `tauri android init`):
+Create `src-tauri/gen/android/key.properties` (gitignored — this is the only signing-related file you need to create; `build.gradle.kts` already reads it):
 
 ```properties
 storePassword=YOUR_KEYSTORE_PASSWORD
@@ -181,11 +181,9 @@ storeFile=C:/work/code/oneJournal/onejournal-release.keystore
 
 Use forward slashes in `storeFile` even on Windows.
 
-### 3. Update build.gradle.kts
+### 3. Signing config in build.gradle.kts (already committed — reference only)
 
-Edit `src-tauri/gen/android/app/build.gradle.kts` (must be done after each `tauri android init`).
-
-Add after the `tauriProperties` block and before `android {`:
+`src-tauri/gen/android/app/build.gradle.kts` already contains the `keystoreProperties` loader and `signingConfigs` block wired up to `key.properties`, and the release build type already sets `signingConfig = signingConfigs.getByName("release")`. You don't need to add this — it's shown here for reference in case `gen/android` is ever regenerated from scratch:
 
 ```kotlin
 val keystoreProperties = Properties().apply {
@@ -195,8 +193,6 @@ val keystoreProperties = Properties().apply {
     }
 }
 ```
-
-Inside `android { }`, add a `signingConfigs` block before `buildTypes`:
 
 ```kotlin
 signingConfigs {
@@ -209,17 +205,13 @@ signingConfigs {
 }
 ```
 
-Inside `getByName("release") { }`, add:
-
 ```kotlin
 signingConfig = signingConfigs.getByName("release")
 ```
 
-### 4. Restore PdfSavePlugin.kt
+### 4. PdfSavePlugin.kt (already committed — reference only)
 
-This custom Kotlin file enables opening PDFs from the app and must be recreated after each `tauri android init`.
-
-Create `src-tauri/gen/android/app/src/main/java/eu/noteberg/app/PdfSavePlugin.kt`:
+This custom Kotlin file enables opening PDFs from the app. It's already committed at `src-tauri/gen/android/app/src/main/java/eu/noteberg/app/PdfSavePlugin.kt` — shown here for reference in case it's ever lost (e.g. `gen/android` regenerated from scratch):
 
 ```kotlin
 package eu.noteberg.app
@@ -372,7 +364,7 @@ Make sure you set the environment variable and **restarted your terminal**.
 
 ### "NDK not found"
 
-Install NDK via Android Studio SDK Manager, then set `NDK_HOME` environment variable.
+Install NDK **27.0.12077973** via Android Studio SDK Manager, then set `NDK_HOME` environment variable to point at it.
 
 ### "Java version mismatch"
 
@@ -395,12 +387,12 @@ rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-andro
 
 ### App crashes on startup
 
-Most likely `PdfSavePlugin.kt` is missing (e.g. after `tauri android init`). Check logcat:
+`PdfSavePlugin.kt` is committed and should always be present. If it's missing (e.g. `gen/android` was deleted and regenerated from scratch), check logcat:
 ```bash
 adb logcat -s AndroidRuntime | grep -i "noteberg\|fatal\|exception"
 ```
 
-Recreate `PdfSavePlugin.kt` as described in the signing section above.
+Recreate `PdfSavePlugin.kt` as described in the signing section above, then commit it.
 
 ### "Project directory does not exist" error
 
@@ -409,11 +401,11 @@ This happens when the bundle identifier changed but `gen/android` still has the 
 Remove-Item -Recurse -Force src-tauri\gen\android
 npm run tauri android init
 ```
-Then reapply signing config and `PdfSavePlugin.kt`.
+Then reapply signing config and `PdfSavePlugin.kt`, and commit the regenerated `gen/android` folder.
 
 ### APK is unsigned (filename ends with `-unsigned.apk`)
 
-`key.properties` is missing or the signing config was not added to `build.gradle.kts`. Follow the signing steps above.
+`key.properties` is missing (it's gitignored and must be created locally — see signing steps above). The signing config in `build.gradle.kts` itself is already committed and should not need changes.
 
 ### Emulator won't start
 
@@ -425,7 +417,11 @@ Try creating a new emulator with less RAM, or:
 
 1. **Build AAB** (Android App Bundle):
    ```bash
-   npm run tauri android build --target aab
+   just build-aab
+   ```
+   Or manually:
+   ```bash
+   npm run tauri android build -- --aab true
    ```
 
 2. **Create Google Play Console account**: https://play.google.com/console
@@ -438,15 +434,22 @@ Try creating a new emulator with less RAM, or:
 
 6. **Submit for review**
 
-## Checklist After `tauri android init`
+## Checklist After a Fresh Clone
 
-Run this after every `gen/android` regeneration:
+`gen/android` is committed, so normally you only need:
+
+- [ ] Create `src-tauri/gen/android/key.properties` with keystore credentials (gitignored, machine-local)
+
+## Checklist After Regenerating `gen/android` From Scratch
+
+Only needed if you deleted `gen/android` and re-ran `tauri android init` (e.g. after changing the bundle identifier):
 
 - [ ] Create `src-tauri/gen/android/key.properties` with keystore credentials
 - [ ] Add `keystoreProperties` block to `build.gradle.kts`
 - [ ] Add `signingConfigs` block to `build.gradle.kts`
 - [ ] Add `signingConfig = signingConfigs.getByName("release")` to release build type
 - [ ] Recreate `PdfSavePlugin.kt`
+- [ ] Commit the regenerated `gen/android` folder
 
 ## File Sizes
 

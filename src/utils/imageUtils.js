@@ -4,22 +4,25 @@
  */
 
 /**
- * Maximum dimensions for imported images (2048x2048)
- * Images larger than this will be resized proportionally
+ * Maximum dimensions for imported images (3072x3072)
+ * Images larger than this will be resized proportionally.
+ * 3072px keeps a handheld photo of an A4 page at ~200 DPI after
+ * perspective cropping, which is needed for readable body text.
  */
-const MAX_IMAGE_DIMENSION = 2048;
+const MAX_IMAGE_DIMENSION = 3072;
 
 /**
- * Target file size for compressed images (~500KB)
+ * Target file size for compressed images (~1200KB)
  * Will adjust JPEG quality to meet this target
  */
-const TARGET_SIZE_KB = 500;
+const TARGET_SIZE_KB = 1200;
 
 /**
  * Minimum JPEG quality (0-1 scale)
- * Won't compress below this even if target size not met
+ * Won't compress below this even if target size not met.
+ * Below 0.75 dense text develops visible ringing artifacts.
  */
-const MIN_QUALITY = 0.6;
+const MIN_QUALITY = 0.75;
 
 /**
  * Maximum JPEG quality (0-1 scale)
@@ -100,7 +103,7 @@ async function captureWithGetUserMedia(facing = "environment") {
 
   try {
     // Check if getUserMedia is supported
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("getUserMedia not supported");
     }
 
@@ -790,6 +793,7 @@ export async function resizeImage(dataUrl, maxDimension = MAX_IMAGE_DIMENSION) {
   canvas.height = newHeight;
 
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(img, 0, 0, newWidth, newHeight);
 
   // Return as data URL (PNG to preserve quality during resize)
@@ -811,6 +815,7 @@ export async function compressImage(dataUrl, targetSizeKB = TARGET_SIZE_KB) {
   canvas.height = img.height;
 
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(img, 0, 0);
 
   // Binary search for optimal quality
@@ -953,6 +958,7 @@ export async function optimizeImageForDisplay(dataUrl, displayWidth, displayHeig
   canvas.height = targetHeight;
 
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
   // Use JPEG with high quality for good compression/quality balance

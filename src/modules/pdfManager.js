@@ -6,6 +6,12 @@ import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?raw";
 import { generateId, getFile, saveFile } from "./storage.js";
 
+// JBig2/CCITT Fax scanned PDFs need the WASM decoder. wasmUrl must be a
+// directory prefix (trailing slash) — PDF.js appends "jbig2.wasm" and
+// "jbig2_nowasm_fallback.js" to it. Both files live in public/pdfjs-wasm/
+// so they're copied verbatim (no hash) and reachable at a stable URL.
+const jbig2WasmDirUrl = `${import.meta.env.BASE_URL}pdfjs-wasm/`;
+
 const _workerBlob = new Blob([pdfjsWorkerSrc], { type: "text/javascript" });
 pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(_workerBlob);
 
@@ -34,7 +40,7 @@ export async function importPdf(file, onProgress) {
 
   // 2. Load the PDF to get dimensions
   const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: jbig2WasmDirUrl });
   const pdfDocument = await loadingTask.promise;
 
   const pages = [];
@@ -86,7 +92,7 @@ async function getPdfDocument(fileId) {
       throw new Error(`PDF file not found: ${fileId}`);
     }
     const arrayBuffer = await blob.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: jbig2WasmDirUrl });
     return loadingTask.promise;
   })();
 

@@ -66,6 +66,7 @@
     "notebook": {
       "noDescription": "No description",
       "deleteTitle": "Delete notebook",
+      "optionsTitle": "Notebook options",
       "newNote": "+ New Note",
       "noteCount_one": "{{count}} note",
       "noteCount_other": "{{count}} notes"
@@ -78,7 +79,12 @@
     },
     "noteOptions": {
       "title": "Note options",
+      "edit": "Edit",
       "moveCopy": "Move / Copy",
+      "delete": "Delete"
+    },
+    "notebookOptions": {
+      "edit": "Edit",
       "delete": "Delete"
     },
     "moveCopy": {
@@ -156,11 +162,8 @@
     "recognition": {
       "statusLabel": "Status",
       "localActive": "Local recognition active",
-      "externalService": "Using external service",
-      "notConfigured": "No recognition service configured",
-      "fallbackUrlLabel": "Fallback Handwriting Recognition URL",
-      "fallbackUrlDesc": "Used when local recognition is not available (non-Windows platforms)",
-      "fallbackUrlPlaceholder": "http://example.com:5000",
+      "notRunning": "Recognition service not running",
+      "windowsOnly": "Handwriting recognition is only available in the Windows app.",
       "languageLabel": "Language",
       "languageDesc": "Target language for handwriting recognition",
       "testBtn": "Test Connection",
@@ -169,9 +172,8 @@
       "success": "✓ Connection successful ({{source}})!",
       "errorStatus": "✗ Server returned {{status}}",
       "errorFailed": "✗ Connection failed: {{message}}",
-      "notConfiguredError": "✗ No recognition service configured",
+      "notConfiguredError": "✗ Recognition service not running",
       "localSidecar": "local sidecar",
-      "externalServiceLabel": "external service",
       "languages": {
         "en-US": "English (US)",
         "de-DE": "German",
@@ -264,6 +266,12 @@
       "titlePlaceholder": "Enter note title",
       "hintQuick": "This will be created as a quick note (not in any notebook).",
       "hintNotebook": "This note will be created in <strong>{{notebook}}</strong>."
+    },
+    "editNote": {
+      "title": "Edit Note"
+    },
+    "editNotebook": {
+      "title": "Edit Notebook"
     },
     "noteProperties": {
       "title": "Note Properties",
@@ -425,6 +433,7 @@
       "delete": "Delete"
     },
     "media": {
+      "select": "Select",
       "crop": "Crop",
       "sendToFront": "Send to Front",
       "sendToBack": "Send to Back",
@@ -440,7 +449,8 @@
       "importProgressTitle": "Importing PDF",
       "importProgressUpload": "Saving PDF file ...",
       "importProgressPage": "Reading page {{current}} of {{total}} ...",
-      "importProgressSaving": "Uploading file {{current}} of {{total}} ..."
+      "importProgressSaving": "Uploading file {{current}} of {{total}} ...",
+      "importProgressFinalizing": "Finalizing ..."
     },
     "textSelection": {
       "cut": "Cut",
@@ -451,7 +461,8 @@
       "simpleCrop": "Simple Crop",
       "perspective": "Perspective",
       "apply": "Apply",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "normalizeLighting": "Normalize lighting"
     }
   },
   "recycleBin": {

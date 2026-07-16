@@ -8,14 +8,6 @@
     "core:default",
     "opener:default",
     {
-      "identifier": "shell:allow-open",
-      "allow": [
-        {
-          "args": true
-        }
-      ]
-    },
-    {
       "identifier": "shell:allow-execute",
       "allow": [
         {

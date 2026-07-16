@@ -7,14 +7,18 @@ import { getIcon } from "../../utils/icons.js";
 export class MediaOverlay {
   constructor(container, callbacks) {
     this.container = container;
-    this.callbacks = callbacks; // { onDelete, onCrop, onToFront, onToBack }
+    this.callbacks = callbacks; // { onDelete, onCrop, onToFront, onToBack, onSelect }
     this.element = null;
     this.menu = null;
     this.optionBtn = null;
     this.activeMediaId = null;
     this.isVisible = false;
+    // "selected" = image is selected (full menu + handles); "hover" = mouse is
+    // hovering an unselected image (button only, menu offers just "Select").
+    this.mode = "selected";
 
     this._onOptionClick = this._onOptionClick.bind(this);
+    this._onSelectClick = this._onSelectClick.bind(this);
     this._onDeleteClick = this._onDeleteClick.bind(this);
     this._onCropClick = this._onCropClick.bind(this);
     this._onToFrontClick = this._onToFrontClick.bind(this);
@@ -44,6 +48,12 @@ export class MediaOverlay {
     this.menu.innerHTML = `
       <div class="note-canvas-toolbar__options-content">
         <div class="note-canvas-toolbar__options-section">
+          <button class="note-canvas-toolbar__option-btn" id="media-select-btn">
+            ${getIcon("checkSquare", 16)} ${t("canvas.media.select")}
+          </button>
+        </div>
+        <div class="note-canvas-toolbar__separator"></div>
+        <div class="note-canvas-toolbar__options-section">
           <button class="note-canvas-toolbar__option-btn" id="media-crop-btn">
             ${getIcon("crop", 16)} ${t("canvas.media.crop")}
           </button>
@@ -65,6 +75,7 @@ export class MediaOverlay {
     // Prevent pointer events from bubbling to canvas (which would cancel the click)
     this.menu.addEventListener("pointerdown", (e) => e.stopPropagation());
 
+    this.menu.querySelector("#media-select-btn").addEventListener("click", this._onSelectClick);
     this.menu.querySelector("#media-delete-btn").addEventListener("click", this._onDeleteClick);
     this.menu.querySelector("#media-crop-btn").addEventListener("click", this._onCropClick);
     this.menu.querySelector("#media-front-btn").addEventListener("click", this._onToFrontClick);
@@ -78,13 +89,45 @@ export class MediaOverlay {
   show(mediaItem, zoom, scrollLeft, scrollTop, viewportRect, offsetX = 0) {
     this.activeMediaId = mediaItem.id;
     this.isVisible = true;
+    this.mode = "selected";
     this.element.classList.add("note-canvas__media-overlay--visible");
     this.updatePosition(mediaItem, zoom, scrollLeft, scrollTop, viewportRect, offsetX);
+  }
+
+  /**
+   * Show the option button on an unselected image (mouse hover affordance).
+   * The menu is identical to the selected state; every action targets the
+   * hovered image via its id, so no separate "select" step is needed.
+   */
+  showForHover(mediaItem, zoom, scrollLeft, scrollTop, viewportRect, offsetX = 0) {
+    // Never override the overlay of an already-selected image.
+    if (this.mode === "selected" && this.isVisible) return;
+    this.activeMediaId = mediaItem.id;
+    this.isVisible = true;
+    this.mode = "hover";
+    this.element.classList.add("note-canvas__media-overlay--visible");
+    this.updatePosition(mediaItem, zoom, scrollLeft, scrollTop, viewportRect, offsetX);
+  }
+
+  /** Whether the overlay is currently showing the hover affordance. */
+  isHovering() {
+    return this.isVisible && this.mode === "hover";
+  }
+
+  /** The media id the overlay is currently anchored to (hover or selected). */
+  getActiveMediaId() {
+    return this.activeMediaId;
+  }
+
+  /** True if the pointer target is inside the overlay (button or menu). */
+  containsTarget(target) {
+    return this.element.contains(target);
   }
 
   hide() {
     this.activeMediaId = null;
     this.isVisible = false;
+    this.mode = "selected";
     this.element.classList.remove("note-canvas__media-overlay--visible");
     this.menu.classList.remove("note-canvas-toolbar__options-dialog--open");
   }
@@ -170,6 +213,15 @@ export class MediaOverlay {
 
     this.menu.style.left = `${menuLeft}px`;
     this.menu.style.top = `${btnRect.top - containerRect.top}px`;
+  }
+
+  _onSelectClick(e) {
+    e.stopPropagation();
+    const id = this.activeMediaId;
+    this.menu.classList.remove("note-canvas-toolbar__options-dialog--open");
+    if (this.callbacks.onSelect) {
+      this.callbacks.onSelect(id);
+    }
   }
 
   _onDeleteClick(e) {

@@ -23,11 +23,11 @@ describe("VirtualScroller", () => {
     onViewportResize = vi.fn();
 
     // Mock ResizeObserver
-    globalThis.ResizeObserver = vi.fn().mockImplementation((cb) => ({
-      observe: vi.fn(),
-      disconnect: vi.fn(),
-      callback: cb, // Expose callback for testing
-    }));
+    globalThis.ResizeObserver = vi.fn(function ResizeObserverMock(cb) {
+      this.observe = vi.fn();
+      this.disconnect = vi.fn();
+      this.callback = cb;
+    });
 
     scroller = new VirtualScroller(container, { onScroll, onViewportResize });
   });
