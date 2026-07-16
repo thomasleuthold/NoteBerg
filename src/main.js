@@ -189,9 +189,15 @@ function setupEventListeners() {
     { passive: false },
   );
 
-  // Prevent context menu in production builds (allow in dev for debugging)
+  // Prevent context menu in production builds (allow in dev for debugging).
+  // In the NC build, #app is embedded in the larger Nextcloud page — only
+  // suppress it inside our own app area so the rest of NC keeps its native
+  // browser context menu (e.g. right-click "open in new tab" on other apps).
   if (import.meta.env.PROD) {
-    window.addEventListener("contextmenu", (e) => e.preventDefault());
+    window.addEventListener("contextmenu", (e) => {
+      if (IS_NEXTCLOUD && !e.target.closest("#app")) return;
+      e.preventDefault();
+    });
   }
 }
 

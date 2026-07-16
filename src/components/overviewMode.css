@@ -19,7 +19,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 :is(body, #app) .tab-btn:hover:not(.active) {
