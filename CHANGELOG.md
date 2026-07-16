@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.34] - 2026-07-14
+
+### Added
+- **Image hover affordance (desktop)**: hovering the mouse over an unselected image now shows its option button, so the media menu is reachable without selecting first (touch behaviour unchanged)
+- **Version tooling**: `just version-info` prints the current version state (semver, stage, build, versionCode, wix); `just set-rc <rc|beta>`, `just bump-rc`, and `just bump-build` manage pre-release stage and the build counter
+
+### Changed
+- **Handwriting recognition**: removed the configurable fallback service URL entirely — recognition is now Windows-sidecar-only on every platform, and the legacy `recognition_url`/`recognition_fallback_url` settings and their migration code are gone
+- **Versioning**: a single monotonic build counter now drives Android `versionCode` and the Windows MSI build field, so successive pre-release builds (rc.1 → rc.2 …) are always distinct installs; the pre-release stage lives in `package.json` and is propagated to `appinfo/info.xml`, the app footer, and native configs by `sync-version.js`
+- **App footer**: the version stage (e.g. "RC", "Beta") is now derived from the version string instead of being hard-coded
+- **Note toolbar**: the background picker highlights the note's current background as active
+- **UI**: footer sync-status indicator gains a hover state; assorted layout/style refinements
+
+### Fixed
+- Nextcloud app version (`info.xml`) is kept in lockstep with `package.json`, ending the drift between the store version and the app version
+
+### Internal
+- Split the monolithic `nextcloudSync.test.js` into focused suites (auth, conflict, media, migration, propfind, sync, tombstone, change-detection, integration) and added extensive new coverage across storage, sync, media, recognition, and utilities
+- Added a mock WebDAV server fixture for higher-fidelity sync tests
+- Reorganized the `justfile` into semantic sections with source-ordered `just --list`; removed obsolete `build-backend`, `fix-build`, and `build-nextcloud-stub.js`
+- Documentation cleanup: refreshed DESIGN/sync docs, removed completed plan documents
+
 ## [0.5.33] - 2026-07-06
 
 ### Security
