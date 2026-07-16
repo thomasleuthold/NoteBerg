@@ -1,0 +1,522 @@
+{
+  "common": {
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "close": "閉じる",
+    "delete": "削除",
+    "restore": "復元",
+    "save": "保存",
+    "ok": "OK",
+    "loading": "読み込み中...",
+    "error": "エラー",
+    "untitled": "無題",
+    "home": "ホーム",
+    "rename": "名前の変更",
+    "create": "作成",
+    "none": "なし",
+    "capture": "キャプチャ",
+    "justNow": "たった今",
+    "minutesAgo": "{{count}}分前",
+    "hoursAgo": "{{count}}時間前",
+    "daysAgo": "{{count}}日前"
+  },
+  "overview": {
+    "tabs": {
+      "notes": "ノート",
+      "search": "検索",
+      "markers": "マーカー",
+      "recycleBin": "ごみ箱"
+    },
+    "sections": {
+      "notebooks": "ノートブック",
+      "quickNotes": "クイックノート",
+      "notes": "ノート",
+      "tasks": "タスク"
+    },
+    "actions": {
+      "newNotebook": "+ 新規ノートブック",
+      "newQuickNote": "+ 新規クイックノート",
+      "newNote": "+ 新規ノート"
+    },
+    "empty": {
+      "noNotebooks": "ノートブックはまだありません。最初のノートブックを作成しましょう！",
+      "noQuickNotes": "クイックノートはまだありません。ノートブックの外にノートを作成できます。",
+      "noNotesInNotebook": "このノートブックにはまだノートがありません。",
+      "noTasks": "タスクが見つかりません。"
+    },
+    "search": {
+      "placeholder": "ノートを検索...",
+      "button": "検索",
+      "searching": "検索中...",
+      "noResults": "検索条件に一致するノートが見つかりません。",
+      "clearTitle": "検索をクリア",
+      "foundInText": "テキスト内で見つかりました",
+      "foundInHandwriting": "手書き内で見つかりました",
+      "foundInPdf": "PDF内で見つかりました",
+      "noContent": "内容なし"
+    },
+    "tasks": {
+      "openCount_one": "未完了 {{count}} 件",
+      "openCount_other": "未完了 {{count}} 件",
+      "showCompleted_one": "完了済みタスク {{count}} 件を表示",
+      "showCompleted_other": "完了済みタスク {{count}} 件を表示",
+      "hideCompleted_one": "完了済みタスク {{count}} 件を非表示",
+      "hideCompleted_other": "完了済みタスク {{count}} 件を非表示",
+      "textTask": "テキストタスク",
+      "strokeTask": "手書きタスク",
+      "selectStrokes": "クリックしてタスクのストロークを選択",
+      "showAsText": "タスクをテキストで表示",
+      "showAsStrokes": "タスクを手書きで表示"
+    },
+    "notebook": {
+      "noDescription": "説明なし",
+      "deleteTitle": "ノートブックを削除",
+      "optionsTitle": "ノートブックのオプション",
+      "newNote": "+ 新規ノート",
+      "noteCount_one": "{{count}} 件のノート",
+      "noteCount_other": "{{count}} 件のノート"
+    },
+    "delete": {
+      "notebookTitle": "ノートブックを削除",
+      "notebookMessage": "「{{title}}」を削除してもよろしいですか？このノートブック内のすべてのノートも削除されます。",
+      "noteTitle": "ノートを削除",
+      "noteMessage": "「{{title}}」を削除してもよろしいですか？"
+    },
+    "noteOptions": {
+      "title": "オプション",
+      "edit": "編集",
+      "moveCopy": "移動 / コピー",
+      "delete": "削除"
+    },
+    "notebookOptions": {
+      "edit": "編集",
+      "delete": "削除"
+    },
+    "moveCopy": {
+      "title": "ノートの移動 / コピー",
+      "move": "移動",
+      "copy": "コピー",
+      "targetLabel": "移動先を選択",
+      "quickNotes": "クイックノート",
+      "current": "現在",
+      "apply": "適用"
+    },
+    "loading": "読み込み中...",
+    "errorTab": "タブの読み込みエラー: {{message}}",
+    "errorRender": "エラー: {{message}}"
+  },
+  "settings": {
+    "title": "設定",
+    "sections": {
+      "appearance": "外観",
+      "language": "言語",
+      "security": "セキュリティ",
+      "nextcloud": "Nextcloud 同期",
+      "recognition": "手書き認識",
+      "logging": "ログ",
+      "dangerZone": "危険な操作",
+      "about": "このアプリについて"
+    },
+    "appearance": {
+      "theme": "テーマ",
+      "themeDesc": "お好みの配色を選択してください",
+      "light": "ライト",
+      "dark": "ダーク",
+      "cardSize": "カードサイズ",
+      "cardSizeDesc": "概要画面でのノートカードのサイズを設定します",
+      "cardSizeSmall": "小",
+      "cardSizeMedium": "中",
+      "cardSizeLarge": "大"
+    },
+    "language": {
+      "label": "表示言語",
+      "desc": "アプリのインターフェース言語を選択してください",
+      "en": "英語",
+      "de": "ドイツ語",
+      "fr": "フランス語",
+      "es": "スペイン語",
+      "it": "イタリア語",
+      "zh": "中国語",
+      "pt": "ポルトガル語",
+      "ja": "日本語",
+      "ko": "韓国語"
+    },
+    "security": {
+      "encryptLocal": "ローカルデータを暗号化",
+      "encryptLocalDesc": "この端末にローカル保存されたノートを暗号化します"
+    },
+    "nextcloud": {
+      "connectLabel": "Nextcloud に接続",
+      "connectDesc": "Nextcloud のログインフローを使用してアカウントを安全に接続します",
+      "urlLabel": "Nextcloud サーバー URL",
+      "urlDesc": "Nextcloud サーバーのアドレスを入力してください",
+      "urlPlaceholder": "https://cloud.example.com",
+      "testBtn": "接続テスト",
+      "connectBtn": "Nextcloud に接続",
+      "loginUrlLabel": "ログイン URL",
+      "loginUrlDesc": "この URL をコピーしてブラウザで開き、ログインを完了してください",
+      "copyUrlBtn": "URL をコピー",
+      "connected": "接続済み",
+      "connectedAs": "{{user}} としてログイン中",
+      "server": "サーバー: {{url}}",
+      "syncNow": "今すぐ同期",
+      "disconnect": "切断",
+      "testing": "テスト中...",
+      "connecting": "接続中...",
+      "errorNoUrl": "サーバー URL を入力してください",
+      "initializing": "初期化中...",
+      "startingFlow": "Nextcloud のログインフローを開始しています...",
+      "waitingLogin": "ログインを待っています... 上記の URL をブラウザで開いてください",
+      "selectedCopyHint": "選択済み - Ctrl+C でコピー",
+      "syncing": "Nextcloud と同期中...",
+      "disconnectConfirm": "Nextcloud との接続を切断してもよろしいですか？",
+      "syncSkipped": "同期をスキップしました（すでに実行中です）",
+      "syncComplete": "✓ 同期が完了しました！ノートブック {{uploadedNotebooks}} 件、ノート {{uploadedNotes}} 件をアップロードしました。ノートブック {{downloadedNotebooks}} 件、ノート {{downloadedNotes}} 件をダウンロードしました。",
+      "syncConflictsDetected": " ⚠️ {{count}} 件の競合を検出しました。",
+      "syncFailed": "✗ 同期に失敗しました: {{message}}"
+    },
+    "recognition": {
+      "statusLabel": "状態",
+      "localActive": "ローカル認識が有効です",
+      "notRunning": "認識サービスが実行されていません",
+      "windowsOnly": "手書き認識は Windows アプリでのみ利用できます。",
+      "languageLabel": "言語",
+      "languageDesc": "手書き認識の対象言語",
+      "testBtn": "接続テスト",
+      "testing": "テスト中...",
+      "connecting": "接続中...",
+      "success": "✓ 接続に成功しました（{{source}}）！",
+      "errorStatus": "✗ サーバーが {{status}} を返しました",
+      "errorFailed": "✗ 接続に失敗しました: {{message}}",
+      "notConfiguredError": "✗ 認識サービスが実行されていません",
+      "localSidecar": "ローカルサービス",
+      "languages": {
+        "en-US": "英語（米国）",
+        "de-DE": "ドイツ語",
+        "fr-FR": "フランス語",
+        "es-ES": "スペイン語",
+        "it-IT": "イタリア語",
+        "ja-JP": "日本語",
+        "zh-CN": "中国語（簡体字）"
+      }
+    },
+    "logging": {
+      "logLevel": "ログレベル",
+      "logLevelDesc": "ログの最小重大度レベルを設定します",
+      "debug": "デバッグ（詳細）",
+      "info": "情報",
+      "warning": "警告（既定）",
+      "error": "エラー（最小）",
+      "sessionLogs": "セッションログ",
+      "sessionLogsDesc": "このセッションのメモリ内ログを表示します",
+      "viewLogs": "ログを表示",
+      "logsTitle": "デバッグログ（{{count}} 件）",
+      "logsIntro": "このアプリ実行中のセッションログ:",
+      "copyLogs": "クリップボードにコピー",
+      "clearLogs": "ログを消去",
+      "copied": "✓ コピーしました！",
+      "clearConfirm": "すべてのデバッグログを消去してもよろしいですか？",
+      "noLogs": "このセッションで利用可能なログはありません。"
+    },
+    "dangerZone": {
+      "resetPassword": "マスターパスワードをリセット",
+      "resetPasswordDesc": "マスターパスワードと暗号化キーを消去します。新しいパスワードの設定が必要になります。",
+      "resetPasswordBtn": "マスターパスワードをリセット",
+      "resetPasswordConfirmTitle": "マスターパスワードをリセット",
+      "resetPasswordConfirmMsg": "⚠️ この操作でマスターパスワードと暗号化キーが消去されます。<br><br>リセット後、暗号化を使用するには新しいマスターパスワードを設定する必要があります。<br><br><strong>注意:</strong> 暗号化されたノートは暗号化されたままとなり、元のパスワードなしでは復号できません。",
+      "resetPasswordConfirmBtn": "パスワードをリセット",
+      "resetPasswordSuccessTitle": "マスターパスワードをリセットしました",
+      "resetPasswordSuccessMsg": "✓ マスターパスワードが消去されました。暗号化を有効にすることで新しいパスワードを設定できます。",
+      "purgeLocal": "ローカルデータを消去",
+      "purgeLocalDesc": "この端末上のすべてのローカルノートブックとノートを消去します。",
+      "purgeLocalBtn": "ローカルデータを消去",
+      "purgeConfirmTitle": "ローカルデータを消去",
+      "purgeConfirmMsg": "⚠️ 危険: この操作により、この端末上のすべてのローカルノートブックとノートが削除されます！<br><br>対象:<ul><li>すべてのノートブックとノート</li><li>すべての削除済み項目（ごみ箱）</li><li>ローカルの同期履歴</li></ul>この操作は元に戻せません。本当に続行しますか？",
+      "purgeConfirmBtn": "すべて消去",
+      "purging": "消去中...",
+      "purgingStatus": "ローカルデータを消去しています...",
+      "purgeSuccessStatus": "✓ ローカルデータを正常に消去しました！「今すぐ同期」をクリックしてサーバーからダウンロードしてください。",
+      "purgeSuccessStatusOffline": "✓ ローカルデータを正常に消去しました！",
+      "purgeSuccessTitle": "消去が完了しました",
+      "purgeSuccessMsgConnected": "ローカルデータを正常に消去しました！<br><br>次の手順:<ol><li>「今すぐ同期」をクリックして Nextcloud からすべてのデータをダウンロード</li><li>同期が完了するまで待機</li><li>ノートがサーバーから復元されます</li></ol>",
+      "purgeSuccessMsgOffline": "ローカルデータを正常に消去しました！",
+      "purgeFailedStatus": "✗ 消去に失敗しました: {{message}}",
+      "purgeFailedTitle": "消去に失敗しました",
+      "purgeFailedMsg": "消去に失敗しました: {{message}}",
+      "warningConnected": "⚠️ この操作は、ノートブック、ノート、同期履歴を含むすべてのローカルデータを削除します。Nextcloud に接続している場合は、再度同期することでデータを復元できます。同期されていない変更は完全に失われます。",
+      "warningDisconnected": "⚠️ この操作は、ノートブック、ノート、同期履歴を含むすべてのローカルデータを削除します。この操作は元に戻せません。"
+    },
+    "about": {
+      "description": "手書きノート、テキスト、図形描画に対応したノートアプリです。",
+      "version": "バージョン: {{version}}",
+      "licenses": "ライセンス情報"
+    },
+    "encryption": {
+      "enabledLocalTitle": "暗号化が有効になりました",
+      "enabledLocalMsg": "✓ マスターパスワードが作成され、ローカルデータの暗号化が有効になりました。新しいノートは暗号化されます。",
+      "disabledLocalMsg": "ローカルデータの暗号化が無効になりました。既に暗号化されたノートは暗号化されたままです。",
+      "updatedTitle": "暗号化設定を更新しました"
+    }
+  },
+  "modals": {
+    "close": "閉じる",
+    "createNotebook": {
+      "title": "ノートブックを作成",
+      "titleLabel": "タイトル *",
+      "titlePlaceholder": "ノートブックのタイトルを入力",
+      "descLabel": "説明",
+      "descPlaceholder": "説明（任意）",
+      "colorLabel": "色",
+      "colors": {
+        "Blue": "青",
+        "Green": "緑",
+        "Purple": "紫",
+        "Red": "赤",
+        "Orange": "オレンジ",
+        "Pink": "ピンク"
+      }
+    },
+    "createNote": {
+      "title": "ノートを作成",
+      "titleLabel": "タイトル *",
+      "titlePlaceholder": "ノートのタイトルを入力",
+      "hintQuick": "クイックノートとして作成されます（どのノートブックにも属しません）。",
+      "hintNotebook": "このノートは <strong>{{notebook}}</strong> に作成されます。"
+    },
+    "editNote": {
+      "title": "ノートを編集"
+    },
+    "editNotebook": {
+      "title": "ノートブックを編集"
+    },
+    "noteProperties": {
+      "title": "ノートのプロパティ",
+      "noteId": "ノート ID",
+      "notebookId": "ノートブック ID",
+      "version": "ノートのバージョン",
+      "modified": "更新日時",
+      "created": "作成日時",
+      "synced": "同期状態",
+      "syncedYes": "同期済み",
+      "syncedNo": "ローカルのみ",
+      "lastEtag": "最終同期 ETag",
+      "deleted": "削除状態",
+      "deletedYes": "ごみ箱にあります",
+      "deletedNo": "有効",
+      "noValue": "なし",
+      "closeBtn": "閉じる"
+    },
+    "conflict": {
+      "title": "同期の競合: {{title}}",
+      "message": "このノートはこの端末とサーバーの両方で変更されています。保持するバージョンを選択してください。",
+      "local": "ローカル版",
+      "remote": "サーバー版",
+      "modified": "更新日時: {{date}}",
+      "strokes": "ストローク数: {{count}}",
+      "keepLocal": "ローカル版を保持",
+      "keepRemote": "サーバー版を保持",
+      "noContent": "<i>テキスト内容なし</i>"
+    },
+    "errors": {
+      "titleRequired": "タイトルは必須です"
+    }
+  },
+  "auth": {
+    "setup": {
+      "titleMigration": "🔒 データを保護する",
+      "titleNew": "🔒 マスターパスワードを作成",
+      "migrationHeading": "セキュリティを強化しています！",
+      "migrationDesc": "データを暗号化して保護するため、マスターパスワードを作成してください。既存のデータは自動的に暗号化されます。",
+      "description": "マスターパスワードはすべてのデータを暗号化します。覚えやすく強力なパスワードを選んでください。",
+      "passwordLabel": "マスターパスワード",
+      "passwordPlaceholder": "マスターパスワードを入力",
+      "confirmLabel": "パスワードの確認",
+      "confirmPlaceholder": "パスワードを再入力",
+      "hintLabel": "パスワードのヒント（任意）",
+      "hintPlaceholder": "例: 最初に飼ったペット + 生まれた年",
+      "hintDesc": "パスワードを思い出すためのヒントです。分かりやすすぎないようにしてください！",
+      "warning": "<strong>⚠️ 重要:</strong> マスターパスワードを忘れると復元できません。必ず覚えておくか、安全な場所に保管してください。",
+      "cancelBtn": "キャンセル",
+      "confirmBtnMigration": "暗号化して続行",
+      "confirmBtnNew": "マスターパスワードを作成",
+      "settingUp": "設定中..."
+    },
+    "unlock": {
+      "title": "🔒 NoteBerg のロックを解除",
+      "description": "マスターパスワードを入力してアプリのロックを解除してください",
+      "passwordLabel": "マスターパスワード",
+      "passwordPlaceholder": "パスワードを入力",
+      "hint": "ヒント: {{hint}}",
+      "unlockBtn": "ロック解除",
+      "biometricBtn": "{{method}} でロック解除",
+      "unlocking": "ロック解除中..."
+    },
+    "strength": {
+      "enterPassword": "パスワードを入力",
+      "veryWeak": "非常に弱い",
+      "weak": "弱い",
+      "fair": "普通",
+      "good": "良い",
+      "strong": "強い",
+      "veryStrong": "非常に強い"
+    },
+    "errors": {
+      "enterPassword": "マスターパスワードを入力してください",
+      "tooShort": "パスワードは8文字以上にしてください",
+      "mismatch": "パスワードが一致しません",
+      "tooWeak": "パスワードが弱すぎます。より強力なパスワードを選んでください。",
+      "wrongPassword": "パスワードが正しくありません。もう一度お試しください。",
+      "biometricFailed": "生体認証に失敗しました。パスワードを使用してください。",
+      "biometricUnavailable": "生体認証によるロック解除は利用できません。パスワードを使用してください。",
+      "setupFailed": "マスターパスワードの設定に失敗しました"
+    }
+  },
+  "footer": {
+    "syncing": "同期中…",
+    "syncClickHint": "未同期 · クリックして今すぐ同期",
+    "notConnected": "Nextcloud に接続されていません",
+    "lastSyncedTooltip": "最終同期: {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
+    "syncFailedTooltip": "同期に失敗しました: {{error}}",
+    "unknownError": "不明なエラー",
+    "recognitionRunning": "手書き認識を実行中…"
+  },
+  "breadcrumb": {
+    "home": "ホーム",
+    "rename": "名前の変更",
+    "save": "保存"
+  },
+  "toolbar": {
+    "modes": {
+      "pan": "パンモード",
+      "draw": "描画モード",
+      "eraser": "消しゴムモード",
+      "lasso": "投げなわ選択",
+      "text": "テキストモード"
+    },
+    "actions": {
+      "undo": "元に戻す (Ctrl+Z)",
+      "redo": "やり直し (Ctrl+Y)",
+      "insert": "挿入",
+      "options": "オプション"
+    },
+    "insert": {
+      "image": "画像を挿入",
+      "camera": "写真を撮る",
+      "pdf": "PDF を挿入",
+      "space": "垂直スペースを挿入"
+    },
+    "background": {
+      "label": "背景",
+      "none": "なし",
+      "ruledNarrow": "罫線 - 狭い",
+      "ruledMedium": "罫線 - 標準",
+      "ruledWide": "罫線 - 広い",
+      "gridSmall": "方眼 - 小",
+      "gridMedium": "方眼 - 中",
+      "gridLarge": "方眼 - 大"
+    },
+    "exportPdf": "PDF を書き出し",
+    "deleteNote": "ノートを削除",
+    "penDialog": {
+      "lineWidth": "線の太さ: ",
+      "color": "色",
+      "colorTitle": "色 {{num}}",
+      "expand": "設定を展開",
+      "collapse": "折りたたむ",
+      "savePreset": "現在の設定をこのプリセットに保存"
+    },
+    "tasks": {
+      "selectStrokes": "クリックしてタスクのストロークを選択"
+    },
+    "eraser": {
+      "strokeEraser": "ストローク消しゴム",
+      "partEraser": "部分消しゴム",
+      "highlighterOnly": "蛍光ペンのみ消去",
+      "size": "サイズ"
+    }
+  },
+  "licenses": {
+    "title": "オープンソースライセンス",
+    "intro": "NoteBerg は次の素晴らしいオープンソースプロジェクトの助けを借りて開発されています:",
+    "viewLicense": "ライセンスを表示",
+    "close": "閉じる"
+  },
+  "canvas": {
+    "selection": {
+      "copy": "コピー",
+      "markAsTask": "タスクとしてマーク",
+      "removeTask": "タスクを解除",
+      "delete": "削除"
+    },
+    "media": {
+      "select": "選択",
+      "crop": "トリミング",
+      "sendToFront": "最前面へ",
+      "sendToBack": "最背面へ",
+      "delete": "削除"
+    },
+    "pdf": {
+      "delete": "PDF を削除",
+      "deleteConfirmTitle": "PDF を削除",
+      "deleteConfirmMsg": "この PDF ドキュメントを削除してもよろしいですか？すべてのページが削除されます。",
+      "exportError": "PDF の書き出しに失敗しました",
+      "exportProgressTitle": "PDF を書き出し中",
+      "exportProgressPage": "{{current}} / {{total}} ページを書き出し中...",
+      "importProgressTitle": "PDF を読み込み中",
+      "importProgressUpload": "PDF ファイルを保存中...",
+      "importProgressPage": "{{current}} / {{total}} ページを読み取り中...",
+      "importProgressSaving": "{{current}} / {{total}} ファイルをアップロード中...",
+      "importProgressFinalizing": "仕上げ処理中..."
+    },
+    "textSelection": {
+      "cut": "切り取り",
+      "copy": "コピー",
+      "paste": "貼り付け"
+    },
+    "crop": {
+      "simpleCrop": "簡易トリミング",
+      "perspective": "遠近補正",
+      "apply": "適用",
+      "cancel": "キャンセル",
+      "normalizeLighting": "照明を補正"
+    }
+  },
+  "recycleBin": {
+    "notebook": "ノートブック",
+    "note": "ノート",
+    "deletedOn": "削除日: {{date}}",
+    "restoreTitle": "復元",
+    "purgeTitle": "完全に削除",
+    "restore": "復元",
+    "purge": "完全に削除",
+    "emptyNotebooks": "削除されたノートブックはありません",
+    "emptyNotes": "削除されたノートはありません",
+    "emptyTitle": "ごみ箱は空です",
+    "emptyDesc": "削除されたノートブックとノートはここに表示されます。",
+    "notebooksCount": "ノートブック（{{count}}）",
+    "notesCount": "ノート（{{count}}）"
+  },
+  "soundDialog": {
+    "trigger": "録音",
+    "title": "録音",
+    "close": "閉じる",
+    "resume": "再開",
+    "pause": "一時停止",
+    "stopRecording": "録音を停止",
+    "newRecording": "新規録音",
+    "importAudioFile": "音声ファイルを読み込む",
+    "noRecordings": "録音はまだありません。",
+    "delete": "削除",
+    "deleteRecordingTitle": "録音を削除",
+    "deleteRecordingMessage": "この録音を削除してもよろしいですか？",
+    "errorGeneric": "録音を開始できませんでした。",
+    "errorNoDevice": "オーディオデバイスが見つかりません。マイクを接続してください。",
+    "errorPermissionDenied": "マイクへのアクセスが拒否されました。"
+  },
+  "noteNavigator": {
+    "toggle": "ナビゲーター",
+    "collapse": "折りたたむ",
+    "previous": "前へ",
+    "next": "次へ"
+  }
+}

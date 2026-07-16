@@ -13,7 +13,12 @@
     "home": "Home",
     "rename": "Rename",
     "create": "Create",
-    "none": "None"
+    "none": "None",
+    "capture": "Capture",
+    "justNow": "just now",
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "daysAgo": "{{count}}d ago"
   },
   "overview": {
     "tabs": {
@@ -127,7 +132,14 @@
       "label": "Interface Language",
       "desc": "Select the language for the app interface",
       "en": "English",
-      "de": "Deutsch"
+      "de": "German",
+      "fr": "French",
+      "es": "Spanish",
+      "it": "Italian",
+      "zh": "Chinese",
+      "pt": "Portuguese",
+      "ja": "Japanese",
+      "ko": "Korean"
     },
     "security": {
       "encryptLocal": "Encrypt Local Data",
@@ -157,7 +169,11 @@
       "waitingLogin": "Waiting for login... Open the URL above in your browser",
       "selectedCopyHint": "Selected - use Ctrl+C",
       "syncing": "Syncing with Nextcloud...",
-      "disconnectConfirm": "Are you sure you want to disconnect from Nextcloud?"
+      "disconnectConfirm": "Are you sure you want to disconnect from Nextcloud?",
+      "syncSkipped": "Sync skipped (already in progress)",
+      "syncComplete": "✓ Sync complete! Uploaded {{uploadedNotebooks}} notebooks, {{uploadedNotes}} notes. Downloaded {{downloadedNotebooks}} notebooks, {{downloadedNotes}} notes.",
+      "syncConflictsDetected": " ⚠️ Detected {{count}} conflicts.",
+      "syncFailed": "✗ Sync failed: {{message}}"
     },
     "recognition": {
       "statusLabel": "Status",
@@ -474,6 +490,33 @@
     "restore": "Restore",
     "purge": "Purge",
     "emptyNotebooks": "No deleted notebooks",
-    "emptyNotes": "No deleted notes"
+    "emptyNotes": "No deleted notes",
+    "emptyTitle": "Recycle Bin is Empty",
+    "emptyDesc": "Deleted notebooks and notes will appear here.",
+    "notebooksCount": "Notebooks ({{count}})",
+    "notesCount": "Notes ({{count}})"
+  },
+  "soundDialog": {
+    "trigger": "Recordings",
+    "title": "Recordings",
+    "close": "Close",
+    "resume": "Resume",
+    "pause": "Pause",
+    "stopRecording": "Stop recording",
+    "newRecording": "New recording",
+    "importAudioFile": "Import audio file",
+    "noRecordings": "No recordings yet.",
+    "delete": "Delete",
+    "deleteRecordingTitle": "Delete Recording",
+    "deleteRecordingMessage": "Are you sure you want to delete this recording?",
+    "errorGeneric": "Could not start recording.",
+    "errorNoDevice": "No audio device found. Please connect a microphone.",
+    "errorPermissionDenied": "Microphone access denied."
+  },
+  "noteNavigator": {
+    "toggle": "Navigator",
+    "collapse": "Collapse",
+    "previous": "Previous",
+    "next": "Next"
   }
 }

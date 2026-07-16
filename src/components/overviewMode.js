@@ -394,10 +394,10 @@ async function renderRecycleBinTab(container) {
     const diffMins = Math.floor((now - date) / 60000);
     const diffHours = Math.floor((now - date) / 3600000);
     const diffDays = Math.floor((now - date) / 86400000);
-    if (diffMins < 1) return "just now";
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) return t("common.justNow");
+    if (diffMins < 60) return t("common.minutesAgo", { count: diffMins });
+    if (diffHours < 24) return t("common.hoursAgo", { count: diffHours });
+    if (diffDays < 7) return t("common.daysAgo", { count: diffDays });
     return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   };
 
@@ -407,16 +407,16 @@ async function renderRecycleBinTab(container) {
       <div class="recycle-item-content">
         <div class="recycle-item-title">${escHtml(item.title || t("common.untitled"))}</div>
         <div class="recycle-item-meta">
-          <span class="recycle-item-type">${type === "notebook" ? "Notebook" : "Note"}</span>
-          <span class="recycle-item-date">Deleted ${fmtDate(item.modified)}</span>
+          <span class="recycle-item-type">${type === "notebook" ? t("recycleBin.notebook") : t("recycleBin.note")}</span>
+          <span class="recycle-item-date">${t("recycleBin.deletedOn", { date: fmtDate(item.modified) })}</span>
         </div>
       </div>
       <div class="recycle-item-actions">
-        <button class="btn-restore" data-type="${type}" data-id="${item.id}" title="Restore">
-          ${restoreIcon} Restore
+        <button class="btn-restore" data-type="${type}" data-id="${item.id}" title="${t("recycleBin.restoreTitle")}">
+          ${restoreIcon} ${t("recycleBin.restore")}
         </button>
-        <button class="btn-purge" data-type="${type}" data-id="${item.id}" title="Delete Permanently">
-          ${trashIcon} Purge
+        <button class="btn-purge" data-type="${type}" data-id="${item.id}" title="${t("recycleBin.purgeTitle")}">
+          ${trashIcon} ${t("recycleBin.purge")}
         </button>
       </div>
     </div>
@@ -428,28 +428,28 @@ async function renderRecycleBinTab(container) {
         <div class="empty-state-icon" style="margin-bottom: 1rem; color: var(--text-secondary);">
           ${getIcon("trash", 64)}
         </div>
-        <h3>Recycle Bin is Empty</h3>
-        <p>Deleted notebooks and notes will appear here.</p>
+        <h3>${t("recycleBin.emptyTitle")}</h3>
+        <p>${t("recycleBin.emptyDesc")}</p>
       </div>
     `;
   } else {
     const notebooksHtml =
       deletedNotebooks.length > 0
         ? deletedNotebooks.map((nb) => renderItem(nb, "notebook", notebookIcon)).join("")
-        : '<p class="empty-state">No deleted notebooks</p>';
+        : `<p class="empty-state">${t("recycleBin.emptyNotebooks")}</p>`;
     const notesHtml =
       deletedNotes.length > 0
         ? deletedNotes.map((n) => renderItem(n, "note", noteIcon)).join("")
-        : '<p class="empty-state">No deleted notes</p>';
+        : `<p class="empty-state">${t("recycleBin.emptyNotes")}</p>`;
 
     container.innerHTML = `
       <div class="recycle-bin-container">
         <div class="recycle-bin-section">
-          <h3>Notebooks (${deletedNotebooks.length})</h3>
+          <h3>${t("recycleBin.notebooksCount", { count: deletedNotebooks.length })}</h3>
           <div class="recycle-items-list">${notebooksHtml}</div>
         </div>
         <div class="recycle-bin-section">
-          <h3>Notes (${deletedNotes.length})</h3>
+          <h3>${t("recycleBin.notesCount", { count: deletedNotes.length })}</h3>
           <div class="recycle-items-list">${notesHtml}</div>
         </div>
       </div>

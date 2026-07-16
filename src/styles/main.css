@@ -650,6 +650,7 @@ body {
   font-family: var(--font-family);
   font-size: 0.875rem;
   font-weight: 500;
+  line-height: 1.25;
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -701,6 +702,7 @@ body {
   font-family: var(--font-family);
   font-size: 0.875rem;
   font-weight: 500;
+  line-height: 1.25;
   transition: all var(--transition-fast);
 }
 

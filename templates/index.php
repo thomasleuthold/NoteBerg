@@ -93,6 +93,16 @@ try {
     font-size: inherit !important;
   }
 
+  /* Restore our own buttons' padding — the blanket reset above zeroes it with
+     !important, which otherwise wins over any specificity from our own CSS. */
+  #app :is(.btn-primary, .btn-secondary, .btn-danger, .btn-danger-filled, .card-new-note-btn) {
+    padding: var(--spacing-sm, 0.35rem) var(--spacing-md, 0.45rem) !important;
+  }
+
+  #app .tab-btn {
+    padding: 10px 14px !important;
+  }
+
   /* NC overrides ::-webkit-scrollbar width to 12px */
   #app ::-webkit-scrollbar {
     width: 8px;

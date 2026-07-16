@@ -13,7 +13,12 @@
     "home": "Startseite",
     "rename": "Umbenennen",
     "create": "Erstellen",
-    "none": "Keine"
+    "none": "Keine",
+    "capture": "Aufnehmen",
+    "justNow": "gerade eben",
+    "minutesAgo": "vor {{count}} Min.",
+    "hoursAgo": "vor {{count}} Std.",
+    "daysAgo": "vor {{count}} T."
   },
   "overview": {
     "tabs": {
@@ -126,8 +131,15 @@
     "language": {
       "label": "Sprache",
       "desc": "Wähle die Sprache der App",
-      "en": "English",
-      "de": "Deutsch"
+      "en": "Englisch",
+      "de": "Deutsch",
+      "fr": "Französisch",
+      "es": "Spanisch",
+      "it": "Italienisch",
+      "zh": "Chinesisch",
+      "pt": "Portugiesisch",
+      "ja": "Japanisch",
+      "ko": "Koreanisch"
     },
     "security": {
       "encryptLocal": "Lokale Daten verschlüsseln",
@@ -157,7 +169,11 @@
       "waitingLogin": "Warte auf Anmeldung... Öffne die URL oben im Browser",
       "selectedCopyHint": "Ausgewählt – Strg+C zum Kopieren",
       "syncing": "Wird mit Nextcloud synchronisiert...",
-      "disconnectConfirm": "Möchtest du die Verbindung zu Nextcloud wirklich trennen?"
+      "disconnectConfirm": "Möchtest du die Verbindung zu Nextcloud wirklich trennen?",
+      "syncSkipped": "Synchronisierung übersprungen (läuft bereits)",
+      "syncComplete": "✓ Synchronisierung abgeschlossen! {{uploadedNotebooks}} Notizbücher, {{uploadedNotes}} Notizen hochgeladen. {{downloadedNotebooks}} Notizbücher, {{downloadedNotes}} Notizen heruntergeladen.",
+      "syncConflictsDetected": " ⚠️ {{count}} Konflikte erkannt.",
+      "syncFailed": "✗ Synchronisierung fehlgeschlagen: {{message}}"
     },
     "recognition": {
       "statusLabel": "Status",
@@ -474,6 +490,33 @@
     "restore": "Wiederherstellen",
     "purge": "Endgültig löschen",
     "emptyNotebooks": "Keine gelöschten Notizbücher",
-    "emptyNotes": "Keine gelöschten Notizen"
+    "emptyNotes": "Keine gelöschten Notizen",
+    "emptyTitle": "Papierkorb ist leer",
+    "emptyDesc": "Gelöschte Notizbücher und Notizen werden hier angezeigt.",
+    "notebooksCount": "Notizbücher ({{count}})",
+    "notesCount": "Notizen ({{count}})"
+  },
+  "soundDialog": {
+    "trigger": "Aufnahmen",
+    "title": "Aufnahmen",
+    "close": "Schließen",
+    "resume": "Fortsetzen",
+    "pause": "Pause",
+    "stopRecording": "Aufnahme stoppen",
+    "newRecording": "Neue Aufnahme",
+    "importAudioFile": "Audiodatei importieren",
+    "noRecordings": "Noch keine Aufnahmen.",
+    "delete": "Löschen",
+    "deleteRecordingTitle": "Aufnahme löschen",
+    "deleteRecordingMessage": "Möchtest du diese Aufnahme wirklich löschen?",
+    "errorGeneric": "Aufnahme konnte nicht gestartet werden.",
+    "errorNoDevice": "Kein Audiogerät gefunden. Bitte schließe ein Mikrofon an.",
+    "errorPermissionDenied": "Zugriff auf das Mikrofon verweigert."
+  },
+  "noteNavigator": {
+    "toggle": "Navigator",
+    "collapse": "Einklappen",
+    "previous": "Zurück",
+    "next": "Weiter"
   }
 }

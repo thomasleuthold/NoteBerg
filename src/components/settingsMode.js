@@ -53,6 +53,17 @@ export async function renderSettings(container) {
   const hasLocalRecognition = !!localRecognitionUrl;
 
   const recognitionLangOptions = ["en-US", "de-DE", "fr-FR", "es-ES", "it-IT", "ja-JP", "zh-CN"];
+  const uiLanguageOptions = [
+    { code: "en", flag: "🇬🇧" },
+    { code: "de", flag: "🇩🇪" },
+    { code: "fr", flag: "🇫🇷" },
+    { code: "es", flag: "🇪🇸" },
+    { code: "it", flag: "🇮🇹" },
+    { code: "zh", flag: "🇨🇳" },
+    { code: "pt", flag: "🇵🇹" },
+    { code: "ja", flag: "🇯🇵" },
+    { code: "ko", flag: "🇰🇷" },
+  ];
 
   container.innerHTML = `
     <div class="settings-panel">
@@ -102,8 +113,12 @@ export async function renderSettings(container) {
             <span class="setting-description">${t("settings.language.desc")}</span>
           </div>
           <select id="language-select" class="setting-control">
-            <option value="en" ${currentLanguage === "en" ? "selected" : ""}>🇬🇧 ${t("settings.language.en")}</option>
-            <option value="de" ${currentLanguage === "de" ? "selected" : ""}>🇩🇪 ${t("settings.language.de")}</option>
+            ${uiLanguageOptions
+              .map(
+                ({ code, flag }) =>
+                  `<option value="${code}" ${currentLanguage === code ? "selected" : ""}>${flag} ${t(`settings.language.${code}`)}</option>`,
+              )
+              .join("")}
           </select>
         </div>
       </div>
@@ -721,7 +736,7 @@ export async function renderSettings(container) {
         const result = await performSync({ silent: false });
 
         if (!result) {
-          syncStatus.textContent = "Sync skipped (already in progress)";
+          syncStatus.textContent = t("settings.nextcloud.syncSkipped");
           syncStatus.style.color = "var(--color-warning)";
           return;
         }
@@ -731,10 +746,15 @@ export async function renderSettings(container) {
         const conflictCount =
           (result.conflicts?.notebooks?.length || 0) + (result.conflicts?.notes?.length || 0);
 
-        let statusMsg = `✓ Sync complete! Uploaded ${result.uploaded.notebooks.uploaded} notebooks, ${result.uploaded.notes.uploaded} notes. Downloaded ${downloadedNotebooks} notebooks, ${downloadedNotes} notes.`;
+        let statusMsg = t("settings.nextcloud.syncComplete", {
+          uploadedNotebooks: result.uploaded.notebooks.uploaded,
+          uploadedNotes: result.uploaded.notes.uploaded,
+          downloadedNotebooks,
+          downloadedNotes,
+        });
 
         if (conflictCount > 0) {
-          statusMsg += ` ⚠️ Detected ${conflictCount} conflicts.`;
+          statusMsg += t("settings.nextcloud.syncConflictsDetected", { count: conflictCount });
           syncStatus.style.color = "var(--color-warning)";
         } else {
           syncStatus.style.color = "var(--color-success)";
@@ -742,7 +762,7 @@ export async function renderSettings(container) {
 
         syncStatus.textContent = statusMsg;
       } catch (error) {
-        syncStatus.textContent = `✗ Sync failed: ${error.message}`;
+        syncStatus.textContent = t("settings.nextcloud.syncFailed", { message: error.message });
         syncStatus.style.color = "var(--color-error)";
       } finally {
         syncBtn.disabled = false;

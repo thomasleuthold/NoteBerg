@@ -3,6 +3,8 @@
  * Uses HTML5 APIs for cross-platform compatibility (desktop + mobile)
  */
 
+import { t } from "../i18n/index.js";
+
 /**
  * Maximum dimensions for imported images (3072x3072)
  * Images larger than this will be resized proportionally.
@@ -668,7 +670,7 @@ function createCameraModal(
 
   const captureBtn = document.createElement("button");
   captureBtn.className = "capture-btn";
-  captureBtn.textContent = "Capture";
+  captureBtn.textContent = t("common.capture");
   captureBtn.style.cssText = `
     padding: 12px 32px;
     font-size: 16px;
@@ -682,7 +684,7 @@ function createCameraModal(
 
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "cancel-btn";
-  cancelBtn.textContent = "Cancel";
+  cancelBtn.textContent = t("common.cancel");
   cancelBtn.style.cssText = `
     padding: 12px 32px;
     font-size: 16px;
