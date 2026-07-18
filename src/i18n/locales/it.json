@@ -511,7 +511,7 @@
     "deleteRecordingMessage": "Vuoi davvero eliminare questa registrazione?",
     "errorGeneric": "Impossibile avviare la registrazione.",
     "errorNoDevice": "Nessun dispositivo audio trovato. Collega un microfono.",
-    "errorPermissionDenied": "Accesso al microfono negato."
+    "errorPermissionDenied": "Accesso al microfono negato. Consenti l'accesso al microfono nelle impostazioni di sistema."
   },
   "noteNavigator": {
     "toggle": "Navigatore",

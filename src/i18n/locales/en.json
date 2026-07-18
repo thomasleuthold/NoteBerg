@@ -511,7 +511,7 @@
     "deleteRecordingMessage": "Are you sure you want to delete this recording?",
     "errorGeneric": "Could not start recording.",
     "errorNoDevice": "No audio device found. Please connect a microphone.",
-    "errorPermissionDenied": "Microphone access denied."
+    "errorPermissionDenied": "Microphone access denied. Please allow microphone access in your system settings."
   },
   "noteNavigator": {
     "toggle": "Navigator",

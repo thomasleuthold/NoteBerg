@@ -511,7 +511,7 @@
     "deleteRecordingMessage": "Möchtest du diese Aufnahme wirklich löschen?",
     "errorGeneric": "Aufnahme konnte nicht gestartet werden.",
     "errorNoDevice": "Kein Audiogerät gefunden. Bitte schließe ein Mikrofon an.",
-    "errorPermissionDenied": "Zugriff auf das Mikrofon verweigert."
+    "errorPermissionDenied": "Zugriff auf das Mikrofon verweigert. Bitte erlaube den Mikrofonzugriff in den Systemeinstellungen."
   },
   "noteNavigator": {
     "toggle": "Navigator",

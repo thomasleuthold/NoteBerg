@@ -511,7 +511,7 @@
     "deleteRecordingMessage": "Voulez-vous vraiment supprimer cet enregistrement ?",
     "errorGeneric": "Impossible de démarrer l'enregistrement.",
     "errorNoDevice": "Aucun périphérique audio détecté. Veuillez connecter un microphone.",
-    "errorPermissionDenied": "Accès au microphone refusé."
+    "errorPermissionDenied": "Accès au microphone refusé. Veuillez autoriser l'accès au microphone dans les paramètres système."
   },
   "noteNavigator": {
     "toggle": "Navigateur",

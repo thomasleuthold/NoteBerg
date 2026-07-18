@@ -128,7 +128,15 @@ export class RecordingManager {
         this._recordingId = null;
         this._recordingStartTime = null;
         console.error("[RecordingManager] Native audio start error:", err);
-        throw new Error(String(err));
+        // The native plugin reports a denied microphone permission via a
+        // recognizable message. Surface it as NotAllowedError so the UI shows
+        // the actionable "permission denied" message instead of a generic one.
+        const message = String(err);
+        const error = new Error(message);
+        if (/permission denied|permission not granted/i.test(message)) {
+          error.name = "NotAllowedError";
+        }
+        throw error;
       }
       this._nativeRecording = true;
       this._nativeAmplitude = 0;

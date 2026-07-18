@@ -511,7 +511,7 @@
     "deleteRecordingMessage": "确定要删除此录音吗？",
     "errorGeneric": "无法开始录音。",
     "errorNoDevice": "未找到音频设备，请连接麦克风。",
-    "errorPermissionDenied": "麦克风访问被拒绝。"
+    "errorPermissionDenied": "麦克风访问被拒绝。请在系统设置中允许访问麦克风。"
   },
   "noteNavigator": {
     "toggle": "导航器",

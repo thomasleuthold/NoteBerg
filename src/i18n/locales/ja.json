@@ -511,7 +511,7 @@
     "deleteRecordingMessage": "この録音を削除してもよろしいですか？",
     "errorGeneric": "録音を開始できませんでした。",
     "errorNoDevice": "オーディオデバイスが見つかりません。マイクを接続してください。",
-    "errorPermissionDenied": "マイクへのアクセスが拒否されました。"
+    "errorPermissionDenied": "マイクへのアクセスが拒否されました。システム設定でマイクへのアクセスを許可してください。"
   },
   "noteNavigator": {
     "toggle": "ナビゲーター",
