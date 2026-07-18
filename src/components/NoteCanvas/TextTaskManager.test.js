@@ -116,6 +116,80 @@ describe("TextTaskManager", () => {
       expect(p1.querySelector(".task-text-checkbox")).toBeTruthy();
       expect(p2.querySelector(".task-text-checkbox")).toBeTruthy();
     });
+
+    // C-01 regression: selecting text that spans a list (or spans a paragraph
+    // across a ul/ol) previously wrapped the whole <ul> — moving its <li>s into
+    // a <span> and appending the checkbox as a direct child of <ul>. That
+    // invalid markup was discarded on the next parse, blanking the note.
+    describe("C-01: list selections must not corrupt markup", () => {
+      const assertListIntegrity = (ul) => {
+        // A <ul>/<ol> may only contain <li> children.
+        for (const child of ul.children) {
+          expect(child.tagName).toBe("LI");
+        }
+        // No <li> may be nested inside a task span.
+        expect(ul.querySelector(".task-text li")).toBeNull();
+      };
+
+      it("wraps each <li> individually when selecting across list items", () => {
+        editorElement.innerHTML = "<ul><li>First item</li><li>Second item</li></ul>";
+        const li1 = editorElement.querySelectorAll("li")[0];
+        const li2 = editorElement.querySelectorAll("li")[1];
+        setupSelection(li1.firstChild, 0, li2.firstChild, 6);
+
+        manager.toggleTaskOnSelection();
+
+        const ul = editorElement.querySelector("ul");
+        assertListIntegrity(ul);
+        expect(ul.querySelectorAll("li").length).toBe(2);
+        expect(ul.querySelectorAll("li .task-text").length).toBe(2);
+        expect(editorElement.textContent).toContain("First item");
+        expect(editorElement.textContent).toContain("Second item");
+      });
+
+      it("does not wrap the <ul> when selection spans a paragraph into a list", () => {
+        editorElement.innerHTML = "<p>Intro</p><ul><li>First</li><li>Second</li></ul>";
+        const intro = editorElement.querySelector("p").firstChild;
+        const li2 = editorElement.querySelectorAll("li")[1].firstChild;
+        setupSelection(intro, 0, li2, 6);
+
+        manager.toggleTaskOnSelection();
+
+        assertListIntegrity(editorElement.querySelector("ul"));
+        expect(editorElement.textContent).toContain("Intro");
+        expect(editorElement.textContent).toContain("First");
+        expect(editorElement.textContent).toContain("Second");
+      });
+
+      it("does not wrap the <ul> when selection spans a list into a following paragraph", () => {
+        editorElement.innerHTML = "<p>Intro</p><ul><li>First</li><li>Second</li></ul><p>Outro</p>";
+        const intro = editorElement.querySelector("p").firstChild;
+        const outro = editorElement.querySelectorAll("p")[1].firstChild;
+        setupSelection(intro, 0, outro, 5);
+
+        manager.toggleTaskOnSelection();
+
+        assertListIntegrity(editorElement.querySelector("ul"));
+        expect(editorElement.textContent).toContain("First");
+        expect(editorElement.textContent).toContain("Second");
+        expect(editorElement.textContent).toContain("Outro");
+      });
+
+      it("wraps a single selected list item without touching siblings", () => {
+        editorElement.innerHTML = "<ul><li>First item</li><li>Second item</li></ul>";
+        const li1 = editorElement.querySelectorAll("li")[0];
+        setupSelection(li1.firstChild, 0, li1.firstChild, 5);
+
+        manager.toggleTaskOnSelection();
+
+        const ul = editorElement.querySelector("ul");
+        assertListIntegrity(ul);
+        expect(ul.querySelectorAll("li").length).toBe(2);
+        // Only the first item became a task
+        expect(ul.querySelectorAll("li")[0].querySelector(".task-text")).toBeTruthy();
+        expect(ul.querySelectorAll("li")[1].querySelector(".task-text")).toBeNull();
+      });
+    });
   });
 
   describe("renderCheckboxes", () => {

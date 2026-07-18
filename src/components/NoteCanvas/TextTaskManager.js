@@ -91,6 +91,59 @@ export class TextTaskManager {
   }
 
   /**
+   * Climb from a node to the top-level element that is a direct child of the
+   * editor. Used so the multi-block sibling walk iterates at the editor's own
+   * child level, where list containers (ul/ol) appear as single units to be
+   * expanded rather than raw siblings to be wrapped.
+   * @param {Node} node
+   * @returns {HTMLElement|null}
+   * @private
+   */
+  _topLevelAncestor(node) {
+    let el = node;
+    while (el?.parentElement && el.parentElement !== this.editorElement) {
+      el = el.parentElement;
+    }
+    return el?.parentElement === this.editorElement ? el : null;
+  }
+
+  /**
+   * Expand an element into the leaf blocks a task may be applied to.
+   * A leaf block (p, li, div, heading, …) yields itself. A list container
+   * (ul/ol) — or any element that holds block-level children — yields its
+   * child leaf blocks instead of itself, so we never wrap a whole <ul> (which
+   * would move its <li>s into a span and corrupt the markup — see C-01).
+   * @param {HTMLElement} el
+   * @returns {HTMLElement[]}
+   * @private
+   */
+  _expandToLeafBlocks(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return [];
+
+    if (/^(ul|ol)$/i.test(el.tagName)) {
+      const items = [];
+      for (const li of el.children) {
+        items.push(...this._expandToLeafBlocks(li));
+      }
+      return items;
+    }
+
+    // A leaf block that itself contains a nested list: wrap only its own
+    // inline content is out of scope — treat it as a leaf so its text becomes
+    // a task, but pull out any nested list items so they aren't swallowed.
+    if (/^(p|div|li|blockquote|h[1-6])$/i.test(el.tagName)) {
+      return [el];
+    }
+
+    // Unknown wrapper — descend into element children looking for leaf blocks.
+    const collected = [];
+    for (const child of el.children) {
+      collected.push(...this._expandToLeafBlocks(child));
+    }
+    return collected;
+  }
+
+  /**
    * Resolve a range boundary (container + offset) to the actual node inside it.
    * When the container is the editor element, offset is a child index.
    * @param {Node} container
@@ -152,15 +205,35 @@ export class TextTaskManager {
       return [startBlock];
     }
 
-    // Different blocks — collect siblings from start to end
+    // Different blocks — collect siblings from start to end.
+    // startBlock/endBlock are leaf blocks (never a ul/ol, since _getBlock skips
+    // list containers). Their common walk happens at the sibling level of
+    // whichever ancestor chain they share; when a sibling is a list container
+    // we expand it into its <li> leaves so each item becomes its own task
+    // rather than wrapping the entire <ul> (C-01).
     if (startBlock && endBlock) {
+      // Walk at the top level shared by both boundaries: climb each boundary to
+      // the child of their nearest common walk level (direct children of the
+      // editor, or of a shared list container).
+      const startTop = this._topLevelAncestor(startBlock);
+      const endTop = this._topLevelAncestor(endBlock);
+
       const blocks = [];
-      let curr = startBlock;
+      let curr = startTop;
       while (curr) {
-        blocks.push(curr);
-        if (curr === endBlock) break;
+        blocks.push(...this._expandToLeafBlocks(curr));
+        if (curr === endTop) break;
         curr = curr.nextElementSibling;
         if (!curr || !this.editorElement.contains(curr)) break;
+      }
+
+      // Trim to the actual selected leaves: drop any leaf before startBlock and
+      // after endBlock (the expansion of the first/last container may include
+      // siblings outside the selection).
+      const startIdx = blocks.indexOf(startBlock);
+      const endIdx = blocks.indexOf(endBlock);
+      if (startIdx !== -1 && endIdx !== -1 && startIdx <= endIdx) {
+        return blocks.slice(startIdx, endIdx + 1);
       }
       return blocks;
     }
@@ -201,6 +274,14 @@ export class TextTaskManager {
   _addTaskToBlock(block) {
     // Skip if already a task
     if (block.querySelector("[data-task-id]")) return;
+
+    // Never wrap a list container or a block containing its own block children:
+    // moving <li>/<ul>/<ol> into a <span> produces invalid markup that the
+    // browser discards on the next parse, blanking the note (C-01). Callers
+    // should have expanded to leaf blocks already; this is a safety net.
+    if (/^(ul|ol)$/i.test(block.tagName) || block.querySelector("li, ul, ol")) {
+      return;
+    }
 
     const taskId = generateId();
 
