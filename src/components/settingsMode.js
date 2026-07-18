@@ -5,6 +5,7 @@
 
 import { APP_FULL_VERSION, APP_NAME } from "../config.js";
 import { changeLanguage, getCurrentLanguage, t } from "../i18n/index.js";
+import { resetAllHelp } from "../modules/helpGuidance.js";
 import {
   clearCredentials,
   getStoredCredentials,
@@ -101,6 +102,17 @@ export async function renderSettings(container) {
             <option value="medium" ${cardSize === "medium" ? "selected" : ""}>${t("settings.appearance.cardSizeMedium")}</option>
             <option value="large" ${cardSize === "large" ? "selected" : ""}>${t("settings.appearance.cardSizeLarge")}</option>
           </select>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>Help Guidance</h3>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">Reset help guidance</span>
+            <span class="setting-description">Show the first-use tips again next time you use each tool.</span>
+          </div>
+          <button id="reset-help-guidance-btn" class="btn-secondary">Reset</button>
         </div>
       </div>
 
@@ -813,6 +825,20 @@ export async function renderSettings(container) {
       console.error("[Settings] Failed to reset master password:", error);
       await showAlertDialog("Error", `Failed to reset master password: ${error.message}`);
     }
+  });
+
+  // Reset help guidance listener
+  const resetHelpBtn = container.querySelector("#reset-help-guidance-btn");
+  resetHelpBtn?.addEventListener("click", async () => {
+    const confirmed = await showConfirmDialog(
+      "Reset help guidance",
+      "This will show the first-use tips again the next time you use each tool.",
+      "Reset",
+      "btn-secondary",
+    );
+    if (!confirmed) return;
+    resetAllHelp();
+    await renderSettings(container);
   });
 
   // Purge local data listener (available regardless of auth status)

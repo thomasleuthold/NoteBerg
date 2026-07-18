@@ -6,7 +6,32 @@
  */
 
 import { syncOnNoteClose } from "../../modules/autoSync.js";
+import { HELP_IDS } from "../../modules/helpGuidance.js";
+import { startHelpTour } from "../HelpOverlay.js";
+import { HELP_CONTENT } from "../helpContent.js";
 import { NoteCanvas } from "./NoteCanvas.js";
+
+// First-note tour: a 7-step map of the toolbar, in left-to-right order. Each
+// step anchors to a toolbar button by its stable DOM id (queried at tour start,
+// after the toolbar has rendered).
+const FIRST_NOTE_STEPS = [
+  { toolId: "pan", content: HELP_CONTENT.pan },
+  { toolId: "draw", content: HELP_CONTENT.draw },
+  { toolId: "text", content: HELP_CONTENT.text },
+  { toolId: "eraser", content: HELP_CONTENT.eraser },
+  { toolId: "lasso", content: HELP_CONTENT.lasso },
+  { toolId: "options", content: HELP_CONTENT.options },
+  { toolId: "insert", content: HELP_CONTENT.insert },
+];
+
+function startFirstNoteTour() {
+  const steps = FIRST_NOTE_STEPS.map(({ toolId, content }) => ({
+    target: document.getElementById(`nc-tool-${toolId}`),
+    title: content.title,
+    body: content.body,
+  }));
+  startHelpTour(HELP_IDS.FIRST_NOTE, steps);
+}
 
 // Module-level instance
 let noteCanvasInstance = null;
@@ -55,6 +80,11 @@ export function initNoteCanvasComponent() {
     try {
       noteCanvasInstance = new NoteCanvas(container);
       await noteCanvasInstance.load(noteId, { searchQuery, taskId });
+      // First-ever note open on this device: show the 7-step toolbar tour.
+      // No-op after the first time (flag persisted in localStorage). The second
+      // load() call site below is a live re-render of an already-open note, not
+      // a first open, so it is intentionally not hooked.
+      startFirstNoteTour();
     } catch (error) {
       console.error("[NoteCanvas] Failed to initialize:", error);
 

@@ -27,12 +27,26 @@ import {
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
+// Maps a canvas mode to its first-use help ID + copy. Only user-initiated mode
+// changes (via the toolbar's onModeChange callback) trigger these — the stylus
+// auto-switch-to-draw calls _setMode() directly and correctly bypasses them.
+const MODE_HELP = {
+  pan: { id: HELP_IDS.MODE_PAN, content: HELP_CONTENT.pan },
+  draw: { id: HELP_IDS.MODE_DRAW, content: HELP_CONTENT.draw },
+  text: { id: HELP_IDS.MODE_TEXT, content: HELP_CONTENT.text },
+  eraser: { id: HELP_IDS.MODE_ERASER, content: HELP_CONTENT.eraser },
+  lasso: { id: HELP_IDS.MODE_LASSO, content: HELP_CONTENT.lasso },
+};
+
+import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import {
   drawStroke as sharedDrawStroke,
   getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
+import { startHelpTour } from "../HelpOverlay.js";
+import { HELP_CONTENT } from "../helpContent.js";
 import { showAlertDialog, showConfirmDialog, showProgressDialog } from "../modals.js";
 import { AppClipboard } from "./AppClipboard.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
@@ -644,6 +658,7 @@ export class NoteCanvas {
       toolbarContainer,
       (mode) => {
         this._setMode(mode);
+        this._maybeShowModeHelp(mode);
       },
       {
         penPresets: this.penPresets,
@@ -810,6 +825,17 @@ export class NoteCanvas {
       // Record undo command for inserted images
       if (insertedItems.length > 0) {
         this.historyManager?.push(new InsertMediaCommand(insertedItems));
+        // First-ever image insert on this device: explain how to re-select an
+        // image afterward. Images are canvas-drawn (no per-image DOM node), so
+        // the callout anchors to the Insert button — where images come from —
+        // and falls back to centered if it isn't in the DOM.
+        startHelpTour(HELP_IDS.FIRST_IMAGE, [
+          {
+            target: document.getElementById("nc-tool-insert"),
+            title: HELP_CONTENT.firstImage.title,
+            body: HELP_CONTENT.firstImage.body,
+          },
+        ]);
       }
     } catch (error) {
       console.error("[NoteCanvas] Failed to insert image:", error);
@@ -1873,6 +1899,18 @@ export class NoteCanvas {
    * Set the current tool mode
    * @param {string} newMode - 'pan' | 'draw' | 'eraser'
    */
+  /**
+   * Show the first-use help callout for a mode the user just selected via the
+   * toolbar. No-op for modes without help, or if already seen (handled inside
+   * startHelpTour). The target button is resolved fresh from the live DOM.
+   */
+  _maybeShowModeHelp(mode) {
+    const help = MODE_HELP[mode];
+    if (!help) return;
+    const target = document.getElementById(`nc-tool-${mode}`);
+    startHelpTour(help.id, [{ target, title: help.content.title, body: help.content.body }]);
+  }
+
   _setMode(newMode) {
     this.mode = newMode;
     this.autoSwitchedToDrawMode = false;

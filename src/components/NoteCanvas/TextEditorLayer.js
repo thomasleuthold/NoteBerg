@@ -24,8 +24,11 @@ import "trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js";
 import "trumbowyg/dist/plugins/table/trumbowyg.table.js";
 import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
 
+import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { getIcon } from "../../utils/icons.js";
 import { sanitizeNoteHtml } from "../../utils/sanitizeHtml.js";
+import { startHelpTour } from "../HelpOverlay.js";
+import { HELP_CONTENT } from "../helpContent.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
 import { SelectionFloatingBar } from "./SelectionFloatingBar.js";
@@ -330,15 +333,26 @@ export class TextEditorLayer {
       this._debounceHistoryPush();
     });
 
-    // Listen for Mark as Task event from plugin
-    this.$editor.on("tbwmarkastask", () => {
+    // Mark as Task — the jQuery plugin event and the native DOM fallback both
+    // funnel through one handler so the first-use help fires exactly once.
+    const onMarkAsTask = () => {
       this.textTaskManager?.toggleTaskOnSelection(this.$editor.data("trumbowyg"));
-    });
+      // First-ever "Mark as Task" use on this device. Anchors to the toolbar
+      // button (queryable now that the action has fired), centered otherwise.
+      startHelpTour(HELP_IDS.MARK_AS_TASK, [
+        {
+          target: document.querySelector(".trumbowyg-markAsTask-button"),
+          title: HELP_CONTENT.markAsTask.title,
+          body: HELP_CONTENT.markAsTask.body,
+        },
+      ]);
+    };
+
+    // Listen for Mark as Task event from plugin
+    this.$editor.on("tbwmarkastask", onMarkAsTask);
 
     // Native event listener fallback
-    this.editorDiv.addEventListener("tbwmarkastask", () => {
-      this.textTaskManager?.toggleTaskOnSelection(this.$editor.data("trumbowyg"));
-    });
+    this.editorDiv.addEventListener("tbwmarkastask", onMarkAsTask);
 
     // Track content height changes with ResizeObserver.
     // When the text editor grows (e.g. user adds lines), we notify NoteCanvas
