@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "NoteBerg",
-  "version": "0.5.35",
+  "version": "0.5.36",
   "identifier": "eu.noteberg.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -48,11 +48,11 @@
       "wix": {
         "bannerPath": "icons/msi2.bmp",
         "dialogImagePath": "icons/msi1.bmp",
-        "version": "0.5.35.1"
+        "version": "0.5.36.1"
       }
     },
     "android": {
-      "versionCode": 535001
+      "versionCode": 536001
     }
   }
 }
