@@ -27,18 +27,6 @@ import {
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
-// Maps a canvas mode to its first-use help ID (the copy key matches the mode
-// name). Only user-initiated mode changes (via the toolbar's onModeChange
-// callback) trigger these — the stylus auto-switch-to-draw calls _setMode()
-// directly and correctly bypasses them.
-const MODE_HELP_IDS = {
-  pan: HELP_IDS.MODE_PAN,
-  draw: HELP_IDS.MODE_DRAW,
-  text: HELP_IDS.MODE_TEXT,
-  eraser: HELP_IDS.MODE_ERASER,
-  lasso: HELP_IDS.MODE_LASSO,
-};
-
 import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
@@ -659,7 +647,6 @@ export class NoteCanvas {
       toolbarContainer,
       (mode) => {
         this._setMode(mode);
-        this._maybeShowModeHelp(mode);
       },
       {
         penPresets: this.penPresets,
@@ -828,19 +815,13 @@ export class NoteCanvas {
       if (insertedItems.length > 0) {
         this.historyManager?.push(new InsertMediaCommand(insertedItems));
         // First-ever image insert on this device: explain how to re-select an
-        // image afterward. Images are canvas-drawn (no per-image DOM node), so
-        // the callout anchors to the Insert button — where images come from —
-        // and falls back to centered if it isn't in the DOM.
+        // image afterward. Images are canvas-drawn (no per-image DOM node to
+        // point an arrow at), so this callout is shown centered with no arrow
+        // (target: null).
         const firstImage = getHelpContent().firstImage;
         startHelpTour(
           HELP_IDS.FIRST_IMAGE,
-          [
-            {
-              target: document.getElementById("nc-tool-insert"),
-              title: firstImage.title,
-              body: firstImage.body,
-            },
-          ],
+          [{ target: null, title: firstImage.title, body: firstImage.body }],
           getHelpLabels(),
         );
       }
@@ -1906,19 +1887,6 @@ export class NoteCanvas {
    * Set the current tool mode
    * @param {string} newMode - 'pan' | 'draw' | 'eraser'
    */
-  /**
-   * Show the first-use help callout for a mode the user just selected via the
-   * toolbar. No-op for modes without help, or if already seen (handled inside
-   * startHelpTour). The target button is resolved fresh from the live DOM.
-   */
-  _maybeShowModeHelp(mode) {
-    const helpId = MODE_HELP_IDS[mode];
-    if (!helpId) return;
-    const content = getHelpContent()[mode];
-    const target = document.getElementById(`nc-tool-${mode}`);
-    startHelpTour(helpId, [{ target, title: content.title, body: content.body }], getHelpLabels());
-  }
-
   _setMode(newMode) {
     this.mode = newMode;
     this.autoSwitchedToDrawMode = false;

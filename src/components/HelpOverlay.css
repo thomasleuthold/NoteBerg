@@ -32,7 +32,7 @@
   position: absolute;
   pointer-events: auto;
   box-sizing: border-box;
-  width: min(320px, calc(100vw - 24px));
+  width: min(400px, calc(100vw - 24px));
   background-color: var(--bg-primary);
   color: var(--text-primary);
   border: 1px solid var(--border-primary);

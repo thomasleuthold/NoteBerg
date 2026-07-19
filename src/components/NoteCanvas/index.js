@@ -11,18 +11,22 @@ import { startHelpTour } from "../HelpOverlay.js";
 import { getHelpContent, getHelpLabels } from "../helpContent.js";
 import { NoteCanvas } from "./NoteCanvas.js";
 
-// First-note tour: a 7-step map of the toolbar, in left-to-right order. Each
-// step anchors to a toolbar button by its stable DOM id (queried at tour start,
-// after the toolbar has rendered).
+// First-note tour: a centered welcome step (auto-save/sync intro, no arrow),
+// then a map of the toolbar in left-to-right order. The toolbar steps anchor to
+// buttons by their stable DOM id (queried at tour start, after the toolbar has
+// rendered); the welcome step has no target so it shows centered.
 const FIRST_NOTE_TOOL_IDS = ["pan", "text", "draw", "eraser", "lasso", "options", "insert"];
 
 function startFirstNoteTour() {
   const content = getHelpContent();
-  const steps = FIRST_NOTE_TOOL_IDS.map((toolId) => ({
-    target: document.getElementById(`nc-tool-${toolId}`),
-    title: content[toolId].title,
-    body: content[toolId].body,
-  }));
+  const steps = [
+    { target: null, title: content.welcome.title, body: content.welcome.body },
+    ...FIRST_NOTE_TOOL_IDS.map((toolId) => ({
+      target: document.getElementById(`nc-tool-${toolId}`),
+      title: content[toolId].title,
+      body: content[toolId].body,
+    })),
+  ];
   startHelpTour(HELP_IDS.FIRST_NOTE, steps, getHelpLabels());
 }
 

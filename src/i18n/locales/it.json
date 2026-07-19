@@ -533,37 +533,41 @@
     "skip": "Salta",
     "dismiss": "Ho capito",
     "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Benvenuto",
+      "body": "Le modifiche vengono salvate automaticamente mentre lavori — non c'è un pulsante di salvataggio. Alla chiusura di una nota viene anche sincronizzata con Nextcloud, se la sincronizzazione è configurata."
+    },
     "pan": {
       "title": "Sposta",
-      "body": "Trascina con il dito per spostare e pizzica per lo zoom. Se scrivi con il pennino, l'area passa a Disegna automaticamente e il dito resta sullo spostamento."
+      "body": "Trascina con il dito per spostare e pizzica per lo zoom. Se scrivi con il pennino, la modalità passa a Disegna automaticamente e il dito resta sullo spostamento."
     },
     "text": {
       "title": "Testo",
-      "body": "Scrivi testo formattato ovunque sulla pagina — titoli, grassetto, elenchi e link sono supportati. Seleziona il testo e usa ✓ Attività per creare un'attività da spuntare."
+      "body": "Scrivi testo formattato ovunque — titoli, formattazione, elenchi, tabelle e link sono supportati. Seleziona il testo e usa il pulsante ✓ per creare un'attività da spuntare."
     },
     "draw": {
       "title": "Disegna",
-      "body": "Tocca di nuovo Disegna per scegliere penna, pennarello o evidenziatore e cambiare colore o spessore. Per testo formattato e ricercabile usa la modalità Testo."
+      "body": "Tocca Disegna per scegliere penna o evidenziatore e cambiare colore o spessore. Il riconoscimento della scrittura è disponibile solo su Windows."
     },
     "eraser": {
       "title": "Gomma",
-      "body": "Cancella tratti interi, oppure passa alla gomma parziale per cancellare solo la parte toccata. Puoi anche limitare la cancellazione ai soli evidenziatori."
+      "body": "Cancella tratti interi, oppure passa alla gomma parziale per cancellare solo la parte toccata. Puoi anche limitare la cancellazione agli evidenziatori."
     },
     "lasso": {
       "title": "Selezione lazo",
-      "body": "Traccia un cappio attorno ai tratti per selezionarli, poi trascina per spostare o ridimensionare. Con la selezione, apri il menu ⋮ e scegli Segna come attività."
+      "body": "Cerchia scrittura ed evidenziatori con il lazo per selezionare, poi trascina per spostare o ridimensionare. Segna come attività è anche nel menu ⋮."
     },
     "options": {
       "title": "Altre opzioni",
-      "body": "Apri il menu della nota per esportazione, impostazioni pagina e altro. Tutto viene salvato automaticamente — non c'è un pulsante di salvataggio."
+      "body": "Apri il menu della nota per esportazione, impostazioni pagina e altro."
     },
     "insert": {
       "title": "Inserisci",
-      "body": "Aggiungi immagini, un PDF o una foto qui. Per selezionare un'immagine dopo, tieni premuto (tocco) o usa il menu ⋮ e Seleziona (mouse), poi trascina per spostare o ridimensionare."
+      "body": "Aggiungi immagini, un PDF o una foto qui."
     },
     "firstImage": {
       "title": "Lavorare con le immagini",
-      "body": "Per selezionare un'immagine dopo, tieni premuto (tocco) o usa il menu ⋮ e Seleziona (mouse). Una volta selezionata, trascina per spostare o ridimensionare."
+      "body": "Seleziona un'immagine tenendola premuta (dito/mouse) o dal menu ⋮ → Seleziona, poi trascina per spostare o ridimensionare. Altre opzioni nel menu ⋮."
     },
     "markAsTask": {
       "title": "Attività",

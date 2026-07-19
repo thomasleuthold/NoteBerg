@@ -533,37 +533,41 @@
     "skip": "Skip",
     "dismiss": "Got it",
     "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Welcome",
+      "body": "Your changes are saved automatically as you work — there's no save button. When you close a note, it also syncs to Nextcloud if you've set up sync."
+    },
     "pan": {
       "title": "Pan & zoom",
-      "body": "Drag with touch to pan and pinch to zoom. If you start writing with a stylus, the canvas switches to Draw automatically while touch stays locked to panning."
+      "body": "Drag with touch to pan and pinch to zoom. If you start writing with a stylus, the mode switches to Draw automatically while finger touch stays on panning."
     },
     "text": {
       "title": "Text",
-      "body": "Type formatted text anywhere on the page — headings, bold, lists, and links are all supported. Select text and use the ✓ Task button to turn it into a checkable task."
+      "body": "Type formatted text anywhere on the page — headings, formatting, lists, tables, and links are supported. Select text and use the ✓ button to turn it into a checkable task."
     },
     "draw": {
       "title": "Draw",
-      "body": "Tap Draw again to pick a pen, marker, or highlighter and change color or width. For formatted, searchable text, use Text mode instead."
+      "body": "Tap Draw to pick a pen or highlighter and change color or width. Handwriting recognition is only available on Windows."
     },
     "eraser": {
       "title": "Eraser",
-      "body": "Erase whole strokes, or switch to the part eraser to rub out only the piece you touch. You can also limit erasing to highlighter strokes only."
+      "body": "Erase whole strokes, or switch to the part eraser to rub out only the piece you touch. You can also limit erasing to highlighters."
     },
     "lasso": {
       "title": "Lasso select",
-      "body": "Draw a loop around strokes to select them, then drag to move or resize. With strokes selected, open the ⋮ menu and choose Mark as Task to turn them into a checkable task."
+      "body": "Circle handwriting and highlighter with the lasso to select, then drag to move or resize. Mark as Task is also available from the ⋮ menu."
     },
     "options": {
       "title": "More options",
-      "body": "Open the note menu for export, page settings, and other actions. Your work saves automatically — there's no save button."
+      "body": "Open the note menu for export, page settings, and more."
     },
     "insert": {
       "title": "Insert",
-      "body": "Add images, a PDF, or a camera photo here. To select an image afterward, long-press it (touch) or open its ⋮ menu and choose Select (mouse), then drag to move or resize."
+      "body": "Add images, a PDF, or a camera photo here."
     },
     "firstImage": {
       "title": "Working with images",
-      "body": "To select an image later, long-press it (touch), or open its ⋮ menu and choose Select (mouse). Once selected, drag to move or resize it."
+      "body": "Select an image by long-pressing it (finger/mouse) or via its ⋮ menu → Select, then drag to move or resize. More options are in the ⋮ menu."
     },
     "markAsTask": {
       "title": "Tasks",

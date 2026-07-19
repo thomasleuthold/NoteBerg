@@ -18,7 +18,7 @@ const SEEN_PREFIX = "noteberg_help_seen_";
 const STEP_PREFIX = "noteberg_help_step_";
 
 export const HELP_IDS = Object.freeze({
-  FIRST_NOTE: "first_note", // multi-step tour (7 steps)
+  FIRST_NOTE: "first_note", // multi-step tour (welcome + 7 toolbar steps)
   MODE_PAN: "mode_pan",
   MODE_DRAW: "mode_draw",
   MODE_TEXT: "mode_text",

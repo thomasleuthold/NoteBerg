@@ -533,17 +533,21 @@
     "skip": "Ignorer",
     "dismiss": "Compris",
     "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Bienvenue",
+      "body": "Vos modifications sont enregistrées automatiquement — pas de bouton d'enregistrement. À la fermeture d'une note, elle est aussi synchronisée avec Nextcloud si la synchro est configurée."
+    },
     "pan": {
       "title": "Déplacer",
-      "body": "Glissez au doigt pour déplacer, pincez pour zoomer. Si vous écrivez au stylet, la zone passe en Dessin automatiquement et le doigt reste sur le déplacement."
+      "body": "Glissez au doigt pour déplacer, pincez pour zoomer. Si vous écrivez au stylet, le mode passe en Dessin automatiquement et le doigt reste sur le déplacement."
     },
     "text": {
       "title": "Texte",
-      "body": "Saisissez du texte formaté partout sur la page — titres, gras, listes et liens sont pris en charge. Sélectionnez du texte et utilisez ✓ Tâche pour en faire une tâche à cocher."
+      "body": "Saisissez du texte formaté partout — titres, mise en forme, listes, tableaux et liens sont pris en charge. Sélectionnez du texte et utilisez le bouton ✓ pour en faire une tâche à cocher."
     },
     "draw": {
       "title": "Dessiner",
-      "body": "Touchez de nouveau Dessiner pour choisir un stylo, un marqueur ou un surligneur et changer la couleur ou l'épaisseur. Pour du texte recherchable, utilisez le mode Texte."
+      "body": "Touchez Dessiner pour choisir un stylo ou un surligneur et changer la couleur ou l'épaisseur. La reconnaissance d'écriture n'est disponible que sous Windows."
     },
     "eraser": {
       "title": "Gomme",
@@ -551,19 +555,19 @@
     },
     "lasso": {
       "title": "Lasso",
-      "body": "Tracez une boucle autour des traits pour les sélectionner, puis glissez pour déplacer ou redimensionner. Une fois sélectionnés, ouvrez le menu ⋮ et choisissez Marquer comme tâche."
+      "body": "Entourez l'écriture et les surligneurs avec le lasso pour sélectionner, puis glissez pour déplacer ou redimensionner. Marquer comme tâche est aussi dans le menu ⋮."
     },
     "options": {
       "title": "Plus d'options",
-      "body": "Ouvrez le menu de la note pour l'export, la mise en page et plus. Tout est enregistré automatiquement — pas de bouton d'enregistrement."
+      "body": "Ouvrez le menu de la note pour l'export, la mise en page et plus."
     },
     "insert": {
       "title": "Insérer",
-      "body": "Ajoutez des images, un PDF ou une photo ici. Pour sélectionner une image, appui long (tactile) ou menu ⋮ puis Sélectionner (souris), puis glissez pour déplacer ou redimensionner."
+      "body": "Ajoutez des images, un PDF ou une photo ici."
     },
     "firstImage": {
       "title": "Gérer les images",
-      "body": "Pour sélectionner une image plus tard, appui long (tactile) ou menu ⋮ puis Sélectionner (souris). Une fois sélectionnée, glissez pour la déplacer ou la redimensionner."
+      "body": "Sélectionnez une image par appui long (doigt/souris) ou via son menu ⋮ → Sélectionner, puis glissez pour déplacer ou redimensionner. Plus d'options dans le menu ⋮."
     },
     "markAsTask": {
       "title": "Tâches",

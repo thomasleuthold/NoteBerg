@@ -13,6 +13,7 @@
 import { t } from "../i18n/index.js";
 
 const KEYS = [
+  "welcome",
   "pan",
   "text",
   "draw",

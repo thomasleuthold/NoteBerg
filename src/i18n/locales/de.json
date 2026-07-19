@@ -533,37 +533,41 @@
     "skip": "Überspringen",
     "dismiss": "Verstanden",
     "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Willkommen",
+      "body": "Deine Änderungen werden automatisch gespeichert — es gibt keine Speichern-Taste. Beim Schließen einer Notiz wird sie zudem mit Nextcloud synchronisiert, falls Sync eingerichtet ist."
+    },
     "pan": {
       "title": "Verschieben",
-      "body": "Mit dem Finger verschieben, mit zwei Fingern zoomen. Beim Schreiben mit dem Stift wechselt die Fläche automatisch zu „Zeichnen“, der Finger bleibt beim Verschieben."
+      "body": "Mit dem Finger verschieben, mit zwei Fingern zoomen. Beim Schreiben mit dem Stift wechselt der Modus automatisch zu „Zeichnen“, der Finger-Touch bleibt beim Verschieben."
     },
     "text": {
       "title": "Text",
-      "body": "Formatierten Text überall auf der Seite eingeben — Überschriften, Fett, Listen und Links werden unterstützt. Text markieren und mit ✓ Aufgabe in eine abhakbare Aufgabe umwandeln."
+      "body": "Formatierten Text überall auf der Seite eingeben — Überschriften, Formatierung, Listen, Tabellen und Links werden unterstützt. Text markieren und mit ✓-Button in eine abhakbare Aufgabe umwandeln."
     },
     "draw": {
       "title": "Zeichnen",
-      "body": "Erneut auf „Zeichnen“ tippen, um Stift, Marker oder Textmarker sowie Farbe und Breite zu wählen. Für formatierten, durchsuchbaren Text den Textmodus nutzen."
+      "body": "Auf „Zeichnen“ tippen, um Stift oder Textmarker sowie Farbe und Breite zu wählen. Handschrifterkennung ist nur unter Windows verfügbar."
     },
     "eraser": {
       "title": "Radierer",
-      "body": "Ganze Striche löschen oder mit dem Teilradierer nur die berührte Stelle. Das Löschen lässt sich auch auf Textmarker-Striche beschränken."
+      "body": "Ganze Striche löschen oder mit dem Teilradierer nur die berührte Stelle. Das Löschen lässt sich auch auf Textmarker beschränken."
     },
     "lasso": {
       "title": "Lasso-Auswahl",
-      "body": "Eine Schlinge um Striche ziehen, um sie auszuwählen, dann verschieben oder skalieren. Bei Auswahl über das ⋮-Menü „Als Aufgabe markieren“ wählen."
+      "body": "Handschrift und Textmarker mit dem Lasso umkreisen um auszuwählen, dann verschieben oder skalieren. Über das ⋮-Menü auch „Als Aufgabe markieren“ verfügbar."
     },
     "options": {
       "title": "Weitere Optionen",
-      "body": "Das Notizmenü für Export, Seiteneinstellungen und mehr öffnen. Alles wird automatisch gespeichert — es gibt keine Speichern-Taste."
+      "body": "Das Notizmenü für Export, Seiteneinstellungen und mehr öffnen."
     },
     "insert": {
       "title": "Einfügen",
-      "body": "Bilder, ein PDF oder ein Kamerafoto hier hinzufügen. Bild danach per langem Tippen (Finger) oder über das ⋮-Menü mit „Auswählen“ (Maus) markieren, dann verschieben oder skalieren."
+      "body": "Bilder, ein PDF oder ein Kamerafoto hier hinzufügen."
     },
     "firstImage": {
       "title": "Bilder bearbeiten",
-      "body": "Ein Bild später per langem Tippen (Finger) oder über das ⋮-Menü mit „Auswählen“ (Maus) markieren. Danach verschieben oder skalieren."
+      "body": "Ein Bild per langem Tippen (Finger/Maus) oder über das ⋮-Menü mit „Auswählen“ markieren. Danach verschieben oder skalieren. Im ⋮-Menü stehen weitere Optionen bereit."
     },
     "markAsTask": {
       "title": "Aufgaben",

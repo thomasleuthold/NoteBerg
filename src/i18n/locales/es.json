@@ -533,17 +533,21 @@
     "skip": "Omitir",
     "dismiss": "Entendido",
     "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Bienvenido",
+      "body": "Tus cambios se guardan automáticamente mientras trabajas — no hay botón de guardar. Al cerrar una nota, también se sincroniza con Nextcloud si tienes la sincronización configurada."
+    },
     "pan": {
       "title": "Desplazar",
-      "body": "Arrastra con el dedo para desplazar y pellizca para ampliar. Si escribes con lápiz, el lienzo cambia a Dibujar automáticamente y el dedo sigue desplazando."
+      "body": "Arrastra con el dedo para desplazar y pellizca para ampliar. Si escribes con lápiz, el modo cambia a Dibujar automáticamente y el dedo sigue desplazando."
     },
     "text": {
       "title": "Texto",
-      "body": "Escribe texto con formato en cualquier parte de la página — títulos, negrita, listas y enlaces. Selecciona texto y usa ✓ Tarea para convertirlo en una tarea marcable."
+      "body": "Escribe texto con formato en cualquier parte — títulos, formato, listas, tablas y enlaces. Selecciona texto y usa el botón ✓ para convertirlo en una tarea marcable."
     },
     "draw": {
       "title": "Dibujar",
-      "body": "Toca Dibujar de nuevo para elegir pluma, marcador o resaltador y cambiar color o grosor. Para texto con formato y buscable, usa el modo Texto."
+      "body": "Toca Dibujar para elegir pluma o resaltador y cambiar color o grosor. El reconocimiento de escritura solo está disponible en Windows."
     },
     "eraser": {
       "title": "Borrador",
@@ -551,19 +555,19 @@
     },
     "lasso": {
       "title": "Lazo",
-      "body": "Traza un lazo alrededor de los trazos para seleccionarlos y arrastra para mover o redimensionar. Con la selección, abre el menú ⋮ y elige Marcar como tarea."
+      "body": "Rodea la escritura y los resaltadores con el lazo para seleccionar, luego arrastra para mover o redimensionar. Marcar como tarea también está en el menú ⋮."
     },
     "options": {
       "title": "Más opciones",
-      "body": "Abre el menú de la nota para exportar, ajustes de página y más. Todo se guarda automáticamente — no hay botón de guardar."
+      "body": "Abre el menú de la nota para exportar, ajustes de página y más."
     },
     "insert": {
       "title": "Insertar",
-      "body": "Añade imágenes, un PDF o una foto aquí. Para seleccionar una imagen después, mantén pulsado (táctil) o usa su menú ⋮ y Seleccionar (ratón), luego arrastra para mover o redimensionar."
+      "body": "Añade imágenes, un PDF o una foto aquí."
     },
     "firstImage": {
       "title": "Trabajar con imágenes",
-      "body": "Para seleccionar una imagen más tarde, mantén pulsado (táctil) o usa su menú ⋮ y Seleccionar (ratón). Ya seleccionada, arrastra para mover o redimensionar."
+      "body": "Selecciona una imagen manteniéndola pulsada (dedo/ratón) o con su menú ⋮ → Seleccionar, luego arrastra para mover o redimensionar. Más opciones en el menú ⋮."
     },
     "markAsTask": {
       "title": "Tareas",
