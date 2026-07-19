@@ -1774,8 +1774,13 @@ export class NoteCanvas {
    * Handle text content change from the editor
    * @private
    * @param {string} html - HTML content
+   * @param {Object} [options]
+   * @param {boolean} [options.skipTaskCleanup] - Skip orphaned-task cleanup.
+   *   Used by undo/redo: a text undo temporarily removes task spans from the
+   *   DOM while their records must survive so redo can restore a consistent
+   *   state (the paired MarkTaskCommand manages the records).
    */
-  _onTextContentChange(html) {
+  _onTextContentChange(html, { skipTaskCleanup = false } = {}) {
     this.noteData.content = html;
     this.textChanged = true;
 
@@ -1805,7 +1810,7 @@ export class NoteCanvas {
     }
 
     // Clean up orphaned text tasks (spans removed by editing)
-    if (this.textEditorLayer?.cleanupOrphanedTextTasks(this.noteData.tasks)) {
+    if (!skipTaskCleanup && this.textEditorLayer?.cleanupOrphanedTextTasks(this.noteData.tasks)) {
       this._saveTasks();
       this._updateNavigatorSubjects();
     }

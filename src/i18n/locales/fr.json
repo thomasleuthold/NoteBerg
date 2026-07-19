@@ -555,7 +555,7 @@
     },
     "lasso": {
       "title": "Lasso",
-      "body": "Entourez l'écriture et les surligneurs avec le lasso pour sélectionner, puis glissez pour déplacer ou redimensionner. Marquer comme tâche est aussi dans le menu ⋮."
+      "body": "Entourez l'écriture et les surligneurs avec le lasso pour sélectionner, puis glissez pour déplacer ou redimensionner. Marquer comme tâche est aussi dans le menu ⋮ de la sélection."
     },
     "options": {
       "title": "Plus d'options",

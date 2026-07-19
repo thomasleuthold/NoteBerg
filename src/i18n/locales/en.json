@@ -555,7 +555,7 @@
     },
     "lasso": {
       "title": "Lasso select",
-      "body": "Circle handwriting and highlighter with the lasso to select, then drag to move or resize. Mark as Task is also available from the ⋮ menu."
+      "body": "Circle handwriting and highlighter with the lasso to select, then drag to move or resize. Mark as Task is also available from the ⋮ menu of the selection."
     },
     "options": {
       "title": "More options",

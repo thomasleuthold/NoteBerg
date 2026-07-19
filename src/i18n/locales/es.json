@@ -555,7 +555,7 @@
     },
     "lasso": {
       "title": "Lazo",
-      "body": "Rodea la escritura y los resaltadores con el lazo para seleccionar, luego arrastra para mover o redimensionar. Marcar como tarea también está en el menú ⋮."
+      "body": "Rodea la escritura y los resaltadores con el lazo para seleccionar, luego arrastra para mover o redimensionar. Marcar como tarea también está en el menú ⋮ de la selección."
     },
     "options": {
       "title": "Más opciones",

@@ -555,7 +555,7 @@
     },
     "lasso": {
       "title": "Lasso-Auswahl",
-      "body": "Handschrift und Textmarker mit dem Lasso umkreisen um auszuwählen, dann verschieben oder skalieren. Über das ⋮-Menü auch „Als Aufgabe markieren“ verfügbar."
+      "body": "Handschrift und Textmarker mit dem Lasso umkreisen um auszuwählen, dann verschieben oder skalieren. Über das ⋮-Menü der Auswahl auch „Als Aufgabe markieren“ verfügbar."
     },
     "options": {
       "title": "Weitere Optionen",
