@@ -115,6 +115,9 @@ async function decryptNoteLocally(note) {
       ? await decryptObject(note.recordings, key)
       : (note.recordings ?? []),
     tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
+    deletedTasks: isBlob(note.deletedTasks)
+      ? await decryptObject(note.deletedTasks, key)
+      : note.deletedTasks || [],
     recognition: isBlob(note.recognition)
       ? await decryptObject(note.recognition, key)
       : note.recognition,
@@ -1835,11 +1838,11 @@ export function attemptMerge(local, remote) {
   addRecordings(localIsNewer ? localRecordings : remoteRecordings);
 
   // Merge tasks by ID, newer modified timestamp wins for individual tasks
-  const localTasks = local.tasks || [];
-  const remoteTasks = remote.tasks || [];
+  const localTasks = Array.isArray(local.tasks) ? local.tasks : [];
+  const remoteTasks = Array.isArray(remote.tasks) ? remote.tasks : [];
   const allDeletedTaskIds = new Set([
-    ...(local.deletedTasks || []),
-    ...(remote.deletedTasks || []),
+    ...(Array.isArray(local.deletedTasks) ? local.deletedTasks : []),
+    ...(Array.isArray(remote.deletedTasks) ? remote.deletedTasks : []),
   ]);
   const taskMap = new Map();
 

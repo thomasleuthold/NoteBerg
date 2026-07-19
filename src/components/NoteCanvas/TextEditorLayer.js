@@ -32,13 +32,16 @@ import { getHelpContent, getHelpLabels } from "../helpContent.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
 import { SelectionFloatingBar } from "./SelectionFloatingBar.js";
-import { TextTaskManager } from "./TextTaskManager.js";
+import { normalizeBareLines, TextTaskManager } from "./TextTaskManager.js";
 
 // Custom indent/outdent plugin — uses margin-left instead of the deprecated
 // execCommand('indent') which is removed in modern Chromium.
 const INDENT_STEP = 8; // px per indent level (in content-space, zoom-independent)
 
 function _getBlockElements(trumbowyg) {
+  // Bare inline lines at the editor root (first typed line, Chromium's
+  // list→text conversion) have no block element to indent — wrap them first.
+  normalizeBareLines(trumbowyg.$ed[0]);
   trumbowyg.saveRange();
   const range = trumbowyg.range;
   if (!range) return [];
