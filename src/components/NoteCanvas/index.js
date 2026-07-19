@@ -8,29 +8,22 @@
 import { syncOnNoteClose } from "../../modules/autoSync.js";
 import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { startHelpTour } from "../HelpOverlay.js";
-import { HELP_CONTENT } from "../helpContent.js";
+import { getHelpContent, getHelpLabels } from "../helpContent.js";
 import { NoteCanvas } from "./NoteCanvas.js";
 
 // First-note tour: a 7-step map of the toolbar, in left-to-right order. Each
 // step anchors to a toolbar button by its stable DOM id (queried at tour start,
 // after the toolbar has rendered).
-const FIRST_NOTE_STEPS = [
-  { toolId: "pan", content: HELP_CONTENT.pan },
-  { toolId: "draw", content: HELP_CONTENT.draw },
-  { toolId: "text", content: HELP_CONTENT.text },
-  { toolId: "eraser", content: HELP_CONTENT.eraser },
-  { toolId: "lasso", content: HELP_CONTENT.lasso },
-  { toolId: "options", content: HELP_CONTENT.options },
-  { toolId: "insert", content: HELP_CONTENT.insert },
-];
+const FIRST_NOTE_TOOL_IDS = ["pan", "text", "draw", "eraser", "lasso", "options", "insert"];
 
 function startFirstNoteTour() {
-  const steps = FIRST_NOTE_STEPS.map(({ toolId, content }) => ({
+  const content = getHelpContent();
+  const steps = FIRST_NOTE_TOOL_IDS.map((toolId) => ({
     target: document.getElementById(`nc-tool-${toolId}`),
-    title: content.title,
-    body: content.body,
+    title: content[toolId].title,
+    body: content[toolId].body,
   }));
-  startHelpTour(HELP_IDS.FIRST_NOTE, steps);
+  startHelpTour(HELP_IDS.FIRST_NOTE, steps, getHelpLabels());
 }
 
 // Module-level instance

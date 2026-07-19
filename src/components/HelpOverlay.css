@@ -108,15 +108,54 @@
   text-decoration: underline;
 }
 
-/* Arrow: a small rotated square anchored between the callout and the target.
-   Positioned/rotated via inline styles from JS. */
+/* Arrow: a large, solid triangular arrowhead that points at the target control.
+   The element is a 26px box; a CSS-border triangle fills it and points in the
+   direction set by the JS (`--up/--down/--left/--right`). Positioned via inline
+   left/top from JS; a drop-shadow keeps it legible over the canvas. */
 .help-overlay__arrow {
   position: absolute;
-  width: 14px;
-  height: 14px;
-  background-color: var(--bg-primary);
-  border-left: 1px solid var(--border-primary);
-  border-top: 1px solid var(--border-primary);
+  width: 26px;
+  height: 26px;
   pointer-events: none;
-  transform: rotate(45deg);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+}
+
+.help-overlay__arrow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 0;
+  height: 0;
+}
+
+/* Points up (callout sits below the target). */
+.help-overlay__arrow--up::after {
+  border-left: 13px solid transparent;
+  border-right: 13px solid transparent;
+  border-bottom: 15px solid var(--bg-primary);
+  top: -4px;
+}
+
+/* Points down (callout sits above the target). */
+.help-overlay__arrow--down::after {
+  border-left: 13px solid transparent;
+  border-right: 13px solid transparent;
+  border-top: 15px solid var(--bg-primary);
+  bottom: -4px;
+}
+
+/* Points left (callout sits to the right of the target). */
+.help-overlay__arrow--left::after {
+  border-top: 13px solid transparent;
+  border-bottom: 13px solid transparent;
+  border-right: 15px solid var(--bg-primary);
+  left: -4px;
+}
+
+/* Points right (callout sits to the left of the target). */
+.help-overlay__arrow--right::after {
+  border-top: 13px solid transparent;
+  border-bottom: 13px solid transparent;
+  border-left: 15px solid var(--bg-primary);
+  right: -4px;
 }

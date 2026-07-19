@@ -1,11 +1,17 @@
 # Help Overlay — Implementation Notes
 
-Status: Phases 0–6 implemented (English strings hardcoded). **Phase 7 (localization) intentionally not started** — to be done once the English copy is final.
+Status: **Phases 0–7 complete** — including localization into all 9 locales.
 
 ## Files added
 - `src/modules/helpGuidance.js` — localStorage-backed seen/step flags. `+ helpGuidance.test.js`.
 - `src/components/HelpOverlay.js` — the tour component (`startHelpTour`, positioning, Next/Back/Skip, ESC). `+ HelpOverlay.css`, `+ HelpOverlay.test.js`.
-- `src/components/helpContent.js` — all tour copy in one place (single-file swap for Phase 7 localization).
+- `src/components/helpContent.js` — `getHelpContent()` / `getHelpLabels()` resolve all copy from i18n (`helpOverlay.*`) at call time.
+
+## Localization (Phase 7)
+- Top-level `helpOverlay` namespace added to all 9 locale files: `next/back/skip/dismiss/progress` + `{pan,text,draw,eraser,lasso,options,insert,firstImage,markAsTask}.{title,body}`.
+- Settings row strings under `settings.help.*` + `settings.sections.help`.
+- `.title` keys are auto-treated as compact by `locales.test.js` (≤2.1× English); `.body` keys fall under the default ≤2.3×. Worst actual ratio across DE/FR/ES/IT/PT is **1.33×** (French peaks at 1.26×), so nothing is near the ceiling.
+- `HelpOverlay.js` keeps hardcoded English fallbacks for its labels as a safety net (used only if a caller omits `getHelpLabels()`).
 
 ## Files touched (hook points)
 - `src/components/settingsMode.js` — "Help Guidance → Reset" section (placed high, right after Appearance) + handler.

@@ -10,6 +10,7 @@
 
 import { t } from "../../i18n/index.js";
 import { getFile, waitForFileUrl } from "../../modules/storage.js";
+import { logger } from "../../utils/logger.js";
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 const _IS_NATIVE = typeof window.__TAURI_INTERNALS__ !== "undefined";
@@ -125,6 +126,13 @@ export class SoundDialog {
     } else if (err?.name === "NotAllowedError") {
       msg = t("soundDialog.errorPermissionDenied");
     }
+
+    // The user-facing message is deliberately generic; record the raw error so
+    // it is visible in the debug logs for diagnosing recording failures.
+    logger.error("SoundDialog", "Recording failed to start", {
+      name: err?.name,
+      message: err?.message ?? String(err),
+    });
 
     if (!this._open) this._toggle();
 

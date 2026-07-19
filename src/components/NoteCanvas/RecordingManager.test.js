@@ -406,12 +406,26 @@ describe("native recording (Android/Tauri)", () => {
     expect(rm.isRecording()).toBe(false);
   });
 
-  it("does not tag an unrelated native failure as NotAllowedError", async () => {
+  // A no-input-device error (e.g. a machine without a microphone, or an RDP
+  // session without forwarded audio) must surface as NotFoundError so the UI
+  // shows the "no microphone found" message instead of the generic failure.
+  it("maps a native no-input-device rejection to NotFoundError", async () => {
+    const RecordingManager = await loadNativeManager();
+    invokeMock.mockRejectedValue(new Error("No audio input device found"));
+    const rm = new RecordingManager();
+
+    await expect(rm.startRecording()).rejects.toMatchObject({ name: "NotFoundError" });
+    expect(rm.isRecording()).toBe(false);
+  });
+
+  it("does not tag an unrelated native failure as a known error name", async () => {
     const RecordingManager = await loadNativeManager();
     invokeMock.mockRejectedValue(new Error("native_audio_start: recorder init failed"));
     const rm = new RecordingManager();
 
-    await expect(rm.startRecording()).rejects.toSatisfy((err) => err.name !== "NotAllowedError");
+    await expect(rm.startRecording()).rejects.toSatisfy(
+      (err) => err.name !== "NotAllowedError" && err.name !== "NotFoundError",
+    );
   });
 
   it("reads the native file, saves it, and appends the recording on stop", async () => {

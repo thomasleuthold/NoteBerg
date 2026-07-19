@@ -106,13 +106,13 @@ export async function renderSettings(container) {
       </div>
 
       <div class="settings-section">
-        <h3>Help Guidance</h3>
+        <h3>${t("settings.sections.help")}</h3>
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">Reset help guidance</span>
-            <span class="setting-description">Show the first-use tips again next time you use each tool.</span>
+            <span class="setting-name">${t("settings.help.reset")}</span>
+            <span class="setting-description">${t("settings.help.resetDesc")}</span>
           </div>
-          <button id="reset-help-guidance-btn" class="btn-secondary">Reset</button>
+          <button id="reset-help-guidance-btn" class="btn-secondary">${t("settings.help.resetBtn")}</button>
         </div>
       </div>
 
@@ -831,9 +831,9 @@ export async function renderSettings(container) {
   const resetHelpBtn = container.querySelector("#reset-help-guidance-btn");
   resetHelpBtn?.addEventListener("click", async () => {
     const confirmed = await showConfirmDialog(
-      "Reset help guidance",
-      "This will show the first-use tips again the next time you use each tool.",
-      "Reset",
+      t("settings.help.resetConfirmTitle"),
+      t("settings.help.resetConfirmMsg"),
+      t("settings.help.resetBtn"),
       "btn-secondary",
     );
     if (!confirmed) return;

@@ -115,7 +115,8 @@
       "recognition": "Reconocimiento",
       "logging": "Registro",
       "dangerZone": "Zona de peligro",
-      "about": "Acerca de"
+      "about": "Acerca de",
+      "help": "Ayuda"
     },
     "appearance": {
       "theme": "Tema",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Contraseña maestra creada y cifrado de datos locales activado. Las notas nuevas se cifrarán.",
       "disabledLocalMsg": "Cifrado de datos locales desactivado. Las notas ya cifradas permanecen cifradas.",
       "updatedTitle": "Configuración de cifrado actualizada"
+    },
+    "help": {
+      "reset": "Restablecer la ayuda",
+      "resetDesc": "Volver a mostrar los consejos iniciales la próxima vez que uses cada herramienta.",
+      "resetBtn": "Restablecer",
+      "resetConfirmTitle": "Restablecer la ayuda",
+      "resetConfirmMsg": "Los consejos iniciales volverán a aparecer la próxima vez que uses cada herramienta."
     }
   },
   "modals": {
@@ -518,5 +526,48 @@
     "collapse": "Contraer",
     "previous": "Anterior",
     "next": "Siguiente"
+  },
+  "helpOverlay": {
+    "next": "Siguiente",
+    "back": "Atrás",
+    "skip": "Omitir",
+    "dismiss": "Entendido",
+    "progress": "{{current}} / {{total}}",
+    "pan": {
+      "title": "Desplazar",
+      "body": "Arrastra con el dedo para desplazar y pellizca para ampliar. Si escribes con lápiz, el lienzo cambia a Dibujar automáticamente y el dedo sigue desplazando."
+    },
+    "text": {
+      "title": "Texto",
+      "body": "Escribe texto con formato en cualquier parte de la página — títulos, negrita, listas y enlaces. Selecciona texto y usa ✓ Tarea para convertirlo en una tarea marcable."
+    },
+    "draw": {
+      "title": "Dibujar",
+      "body": "Toca Dibujar de nuevo para elegir pluma, marcador o resaltador y cambiar color o grosor. Para texto con formato y buscable, usa el modo Texto."
+    },
+    "eraser": {
+      "title": "Borrador",
+      "body": "Borra trazos enteros, o cambia al borrador parcial para borrar solo la parte que tocas. También puedes limitar el borrado a los resaltadores."
+    },
+    "lasso": {
+      "title": "Lazo",
+      "body": "Traza un lazo alrededor de los trazos para seleccionarlos y arrastra para mover o redimensionar. Con la selección, abre el menú ⋮ y elige Marcar como tarea."
+    },
+    "options": {
+      "title": "Más opciones",
+      "body": "Abre el menú de la nota para exportar, ajustes de página y más. Todo se guarda automáticamente — no hay botón de guardar."
+    },
+    "insert": {
+      "title": "Insertar",
+      "body": "Añade imágenes, un PDF o una foto aquí. Para seleccionar una imagen después, mantén pulsado (táctil) o usa su menú ⋮ y Seleccionar (ratón), luego arrastra para mover o redimensionar."
+    },
+    "firstImage": {
+      "title": "Trabajar con imágenes",
+      "body": "Para seleccionar una imagen más tarde, mantén pulsado (táctil) o usa su menú ⋮ y Seleccionar (ratón). Ya seleccionada, arrastra para mover o redimensionar."
+    },
+    "markAsTask": {
+      "title": "Tareas",
+      "body": "El texto que marcaste ahora es una tarea marcable. Márcala aquí o desde tu lista de tareas."
+    }
   }
 }

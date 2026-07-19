@@ -9,6 +9,7 @@
 import { fetch as _tauriFetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { APP_NAME, APP_VERSION } from "../config.js";
+import { logger } from "../utils/logger.js";
 import { decryptObject } from "./encryption.js";
 import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
 import { extFromMime, mimeFromExt } from "./mime.js";
@@ -301,7 +302,13 @@ export async function testConnection(serverUrl) {
 
     return { success: false, error: "Not a valid Nextcloud server" };
   } catch (error) {
-    console.error("[NextcloudSync] testConnection failed:", error);
+    // Capture the full error (reqwest includes the underlying cause — DNS, TLS,
+    // connection refused — after the URL) in the copyable debug logs.
+    logger.error("NextcloudSync", "testConnection failed", {
+      url: `${serverUrl}/status.php`,
+      name: error?.name,
+      message: error?.message ?? String(error),
+    });
     return { success: false, error: error?.message || String(error) };
   }
 }

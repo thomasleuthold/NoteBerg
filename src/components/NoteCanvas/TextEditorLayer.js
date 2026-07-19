@@ -28,7 +28,7 @@ import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { getIcon } from "../../utils/icons.js";
 import { sanitizeNoteHtml } from "../../utils/sanitizeHtml.js";
 import { startHelpTour } from "../HelpOverlay.js";
-import { HELP_CONTENT } from "../helpContent.js";
+import { getHelpContent, getHelpLabels } from "../helpContent.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
 import { SelectionFloatingBar } from "./SelectionFloatingBar.js";
@@ -339,13 +339,18 @@ export class TextEditorLayer {
       this.textTaskManager?.toggleTaskOnSelection(this.$editor.data("trumbowyg"));
       // First-ever "Mark as Task" use on this device. Anchors to the toolbar
       // button (queryable now that the action has fired), centered otherwise.
-      startHelpTour(HELP_IDS.MARK_AS_TASK, [
-        {
-          target: document.querySelector(".trumbowyg-markAsTask-button"),
-          title: HELP_CONTENT.markAsTask.title,
-          body: HELP_CONTENT.markAsTask.body,
-        },
-      ]);
+      const markAsTask = getHelpContent().markAsTask;
+      startHelpTour(
+        HELP_IDS.MARK_AS_TASK,
+        [
+          {
+            target: document.querySelector(".trumbowyg-markAsTask-button"),
+            title: markAsTask.title,
+            body: markAsTask.body,
+          },
+        ],
+        getHelpLabels(),
+      );
     };
 
     // Listen for Mark as Task event from plugin

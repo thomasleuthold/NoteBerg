@@ -115,7 +115,8 @@
       "recognition": "Reconhecimento de escrita",
       "logging": "Registros",
       "dangerZone": "Zona de risco",
-      "about": "Sobre"
+      "about": "Sobre",
+      "help": "Ajuda"
     },
     "appearance": {
       "theme": "Tema",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Senha mestra criada e criptografia de dados locais ativada. Novas notas serão criptografadas.",
       "disabledLocalMsg": "Criptografia de dados locais desativada. Notas já criptografadas permanecem criptografadas.",
       "updatedTitle": "Configuração de criptografia atualizada"
+    },
+    "help": {
+      "reset": "Repor as dicas de ajuda",
+      "resetDesc": "Mostrar as primeiras dicas de novo na próxima vez que usar cada ferramenta.",
+      "resetBtn": "Repor",
+      "resetConfirmTitle": "Repor as dicas de ajuda",
+      "resetConfirmMsg": "As primeiras dicas voltarão a aparecer na próxima vez que usar cada ferramenta."
     }
   },
   "modals": {
@@ -518,5 +526,48 @@
     "collapse": "Recolher",
     "previous": "Anterior",
     "next": "Próximo"
+  },
+  "helpOverlay": {
+    "next": "Avançar",
+    "back": "Voltar",
+    "skip": "Ignorar",
+    "dismiss": "Entendi",
+    "progress": "{{current}} / {{total}}",
+    "pan": {
+      "title": "Deslocar",
+      "body": "Arraste com o dedo para deslocar e pince para ampliar. Se escrever com a caneta, a área muda para Desenhar automaticamente e o dedo continua a deslocar."
+    },
+    "text": {
+      "title": "Texto",
+      "body": "Escreva texto formatado em qualquer parte da página — títulos, negrito, listas e ligações. Selecione texto e use ✓ Tarefa para o tornar uma tarefa marcável."
+    },
+    "draw": {
+      "title": "Desenhar",
+      "body": "Toque em Desenhar de novo para escolher caneta, marcador ou marca-texto e mudar a cor ou espessura. Para texto formatado e pesquisável, use o modo Texto."
+    },
+    "eraser": {
+      "title": "Borracha",
+      "body": "Apague traços inteiros, ou mude para a borracha parcial para apagar só a parte tocada. Também pode limitar a apagar apenas marca-textos."
+    },
+    "lasso": {
+      "title": "Laço",
+      "body": "Trace um laço à volta dos traços para os selecionar e arraste para mover ou redimensionar. Com a seleção, abra o menu ⋮ e escolha Marcar como tarefa."
+    },
+    "options": {
+      "title": "Mais opções",
+      "body": "Abra o menu da nota para exportação, definições de página e mais. Tudo é guardado automaticamente — não há botão de guardar."
+    },
+    "insert": {
+      "title": "Inserir",
+      "body": "Adicione imagens, um PDF ou uma foto aqui. Para selecionar uma imagem depois, toque longo (toque) ou use o menu ⋮ e Selecionar (rato), depois arraste para mover ou redimensionar."
+    },
+    "firstImage": {
+      "title": "Trabalhar com imagens",
+      "body": "Para selecionar uma imagem depois, toque longo (toque) ou use o menu ⋮ e Selecionar (rato). Já selecionada, arraste para mover ou redimensionar."
+    },
+    "markAsTask": {
+      "title": "Tarefas",
+      "body": "O texto que marcou é agora uma tarefa marcável. Marque-a aqui ou na sua lista de tarefas."
+    }
   }
 }

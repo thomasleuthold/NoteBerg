@@ -23,7 +23,7 @@ let activeTour = null;
 
 const CALLOUT_GAP = 16; // px between target and callout
 const VIEWPORT_MARGIN = 12; // keep callout this far from the viewport edge
-const ARROW_HALF = 7; // half the arrow square's side (matches CSS 14px)
+const ARROW_HALF = 13; // half the arrow's bounding box (matches CSS 26px)
 
 /**
  * Start (or resume) a help tour.
@@ -246,19 +246,24 @@ function positionArrow(arrow, placement, callout, target) {
   const { left, top, cw, ch } = callout;
   const { targetCX, targetCY } = target;
 
+  // The arrowhead points toward the target: callout below → arrow points up, etc.
+  const dir = { below: "up", above: "down", right: "left", left: "right" }[placement];
+  arrow.className = `help-overlay__arrow help-overlay__arrow--${dir}`;
+
   let ax;
   let ay;
 
   if (placement === "below" || placement === "above") {
-    // Arrow sits on the callout edge facing the target, aligned to target's X,
-    // but clamped to stay within the callout's horizontal span.
-    ax = Math.max(left + ARROW_HALF + 4, Math.min(targetCX, left + cw - ARROW_HALF - 4));
+    // Tip aligned to target's X, clamped to stay within the callout's span.
+    ax = Math.max(left + ARROW_HALF + 6, Math.min(targetCX, left + cw - ARROW_HALF - 6));
     ay = placement === "below" ? top : top + ch;
   } else {
-    ay = Math.max(top + ARROW_HALF + 4, Math.min(targetCY, top + ch - ARROW_HALF - 4));
+    ay = Math.max(top + ARROW_HALF + 6, Math.min(targetCY, top + ch - ARROW_HALF - 6));
     ax = placement === "right" ? left : left + cw;
   }
 
+  // Position by the arrow's bounding box (2*ARROW_HALF square) so the tip lands
+  // on the callout edge and the head sticks out toward the target.
   arrow.style.left = `${ax - ARROW_HALF}px`;
   arrow.style.top = `${ay - ARROW_HALF}px`;
 }

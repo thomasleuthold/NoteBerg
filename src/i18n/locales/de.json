@@ -115,7 +115,8 @@
       "recognition": "Handschrifterkennung",
       "logging": "Protokollierung",
       "dangerZone": "Gefahrenzone",
-      "about": "Über"
+      "about": "Über",
+      "help": "Hilfe-Tipps"
     },
     "appearance": {
       "theme": "Design",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Master-Passwort erstellt und lokale Datenverschlüsselung aktiviert. Neue Notizen werden verschlüsselt.",
       "disabledLocalMsg": "Lokale Datenverschlüsselung deaktiviert. Bereits verschlüsselte Notizen bleiben verschlüsselt.",
       "updatedTitle": "Verschlüsselungseinstellung aktualisiert"
+    },
+    "help": {
+      "reset": "Hilfe-Tipps zurücksetzen",
+      "resetDesc": "Die Erst-Tipps beim nächsten Verwenden jedes Werkzeugs erneut anzeigen.",
+      "resetBtn": "Zurücksetzen",
+      "resetConfirmTitle": "Hilfe-Tipps zurücksetzen",
+      "resetConfirmMsg": "Die Erst-Tipps werden beim nächsten Verwenden jedes Werkzeugs erneut angezeigt."
     }
   },
   "modals": {
@@ -518,5 +526,48 @@
     "collapse": "Einklappen",
     "previous": "Zurück",
     "next": "Weiter"
+  },
+  "helpOverlay": {
+    "next": "Weiter",
+    "back": "Zurück",
+    "skip": "Überspringen",
+    "dismiss": "Verstanden",
+    "progress": "{{current}} / {{total}}",
+    "pan": {
+      "title": "Verschieben",
+      "body": "Mit dem Finger verschieben, mit zwei Fingern zoomen. Beim Schreiben mit dem Stift wechselt die Fläche automatisch zu „Zeichnen“, der Finger bleibt beim Verschieben."
+    },
+    "text": {
+      "title": "Text",
+      "body": "Formatierten Text überall auf der Seite eingeben — Überschriften, Fett, Listen und Links werden unterstützt. Text markieren und mit ✓ Aufgabe in eine abhakbare Aufgabe umwandeln."
+    },
+    "draw": {
+      "title": "Zeichnen",
+      "body": "Erneut auf „Zeichnen“ tippen, um Stift, Marker oder Textmarker sowie Farbe und Breite zu wählen. Für formatierten, durchsuchbaren Text den Textmodus nutzen."
+    },
+    "eraser": {
+      "title": "Radierer",
+      "body": "Ganze Striche löschen oder mit dem Teilradierer nur die berührte Stelle. Das Löschen lässt sich auch auf Textmarker-Striche beschränken."
+    },
+    "lasso": {
+      "title": "Lasso-Auswahl",
+      "body": "Eine Schlinge um Striche ziehen, um sie auszuwählen, dann verschieben oder skalieren. Bei Auswahl über das ⋮-Menü „Als Aufgabe markieren“ wählen."
+    },
+    "options": {
+      "title": "Weitere Optionen",
+      "body": "Das Notizmenü für Export, Seiteneinstellungen und mehr öffnen. Alles wird automatisch gespeichert — es gibt keine Speichern-Taste."
+    },
+    "insert": {
+      "title": "Einfügen",
+      "body": "Bilder, ein PDF oder ein Kamerafoto hier hinzufügen. Bild danach per langem Tippen (Finger) oder über das ⋮-Menü mit „Auswählen“ (Maus) markieren, dann verschieben oder skalieren."
+    },
+    "firstImage": {
+      "title": "Bilder bearbeiten",
+      "body": "Ein Bild später per langem Tippen (Finger) oder über das ⋮-Menü mit „Auswählen“ (Maus) markieren. Danach verschieben oder skalieren."
+    },
+    "markAsTask": {
+      "title": "Aufgaben",
+      "body": "Der markierte Text ist jetzt eine abhakbare Aufgabe. Hier oder in der Aufgabenliste abhaken."
+    }
   }
 }

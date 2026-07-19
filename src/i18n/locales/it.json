@@ -115,7 +115,8 @@
       "recognition": "Riconoscimento scrittura",
       "logging": "Registro eventi",
       "dangerZone": "Zona pericolosa",
-      "about": "Informazioni"
+      "about": "Informazioni",
+      "help": "Guida"
     },
     "appearance": {
       "theme": "Tema",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Password principale creata e cifratura dei dati locali attivata. Le nuove note verranno cifrate.",
       "disabledLocalMsg": "Cifratura dei dati locali disattivata. Le note già cifrate rimangono cifrate.",
       "updatedTitle": "Impostazione di cifratura aggiornata"
+    },
+    "help": {
+      "reset": "Reimposta la guida",
+      "resetDesc": "Mostra di nuovo i primi suggerimenti al prossimo uso di ogni strumento.",
+      "resetBtn": "Reimposta",
+      "resetConfirmTitle": "Reimposta la guida",
+      "resetConfirmMsg": "I primi suggerimenti riappariranno al prossimo uso di ogni strumento."
     }
   },
   "modals": {
@@ -518,5 +526,48 @@
     "collapse": "Comprimi",
     "previous": "Precedente",
     "next": "Successivo"
+  },
+  "helpOverlay": {
+    "next": "Avanti",
+    "back": "Indietro",
+    "skip": "Salta",
+    "dismiss": "Ho capito",
+    "progress": "{{current}} / {{total}}",
+    "pan": {
+      "title": "Sposta",
+      "body": "Trascina con il dito per spostare e pizzica per lo zoom. Se scrivi con il pennino, l'area passa a Disegna automaticamente e il dito resta sullo spostamento."
+    },
+    "text": {
+      "title": "Testo",
+      "body": "Scrivi testo formattato ovunque sulla pagina — titoli, grassetto, elenchi e link sono supportati. Seleziona il testo e usa ✓ Attività per creare un'attività da spuntare."
+    },
+    "draw": {
+      "title": "Disegna",
+      "body": "Tocca di nuovo Disegna per scegliere penna, pennarello o evidenziatore e cambiare colore o spessore. Per testo formattato e ricercabile usa la modalità Testo."
+    },
+    "eraser": {
+      "title": "Gomma",
+      "body": "Cancella tratti interi, oppure passa alla gomma parziale per cancellare solo la parte toccata. Puoi anche limitare la cancellazione ai soli evidenziatori."
+    },
+    "lasso": {
+      "title": "Selezione lazo",
+      "body": "Traccia un cappio attorno ai tratti per selezionarli, poi trascina per spostare o ridimensionare. Con la selezione, apri il menu ⋮ e scegli Segna come attività."
+    },
+    "options": {
+      "title": "Altre opzioni",
+      "body": "Apri il menu della nota per esportazione, impostazioni pagina e altro. Tutto viene salvato automaticamente — non c'è un pulsante di salvataggio."
+    },
+    "insert": {
+      "title": "Inserisci",
+      "body": "Aggiungi immagini, un PDF o una foto qui. Per selezionare un'immagine dopo, tieni premuto (tocco) o usa il menu ⋮ e Seleziona (mouse), poi trascina per spostare o ridimensionare."
+    },
+    "firstImage": {
+      "title": "Lavorare con le immagini",
+      "body": "Per selezionare un'immagine dopo, tieni premuto (tocco) o usa il menu ⋮ e Seleziona (mouse). Una volta selezionata, trascina per spostare o ridimensionare."
+    },
+    "markAsTask": {
+      "title": "Attività",
+      "body": "Il testo che hai segnato ora è un'attività da spuntare. Spuntala qui o dalla tua lista attività."
+    }
   }
 }
