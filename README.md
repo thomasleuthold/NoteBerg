@@ -49,8 +49,8 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 
 ### UI & Platform
 - 🌙 Dark mode / light mode with system preference detection
-- 🖥️ Desktop app — Windows, macOS, Linux not tested so far
-- 📱 Mobile app — Android, iOS not tested so far
+- 🖥️ Windows app — download the installer from [GitHub Releases](https://github.com/thomasleuthold/NoteBerg/releases) (unsigned build; Windows may warn about an unknown publisher). macOS and Linux are not available yet.
+- 📱 Android app — available via [Google Play open testing](https://play.google.com/store/apps/details?id=eu.noteberg.app) (iOS not tested so far)
 - 🌐 Nextcloud app — available in the [Nextcloud App Store](https://apps.nextcloud.com/apps/noteberg)
 - 🔡 Internationalization — English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Chinese
 
