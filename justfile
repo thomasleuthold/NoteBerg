@@ -37,8 +37,9 @@ build-w:
     just package-sidecar
     npm run tauri build
     New-Item -ItemType Directory -Force -Path dist | Out-Null
-    # Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
-    Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\" -Force
+    $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Select-Object -First 1
+    # Copy-Item -Path $msi.FullName -Destination "builds\noteberg_windows-{{version}}.msi" -Force
+    Copy-Item -Path $msi.FullName -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_windows-{{version}}.msi" -Force
 
 # Build the Android app (APK) and copy to the Dist share
 build-a:
@@ -47,8 +48,8 @@ build-a:
     just patch-android
     npm run tauri android build -- --apk true
     New-Item -ItemType Directory -Force -Path builds | Out-Null
-    # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\NoteBerg_{{version}}_android_universal.apk" -Force
-    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\NoteBerg_{{version}}_android_universal.apk" -Force
+    # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\noteberg_android-{{version}}-universal.apk" -Force
+    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}-universal.apk" -Force
 
 # Build the Android app bundle (AAB) and copy to the Dist share
 build-aab:
@@ -57,7 +58,7 @@ build-aab:
     just patch-android
     npm run tauri android build -- --aab true
     New-Item -ItemType Directory -Force -Path builds | Out-Null
-    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\NoteBerg_{{version}}_android.aab" -Force
+    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}.aab" -Force
 
 # Build all targets: Windows, Android APK, Android AAB, and Nextcloud app
 build-all:
@@ -111,7 +112,11 @@ build-nc:
     # 4+5. Package tar.gz and sign (version read from info.xml inside script)
     powershell -File scripts/package-nc-release.ps1
 
-    # 6. Cleanup temp dir
+    # 6. Copy the packaged tarball (+ signature) to the Dist share, like the other build-* recipes
+    Copy-Item -Path "builds\noteberg_nextcloud-$ncver.tar.gz" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_nextcloud-$ncver.tar.gz" -Force
+    Copy-Item -Path "builds\noteberg_nextcloud-$ncver.tar.gz.sig" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_nextcloud-$ncver.tar.gz.sig" -Force
+
+    # 7. Cleanup temp dir
     Remove-Item -Recurse -Force "build-nc-tmp"
 
 # ===========================================================================
