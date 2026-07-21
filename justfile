@@ -83,7 +83,7 @@ package-sidecar:
 # ===========================================================================
 
 # Requires: noteberg.key + noteberg.crt in repo root, and `just nc-up` running for signing
-# Output: builds/noteberg-<version>.tar.gz + builds/noteberg-<version>.tar.gz.sig
+# Output: builds/noteberg_nextcloud-<version>.tar.gz + builds/noteberg_nextcloud-<version>.tar.gz.sig
 # Build, code-sign, and package the Nextcloud app release (tar.gz + .sig)
 build-nc:
     # 0. Sync info.xml <version> from package.json (keeps NC in lockstep)
