@@ -219,16 +219,13 @@ async function _legacyEncrypt(plaintext) {
 }
 
 async function _legacySave(key, value) {
+  // Never fall back to storing `value` in cleartext: on this path localStorage
+  // is the actual credential store (browser / dev-without-Tauri), so a failure
+  // to encrypt must fail the save, not silently persist the secret unencrypted.
   if (!_isCryptoAvailable()) {
-    localStorage.setItem(`secure_${key}`, value);
-    return;
+    throw new Error("Web Crypto API not available — cannot store credential securely");
   }
-  try {
-    localStorage.setItem(`secure_${key}`, await _legacyEncrypt(value));
-  } catch (e) {
-    console.error("[SecureStorage] Legacy encrypt failed, storing plain:", e);
-    localStorage.setItem(`secure_${key}`, value);
-  }
+  localStorage.setItem(`secure_${key}`, await _legacyEncrypt(value));
 }
 
 async function _legacyGet(key) {

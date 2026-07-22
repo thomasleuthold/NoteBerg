@@ -16,6 +16,9 @@ on:
           - macos
           - android
 
+permissions:
+  contents: write
+
 jobs:
   # ─── Windows ────────────────────────────────────────────────────────────────
   release-windows:
