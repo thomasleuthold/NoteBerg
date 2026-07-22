@@ -1,7 +1,7 @@
 {
   "name": "noteberg",
-  "version": "0.5.35-rc.1",
-  "build": 1,
+  "version": "0.5.36",
+  "build": 3,
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
   "scripts": {
@@ -60,7 +60,6 @@
     "i18next": "^26.0.8",
     "idb": "^8.0.3",
     "jquery": "^4.0.0",
-    "list": "^2.0.19",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.7.284",
     "perspective-transform": "^1.1.3",

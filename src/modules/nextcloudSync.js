@@ -9,6 +9,7 @@
 import { fetch as _tauriFetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { APP_NAME, APP_VERSION } from "../config.js";
+import { logger } from "../utils/logger.js";
 import { decryptObject } from "./encryption.js";
 import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
 import { extFromMime, mimeFromExt } from "./mime.js";
@@ -114,6 +115,9 @@ async function decryptNoteLocally(note) {
       ? await decryptObject(note.recordings, key)
       : (note.recordings ?? []),
     tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
+    deletedTasks: isBlob(note.deletedTasks)
+      ? await decryptObject(note.deletedTasks, key)
+      : note.deletedTasks || [],
     recognition: isBlob(note.recognition)
       ? await decryptObject(note.recognition, key)
       : note.recognition,
@@ -301,7 +305,13 @@ export async function testConnection(serverUrl) {
 
     return { success: false, error: "Not a valid Nextcloud server" };
   } catch (error) {
-    console.error("[NextcloudSync] testConnection failed:", error);
+    // Capture the full error (reqwest includes the underlying cause — DNS, TLS,
+    // connection refused — after the URL) in the copyable debug logs.
+    logger.error("NextcloudSync", "testConnection failed", {
+      url: `${serverUrl}/status.php`,
+      name: error?.name,
+      message: error?.message ?? String(error),
+    });
     return { success: false, error: error?.message || String(error) };
   }
 }
@@ -1828,11 +1838,11 @@ export function attemptMerge(local, remote) {
   addRecordings(localIsNewer ? localRecordings : remoteRecordings);
 
   // Merge tasks by ID, newer modified timestamp wins for individual tasks
-  const localTasks = local.tasks || [];
-  const remoteTasks = remote.tasks || [];
+  const localTasks = Array.isArray(local.tasks) ? local.tasks : [];
+  const remoteTasks = Array.isArray(remote.tasks) ? remote.tasks : [];
   const allDeletedTaskIds = new Set([
-    ...(local.deletedTasks || []),
-    ...(remote.deletedTasks || []),
+    ...(Array.isArray(local.deletedTasks) ? local.deletedTasks : []),
+    ...(Array.isArray(remote.deletedTasks) ? remote.deletedTasks : []),
   ]);
   const taskMap = new Map();
 

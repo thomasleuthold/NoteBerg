@@ -115,7 +115,8 @@
       "recognition": "Riconoscimento scrittura",
       "logging": "Registro eventi",
       "dangerZone": "Zona pericolosa",
-      "about": "Informazioni"
+      "about": "Informazioni",
+      "help": "Guida"
     },
     "appearance": {
       "theme": "Tema",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Password principale creata e cifratura dei dati locali attivata. Le nuove note verranno cifrate.",
       "disabledLocalMsg": "Cifratura dei dati locali disattivata. Le note già cifrate rimangono cifrate.",
       "updatedTitle": "Impostazione di cifratura aggiornata"
+    },
+    "help": {
+      "reset": "Reimposta la guida",
+      "resetDesc": "Mostra di nuovo i primi suggerimenti al prossimo uso di ogni strumento.",
+      "resetBtn": "Reimposta",
+      "resetConfirmTitle": "Reimposta la guida",
+      "resetConfirmMsg": "I primi suggerimenti riappariranno al prossimo uso di ogni strumento."
     }
   },
   "modals": {
@@ -511,12 +519,59 @@
     "deleteRecordingMessage": "Vuoi davvero eliminare questa registrazione?",
     "errorGeneric": "Impossibile avviare la registrazione.",
     "errorNoDevice": "Nessun dispositivo audio trovato. Collega un microfono.",
-    "errorPermissionDenied": "Accesso al microfono negato."
+    "errorPermissionDenied": "Accesso al microfono negato. Consenti l'accesso al microfono nelle impostazioni di sistema."
   },
   "noteNavigator": {
     "toggle": "Navigatore",
     "collapse": "Comprimi",
     "previous": "Precedente",
     "next": "Successivo"
+  },
+  "helpOverlay": {
+    "next": "Avanti",
+    "back": "Indietro",
+    "skip": "Salta",
+    "dismiss": "Ho capito",
+    "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Benvenuto",
+      "body": "Le modifiche vengono salvate automaticamente mentre lavori — non c'è un pulsante di salvataggio. Alla chiusura di una nota viene anche sincronizzata con Nextcloud, se la sincronizzazione è configurata."
+    },
+    "pan": {
+      "title": "Sposta",
+      "body": "Trascina con il dito per spostare e pizzica per lo zoom. Se scrivi con il pennino, la modalità passa a Disegna automaticamente e il dito resta sullo spostamento."
+    },
+    "text": {
+      "title": "Testo",
+      "body": "Scrivi testo formattato ovunque — titoli, formattazione, elenchi, tabelle e link sono supportati. Seleziona il testo e usa il pulsante ✓ per creare un'attività da spuntare."
+    },
+    "draw": {
+      "title": "Disegna",
+      "body": "Tocca Disegna per scegliere penna o evidenziatore e cambiare colore o spessore. Il riconoscimento della scrittura è disponibile solo su Windows."
+    },
+    "eraser": {
+      "title": "Gomma",
+      "body": "Cancella tratti interi, oppure passa alla gomma parziale per cancellare solo la parte toccata. Puoi anche limitare la cancellazione agli evidenziatori."
+    },
+    "lasso": {
+      "title": "Selezione lazo",
+      "body": "Cerchia scrittura ed evidenziatori con il lazo per selezionare, poi trascina per spostare o ridimensionare. Segna come attività è anche nel menu ⋮ della selezione."
+    },
+    "options": {
+      "title": "Altre opzioni",
+      "body": "Apri il menu della nota per esportazione, impostazioni pagina e altro."
+    },
+    "insert": {
+      "title": "Inserisci",
+      "body": "Aggiungi immagini, un PDF o una foto qui."
+    },
+    "firstImage": {
+      "title": "Lavorare con le immagini",
+      "body": "Seleziona un'immagine tenendola premuta (dito/mouse) o dal menu ⋮ → Seleziona, poi trascina per spostare o ridimensionare. Altre opzioni nel menu ⋮."
+    },
+    "markAsTask": {
+      "title": "Attività",
+      "body": "Il testo che hai segnato ora è un'attività da spuntare. Spuntala qui o dalla tua lista attività."
+    }
   }
 }

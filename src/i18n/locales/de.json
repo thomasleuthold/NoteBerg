@@ -115,7 +115,8 @@
       "recognition": "Handschrifterkennung",
       "logging": "Protokollierung",
       "dangerZone": "Gefahrenzone",
-      "about": "Über"
+      "about": "Über",
+      "help": "Hilfe-Tipps"
     },
     "appearance": {
       "theme": "Design",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Master-Passwort erstellt und lokale Datenverschlüsselung aktiviert. Neue Notizen werden verschlüsselt.",
       "disabledLocalMsg": "Lokale Datenverschlüsselung deaktiviert. Bereits verschlüsselte Notizen bleiben verschlüsselt.",
       "updatedTitle": "Verschlüsselungseinstellung aktualisiert"
+    },
+    "help": {
+      "reset": "Hilfe-Tipps zurücksetzen",
+      "resetDesc": "Die Erst-Tipps beim nächsten Verwenden jedes Werkzeugs erneut anzeigen.",
+      "resetBtn": "Zurücksetzen",
+      "resetConfirmTitle": "Hilfe-Tipps zurücksetzen",
+      "resetConfirmMsg": "Die Erst-Tipps werden beim nächsten Verwenden jedes Werkzeugs erneut angezeigt."
     }
   },
   "modals": {
@@ -511,12 +519,59 @@
     "deleteRecordingMessage": "Möchtest du diese Aufnahme wirklich löschen?",
     "errorGeneric": "Aufnahme konnte nicht gestartet werden.",
     "errorNoDevice": "Kein Audiogerät gefunden. Bitte schließe ein Mikrofon an.",
-    "errorPermissionDenied": "Zugriff auf das Mikrofon verweigert."
+    "errorPermissionDenied": "Zugriff auf das Mikrofon verweigert. Bitte erlaube den Mikrofonzugriff in den Systemeinstellungen."
   },
   "noteNavigator": {
     "toggle": "Navigator",
     "collapse": "Einklappen",
     "previous": "Zurück",
     "next": "Weiter"
+  },
+  "helpOverlay": {
+    "next": "Weiter",
+    "back": "Zurück",
+    "skip": "Überspringen",
+    "dismiss": "Verstanden",
+    "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Willkommen",
+      "body": "Deine Änderungen werden automatisch gespeichert — es gibt keine Speichern-Taste. Beim Schließen einer Notiz wird sie zudem mit Nextcloud synchronisiert, falls Sync eingerichtet ist."
+    },
+    "pan": {
+      "title": "Verschieben",
+      "body": "Mit dem Finger verschieben, mit zwei Fingern zoomen. Beim Schreiben mit dem Stift wechselt der Modus automatisch zu „Zeichnen“, der Finger-Touch bleibt beim Verschieben."
+    },
+    "text": {
+      "title": "Text",
+      "body": "Formatierten Text überall auf der Seite eingeben — Überschriften, Formatierung, Listen, Tabellen und Links werden unterstützt. Text markieren und mit ✓-Button in eine abhakbare Aufgabe umwandeln."
+    },
+    "draw": {
+      "title": "Zeichnen",
+      "body": "Auf „Zeichnen“ tippen, um Stift oder Textmarker sowie Farbe und Breite zu wählen. Handschrifterkennung ist nur unter Windows verfügbar."
+    },
+    "eraser": {
+      "title": "Radierer",
+      "body": "Ganze Striche löschen oder mit dem Teilradierer nur die berührte Stelle. Das Löschen lässt sich auch auf Textmarker beschränken."
+    },
+    "lasso": {
+      "title": "Lasso-Auswahl",
+      "body": "Handschrift und Textmarker mit dem Lasso umkreisen um auszuwählen, dann verschieben oder skalieren. Über das ⋮-Menü der Auswahl auch „Als Aufgabe markieren“ verfügbar."
+    },
+    "options": {
+      "title": "Weitere Optionen",
+      "body": "Das Notizmenü für Export, Seiteneinstellungen und mehr öffnen."
+    },
+    "insert": {
+      "title": "Einfügen",
+      "body": "Bilder, ein PDF oder ein Kamerafoto hier hinzufügen."
+    },
+    "firstImage": {
+      "title": "Bilder bearbeiten",
+      "body": "Ein Bild per langem Tippen (Finger/Maus) oder über das ⋮-Menü mit „Auswählen“ markieren. Danach verschieben oder skalieren. Im ⋮-Menü stehen weitere Optionen bereit."
+    },
+    "markAsTask": {
+      "title": "Aufgaben",
+      "body": "Der markierte Text ist jetzt eine abhakbare Aufgabe. Hier oder in der Aufgabenliste abhaken."
+    }
   }
 }

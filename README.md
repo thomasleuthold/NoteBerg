@@ -49,8 +49,8 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 
 ### UI & Platform
 - 🌙 Dark mode / light mode with system preference detection
-- 🖥️ Desktop app — Windows, macOS, Linux not tested so far
-- 📱 Mobile app — Android, iOS not tested so far
+- 🖥️ Windows app — download the installer from [GitHub Releases](https://github.com/thomasleuthold/NoteBerg/releases) (unsigned build; Windows may warn about an unknown publisher). macOS and Linux are not available yet.
+- 📱 Android app — available via [Google Play open testing](https://play.google.com/store/apps/details?id=eu.noteberg.app) (iOS not tested so far)
 - 🌐 Nextcloud app — available in the [Nextcloud App Store](https://apps.nextcloud.com/apps/noteberg)
 - 🔡 Internationalization — English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Chinese
 
@@ -141,13 +141,15 @@ NoteBerg/
 - **Drawing**: HTML5 Canvas with PointerEvent API
 - **Text editor**: Trumbowyg
 - **PDF rendering**: PDF.js
-- **PDF generation**: pdf-lib
-- **Thumbnail generation**: html2canvas
+- **PDF generation**: pdf-lib, html2canvas (text-layer rendering for export)
+- **HTML sanitization**: DOMPurify
 
 ## Documentation
 
 - [ANDROID_BUILD_WINDOWS.md](documentation/ANDROID_BUILD_WINDOWS.md) — Android build setup on Windows
-- [DESIGN.md](documentation/DESIGN.md) — Architecture and design decisions
+- [architecture_design.md](documentation/architecture_design.md) — Architecture and design decisions
+- [note_editor_architecture.md](documentation/note_editor_architecture.md) — Note editor internals (stroke recording, canvas layers, undo/redo)
+- [sync_architecture.md](documentation/sync_architecture.md) — Nextcloud sync engine
 
 ## Thank You
 
@@ -161,14 +163,16 @@ NoteBerg stands on the shoulders of many excellent open-source projects. A since
 | [i18next](https://www.i18next.com/) | Internationalization |
 | [jQuery](https://jquery.com/) | DOM utilities (required by Trumbowyg) |
 | [Trumbowyg](https://alex-d.github.io/Trumbowyg/) | Lightweight WYSIWYG text editor |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | HTML sanitization for synced/imported note content |
 | [PDF.js](https://mozilla.github.io/pdf.js/) | PDF rendering in the canvas |
 | [pdf-lib](https://pdf-lib.js.org/) | PDF export generation |
-| [html2canvas](https://html2canvas.hertzen.com/) | Note thumbnail generation |
+| [html2canvas](https://html2canvas.hertzen.com/) | Text-layer rendering for PDF export |
 | [perspective-transform](https://github.com/fhguilherme/perspective-transform) | Image perspective correction |
 | [Feather Icons](https://feathericons.com/) | UI icon set |
 | [cpal](https://github.com/RustAudio/cpal) | Cross-platform audio capture (Windows WASAPI) |
 | [hound](https://github.com/ruuda/hound) | WAV audio encoding |
 | [keyring](https://github.com/hwchen/keyring-rs) | OS keychain access (Windows, macOS, Linux) |
+| [rfd](https://github.com/PolyMeilex/rfd) | Native file save dialog (Windows PDF export) |
 | [Biome](https://biomejs.dev/) | Linting and formatting |
 | [Vitest](https://vitest.dev/) | Unit testing framework |
 | [Testing Library](https://testing-library.com/) | DOM testing utilities |

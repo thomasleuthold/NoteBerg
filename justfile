@@ -37,8 +37,7 @@ build-w:
     just package-sidecar
     npm run tauri build
     New-Item -ItemType Directory -Force -Path dist | Out-Null
-    # Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "builds\" -Force
-    Copy-Item -Path "src-tauri\target\release\bundle\msi\*.msi" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\" -Force
+    $msi = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if (-not $msi) { Write-Error "No MSI found in src-tauri\target\release\bundle\msi — did 'npm run tauri build' produce an MSI target?"; exit 1 }; Copy-Item -Path $msi.FullName -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_windows-{{version}}.msi" -Force
 
 # Build the Android app (APK) and copy to the Dist share
 build-a:
@@ -47,8 +46,8 @@ build-a:
     just patch-android
     npm run tauri android build -- --apk true
     New-Item -ItemType Directory -Force -Path builds | Out-Null
-    # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\NoteBerg_{{version}}_android_universal.apk" -Force
-    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\NoteBerg_{{version}}_android_universal.apk" -Force
+    # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\noteberg_android-{{version}}-universal.apk" -Force
+    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}-universal.apk" -Force
 
 # Build the Android app bundle (AAB) and copy to the Dist share
 build-aab:
@@ -57,7 +56,7 @@ build-aab:
     just patch-android
     npm run tauri android build -- --aab true
     New-Item -ItemType Directory -Force -Path builds | Out-Null
-    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\NoteBerg_{{version}}_android.aab" -Force
+    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}.aab" -Force
 
 # Build all targets: Windows, Android APK, Android AAB, and Nextcloud app
 build-all:
@@ -83,7 +82,7 @@ package-sidecar:
 # ===========================================================================
 
 # Requires: noteberg.key + noteberg.crt in repo root, and `just nc-up` running for signing
-# Output: builds/noteberg-<version>.tar.gz + builds/noteberg-<version>.tar.gz.sig
+# Output: builds/noteberg_nextcloud-<version>.tar.gz + builds/noteberg_nextcloud-<version>.tar.gz.sig
 # Build, code-sign, and package the Nextcloud app release (tar.gz + .sig)
 build-nc:
     # 0. Sync info.xml <version> from package.json (keeps NC in lockstep)
@@ -93,7 +92,6 @@ build-nc:
     $env:VITE_NC_BASE = "/apps/noteberg/"; npm run build:nextcloud
 
     # 2. Assemble app into a clean temp directory
-    $ncver = (Select-Xml -Path appinfo/info.xml -XPath "//version").Node.InnerText
     if (Test-Path "build-nc-tmp") { Remove-Item -Recurse -Force "build-nc-tmp" }
     New-Item -ItemType Directory -Force -Path "build-nc-tmp\noteberg" | Out-Null
     Copy-Item -Recurse "appinfo"   "build-nc-tmp\noteberg\"
@@ -111,7 +109,10 @@ build-nc:
     # 4+5. Package tar.gz and sign (version read from info.xml inside script)
     powershell -File scripts/package-nc-release.ps1
 
-    # 6. Cleanup temp dir
+    # 6. Copy the packaged tarball (+ signature) to the Dist share, like the other build-* recipes
+    $ncver = (Select-Xml -Path appinfo/info.xml -XPath "//version").Node.InnerText; Copy-Item -Path "builds\noteberg_nextcloud-$ncver.tar.gz" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_nextcloud-$ncver.tar.gz" -Force; Copy-Item -Path "builds\noteberg_nextcloud-$ncver.tar.gz.sig" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_nextcloud-$ncver.tar.gz.sig" -Force
+
+    # 7. Cleanup temp dir
     Remove-Item -Recurse -Force "build-nc-tmp"
 
 # ===========================================================================
@@ -121,9 +122,7 @@ build-nc:
 # Start the NC dev container (port 8080, repo volume-mounted at /apps-extra/noteberg)
 nc-up:
     podman run --rm --name noteberg-nc -d -p 8080:80 -v "${PWD}:/var/www/html/apps-extra/noteberg" ghcr.io/juliusknorr/nextcloud-dev-php84:latest
-    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1
-    netsh interface portproxy add v4tov4 listenport=8080 listenaddress=127.0.0.1 connectport=8080 connectaddress=$wslIp 2>&1 | Out-Null
-    Write-Host "NoteBerg Nextcloud running at http://localhost:8080 (WSL IP: $wslIp)"
+    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1; netsh interface portproxy add v4tov4 listenport=8080 listenaddress=127.0.0.1 connectport=8080 connectaddress=$wslIp 2>&1 | Out-Null; Write-Host "NoteBerg Nextcloud running at http://localhost:8080 (WSL IP: $wslIp)"
     Write-Host "Run 'npm run dev:nextcloud' in a separate terminal for watch mode"
 
 # Stop the NC dev container (port 8080) and clean up the port proxy
@@ -142,9 +141,8 @@ nc-dev-push:
 nc-test php="84":
     podman stop noteberg-nc-test 2>&1 | Out-Null; $true
     podman run --rm --name noteberg-nc-test -d -p 8081:80 ghcr.io/juliusknorr/nextcloud-dev-php{{php}}:latest
-    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1
     netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
-    netsh interface portproxy add v4tov4 listenport=8081 listenaddress=127.0.0.1 connectport=8081 connectaddress=$wslIp 2>&1 | Out-Null
+    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1; netsh interface portproxy add v4tov4 listenport=8081 listenaddress=127.0.0.1 connectport=8081 connectaddress=$wslIp 2>&1 | Out-Null
     Write-Host "Waiting for Nextcloud to initialize..."
     Start-Sleep -Seconds 15
     podman exec noteberg-nc-test bash -c "php /var/www/html/occ config:system:set updater.release.channel --value=beta"
@@ -174,9 +172,8 @@ nc-test-push:
 nc-test33:
     podman stop noteberg-nc-test33 2>&1 | Out-Null; $true
     podman run --rm --name noteberg-nc-test33 -d -p 8082:80 -v "${PWD}:/var/www/html/custom_apps/noteberg" nextcloud:33-apache
-    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1
     netsh interface portproxy delete v4tov4 listenport=8082 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
-    netsh interface portproxy add v4tov4 listenport=8082 listenaddress=127.0.0.1 connectport=8082 connectaddress=$wslIp 2>&1 | Out-Null
+    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1; netsh interface portproxy add v4tov4 listenport=8082 listenaddress=127.0.0.1 connectport=8082 connectaddress=$wslIp 2>&1 | Out-Null
     Write-Host "Waiting for Nextcloud to initialize..."
     Start-Sleep -Seconds 20
     podman exec noteberg-nc-test33 //bin/sh -c "php /var/www/html/occ app:enable noteberg 2>&1"

@@ -36,7 +36,7 @@ Every note is split into two IndexedDB records by `splitNote()` in `storage.js`:
 | Store | Contents | Used for |
 |---|---|---|
 | `notes` (index) | id, title, modified, version, synced, lastSyncedEtag, deleted, purged, tags, media `[{id, name, type, size, deleted}]` (no fileId), recordings `[{id, name, duration, deleted}]` (no fileId) | Sync decisions, overview list |
-| `noteContent` (content) | strokes, content, media with fileIds and positions, recordings with fileIds, pdfSource, thumbnail (base64), deletedMedia, tasks | Rendering, editing |
+| `noteContent` (content) | strokes, content, media with fileIds and positions, recordings with fileIds, pdfSource, deletedMedia, tasks | Rendering, editing |
 
 Key implication: **the index stub's media array has no `fileId`**. To get fileIds for binary file operations, `getRawNote()` must be called to load the full content record.
 
@@ -70,7 +70,7 @@ Key implication: **the index stub's media array has no `fileId`**. To get fileId
    - Race-condition check: if local was modified *during* this sync, attempt merge rather than overwrite.
    - If version/modified identical to local: just update etag (`updateNoteEtag`).
    - Otherwise: `saveNote(downloadedNote)`.
-   - Strip `_currentFileEtag` and `thumbnail` from downloaded notes before saving.
+   - Strip `_currentFileEtag` from downloaded notes before saving (also strips a legacy `thumbnail` field defensively, though notes no longer carry one — see [architecture_design.md](architecture_design.md#overview-thumbnails)).
 7. **Update etags** for notes where the server etag changed but content was not actually newer (etag oscillation).
 8. **Process deletions:** Remove locally any notebooks/notes deleted on remote.
 9. **Dispatch events:** `datachange` if content changed; `sync-conflicts` if unresolved conflicts.
@@ -112,7 +112,7 @@ For each note to upload:
   1. decryptNoteLocally()          — unwrap local encryption if enabled
   2. syncNoteMedia()               — upload binary files (see below)
   3. cleanupOrphanedMedia()        — delete remote files no longer referenced
-  4. Strip internal fields         — remove synced, lastSyncedEtag, thumbnail, _currentFileEtag
+  4. Strip internal fields         — remove synced, lastSyncedEtag, _currentFileEtag (and legacy thumbnail, if present)
   5. PUT note JSON                 — with If-Match: {etag} header. A 412
      (remote changed since our last sync) FAILS the upload — the note stays
      synced=false so the next cycle downloads + merges + re-uploads. It is

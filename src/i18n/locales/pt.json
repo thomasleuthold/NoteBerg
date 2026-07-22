@@ -115,7 +115,8 @@
       "recognition": "Reconhecimento de escrita",
       "logging": "Registros",
       "dangerZone": "Zona de risco",
-      "about": "Sobre"
+      "about": "Sobre",
+      "help": "Ajuda"
     },
     "appearance": {
       "theme": "Tema",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Senha mestra criada e criptografia de dados locais ativada. Novas notas serão criptografadas.",
       "disabledLocalMsg": "Criptografia de dados locais desativada. Notas já criptografadas permanecem criptografadas.",
       "updatedTitle": "Configuração de criptografia atualizada"
+    },
+    "help": {
+      "reset": "Repor as dicas de ajuda",
+      "resetDesc": "Mostrar as primeiras dicas de novo na próxima vez que usar cada ferramenta.",
+      "resetBtn": "Repor",
+      "resetConfirmTitle": "Repor as dicas de ajuda",
+      "resetConfirmMsg": "As primeiras dicas voltarão a aparecer na próxima vez que usar cada ferramenta."
     }
   },
   "modals": {
@@ -511,12 +519,59 @@
     "deleteRecordingMessage": "Tem certeza de que deseja excluir esta gravação?",
     "errorGeneric": "Não foi possível iniciar a gravação.",
     "errorNoDevice": "Nenhum dispositivo de áudio encontrado. Conecte um microfone.",
-    "errorPermissionDenied": "Acesso ao microfone negado."
+    "errorPermissionDenied": "Acesso ao microfone negado. Permita o acesso ao microfone nas configurações do sistema."
   },
   "noteNavigator": {
     "toggle": "Navegador",
     "collapse": "Recolher",
     "previous": "Anterior",
     "next": "Próximo"
+  },
+  "helpOverlay": {
+    "next": "Avançar",
+    "back": "Voltar",
+    "skip": "Ignorar",
+    "dismiss": "Entendi",
+    "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Bem-vindo",
+      "body": "As suas alterações são guardadas automaticamente enquanto trabalha — não há botão de guardar. Ao fechar uma nota, também é sincronizada com o Nextcloud se tiver a sincronização configurada."
+    },
+    "pan": {
+      "title": "Deslocar",
+      "body": "Arraste com o dedo para deslocar e pince para ampliar. Se escrever com a caneta, o modo muda para Desenhar automaticamente e o dedo continua a deslocar."
+    },
+    "text": {
+      "title": "Texto",
+      "body": "Escreva texto formatado em qualquer parte — títulos, formatação, listas, tabelas e ligações. Selecione texto e use o botão ✓ para o tornar uma tarefa marcável."
+    },
+    "draw": {
+      "title": "Desenhar",
+      "body": "Toque em Desenhar para escolher caneta ou marca-texto e mudar a cor ou espessura. O reconhecimento de escrita só está disponível no Windows."
+    },
+    "eraser": {
+      "title": "Borracha",
+      "body": "Apague traços inteiros, ou mude para a borracha parcial para apagar só a parte tocada. Também pode limitar a apagar apenas marca-textos."
+    },
+    "lasso": {
+      "title": "Laço",
+      "body": "Rodeie a escrita e os marca-textos com o laço para selecionar, depois arraste para mover ou redimensionar. Marcar como tarefa também está no menu ⋮ da seleção."
+    },
+    "options": {
+      "title": "Mais opções",
+      "body": "Abra o menu da nota para exportação, definições de página e mais."
+    },
+    "insert": {
+      "title": "Inserir",
+      "body": "Adicione imagens, um PDF ou uma foto aqui."
+    },
+    "firstImage": {
+      "title": "Trabalhar com imagens",
+      "body": "Selecione uma imagem com toque longo (dedo/rato) ou pelo menu ⋮ → Selecionar, depois arraste para mover ou redimensionar. Mais opções no menu ⋮."
+    },
+    "markAsTask": {
+      "title": "Tarefas",
+      "body": "O texto que marcou é agora uma tarefa marcável. Marque-a aqui ou na sua lista de tarefas."
+    }
   }
 }

@@ -128,7 +128,18 @@ export class RecordingManager {
         this._recordingId = null;
         this._recordingStartTime = null;
         console.error("[RecordingManager] Native audio start error:", err);
-        throw new Error(String(err));
+        // Map recognizable native error messages to the standard getUserMedia
+        // error names so the UI shows an actionable message instead of the
+        // generic one: NotAllowedError → "permission denied", NotFoundError →
+        // "no microphone found".
+        const message = String(err);
+        const error = new Error(message);
+        if (/permission denied|permission not granted/i.test(message)) {
+          error.name = "NotAllowedError";
+        } else if (/no audio input device|no input device|device not found/i.test(message)) {
+          error.name = "NotFoundError";
+        }
+        throw error;
       }
       this._nativeRecording = true;
       this._nativeAmplitude = 0;

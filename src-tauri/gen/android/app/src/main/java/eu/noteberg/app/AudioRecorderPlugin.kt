@@ -6,26 +6,59 @@ import android.media.MediaRecorder
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import app.tauri.annotation.Command
+import app.tauri.annotation.Permission
+import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.io.File
 
-@TauriPlugin
+private const val ALIAS_MICROPHONE = "microphone"
+
+@TauriPlugin(
+    permissions = [
+        Permission(strings = [Manifest.permission.RECORD_AUDIO], alias = ALIAS_MICROPHONE)
+    ]
+)
 class AudioRecorderPlugin(private val activity: android.app.Activity) : Plugin(activity) {
 
     private var recorder: MediaRecorder? = null
     private var outputFile: File? = null
 
+    private fun hasMicPermission(): Boolean =
+        ActivityCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
     @Command
     fun start(invoke: Invoke) {
-        if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED) {
-            invoke.reject("RECORD_AUDIO permission not granted")
+        // Manifest declaration alone does not grant a dangerous permission on
+        // Android 6+ (API 23+); it must be requested at runtime. Without this,
+        // a fresh install rejects every start() with the permission error and
+        // no system dialog ever appears (M-02).
+        if (!hasMicPermission()) {
+            requestPermissionForAlias(ALIAS_MICROPHONE, invoke, "onMicPermissionResult")
             return
         }
+        beginRecording(invoke)
+    }
 
+    /**
+     * Runs after the user responds to the runtime microphone permission prompt.
+     * The framework re-supplies the original [Invoke] that triggered the request.
+     */
+    @PermissionCallback
+    fun onMicPermissionResult(invoke: Invoke) {
+        if (hasMicPermission()) {
+            beginRecording(invoke)
+        } else {
+            // Distinct code so the JS layer can show an actionable "enable the
+            // microphone permission" message rather than a generic failure.
+            invoke.reject("Microphone permission denied", "PERMISSION_DENIED")
+        }
+    }
+
+    private fun beginRecording(invoke: Invoke) {
         try {
             stopAndRelease()
 
