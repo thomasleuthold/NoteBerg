@@ -75,6 +75,13 @@ const licenses = [
     licenseUrl: "https://github.com/Alex-D/Trumbowyg/blob/main/LICENSE",
   },
   {
+    name: "DOMPurify",
+    description: "DOM-only, super-fast, uber-tolerant XSS sanitizer",
+    url: "https://github.com/cure53/DOMPurify",
+    license: "Apache License 2.0 / Mozilla Public License 2.0",
+    licenseUrl: "https://github.com/cure53/DOMPurify/blob/main/LICENSE",
+  },
+  {
     name: "pdf-lib",
     description: "Create and modify PDF documents in any JavaScript environment",
     url: "https://pdf-lib.js.org/",
@@ -150,6 +157,13 @@ const licenses = [
     url: "https://github.com/hwchen/keyring-rs",
     license: "MIT License / Apache License 2.0",
     licenseUrl: "https://github.com/hwchen/keyring-rs/blob/master/LICENSE-MIT",
+  },
+  {
+    name: "rfd",
+    description: "Rust Filesystem Dialog — native file save/open dialogs",
+    url: "https://github.com/PolyMeilex/rfd",
+    license: "MIT License",
+    licenseUrl: "https://github.com/PolyMeilex/rfd/blob/master/LICENSE",
   },
 ];
 

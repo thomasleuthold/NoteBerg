@@ -27,12 +27,15 @@ import {
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
+import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import {
   drawStroke as sharedDrawStroke,
   getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
+import { startHelpTour } from "../HelpOverlay.js";
+import { getHelpContent, getHelpLabels } from "../helpContent.js";
 import { showAlertDialog, showConfirmDialog, showProgressDialog } from "../modals.js";
 import { AppClipboard } from "./AppClipboard.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
@@ -760,16 +763,17 @@ export class NoteCanvas {
 
           // Convert DataURL to Blob for storage.
           // NC CSP blocks fetch() on data: URLs, so use direct base64 decode there.
+          // On native (Android/desktop WebView) the CSP likewise blocks data:
+          // fetches, so falling back to base64 decode is the normal, successful
+          // path — log at debug level rather than warning so it does not look
+          // like a failure in the session logs.
           let blob;
           if (!_IS_NEXTCLOUD) {
             try {
               const res = await fetch(processed.dataUrl);
               blob = await res.blob();
             } catch (fetchErr) {
-              console.warn(
-                "[NoteCanvas] fetch(dataUrl) failed, using fallback conversion",
-                fetchErr,
-              );
+              console.log("[NoteCanvas] fetch(dataUrl) blocked, using base64 fallback", fetchErr);
             }
           }
           if (!blob) {
@@ -810,6 +814,16 @@ export class NoteCanvas {
       // Record undo command for inserted images
       if (insertedItems.length > 0) {
         this.historyManager?.push(new InsertMediaCommand(insertedItems));
+        // First-ever image insert on this device: explain how to re-select an
+        // image afterward. Images are canvas-drawn (no per-image DOM node to
+        // point an arrow at), so this callout is shown centered with no arrow
+        // (target: null).
+        const firstImage = getHelpContent().firstImage;
+        startHelpTour(
+          HELP_IDS.FIRST_IMAGE,
+          [{ target: null, title: firstImage.title, body: firstImage.body }],
+          getHelpLabels(),
+        );
       }
     } catch (error) {
       console.error("[NoteCanvas] Failed to insert image:", error);
@@ -1760,8 +1774,13 @@ export class NoteCanvas {
    * Handle text content change from the editor
    * @private
    * @param {string} html - HTML content
+   * @param {Object} [options]
+   * @param {boolean} [options.skipTaskCleanup] - Skip orphaned-task cleanup.
+   *   Used by undo/redo: a text undo temporarily removes task spans from the
+   *   DOM while their records must survive so redo can restore a consistent
+   *   state (the paired MarkTaskCommand manages the records).
    */
-  _onTextContentChange(html) {
+  _onTextContentChange(html, { skipTaskCleanup = false } = {}) {
     this.noteData.content = html;
     this.textChanged = true;
 
@@ -1791,7 +1810,7 @@ export class NoteCanvas {
     }
 
     // Clean up orphaned text tasks (spans removed by editing)
-    if (this.textEditorLayer?.cleanupOrphanedTextTasks(this.noteData.tasks)) {
+    if (!skipTaskCleanup && this.textEditorLayer?.cleanupOrphanedTextTasks(this.noteData.tasks)) {
       this._saveTasks();
       this._updateNavigatorSubjects();
     }

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.36] - 2026-07-18
+
+### Added
+- **Help overlay**: first-use guided tours for the note editor — one short, arrow-pointed callout at a time introduces each canvas mode (Pan/Draw/Text/Eraser/Lasso), the Options and Add buttons, image selection, and Mark as Task. Tours are one-time and device-local, with a "Reset help guidance" row in Settings to replay them; works identically on Windows, Android, and Nextcloud
+
+### Fixed
+- **Mark as Task could erase note content (data loss)**: converting a text selection that spanned a bullet/numbered list wrapped the whole list into a task, producing invalid markup the browser discarded on reload — blanking the note, and surviving Undo and relaunch. Each list item now becomes its own task and list markup stays valid
+- **Audio recording on Android failed on a fresh install**: the microphone permission was never requested at runtime, so recording rejected immediately with no system prompt on devices that had not previously granted it. The permission is now requested on first use, and a denied permission shows an actionable message pointing to system settings
+
 ## [0.5.35] - 2026-07-16
 
 ### Added

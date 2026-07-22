@@ -96,13 +96,23 @@ describe("NoteCanvas Commands", () => {
     it("should undo and redo text changes", () => {
       const cmd = new TextChangeCommand("<p>Old</p>", "<p>New</p>");
 
+      // Task records must survive the HTML swap (they belong to the paired
+      // MarkTaskCommand on the history stack), and checkboxes must be
+      // re-rendered because persisted HTML doesn't contain them.
       cmd.undo(noteCanvas);
       expect(noteCanvas.textEditorLayer.setContentSilently).toHaveBeenCalledWith("<p>Old</p>");
-      expect(noteCanvas._onTextContentChange).toHaveBeenCalledWith("<p>Old</p>");
+      expect(noteCanvas._onTextContentChange).toHaveBeenCalledWith("<p>Old</p>", {
+        skipTaskCleanup: true,
+      });
+      expect(noteCanvas.textEditorLayer.renderTaskCheckboxes).toHaveBeenCalledWith(
+        noteCanvas.noteData.tasks,
+      );
 
       cmd.redo(noteCanvas);
       expect(noteCanvas.textEditorLayer.setContentSilently).toHaveBeenCalledWith("<p>New</p>");
-      expect(noteCanvas._onTextContentChange).toHaveBeenCalledWith("<p>New</p>");
+      expect(noteCanvas._onTextContentChange).toHaveBeenCalledWith("<p>New</p>", {
+        skipTaskCleanup: true,
+      });
     });
 
     it("should handle missing textEditorLayer gracefully", () => {

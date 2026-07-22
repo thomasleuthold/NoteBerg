@@ -115,7 +115,8 @@
       "recognition": "手写识别",
       "logging": "日志",
       "dangerZone": "危险操作",
-      "about": "关于"
+      "about": "关于",
+      "help": "帮助引导"
     },
     "appearance": {
       "theme": "主题",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ 主密码已创建，本地数据加密已启用。新笔记将被加密。",
       "disabledLocalMsg": "本地数据加密已禁用。已加密的笔记将保持加密状态。",
       "updatedTitle": "加密设置已更新"
+    },
+    "help": {
+      "reset": "重置帮助引导",
+      "resetDesc": "下次使用各工具时再次显示首次使用提示。",
+      "resetBtn": "重置",
+      "resetConfirmTitle": "重置帮助引导",
+      "resetConfirmMsg": "下次使用各工具时将再次显示首次使用提示。"
     }
   },
   "modals": {
@@ -511,12 +519,59 @@
     "deleteRecordingMessage": "确定要删除此录音吗？",
     "errorGeneric": "无法开始录音。",
     "errorNoDevice": "未找到音频设备，请连接麦克风。",
-    "errorPermissionDenied": "麦克风访问被拒绝。"
+    "errorPermissionDenied": "麦克风访问被拒绝。请在系统设置中允许访问麦克风。"
   },
   "noteNavigator": {
     "toggle": "导航器",
     "collapse": "收起",
     "previous": "上一个",
     "next": "下一个"
+  },
+  "helpOverlay": {
+    "next": "下一步",
+    "back": "上一步",
+    "skip": "跳过",
+    "dismiss": "知道了",
+    "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "欢迎",
+      "body": "你的更改会在编辑时自动保存——没有保存按钮。关闭笔记时，如果已设置同步，还会同步到 Nextcloud。"
+    },
+    "pan": {
+      "title": "平移与缩放",
+      "body": "用手指拖动可平移，双指捏合可缩放。若用触控笔书写，模式会自动切换到绘图，手指触摸仍用于平移。"
+    },
+    "text": {
+      "title": "文本",
+      "body": "可在页面任意位置输入带格式的文本——支持标题、格式、列表、表格和链接。选中文本并使用 ✓ 按钮，即可将其变为可勾选的任务。"
+    },
+    "draw": {
+      "title": "绘图",
+      "body": "点按绘图可选择钢笔或荧光笔，并更改颜色或粗细。手写识别仅在 Windows 上可用。"
+    },
+    "eraser": {
+      "title": "橡皮擦",
+      "body": "可擦除整条笔迹，或切换到局部橡皮擦，只擦除触碰到的部分。也可将擦除限定为仅荧光笔。"
+    },
+    "lasso": {
+      "title": "套索选择",
+      "body": "用套索圈出手写和荧光笔以选中，然后拖动可移动或缩放。所选内容的 ⋮ 菜单中也提供“标记为任务”。"
+    },
+    "options": {
+      "title": "更多选项",
+      "body": "打开笔记菜单可进行导出、页面设置等操作。"
+    },
+    "insert": {
+      "title": "插入",
+      "body": "在此添加图片、PDF 或相机照片。"
+    },
+    "firstImage": {
+      "title": "处理图片",
+      "body": "长按图片（手指/鼠标）或通过其 ⋮ 菜单 →“选择”来选中，然后拖动以移动或缩放。⋮ 菜单中还有更多选项。"
+    },
+    "markAsTask": {
+      "title": "任务",
+      "body": "你标记的文本现在是可勾选的任务。可在此处或任务列表中勾选它。"
+    }
   }
 }

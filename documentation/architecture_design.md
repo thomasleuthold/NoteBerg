@@ -35,8 +35,8 @@ The build target is controlled by the `VITE_PLATFORM` environment variable:
 | Platform | Value | Storage | Audio | Recognition |
 |---|---|---|---|---|
 | Desktop (Tauri) | *(unset)* | IndexedDB | Native (Windows) / browser | Local sidecar (Windows) |
-| Android (Tauri) | *(unset)* | IndexedDB | Native (Kotlin plugin) | External URL |
-| Nextcloud web app | `nextcloud` | WebDAV | Browser only | External URL |
+| Android (Tauri) | *(unset)* | IndexedDB | Native (Kotlin plugin) | not available |
+| Nextcloud web app | `nextcloud` | WebDAV | Import + playback only — no recording | not available |
 
 ---
 
@@ -51,7 +51,7 @@ The schema is split into two stores for performance — the index is small and f
 id, notebookId, title, created, modified, version,
 synced, lastSyncedEtag, deleted, purged, previousNotebookId,
 encrypted, background, formatVersion, tags,
-hasStrokes, hasContent, hasRecognition, hasThumbnail,
+hasStrokes, hasContent, hasRecognition,
 media[]  (snapshot: id, name, type, size, deleted — no fileIds),
 recordings[]  (snapshot: id, name, duration, deleted — no fileIds)
 ```
@@ -64,8 +64,10 @@ media[] (full: id, fileId, name, type, size, x, y, width, height,
 deletedMedia[], tasks[], recognition,
 penPresets[], pdfSource (fileId),
 recordings[] (full: id, fileId, name, duration, created, deleted),
-deletedRecordings[], thumbnail (base64 JPEG, 360×500px)
+deletedRecordings[]
 ```
+
+Note: there is no stored/persisted thumbnail. A `thumbnailFileId`/`hasThumbnail` scheme existed previously but was removed (see `_migrateThumbnailsToNoteContent()` in `storage.js`, a one-time v5 migration that deletes the old blobs and stale index fields). Overview cards are rendered on demand instead — see [Overview Thumbnails](#overview-thumbnails) below.
 
 **`notebooks` store:**
 ```
@@ -82,15 +84,11 @@ id (fileId), data (ArrayBuffer), type (MIME), created
 
 ### Web Worker (StorageWorker.js)
 
-All IndexedDB writes from the canvas go through a dedicated Web Worker to keep the drawing loop on the main thread smooth. The worker processes a sequential message queue to avoid read-modify-write races.
-
-Message types: `SAVE_STROKES`, `SAVE_MEDIA`, `SAVE_PRESETS`, `SAVE_THUMBNAIL`, `SAVE_TASKS`, `SAVE_CONTENT`, `SAVE_RECORDINGS`
-
-Each message updates both the `noteContent` store (full data) and the `notes` index (derived flags + metadata snapshot). `SAVE_THUMBNAIL` intentionally does **not** touch `modified`, `version`, or `synced` — thumbnails are UI-only metadata and must not trigger a sync upload.
-
-The worker receives the encryption key when encryption is enabled and encrypts content in-place before writing.
+All IndexedDB writes from the canvas go through a dedicated Web Worker to keep the drawing loop on the main thread smooth, processing a sequential message queue to avoid read-modify-write races. It also encrypts content in-place before writing, when encryption is enabled.
 
 **Disabled in the Nextcloud build** — replaced by the WebDAV storage layer.
+
+Full message-type list and per-message trigger/behavior breakdown: see **[note_editor_architecture.md § Storage Handoff](note_editor_architecture.md#storage-handoff)**.
 
 ### WebDAV Storage (Nextcloud build)
 
@@ -116,33 +114,11 @@ The worker receives the encryption key when encryption is enabled and encrypts c
 
 ## Nextcloud Sync
 
-### Authentication
+Authentication uses Login Flow v2 (OAuth-like browser redirect); the resulting credentials (`serverUrl`, `loginName`, `appPassword`) are stored in the OS keychain, never in localStorage or IndexedDB.
 
-Login Flow v2 (OAuth-like browser redirect). The resulting credentials (`serverUrl`, `loginName`, `appPassword`) are stored in the OS keychain — never in localStorage or IndexedDB.
+Sync itself is ETag-based (PROPFIND → compare ETags → download/upload deltas → update `lastSyncedEtag`), with per-field conflict merging, an ETag-oscillation workaround for a Nextcloud server-side versioning quirk, and `synced`/`version`/`deleted`/`purged` flags driving the whole state machine.
 
-### ETag-based Incremental Sync
-
-Each note/notebook file is tracked by its WebDAV ETag (`lastSyncedEtag`). On sync:
-
-1. **PROPFIND** all remote files → compare ETags
-2. **Download** files where remote ETag ≠ `lastSyncedEtag`
-3. **Upload** files where `synced = false` (local edits pending)
-4. Update `lastSyncedEtag` after successful upload or download
-
-**ETag oscillation fix:** Nextcloud can alternate between two ETags for the same file (server-side versioning). When a file appears modified remotely but local content is clean (`synced = true`), the remote `mtime` is compared against local `modified`. If `remote.modified ≤ local.modified + 2s`, the remote ETag is accepted without downloading.
-
-### Conflict Resolution
-
-- Upload conflict (HTTP 412): retry without `If-Match` header (force overwrite)
-- Stroke merge: local changes take priority
-- Media merge: deduplicated by `fileId`, deletion markers respected
-- Manual resolution UI for structural conflicts
-
-### Sync Flags
-
-- `synced = false` — set on any local edit; cleared after successful upload
-- `version` — incremented on each save; used for ordering during merge
-- `deleted` / `purged` — soft delete then hard delete lifecycle
+Full step-by-step engine behavior, conflict resolution rules, concurrency limits, and known edge cases: see **[sync_architecture.md](sync_architecture.md)**.
 
 ---
 
@@ -167,15 +143,7 @@ Each note/notebook file is tracked by its WebDAV ETag (`lastSyncedEtag`). On syn
 
 Arrays of coordinates are used rather than arrays of point objects for compact storage and efficient serialisation.
 
-### Canvas Layers
-
-The canvas uses multiple stacked layers:
-1. **Background layer** — ruled lines / grid pattern
-2. **PDF layer** — rendered PDF pages (if note has a PDF source)
-3. **Stroke layer** — freehand strokes (HTML5 Canvas)
-4. **Media layer** — images, with resize/rotate/crop handles
-5. **Text layer** — WYSIWYG text editor (Trumbowyg) overlay
-6. **Lasso layer** — selection rectangle and handles
+For the full stroke-recording pipeline, canvas/rendering architecture (2 canvases + DOM overlays, sliding-buffer rendering), undo/redo, media, and text-editing internals: see **[note_editor_architecture.md](note_editor_architecture.md)**.
 
 ### Drawing Modes
 
@@ -210,9 +178,9 @@ A .NET sidecar (`NoteBerg.Recognition`) is bundled with the app and auto-started
 
 ### Recognition Flow
 
-1. Strokes sent as `[{ id, points: [{x, y, pressure}] }]` (POST `/recognize`)
-2. Response: `{ fullText, lines: [{text, boundingBox, words}], words: [{text, boundingBox}] }`
-3. Result stored in `noteContent.recognition`
+1. Strokes sent as `[{ id, points: [{x, y, pressure}] }]` (POST `/recognize?language=...`)
+2. Response: a bare array of `{ text, boundingBox }` word objects (no `lines`, no wrapping object)
+3. Client derives `{ fullText, words }` (`fullText` = words joined with spaces) and stores that shape in `noteContent.recognition`
 4. Debounced 2.5s after last stroke modification
 5. Batch recognition on app startup for all unrecognised notes (Windows)
 
@@ -237,11 +205,13 @@ The compressor uses a per-sample peak detector with attack/release smoothing and
 
 `AudioRecorderPlugin` uses Android `MediaRecorder` (MP4/AAC, 44.1 kHz). Communicated via Tauri mobile plugin commands: `start`, `stop`, `pause`, `resume`, `cancel`, `getAmplitude`.
 
-### Browser (Nextcloud / non-native)
+### Browser (non-native, non-Nextcloud)
 
 `getUserMedia` with `echoCancellation`, `noiseSuppression`, `autoGainControl` constraints → Web Audio API processing chain → `MediaRecorder`. The same compressor/limiter parameters as the native Windows chain are applied via the Web Audio API.
 
-Recording and new recording are disabled in the Nextcloud build UI — only import of existing audio files is available.
+### Nextcloud — Import Only
+
+The Nextcloud build has **no recording code path at all**, browser-based or otherwise. `SoundDialog.js` gates the "New recording" button behind a native-only check (`window.__TAURI_INTERNALS__` present) — in the Nextcloud build that button is never rendered, so the `getUserMedia`/Web Audio chain above is never invoked there. Only importing existing audio files and playback are available in the NC build's sound dialog.
 
 ### Recording Storage
 
@@ -265,6 +235,10 @@ Media items in notes carry positioning metadata (content coordinates):
 { id, fileId, name, type, size, x, y, width, height, rotation, cropData, pdfPage, deleted }
 ```
 
+### Overview Thumbnails
+
+Overview cards are **not** backed by a stored thumbnail blob. `renderNoteSnapshot(canvas, note)` (`src/utils/noteRenderer.js`) renders a 360×500px preview on demand at overview-render time: it mounts a detached `CanvasRenderer` to draw the background/pattern, then layers in media (images and the first PDF page) and strokes directly from the note's live content. A one-time migration (`_migrateThumbnailsToNoteContent()` in `storage.js`) removed the old `thumbnailFileId`/`thumbnailTimestamp` index fields and their blobs — thumbnails used to be persisted and synced, but this was replaced because it caused ETag churn on Nextcloud (see the etag-oscillation history in [sync_architecture.md](sync_architecture.md)).
+
 ---
 
 ## Security
@@ -280,10 +254,11 @@ Nextcloud credentials (`serverUrl`, `loginName`, `appPassword`) are stored exclu
 ### Local Encryption (Master Password)
 
 Optional per-note encryption using:
-- **Key derivation:** PBKDF2-SHA256, 100,000 iterations, 16-byte random salt
+- **Key derivation:** PBKDF2-SHA256, 600,000 iterations for new keys, 16-byte random salt (100,000 iterations retained only to decrypt keys derived before the bump, via a stored per-user `iterations` field)
 - **Encryption:** AES-256-GCM, 12-byte random IV per operation
-- **Encrypted fields:** `content`, `strokes`, `media`, `tasks`, `recognition`, `thumbnail`, `recordings`
+- **Encrypted fields:** `content`, `strokes`, `media`, `tasks`, `recognition`, `recordings`
 - The master password itself is stored in the OS keychain for auto-unlock
+- If the app is locked (no key available) when a save fires for an encrypted note, `StorageWorker.js` drops that save and logs an error rather than writing plaintext — the edit is lost from persistence until the app is unlocked and the action is repeated
 
 The `notes` index store is **never** encrypted — only `noteContent` is — so the overview can render without decryption.
 
@@ -336,16 +311,10 @@ The Nextcloud app shares the same `src/` frontend as the Tauri desktop/Android a
 | Sync engine (`nextcloudSync.js`, `autoSync.js`) | Active — etag tracking, conflict resolution, three-way merge | None — `storage.webdav.js` reads/writes WebDAV directly | There is nothing to reconcile: the NC app **is** the server, so every read/write is already the source of truth |
 | Settings panel | Full (theme, language, sync, encryption, recognition, purge) | Hidden entirely | Theme/language come from Nextcloud itself; the dropped subsystems above have no settings to expose |
 | Handwriting recognition | Sidecar-based (Windows only) | Not available — hint text only | Recognition depends on the Windows `InkAnalyzer` sidecar; there is no supported way to self-host the service, so non-Windows platforms show no setting at all |
+| Audio recording | Native (Windows/Android) or browser `MediaRecorder` | Import + playback only — no recording UI at all | `SoundDialog.js` gates the "New recording" button behind a native-only (`__TAURI_INTERNALS__`) check; the button isn't rendered in the NC build, so even the browser `getUserMedia` path is never reached there |
 | Tombstones | Written to IndexedDB + WebDAV | Written to WebDAV only | Still required so Tauri fat clients sharing the same `/NoteBerg/` folder see deletions from the NC app |
 
 `storage.webdav.js` keeps the exact same exported function signatures as the IndexedDB `storage.js` (`getAllNotes`, `getNote`, `saveNote`, `deleteNote`, `saveMedia`, etc.) so every caller above the storage layer is platform-agnostic; only the module swapped via the Vite alias differs.
-
-### Open questions (unresolved as of this writing)
-
-- **Handwriting recognition** — the Windows `InkAnalyzer` sidecar doesn't translate to a web app; recognition is simply unavailable on the NC app (no self-hosting option is offered).
-- **Offline support** — out of scope; the NC app requires a live connection to the Nextcloud server.
-- **Card size setting** — fixed default; no per-user setting yet.
-- **Nextcloud App Store publishing** — the app currently ships as an `-rc` (release candidate) version intentionally, to keep it out of the main store listing until more testing has happened.
 
 ---
 

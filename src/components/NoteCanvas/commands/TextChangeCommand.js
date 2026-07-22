@@ -21,9 +21,7 @@ export class TextChangeCommand {
    * @param {NoteCanvas} noteCanvas
    */
   redo(noteCanvas) {
-    if (!noteCanvas.textEditorLayer) return;
-    noteCanvas.textEditorLayer.setContentSilently(this.afterHtml);
-    noteCanvas._onTextContentChange(this.afterHtml);
+    this._apply(noteCanvas, this.afterHtml);
   }
 
   /**
@@ -31,9 +29,21 @@ export class TextChangeCommand {
    * @param {NoteCanvas} noteCanvas
    */
   undo(noteCanvas) {
+    this._apply(noteCanvas, this.beforeHtml);
+  }
+
+  /**
+   * Swap the editor HTML. Task records are left untouched (skipTaskCleanup):
+   * they are owned by the paired MarkTaskCommand on the history stack, and
+   * cleaning them here would make redo unable to restore a consistent state.
+   * Checkboxes are re-rendered because persisted HTML doesn't contain them.
+   * @private
+   */
+  _apply(noteCanvas, html) {
     if (!noteCanvas.textEditorLayer) return;
-    noteCanvas.textEditorLayer.setContentSilently(this.beforeHtml);
-    noteCanvas._onTextContentChange(this.beforeHtml);
+    noteCanvas.textEditorLayer.setContentSilently(html);
+    noteCanvas._onTextContentChange(html, { skipTaskCleanup: true });
+    noteCanvas.textEditorLayer.renderTaskCheckboxes(noteCanvas.noteData.tasks);
   }
 
   cleanup() {

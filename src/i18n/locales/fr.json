@@ -115,7 +115,8 @@
       "recognition": "Reconnaissance",
       "logging": "Journaux",
       "dangerZone": "Zone de danger",
-      "about": "À propos"
+      "about": "À propos",
+      "help": "Aide"
     },
     "appearance": {
       "theme": "Thème",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Mot de passe principal créé et chiffrement des données locales activé. Les nouvelles notes seront chiffrées.",
       "disabledLocalMsg": "Chiffrement des données locales désactivé. Les notes déjà chiffrées restent chiffrées.",
       "updatedTitle": "Paramètre de chiffrement mis à jour"
+    },
+    "help": {
+      "reset": "Réinitialiser l'aide",
+      "resetDesc": "Réafficher les premiers conseils à la prochaine utilisation de chaque outil.",
+      "resetBtn": "Réinitialiser",
+      "resetConfirmTitle": "Réinitialiser l'aide",
+      "resetConfirmMsg": "Les premiers conseils réapparaîtront à la prochaine utilisation de chaque outil."
     }
   },
   "modals": {
@@ -511,12 +519,59 @@
     "deleteRecordingMessage": "Voulez-vous vraiment supprimer cet enregistrement ?",
     "errorGeneric": "Impossible de démarrer l'enregistrement.",
     "errorNoDevice": "Aucun périphérique audio détecté. Veuillez connecter un microphone.",
-    "errorPermissionDenied": "Accès au microphone refusé."
+    "errorPermissionDenied": "Accès au microphone refusé. Veuillez autoriser l'accès au microphone dans les paramètres système."
   },
   "noteNavigator": {
     "toggle": "Navigateur",
     "collapse": "Réduire",
     "previous": "Précédent",
     "next": "Suivant"
+  },
+  "helpOverlay": {
+    "next": "Suivant",
+    "back": "Retour",
+    "skip": "Ignorer",
+    "dismiss": "Compris",
+    "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Bienvenue",
+      "body": "Vos modifications sont enregistrées automatiquement — pas de bouton d'enregistrement. À la fermeture d'une note, elle est aussi synchronisée avec Nextcloud si la synchro est configurée."
+    },
+    "pan": {
+      "title": "Déplacer",
+      "body": "Glissez au doigt pour déplacer, pincez pour zoomer. Si vous écrivez au stylet, le mode passe en Dessin automatiquement et le doigt reste sur le déplacement."
+    },
+    "text": {
+      "title": "Texte",
+      "body": "Saisissez du texte formaté partout — titres, mise en forme, listes, tableaux et liens sont pris en charge. Sélectionnez du texte et utilisez le bouton ✓ pour en faire une tâche à cocher."
+    },
+    "draw": {
+      "title": "Dessiner",
+      "body": "Touchez Dessiner pour choisir un stylo ou un surligneur et changer la couleur ou l'épaisseur. La reconnaissance d'écriture n'est disponible que sous Windows."
+    },
+    "eraser": {
+      "title": "Gomme",
+      "body": "Effacez des traits entiers, ou passez à la gomme partielle pour n'effacer que la partie touchée. L'effacement peut aussi se limiter aux surligneurs."
+    },
+    "lasso": {
+      "title": "Lasso",
+      "body": "Entourez l'écriture et les surligneurs avec le lasso pour sélectionner, puis glissez pour déplacer ou redimensionner. Marquer comme tâche est aussi dans le menu ⋮ de la sélection."
+    },
+    "options": {
+      "title": "Plus d'options",
+      "body": "Ouvrez le menu de la note pour l'export, la mise en page et plus."
+    },
+    "insert": {
+      "title": "Insérer",
+      "body": "Ajoutez des images, un PDF ou une photo ici."
+    },
+    "firstImage": {
+      "title": "Gérer les images",
+      "body": "Sélectionnez une image par appui long (doigt/souris) ou via son menu ⋮ → Sélectionner, puis glissez pour déplacer ou redimensionner. Plus d'options dans le menu ⋮."
+    },
+    "markAsTask": {
+      "title": "Tâches",
+      "body": "Le texte marqué est maintenant une tâche à cocher. Cochez-la ici ou dans votre liste de tâches."
+    }
   }
 }

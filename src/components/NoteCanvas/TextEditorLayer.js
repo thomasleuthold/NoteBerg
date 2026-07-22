@@ -24,18 +24,24 @@ import "trumbowyg/dist/plugins/lineheight/trumbowyg.lineheight.js";
 import "trumbowyg/dist/plugins/table/trumbowyg.table.js";
 import "trumbowyg/dist/plugins/table/ui/trumbowyg.table.css";
 
+import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { getIcon } from "../../utils/icons.js";
 import { sanitizeNoteHtml } from "../../utils/sanitizeHtml.js";
+import { startHelpTour } from "../HelpOverlay.js";
+import { getHelpContent, getHelpLabels } from "../helpContent.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
 import { SelectionFloatingBar } from "./SelectionFloatingBar.js";
-import { TextTaskManager } from "./TextTaskManager.js";
+import { normalizeBareLines, TextTaskManager } from "./TextTaskManager.js";
 
 // Custom indent/outdent plugin — uses margin-left instead of the deprecated
 // execCommand('indent') which is removed in modern Chromium.
 const INDENT_STEP = 8; // px per indent level (in content-space, zoom-independent)
 
 function _getBlockElements(trumbowyg) {
+  // Bare inline lines at the editor root (first typed line, Chromium's
+  // list→text conversion) have no block element to indent — wrap them first.
+  normalizeBareLines(trumbowyg.$ed[0]);
   trumbowyg.saveRange();
   const range = trumbowyg.range;
   if (!range) return [];
@@ -330,15 +336,31 @@ export class TextEditorLayer {
       this._debounceHistoryPush();
     });
 
-    // Listen for Mark as Task event from plugin
-    this.$editor.on("tbwmarkastask", () => {
+    // Mark as Task — the jQuery plugin event and the native DOM fallback both
+    // funnel through one handler so the first-use help fires exactly once.
+    const onMarkAsTask = () => {
       this.textTaskManager?.toggleTaskOnSelection(this.$editor.data("trumbowyg"));
-    });
+      // First-ever "Mark as Task" use on this device. Anchors to the toolbar
+      // button (queryable now that the action has fired), centered otherwise.
+      const markAsTask = getHelpContent().markAsTask;
+      startHelpTour(
+        HELP_IDS.MARK_AS_TASK,
+        [
+          {
+            target: document.querySelector(".trumbowyg-markAsTask-button"),
+            title: markAsTask.title,
+            body: markAsTask.body,
+          },
+        ],
+        getHelpLabels(),
+      );
+    };
+
+    // Listen for Mark as Task event from plugin
+    this.$editor.on("tbwmarkastask", onMarkAsTask);
 
     // Native event listener fallback
-    this.editorDiv.addEventListener("tbwmarkastask", () => {
-      this.textTaskManager?.toggleTaskOnSelection(this.$editor.data("trumbowyg"));
-    });
+    this.editorDiv.addEventListener("tbwmarkastask", onMarkAsTask);
 
     // Track content height changes with ResizeObserver.
     // When the text editor grows (e.g. user adds lines), we notify NoteCanvas

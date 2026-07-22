@@ -1,0 +1,161 @@
+/**
+ * HelpOverlay — first-use guided tour callouts.
+ *
+ * All of this CSS applies only to elements inside `.help-overlay`, which exists
+ * in the DOM *only while a tour is running* (HelpOverlay.js appends the layer on
+ * start and removes it entirely on finish/skip). When no tour is active there is
+ * no `.help-overlay` node, so none of these rules match anything — the feature is
+ * provably inert, not merely hidden. Nothing here targets the canvas, toolbar, or
+ * NC app chrome.
+ */
+
+.help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000; /* above modals (1000) and all app/canvas layers */
+  font-family: var(--font-family);
+  /* The layer itself is click-through so the canvas stays visible/legible and
+     the user isn't trapped; only the callout box captures clicks. */
+  pointer-events: none;
+}
+
+/* Optional faint backdrop — subtle, never a full dark scrim, so the arrow can
+   still reference the real control behind it. */
+.help-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
+.help-overlay__callout {
+  position: absolute;
+  pointer-events: auto;
+  box-sizing: border-box;
+  width: min(400px, calc(100vw - 24px));
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--spacing-lg);
+  /* Positioned via inline top/left set by JS. */
+}
+
+.help-overlay__title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+.help-overlay__body {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin: 0 0 var(--spacing-lg) 0;
+}
+
+.help-overlay__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.help-overlay__progress {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  margin-right: auto;
+}
+
+/* Self-contained buttons (do not reuse .btn-primary/.btn-secondary, whose
+   --text-inverse styling is tuned for the app header, not a light callout). */
+.help-overlay__btn {
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-primary);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.help-overlay__btn:hover {
+  background-color: var(--bg-primary);
+}
+
+.help-overlay__btn--primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.help-overlay__btn--primary:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.help-overlay__btn--skip {
+  border-color: transparent;
+  background: none;
+  color: var(--text-tertiary);
+}
+
+.help-overlay__btn--skip:hover {
+  background: none;
+  color: var(--text-secondary);
+  text-decoration: underline;
+}
+
+/* Arrow: a large, solid triangular arrowhead that points at the target control.
+   The element is a 26px box; a CSS-border triangle fills it and points in the
+   direction set by the JS (`--up/--down/--left/--right`). Positioned via inline
+   left/top from JS; a drop-shadow keeps it legible over the canvas. */
+.help-overlay__arrow {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+}
+
+.help-overlay__arrow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 0;
+  height: 0;
+}
+
+/* Points up (callout sits below the target). */
+.help-overlay__arrow--up::after {
+  border-left: 13px solid transparent;
+  border-right: 13px solid transparent;
+  border-bottom: 15px solid var(--bg-primary);
+  top: -4px;
+}
+
+/* Points down (callout sits above the target). */
+.help-overlay__arrow--down::after {
+  border-left: 13px solid transparent;
+  border-right: 13px solid transparent;
+  border-top: 15px solid var(--bg-primary);
+  bottom: -4px;
+}
+
+/* Points left (callout sits to the right of the target). */
+.help-overlay__arrow--left::after {
+  border-top: 13px solid transparent;
+  border-bottom: 13px solid transparent;
+  border-right: 15px solid var(--bg-primary);
+  left: -4px;
+}
+
+/* Points right (callout sits to the left of the target). */
+.help-overlay__arrow--right::after {
+  border-top: 13px solid transparent;
+  border-bottom: 13px solid transparent;
+  border-left: 15px solid var(--bg-primary);
+  right: -4px;
+}

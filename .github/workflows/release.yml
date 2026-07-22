@@ -58,11 +58,20 @@ jobs:
         with:
           tauriScript: npm run tauri
 
+      - name: Rename MSI to carry platform
+        shell: powershell
+        run: |
+          $ver = "${{ inputs.tag }}" -replace '^v', ''
+          $msi = Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" | Select-Object -First 1
+          $dest = Join-Path $msi.DirectoryName "noteberg_windows-$ver.msi"
+          Move-Item $msi.FullName $dest -Force
+          Write-Host "Renamed to $dest"
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
-          files: src-tauri/target/release/bundle/msi/*.msi
+          files: src-tauri/target/release/bundle/msi/noteberg_windows-*.msi
 
   # ─── Linux ──────────────────────────────────────────────────────────────────
   release-linux:
@@ -200,8 +209,23 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
+      - name: Rename APKs to carry platform
+        run: |
+          ver="${{ inputs.tag }}"
+          ver="${ver#v}"
+          find src-tauri/gen/android/app/build/outputs/apk -path '*/release/*.apk' | while read -r apk; do
+            dir=$(dirname "$apk")
+            base=$(basename "$apk")
+            # strip leading "app-" and trailing "-release.apk" to isolate the arch (e.g. arm64, x86_64)
+            arch=${base#app-}
+            arch=${arch%-release.apk}
+            dest="$dir/noteberg_android-$ver-$arch.apk"
+            mv "$apk" "$dest"
+            echo "Renamed $base -> $(basename "$dest")"
+          done
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
-          files: src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
+          files: src-tauri/gen/android/app/build/outputs/apk/**/release/noteberg_android-*.apk

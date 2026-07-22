@@ -115,7 +115,8 @@
       "recognition": "Handwriting Recognition",
       "logging": "Logging",
       "dangerZone": "Danger Zone",
-      "about": "About"
+      "about": "About",
+      "help": "Help Guidance"
     },
     "appearance": {
       "theme": "Theme",
@@ -256,6 +257,13 @@
       "enabledLocalMsg": "✓ Master password created and local data encryption enabled. New notes will be encrypted.",
       "disabledLocalMsg": "Local data encryption disabled. Existing encrypted notes remain encrypted.",
       "updatedTitle": "Encryption Setting Updated"
+    },
+    "help": {
+      "reset": "Reset help guidance",
+      "resetDesc": "Show the first-use tips again next time you use each tool.",
+      "resetBtn": "Reset",
+      "resetConfirmTitle": "Reset help guidance",
+      "resetConfirmMsg": "This will show the first-use tips again the next time you use each tool."
     }
   },
   "modals": {
@@ -511,12 +519,59 @@
     "deleteRecordingMessage": "Are you sure you want to delete this recording?",
     "errorGeneric": "Could not start recording.",
     "errorNoDevice": "No audio device found. Please connect a microphone.",
-    "errorPermissionDenied": "Microphone access denied."
+    "errorPermissionDenied": "Microphone access denied. Please allow microphone access in your system settings."
   },
   "noteNavigator": {
     "toggle": "Navigator",
     "collapse": "Collapse",
     "previous": "Previous",
     "next": "Next"
+  },
+  "helpOverlay": {
+    "next": "Next",
+    "back": "Back",
+    "skip": "Skip",
+    "dismiss": "Got it",
+    "progress": "{{current}} / {{total}}",
+    "welcome": {
+      "title": "Welcome",
+      "body": "Your changes are saved automatically as you work — there's no save button. When you close a note, it also syncs to Nextcloud if you've set up sync."
+    },
+    "pan": {
+      "title": "Pan & zoom",
+      "body": "Drag with touch to pan and pinch to zoom. If you start writing with a stylus, the mode switches to Draw automatically while finger touch stays on panning."
+    },
+    "text": {
+      "title": "Text",
+      "body": "Type formatted text anywhere on the page — headings, formatting, lists, tables, and links are supported. Select text and use the ✓ button to turn it into a checkable task."
+    },
+    "draw": {
+      "title": "Draw",
+      "body": "Tap Draw to pick a pen or highlighter and change color or width. Handwriting recognition is only available on Windows."
+    },
+    "eraser": {
+      "title": "Eraser",
+      "body": "Erase whole strokes, or switch to the part eraser to rub out only the piece you touch. You can also limit erasing to highlighters."
+    },
+    "lasso": {
+      "title": "Lasso select",
+      "body": "Circle handwriting and highlighter with the lasso to select, then drag to move or resize. Mark as Task is also available from the ⋮ menu of the selection."
+    },
+    "options": {
+      "title": "More options",
+      "body": "Open the note menu for export, page settings, and more."
+    },
+    "insert": {
+      "title": "Insert",
+      "body": "Add images, a PDF, or a camera photo here."
+    },
+    "firstImage": {
+      "title": "Working with images",
+      "body": "Select an image by long-pressing it (finger/mouse) or via its ⋮ menu → Select, then drag to move or resize. More options are in the ⋮ menu."
+    },
+    "markAsTask": {
+      "title": "Tasks",
+      "body": "The text you marked is now a checkable task. Tick it off here or from your task list."
+    }
   }
 }
