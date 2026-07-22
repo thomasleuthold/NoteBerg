@@ -42,7 +42,10 @@ async function renderTextToCanvas(html, scale = 2) {
   // Untrusted synced HTML written into a same-origin iframe via document.write —
   // which, unlike innerHTML, even executes <script> tags. Sanitize first.
   html = sanitizeNoteHtml(html);
-  // Strip all tags and check if there's any visible text content
+  // Strip all tags and check if there's any visible text content. This is a
+  // text-only emptiness check, not a sanitization step — `textOnly` is never
+  // written back into the DOM, so an imprecise tag-strip here isn't an XSS risk.
+  // codeql[js/incomplete-multi-character-sanitization]
   const textOnly = html.replace(/<[^>]*>/g, "").trim();
   if (!textOnly) return null;
 

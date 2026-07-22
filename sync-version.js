@@ -30,9 +30,13 @@ import { fileURLToPath } from 'url';
  *   e.g. 0.5.33 build 142 -> 0 + 500_000 + 33_000 + 142 = 533_142  ("0.5.33 #142")
  *   Constraints: minor < 100, patch < 100, build < 1000 within a single patch line.
  *
- * This script NEVER auto-increments the build counter. It only reads package.json
- * and regenerates the derived files. The build counter is bumped explicitly and only
- * by `just bump-build` (which passes --bump-build).
+ * This script does not otherwise touch the build counter — it just reads
+ * package.json and regenerates the derived files — except:
+ *   - `just bump-build` passes --bump-build, which increments it by 1.
+ *   - `npm version patch/minor/major` (i.e. `just bump`/`bump-minor`/`bump-major`)
+ *     runs this script as npm's "version" lifecycle script (recognizable via
+ *     process.env.npm_lifecycle_event === 'version'). That means the semver
+ *     base just changed, so the build counter resets to 1 for the new version.
  *
  * Flags:
  *   --bump-build   increment package.json.build by 1 before regenerating (NOT committed)
@@ -49,6 +53,9 @@ const infoXmlPath = resolve(rootDir, 'appinfo', 'info.xml');
 
 const bumpBuild = process.argv.includes('--bump-build');
 const infoOnly = process.argv.includes('--info');
+// npm sets this to the script name being run — 'version' only when invoked as
+// npm's version-lifecycle script (i.e. via `npm version patch/minor/major`).
+const isNpmVersionHook = process.env.npm_lifecycle_event === 'version';
 
 /**
  * Parse a semver string like "0.5.33-rc.4" into its parts.
@@ -93,9 +100,16 @@ try {
 
   const parsed = parseVersion(pkg.version);
 
-  // --- 1. Build counter (bumped ONLY via --bump-build) ---------------------
+  // --- 1. Build counter -----------------------------------------------------
+  // Bumped via --bump-build, or reset to 1 when a semver bump just ran (npm's
+  // "version" lifecycle script — the base version has already changed by now).
   let build = Number.isInteger(pkg.build) ? pkg.build : 0;
-  if (bumpBuild && !infoOnly) {
+  if (isNpmVersionHook && !infoOnly) {
+    build = 1;
+    pkg.build = build;
+    writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+    console.log(`Version bump detected — build counter reset -> ${build}`);
+  } else if (bumpBuild && !infoOnly) {
     build += 1;
     pkg.build = build;
     // Preserve formatting/indentation of package.json as closely as possible.
