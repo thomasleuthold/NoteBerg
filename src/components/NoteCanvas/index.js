@@ -85,13 +85,19 @@ export function initNoteCanvasComponent() {
     } catch (error) {
       console.error("[NoteCanvas] Failed to initialize:", error);
 
-      // Show error message in container
-      container.innerHTML = `
-        <div class="note-canvas__error">
-          <p class="note-canvas__error-title">Failed to load note</p>
-          <p class="note-canvas__error-message">${error.message}</p>
-        </div>
-      `;
+      // Show error message in container. Built via textContent (not innerHTML)
+      // since error.message may echo untrusted data (e.g. a corrupted note field).
+      container.innerHTML = "";
+      const errorEl = document.createElement("div");
+      errorEl.className = "note-canvas__error";
+      const titleEl = document.createElement("p");
+      titleEl.className = "note-canvas__error-title";
+      titleEl.textContent = "Failed to load note";
+      const messageEl = document.createElement("p");
+      messageEl.className = "note-canvas__error-message";
+      messageEl.textContent = error.message;
+      errorEl.append(titleEl, messageEl);
+      container.appendChild(errorEl);
     }
   });
 

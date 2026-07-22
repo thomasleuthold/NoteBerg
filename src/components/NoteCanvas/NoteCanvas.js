@@ -1585,7 +1585,9 @@ export class NoteCanvas {
 
     // 3. Text editor matches — check raw note content with regex
     if (this.noteData?.content) {
-      // Strip HTML tags for matching
+      // Strip HTML tags for matching. Used only for a regex.test() search match,
+      // never written back into the DOM, so an imprecise tag-strip isn't an XSS risk.
+      // codeql[js/incomplete-multi-character-sanitization]
       const textContent = this.noteData.content.replace(/<[^>]+>/g, "");
       regex.lastIndex = 0;
       if (regex.test(textContent)) {

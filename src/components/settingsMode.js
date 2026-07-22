@@ -552,7 +552,9 @@ export async function renderSettings(container) {
       return;
     }
 
-    // Create a custom modal with copy and clear buttons
+    // Create a custom modal with copy and clear buttons. The log text itself is
+    // set via .value below (not interpolated into this HTML string) since
+    // log entries can contain arbitrary/untrusted text.
     const modalHtml = `
       <div id="logs-modal" class="modal-overlay">
         <div class="modal-dialog modal--wide">
@@ -566,7 +568,7 @@ export async function renderSettings(container) {
               id="logs-content"
               class="logs-textarea"
               readonly
-            >${logsText}</textarea>
+            ></textarea>
           </div>
           <div class="modal-footer modal-footer--gap">
             <button class="btn-secondary" id="copy-logs-btn">${t("settings.logging.copyLogs")}</button>
@@ -585,6 +587,7 @@ export async function renderSettings(container) {
     const copyBtn = modal.querySelector("#copy-logs-btn");
     const clearBtn = modal.querySelector("#clear-logs-btn");
     const logsContent = modal.querySelector("#logs-content");
+    logsContent.value = logsText;
 
     const closeModal = () => {
       modal.classList.add("modal-closing");
