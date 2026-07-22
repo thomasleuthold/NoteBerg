@@ -1,6 +1,6 @@
 {
   "name": "noteberg",
-  "version": "0.5.36",
+  "version": "0.5.37",
   "build": 3,
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
