@@ -1587,8 +1587,7 @@ export class NoteCanvas {
     if (this.noteData?.content) {
       // Strip HTML tags for matching. Used only for a regex.test() search match,
       // never written back into the DOM, so an imprecise tag-strip isn't an XSS risk.
-      // codeql[js/incomplete-multi-character-sanitization]
-      const textContent = this.noteData.content.replace(/<[^>]+>/g, "");
+      const textContent = this.noteData.content.replace(/<[^>]+>/g, ""); // codeql[js/incomplete-multi-character-sanitization]
       regex.lastIndex = 0;
       if (regex.test(textContent)) {
         // Content matches — add position at top (text editor starts at y=0)
