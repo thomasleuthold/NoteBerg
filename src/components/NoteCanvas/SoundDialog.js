@@ -351,8 +351,7 @@ export class SoundDialog {
         const newBtn = document.createElement("button");
         newBtn.className = "sound-dialog__new-btn";
         // Static i18n key with no interpolation options — not attacker-controlled.
-        // codeql[js/xss-through-dom]
-        newBtn.innerHTML = `${getIcon("mic", 16)}<span>${t("soundDialog.newRecording")}</span>`;
+        newBtn.innerHTML = `${getIcon("mic", 16)}<span>${t("soundDialog.newRecording")}</span>`; // codeql[js/xss-through-dom]
         newBtn.addEventListener("click", async (e) => {
           e.stopPropagation();
           if (this._audioEl) {
@@ -378,8 +377,7 @@ export class SoundDialog {
       const importBtn = document.createElement("button");
       importBtn.className = "sound-dialog__new-btn";
       // Static i18n key with no interpolation options — not attacker-controlled.
-      // codeql[js/xss-through-dom]
-      importBtn.innerHTML = `${getIcon("upload", 16)}<span>${t("soundDialog.importAudioFile")}</span>`;
+      importBtn.innerHTML = `${getIcon("upload", 16)}<span>${t("soundDialog.importAudioFile")}</span>`; // codeql[js/xss-through-dom]
       importBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         this._importAudioFile();

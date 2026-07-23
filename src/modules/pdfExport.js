@@ -45,8 +45,7 @@ async function renderTextToCanvas(html, scale = 2) {
   // Strip all tags and check if there's any visible text content. This is a
   // text-only emptiness check, not a sanitization step — `textOnly` is never
   // written back into the DOM, so an imprecise tag-strip here isn't an XSS risk.
-  // codeql[js/incomplete-multi-character-sanitization]
-  const textOnly = html.replace(/<[^>]*>/g, "").trim();
+  const textOnly = html.replace(/<[^>]*>/g, "").trim(); // codeql[js/incomplete-multi-character-sanitization]
   if (!textOnly) return null;
 
   // Use an iframe for full rendering isolation — this prevents the page background

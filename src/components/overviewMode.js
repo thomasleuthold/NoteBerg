@@ -59,6 +59,11 @@ const searchState = {
 // Module state for active tab
 let currentActiveTab = "notes";
 
+// Incremented on every renderActiveTab (and direct re-render) call. Sub-renderers capture
+// their own token and check it against the current value before writing to the DOM, so a
+// slow render for a tab the user has since navigated away from can't clobber the active tab.
+let renderToken = 0;
+
 // Render concurrency guard: prevents two renderOverview calls from racing on the same container.
 // If a render is in progress when datachange fires, we note that a refresh is pending and
 // let the active render trigger it when done, rather than starting a second concurrent render.
@@ -133,10 +138,9 @@ export async function renderOverview(
   }
 }
 
-async function renderNotesList(container) {
-  // Fetch data
-  const notebooks = await getAllNotebooks();
-  const quickNotes = await getQuickNotes();
+async function renderNotesList(container, myToken) {
+  // Fetch data (notebooks and quick notes are independent — fetch concurrently)
+  const [notebooks, quickNotes] = await Promise.all([getAllNotebooks(), getQuickNotes()]);
 
   // Get note counts for each notebook
   const notebookData = await Promise.all(
@@ -147,6 +151,8 @@ async function renderNotesList(container) {
       return { notebook, count: notes.length, effectiveUpdatedAt };
     }),
   );
+
+  if (myToken !== renderToken) return;
 
   // Sort by effectiveUpdatedAt descending
   notebookData.sort((a, b) => b.effectiveUpdatedAt - a.effectiveUpdatedAt);
@@ -189,15 +195,18 @@ async function renderNotesList(container) {
 
   // Render previews for quick notes
   requestAnimationFrame(() => {
+    if (myToken !== renderToken) return;
     renderNotePreviews(container, quickNotes);
   });
 }
 
-async function renderNotebookContents(container, notebookId) {
+async function renderNotebookContents(container, notebookId, myToken) {
   const notebook = await getNotebook(notebookId);
   if (!notebook) throw new Error("Notebook not found");
 
   const notes = await getNotesByNotebook(notebookId);
+
+  if (myToken !== renderToken) return;
 
   const notesHtml =
     notes.length > 0
@@ -242,11 +251,13 @@ async function renderNotebookContents(container, notebookId) {
 
   // Render previews
   requestAnimationFrame(() => {
+    if (myToken !== renderToken) return;
     renderNotePreviews(container, notes);
   });
 }
 
-async function renderSearchTab(container) {
+async function renderSearchTab(container, myToken) {
+  if (myToken !== renderToken) return;
   const closeIcon = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
 
   container.innerHTML = `
@@ -267,71 +278,60 @@ async function renderSearchTab(container) {
   attachSearchListeners(container);
 }
 
-async function renderMarkersTab(container) {
-  // Collect tasks from all notes — need full content (tasks, strokes, recognition)
-  const noteIndexes = await getAllNotes();
-  // In Tauri build, getAllNotes() returns index entries with hasStrokes/hasContent flags.
-  // In NC build, it returns full notes directly — those flags are never set, so fall back
-  // to checking tasks/strokes/content directly.
-  const notesWithTasks = noteIndexes.filter(
-    (n) =>
-      n.hasStrokes ||
-      n.hasContent ||
-      (n.tasks && n.tasks.length > 0) ||
-      (n.strokes && n.strokes.length > 0) ||
-      n.content,
-  );
-  const fullNotes = await Promise.all(notesWithTasks.map((n) => getNote(n.id)));
-  const allNotes = fullNotes.filter(Boolean);
-  const allTasks = [];
-  for (const note of allNotes) {
-    try {
-      const tasks = Array.isArray(note.tasks) ? note.tasks : [];
+/** Number of notes fetched/decoded per batch while progressively building the markers tab. */
+const MARKERS_BATCH_SIZE = 8;
 
-      let recognition = note.recognition;
-      if (typeof recognition === "string") {
-        try {
-          recognition = JSON.parse(recognition);
-        } catch (_e) {
-          recognition = null;
-        }
-      }
-      if (recognition !== null && !Array.isArray(recognition?.words)) {
+function extractTasksFromNote(note) {
+  const tasks = [];
+  try {
+    const noteTasks = Array.isArray(note.tasks) ? note.tasks : [];
+
+    let recognition = note.recognition;
+    if (typeof recognition === "string") {
+      try {
+        recognition = JSON.parse(recognition);
+      } catch (_e) {
         recognition = null;
       }
-
-      const rawDeletedTasks = Array.isArray(note.deletedTasks) ? note.deletedTasks : [];
-      const deletedTaskIds = new Set(rawDeletedTasks);
-      const noteStrokes = Array.isArray(note.strokes) ? note.strokes : [];
-      for (const task of tasks) {
-        // Skip explicitly deleted tasks and ghost stroke tasks (all strokes gone)
-        if (deletedTaskIds.has(task.id)) continue;
-        const taskStrokeIds = new Set(task.strokeIds || []);
-        const taskStrokes = noteStrokes.filter(
-          (s) => taskStrokeIds.has(s.id) && !s._deleted && !s.isDeleted,
-        );
-        if (task.type === "stroke" && taskStrokes.length === 0) continue;
-        allTasks.push({
-          ...task,
-          noteId: note.id,
-          noteTitle: note.title || t("common.untitled"),
-          noteContent: note.content || "",
-          recognition,
-          strokes: taskStrokes,
-        });
-      }
-    } catch (noteError) {
-      console.warn(`[markers] Skipping note ${note.id} due to error:`, noteError);
     }
+    if (recognition !== null && !Array.isArray(recognition?.words)) {
+      recognition = null;
+    }
+
+    const rawDeletedTasks = Array.isArray(note.deletedTasks) ? note.deletedTasks : [];
+    const deletedTaskIds = new Set(rawDeletedTasks);
+    const noteStrokes = Array.isArray(note.strokes) ? note.strokes : [];
+    for (const task of noteTasks) {
+      // Skip explicitly deleted tasks and ghost stroke tasks (all strokes gone)
+      if (deletedTaskIds.has(task.id)) continue;
+      const taskStrokeIds = new Set(task.strokeIds || []);
+      const taskStrokes = noteStrokes.filter(
+        (s) => taskStrokeIds.has(s.id) && !s._deleted && !s.isDeleted,
+      );
+      if (task.type === "stroke" && taskStrokes.length === 0) continue;
+      tasks.push({
+        ...task,
+        noteId: note.id,
+        noteTitle: note.title || t("common.untitled"),
+        noteContent: note.content || "",
+        recognition,
+        strokes: taskStrokes,
+      });
+    }
+  } catch (noteError) {
+    console.warn(`[markers] Skipping note ${note.id} due to error:`, noteError);
   }
+  return tasks;
+}
+
+// Note: renderTaskItem() (called from within the returned HTML template) populates
+// taskStrokesMap as a side effect, so callers must reset the map before invoking this.
+function buildTasksHtml(allTasks) {
   const openTasks = allTasks.filter((t) => !t.checked);
   const doneTasks = allTasks.filter((t) => t.checked);
 
-  taskStrokesMap = new Map();
-
-  const tasksHtml =
-    allTasks.length > 0
-      ? `
+  return allTasks.length > 0
+    ? `
       <div class="tasks-section">
         <div class="section-header tasks-section__header">
           <h3>${getIcon("checkSquare", 20)} ${t("overview.sections.tasks")}</h3>
@@ -356,25 +356,74 @@ async function renderMarkersTab(container) {
             : ""
         }
       </div>`
-      : `<p class="empty-state">${t("overview.empty.noTasks")}</p>`;
+    : `<p class="empty-state">${t("overview.empty.noTasks")}</p>`;
+}
 
-  container.innerHTML = tasksHtml;
-  drawTaskStrokeCanvases(container);
-  attachTaskListeners(container);
+async function renderMarkersTab(container, myToken) {
+  // Collect tasks from all notes — need full content (tasks, strokes, recognition)
+  const noteIndexes = await getAllNotes();
+  if (myToken !== renderToken) return;
 
-  // Toggle between stroke/text display
-  const toggleBtn = container.querySelector("#toggle-task-display");
-  if (toggleBtn) {
-    toggleBtn.addEventListener("click", () => {
-      forceStrokeRender = !forceStrokeRender;
-      renderMarkersTab(container);
-    });
+  // In Tauri build, getAllNotes() returns index entries with hasStrokes/hasContent flags.
+  // In NC build, it returns full notes directly — those flags are never set, so fall back
+  // to checking tasks/strokes/content directly.
+  const notesWithTasks = noteIndexes.filter(
+    (n) =>
+      n.hasStrokes ||
+      n.hasContent ||
+      (n.tasks && n.tasks.length > 0) ||
+      (n.strokes && n.strokes.length > 0) ||
+      n.content,
+  );
+
+  const allTasks = [];
+
+  const renderProgress = (isFinal) => {
+    if (myToken !== renderToken) return;
+    taskStrokesMap = new Map();
+    container.innerHTML = buildTasksHtml(allTasks);
+    drawTaskStrokeCanvases(container);
+    attachTaskListeners(container);
+    if (isFinal) {
+      const toggleBtn = container.querySelector("#toggle-task-display");
+      if (toggleBtn) {
+        toggleBtn.addEventListener("click", () => {
+          forceStrokeRender = !forceStrokeRender;
+          // Mint a fresh token so any still-running batch loop from the previous
+          // render is invalidated and can't clobber this re-render.
+          renderMarkersTab(container, ++renderToken);
+        });
+      }
+    }
+  };
+
+  if (notesWithTasks.length === 0) {
+    renderProgress(true);
+    return;
+  }
+
+  // Fetch+decode notes in small batches and paint after each one, so the user sees tasks
+  // appear progressively instead of waiting for every note to finish loading.
+  for (let i = 0; i < notesWithTasks.length; i += MARKERS_BATCH_SIZE) {
+    const batch = notesWithTasks.slice(i, i + MARKERS_BATCH_SIZE);
+    const fullNotes = await Promise.all(batch.map((n) => getNote(n.id)));
+    if (myToken !== renderToken) return;
+
+    for (const note of fullNotes) {
+      if (!note) continue;
+      allTasks.push(...extractTasksFromNote(note));
+    }
+
+    renderProgress(i + MARKERS_BATCH_SIZE >= notesWithTasks.length);
   }
 }
 
-async function renderRecycleBinTab(container) {
-  const deletedNotebooks = await getDeletedNotebooks();
-  const deletedNotes = await getDeletedNotes();
+async function renderRecycleBinTab(container, myToken) {
+  const [deletedNotebooks, deletedNotes] = await Promise.all([
+    getDeletedNotebooks(),
+    getDeletedNotes(),
+  ]);
+  if (myToken !== renderToken) return;
   const totalItems = deletedNotebooks.length + deletedNotes.length;
 
   const notebookIcon = getIcon("notebook", 24);
@@ -507,23 +556,25 @@ async function renderRecycleBinTab(container) {
 }
 
 async function renderActiveTab(container, notebookId) {
+  const myToken = ++renderToken;
   container.innerHTML = `<div class="loading-state">${t("overview.loading")}</div>`;
 
   try {
     if (currentActiveTab === "notes") {
       if (notebookId) {
-        await renderNotebookContents(container, notebookId);
+        await renderNotebookContents(container, notebookId, myToken);
       } else {
-        await renderNotesList(container);
+        await renderNotesList(container, myToken);
       }
     } else if (currentActiveTab === "search") {
-      await renderSearchTab(container);
+      await renderSearchTab(container, myToken);
     } else if (currentActiveTab === "markers") {
-      await renderMarkersTab(container);
+      await renderMarkersTab(container, myToken);
     } else if (currentActiveTab === "recyclebin") {
-      await renderRecycleBinTab(container);
+      await renderRecycleBinTab(container, myToken);
     }
   } catch (error) {
+    if (myToken !== renderToken) return;
     console.error("Error rendering tab:", error);
     container.innerHTML = `<div class="error-state"><p>${t("overview.errorTab", { message: error.message })}</p></div>`;
   }
