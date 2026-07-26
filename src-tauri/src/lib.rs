@@ -2,6 +2,9 @@ use std::sync::Mutex;
 #[cfg(target_os = "windows")]
 use std::sync::OnceLock;
 
+#[cfg(target_os = "windows")]
+mod mcp;
+
 // ── Windows native audio recording ───────────────────────────────────────────
 //
 // Uses cpal for cross-platform WASAPI capture and hound for WAV encoding.
@@ -711,6 +714,12 @@ pub fn run() {
             native_audio_pause,
             native_audio_resume,
             native_audio_cancel,
+            #[cfg(target_os = "windows")]
+            mcp::mcp_respond,
+            #[cfg(target_os = "windows")]
+            mcp::mcp_set_config,
+            #[cfg(target_os = "windows")]
+            mcp::mcp_get_status,
         ]);
 
     #[cfg(target_os = "android")]
@@ -728,6 +737,7 @@ pub fn run() {
                 // microphone privacy list (required for getUserMedia to find the device).
                 register_audio_privacy();
                 spawn_recognition_sidecar(_app)?;
+                mcp::start(_app);
             }
             Ok(())
         })

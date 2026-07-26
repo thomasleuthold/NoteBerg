@@ -189,6 +189,27 @@ input:disabled + .toggle-slider {
   color: var(--color-primary);
 }
 
+/* ===== MCP indicator (footer badge, Windows only) ===== */
+.mcp-indicator {
+  display: none;
+  align-items: center;
+  margin-left: 16px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-primary);
+  border: 1px solid currentColor;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.mcp-indicator--active {
+  color: var(--color-success);
+}
+
 /* ===== Toggle switch disabled state ===== */
 .toggle-switch--disabled {
   opacity: 0.5;

@@ -355,6 +355,18 @@ export function getStrokeBounds(strokes) {
   let maxY = -Infinity;
   let hasPoints = false;
 
+  // Widest half-width across all strokes — applied once to the final
+  // combined bounds below, not per-stroke. Applying each stroke's `w` to the
+  // running (already-combined) minX/maxX/minY/maxY, as a previous version of
+  // this function did, compounds: stroke 2's padding widens bounds that
+  // already include stroke 1's padding, and so on, so a note with many
+  // strokes ended up with bounds many times larger than the actual ink
+  // extent (confirmed empirically: 100 strokes produced a bounding box over
+  // 2x too wide) — visible as large blank margins around rendered stroke
+  // images (get_note's strokes_images/get_task_marker_image MCP formats,
+  // and the overview Markers tab's mini stroke previews).
+  let maxHalfWidth = 0;
+
   strokes.forEach((stroke) => {
     if (!stroke.x || stroke.x.length === 0) return;
     hasPoints = true;
@@ -364,14 +376,14 @@ export function getStrokeBounds(strokes) {
       minY = Math.min(minY, stroke.y[i]);
       maxY = Math.max(maxY, stroke.y[i]);
     }
-    const w = (stroke.width || 2) / 2;
-    minX -= w;
-    maxX += w;
-    minY -= w;
-    maxY += w;
+    maxHalfWidth = Math.max(maxHalfWidth, (stroke.width || 2) / 2);
   });
 
   if (!hasPoints) return null;
+  minX -= maxHalfWidth;
+  maxX += maxHalfWidth;
+  minY -= maxHalfWidth;
+  maxY += maxHalfWidth;
   return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
 }
 

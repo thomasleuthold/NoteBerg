@@ -25,6 +25,9 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 - 🔍 Automatic background recognition of handwritten content (Windows only, via local recognition service)
 - 💬 Recognition text used for full-text search across all notes
 
+### AI Integration (MCP)
+- 🤖 Optional, off-by-default MCP server lets AI assistants (e.g. Claude Desktop) read your notebooks over a local, token-protected connection (Windows only) — see [mcp.md](documentation/mcp.md)
+
 ### Media & Import/Export
 - 📄 PDF import — annotate PDFs with pen and text
 - 🖼️ Image insertion with cropping and perspective correction
@@ -150,6 +153,7 @@ NoteBerg/
 - [architecture_design.md](documentation/architecture_design.md) — Architecture and design decisions
 - [note_editor_architecture.md](documentation/note_editor_architecture.md) — Note editor internals (stroke recording, canvas layers, undo/redo)
 - [sync_architecture.md](documentation/sync_architecture.md) — Nextcloud sync engine
+- [mcp.md](documentation/mcp.md) — MCP server setup: connect Claude Desktop and other AI assistants to your notebooks
 
 ## Thank You
 

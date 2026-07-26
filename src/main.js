@@ -31,6 +31,14 @@ import { initLogger } from "./utils/logger.js";
 
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
+// Platforms where the Rust MCP server (src-tauri/src/mcp.rs) is compiled in —
+// must be kept in lockstep with the #[cfg(target_os = "...")] gates on
+// mcp::start / mcp::mcp_respond in lib.rs. Widen both together, not just one.
+// (Windows-only today; add macOS/Linux here when their cfg gates are added.)
+function isMcpSupportedPlatform() {
+  return typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
+}
+
 // Application state
 const app = {
   initialized: false,
@@ -97,6 +105,29 @@ async function init() {
     const { migrateCredentials } = await import("./modules/nextcloudSync.js");
     await migrateCredentials();
     console.log(`Credential migration took ${Math.round(performance.now() - migrateStart)}ms`);
+
+    // MCP bridge: only where the Rust side actually exists (see isMcpSupportedPlatform
+    // above and documentation/roadmap/mcp/DESIGN.md). This whole branch is already
+    // unreachable in the Nextcloud build (IS_NEXTCLOUD guard above); this check
+    // additionally excludes Android, iOS, and any future desktop OS before its
+    // Rust cfg gate is actually added.
+    if (isMcpSupportedPlatform()) {
+      const { initMcpBridge, syncMcpConfigToRust } = await import("./modules/mcpBridge.js");
+      initMcpBridge();
+      // Awaited (not fire-and-forget): Rust always boots disabled/tokenless,
+      // so until this completes the server doesn't reflect a user's
+      // persisted "enabled" setting yet. See syncMcpConfigToRust's doc
+      // comment for why this is awaited-with-one-retry rather than a
+      // silent background push.
+      try {
+        await syncMcpConfigToRust();
+      } catch (error) {
+        console.error(
+          "[MCP Bridge] Could not sync MCP config to Rust after retry — MCP will stay disabled this session:",
+          error,
+        );
+      }
+    }
   }
 
   // Initialize router

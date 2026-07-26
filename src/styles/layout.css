@@ -982,9 +982,80 @@
   margin-right: var(--spacing-sm);
 }
 
-.setting-item button:disabled {
+.setting-item button:disabled,
+.modal-footer button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* MCP token list (Settings > MCP Server) */
+.mcp-token-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.mcp-token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-secondary);
+}
+
+.mcp-token-row-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.mcp-token-row button {
+  margin-right: 0;
+  flex-shrink: 0;
+}
+
+.mcp-status-mismatch-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background-color: var(--color-danger-light);
+}
+
+.mcp-status-mismatch-warning .setting-description {
+  color: var(--color-danger);
+}
+
+.mcp-token-display {
+  display: block;
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-secondary);
+  word-break: break-all;
+}
+
+.mcp-token-display-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.mcp-token-display-row .mcp-token-display {
+  margin-top: 0;
+  flex: 1;
+}
+
+.modal-text-prompt-message {
+  margin-top: 0;
+  margin-bottom: var(--spacing-lg);
 }
 
 /* Theme Toggle Group */
@@ -1528,6 +1599,53 @@
 
 .modal-footer--gap {
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ===== MCP access log modal ===== */
+.logs-table-wrapper {
+  max-height: 55vh;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.mcp-audit-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mcp-audit-log-table th,
+.mcp-audit-log-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.mcp-audit-log-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+}
+
+.mcp-audit-log-args {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.mcp-audit-log-outcome--ok {
+  color: var(--color-success);
+}
+
+.mcp-audit-log-outcome--error {
+  color: var(--color-error);
+  cursor: help;
 }
 
 /* ===== Password modal field ===== */

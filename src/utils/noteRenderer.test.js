@@ -84,15 +84,45 @@ describe("getStrokeBounds", () => {
     expect(bounds).toEqual({ minX: -1, maxX: 101, minY: -1, maxY: 51, width: 102, height: 52 });
   });
 
-  it("spans across multiple strokes, with padding applied cumulatively per stroke", () => {
-    // Padding is subtracted/added inside the per-stroke forEach, so with two
-    // strokes of width 4 the +/-2 padding is applied twice (once per stroke),
-    // not once overall.
+  it("spans across multiple strokes, with padding applied once to the combined bounds", () => {
+    // Padding (half the widest stroke's width) is applied once to the final
+    // combined min/max, not per-stroke — applying it inside the per-stroke
+    // loop (a previous version of this function did) compounds across
+    // strokes: with N strokes the bounds end up padded ~N times over,
+    // producing bounding boxes many times larger than the real ink extent
+    // for notes with many strokes (confirmed empirically: 100 strokes
+    // produced bounds over 2x too wide) — visible as large blank margins
+    // around rendered stroke images (get_note's strokes_images format, and
+    // the Markers tab's mini stroke previews).
     const bounds = getStrokeBounds([
       { x: [0], y: [0], width: 4 },
       { x: [200], y: [100], width: 4 },
     ]);
-    expect(bounds).toEqual({ minX: -4, maxX: 202, minY: -4, maxY: 102, width: 206, height: 106 });
+    expect(bounds).toEqual({ minX: -2, maxX: 202, minY: -2, maxY: 102, width: 204, height: 104 });
+  });
+
+  it("does not compound padding across many strokes", () => {
+    // Regression test for the compounding bug above, at a scale (100
+    // strokes) that would have made it obviously wrong: real ink spans
+    // x:[50,200], padding should be applied exactly once (half-width 1, for
+    // the default width-2 fallback), not once per stroke.
+    const strokes = Array.from({ length: 100 }, (_, i) => ({
+      x: [50, 60, 70, 200],
+      y: [i * 30, i * 30 + 5, i * 30 + 10, i * 30 + 2],
+      width: 2,
+    }));
+    const bounds = getStrokeBounds(strokes);
+    expect(bounds.minX).toBe(49);
+    expect(bounds.maxX).toBe(201);
+    expect(bounds.width).toBe(152);
+  });
+
+  it("pads by the widest stroke's half-width when strokes have different widths", () => {
+    const bounds = getStrokeBounds([
+      { x: [0, 100], y: [0, 0], width: 2 },
+      { x: [0, 100], y: [50, 50], width: 20 },
+    ]);
+    expect(bounds).toEqual({ minX: -10, maxX: 110, minY: -10, maxY: 60, width: 120, height: 70 });
   });
 
   it("ignores strokes with an empty x array when others have points", () => {

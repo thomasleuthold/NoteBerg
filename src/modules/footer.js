@@ -61,6 +61,40 @@ export async function updateSyncStatus() {
   }
 }
 
+// Windows-only, matching main.js's isMcpSupportedPlatform — kept as its own
+// local check (same convention settingsMode.js already uses) rather than a
+// shared export, since it's one line and this module has no other reason to
+// import from main.js.
+const IS_MCP_SUPPORTED_PLATFORM =
+  !IS_NEXTCLOUD && typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
+
+let mcpActivityTimeout = null;
+
+/**
+ * Show/hide the footer's MCP badge based on whether the server is actually
+ * enabled and running — not just whether the user's persisted setting says
+ * "enabled" (see settingsMode.js's mcpStatusMismatch handling for why those
+ * can disagree, e.g. a failed startup sync).
+ */
+async function updateMcpIndicator() {
+  if (!IS_MCP_SUPPORTED_PLATFORM) return;
+
+  const mcpIndicator = document.querySelector(".mcp-indicator");
+  if (!mcpIndicator) return;
+
+  const { isMcpEnabled, getMcpStatus } = await import("./mcpBridge.js");
+  let running = false;
+  try {
+    const enabled = await isMcpEnabled();
+    const status = await getMcpStatus();
+    running = enabled && status.enabled;
+  } catch (_e) {
+    // Bridge not initialized yet — treat as not running.
+  }
+
+  mcpIndicator.style.display = running ? "flex" : "none";
+}
+
 /**
  * Perform manual sync (triggered by user clicking footer, Tauri only)
  */
@@ -116,6 +150,30 @@ export function initFooter() {
 
     updateSyncStatus();
     window.addEventListener("nextcloud-auth-changed", updateSyncStatus);
+
+    // MCP badge — Windows only, shown only while the server is actually
+    // enabled and running (see updateMcpIndicator). Inserted after the
+    // recognition indicator, mirroring its own insertion pattern.
+    if (IS_MCP_SUPPORTED_PLATFORM && syncStatus?.parentElement) {
+      const mcpIndicator = document.createElement("span");
+      mcpIndicator.className = "mcp-indicator";
+      mcpIndicator.title = t("footer.mcpRunning");
+      mcpIndicator.textContent = "MCP";
+      syncStatus.parentElement.appendChild(mcpIndicator);
+
+      updateMcpIndicator();
+      window.addEventListener("mcp-status-changed", updateMcpIndicator);
+
+      // Pulse green briefly on real MCP traffic — mcpBridge.js's handle()
+      // dispatches this on every tool call, success or failure alike.
+      window.addEventListener("mcp-activity", () => {
+        mcpIndicator.classList.add("mcp-indicator--active");
+        clearTimeout(mcpActivityTimeout);
+        mcpActivityTimeout = setTimeout(() => {
+          mcpIndicator.classList.remove("mcp-indicator--active");
+        }, 500);
+      });
+    }
   }
 
   // Initialize version display

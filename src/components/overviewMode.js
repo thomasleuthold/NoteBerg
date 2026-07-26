@@ -281,7 +281,7 @@ async function renderSearchTab(container, myToken) {
 /** Number of notes fetched/decoded per batch while progressively building the markers tab. */
 const MARKERS_BATCH_SIZE = 8;
 
-function extractTasksFromNote(note) {
+export function extractTasksFromNote(note) {
   const tasks = [];
   try {
     const noteTasks = Array.isArray(note.tasks) ? note.tasks : [];
@@ -665,6 +665,122 @@ function attachNotesListListeners(container) {
   }
 }
 
+/**
+ * Search all notes' typed content, recognized handwriting, and extracted PDF
+ * text for a query (supports `*`/`?` wildcards). Extracted from the overview
+ * search UI's inline handler so both the UI and the MCP bridge (mcpBridge.js's
+ * search_notes tool) share one implementation instead of duplicating it.
+ * @param {string} rawQuery
+ * @returns {Promise<Array<{note: object, contentMatch: boolean, recognitionMatch: boolean, pdfMatch: boolean}>>}
+ */
+export async function searchAllNotes(rawQuery) {
+  // Title search uses index only (fast). Content/recognition/PDF search needs full notes.
+  const notebooks = await getAllNotebooks();
+  const quickNoteIndexes = await getQuickNotes();
+  const notebookNoteIndexes = await Promise.all(notebooks.map((nb) => getNotesByNotebook(nb.id)));
+  const allIndexes = [...quickNoteIndexes, ...notebookNoteIndexes.flat()];
+
+  // Load full notes for content/recognition/PDF search
+  const fullNotes = await Promise.all(allIndexes.map((idx) => getNote(idx.id)));
+  const allNotes = fullNotes.filter(Boolean);
+
+  // Extract PDF text for notes that have PDF pages
+  const pdfTextByNote = new Map();
+  const notesWithPdfs = allNotes.filter((note) => {
+    return note.media?.some((m) => m.type === "pdf-page");
+  });
+  await Promise.all(
+    notesWithPdfs.map(async (note) => {
+      const fileIds = [
+        ...new Set(note.media.filter((m) => m.type === "pdf-page").map((m) => m.fileId)),
+      ];
+      const texts = await Promise.all(fileIds.map((fid) => extractPdfText(fid)));
+      pdfTextByNote.set(note.id, texts.join("\n"));
+    }),
+  );
+
+  const results = [];
+  for (const note of allNotes) {
+    const contentMatch = globQueryMatches(rawQuery, note.content || "");
+    const recognitionMatch = globQueryMatches(rawQuery, note.recognition?.fullText || "");
+    const pdfMatch = globQueryMatches(rawQuery, pdfTextByNote.get(note.id) || "");
+    if (contentMatch || recognitionMatch || pdfMatch) {
+      results.push({ note, contentMatch, recognitionMatch, pdfMatch });
+    }
+  }
+  return results;
+}
+
+/**
+ * Case-insensitive glob match ("*" = any run of characters incl. none, "?" =
+ * exactly one character, anything else literal), unanchored — true if the
+ * pattern matches anywhere in `text`, mirroring the previous implementation
+ * (a regex .test() with no ^/$ anchors and "*"/"?" mapped to ".*"/".").
+ *
+ * Implemented as a linear two-pointer scan (the standard non-recursive
+ * wildcard-matching algorithm), NOT a regex — a regex built by translating
+ * "*" to ".*" is catastrophic-backtracking: measured empirically, a 3-
+ * wildcard query against 800 characters of non-matching content took 41
+ * SECONDS (single-threaded JS, so this froze the whole app, not just
+ * search), and 2 wildcards were already badly non-linear (2000 chars: 3.2s;
+ * 4000 chars: 24s). A wildcard-count cap doesn't fix this — 2 adjacent
+ * wildcards are already enough for exponential blowup, so a cap tight enough
+ * to be safe (1 wildcard) still isn't linear and defeats normal glob usage.
+ * This scan is provably O(pattern length * text length) with no
+ * backtracking regardless of wildcard count or position — confirmed
+ * empirically: 50 wildcards against 500,000 characters resolves in ~11ms.
+ *
+ * Reachable with an attacker/LLM-controlled query via MCP's search_notes
+ * tool (mcpBridge.js), not just a person typing into the search box, so
+ * safety can't depend on "no one would type that".
+ */
+function globQueryMatches(rawQuery, text) {
+  const query = rawQuery.toLowerCase();
+  const haystack = text.toLowerCase();
+
+  // Old regex had no ^/$ anchors, so it matched the pattern anywhere as a
+  // substring. Pad with "*" on whichever side doesn't already have one, so
+  // the anchored scan below becomes an unanchored "find anywhere" match
+  // without changing its (already-linear) algorithm.
+  const withLeadingStar = query.startsWith("*") ? query : `*${query}`;
+  const pattern = withLeadingStar.endsWith("*") ? withLeadingStar : `${withLeadingStar}*`;
+
+  return wildcardMatch(pattern, haystack);
+}
+
+/** Anchored glob match: pattern must account for the entire `text`. `pattern` is assumed lowercase and to already contain any "*"/"?" wildcards. */
+function wildcardMatch(pattern, text) {
+  let patternIndex = 0;
+  let textIndex = 0;
+  let starIndex = -1; // last "*" seen in pattern, or -1 if none yet
+  let starMatchIndex = 0; // how much of text the last "*" has tentatively consumed
+
+  while (textIndex < text.length) {
+    if (
+      patternIndex < pattern.length &&
+      (pattern[patternIndex] === "?" || pattern[patternIndex] === text[textIndex])
+    ) {
+      patternIndex++;
+      textIndex++;
+    } else if (patternIndex < pattern.length && pattern[patternIndex] === "*") {
+      starIndex = patternIndex;
+      starMatchIndex = textIndex;
+      patternIndex++;
+    } else if (starIndex !== -1) {
+      // Mismatch after a "*": let the "*" absorb one more character and retry.
+      patternIndex = starIndex + 1;
+      starMatchIndex++;
+      textIndex = starMatchIndex;
+    } else {
+      return false;
+    }
+  }
+
+  // Any trailing "*"s in the pattern match the empty remainder.
+  while (patternIndex < pattern.length && pattern[patternIndex] === "*") patternIndex++;
+  return patternIndex === pattern.length;
+}
+
 function attachSearchListeners(container) {
   const searchInput = container.querySelector("#search-input");
   const searchBtn = container.querySelector("#search-btn");
@@ -694,48 +810,7 @@ function attachSearchListeners(container) {
       searchResults.innerHTML = `<div class="search-status">${t("overview.search.searching")}</div>`;
 
       try {
-        // Title search uses index only (fast). Content/recognition/PDF search needs full notes.
-        const notebooks = await getAllNotebooks();
-        const quickNoteIndexes = await getQuickNotes();
-        const notebookNoteIndexes = await Promise.all(
-          notebooks.map((nb) => getNotesByNotebook(nb.id)),
-        );
-        const allIndexes = [...quickNoteIndexes, ...notebookNoteIndexes.flat()];
-
-        // Create regex pattern from query with wildcard support
-        const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const pattern = escapeRegex(rawQuery).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
-        const searchRegex = new RegExp(pattern, "i");
-
-        // Load full notes for content/recognition/PDF search
-        const fullNotes = await Promise.all(allIndexes.map((idx) => getNote(idx.id)));
-        const allNotes = fullNotes.filter(Boolean);
-
-        // Extract PDF text for notes that have PDF pages
-        const pdfTextByNote = new Map();
-        const notesWithPdfs = allNotes.filter((note) => {
-          return note.media?.some((m) => m.type === "pdf-page");
-        });
-        await Promise.all(
-          notesWithPdfs.map(async (note) => {
-            const fileIds = [
-              ...new Set(note.media.filter((m) => m.type === "pdf-page").map((m) => m.fileId)),
-            ];
-            const texts = await Promise.all(fileIds.map((fid) => extractPdfText(fid)));
-            pdfTextByNote.set(note.id, texts.join("\n"));
-          }),
-        );
-
-        const results = [];
-        for (const note of allNotes) {
-          const contentMatch = searchRegex.test(note.content || "");
-          const recognitionMatch = searchRegex.test(note.recognition?.fullText || "");
-          const pdfMatch = searchRegex.test(pdfTextByNote.get(note.id) || "");
-          if (contentMatch || recognitionMatch || pdfMatch) {
-            results.push({ note, contentMatch, recognitionMatch, pdfMatch });
-          }
-        }
-
+        const results = await searchAllNotes(rawQuery);
         searchState.results = results;
         renderSearchResultsList(searchResults, results);
       } catch (error) {
@@ -1069,26 +1144,41 @@ function drawTaskStrokeCanvases(container) {
 /**
  * Render a single task item for the overview tasks section
  */
-function renderTaskItem(task) {
-  const isDone = task.checked;
-  const checkIcon = isDone ? getIcon("checkSquare", 16) : getIcon("square", 16);
-
-  // Extract display text for text tasks from HTML content
-  let label = "";
+/**
+ * Derive a human-readable label for a task (from extractTasksFromNote's output):
+ * for a "text" task, the plain text of the matching <span data-task-id> in the
+ * note's HTML content; for a "stroke" task, the recognized words whose
+ * strokeIds overlap the task's strokeIds, joined. Returns "" if no label could
+ * be derived (caller decides the fallback — see renderTaskItem below).
+ * Exported so the MCP bridge (get_task_markers) can reuse the same derivation
+ * instead of duplicating it.
+ * @param {object} task
+ * @returns {string}
+ */
+export function deriveTaskLabel(task) {
   if (task.type === "text" && task.noteContent) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(task.noteContent, "text/html");
     const span = doc.querySelector(`[data-task-id="${task.id}"]`);
-    label = span?.textContent || "";
-  } else if (task.type === "stroke" && task.recognition?.words && task.strokeIds?.length > 0) {
+    return span?.textContent || "";
+  }
+  if (task.type === "stroke" && task.recognition?.words && task.strokeIds?.length > 0) {
     const taskStrokeIds = new Set(task.strokeIds);
     const matchedWords = task.recognition.words.filter((word) =>
       word.strokeIds?.some((id) => taskStrokeIds.has(id)),
     );
     if (matchedWords.length > 0) {
-      label = matchedWords.map((w) => w.text).join(" ");
+      return matchedWords.map((w) => w.text).join(" ");
     }
   }
+  return "";
+}
+
+function renderTaskItem(task) {
+  const isDone = task.checked;
+  const checkIcon = isDone ? getIcon("checkSquare", 16) : getIcon("square", 16);
+
+  let label = deriveTaskLabel(task);
   if (!label) {
     label = task.type === "text" ? t("overview.tasks.textTask") : "";
   }

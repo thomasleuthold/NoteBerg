@@ -35,6 +35,7 @@ windows = { version = "0.58", features = ["Win32_Media_Audio", "Win32_System_Com
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
 cpal = "0.15"
 hound = "3"
+tiny_http = "0.12"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
