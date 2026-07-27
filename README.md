@@ -177,12 +177,23 @@ NoteBerg stands on the shoulders of many excellent open-source projects. A since
 | [hound](https://github.com/ruuda/hound) | WAV audio encoding |
 | [keyring](https://github.com/hwchen/keyring-rs) | OS keychain access (Windows, macOS, Linux) |
 | [rfd](https://github.com/PolyMeilex/rfd) | Native file save dialog (Windows PDF export) |
+| [tiny_http](https://github.com/tiny-http/tiny-http) | Local HTTP server powering the MCP server (AI integration) |
+| [serde](https://github.com/serde-rs/serde) / [serde_json](https://github.com/serde-rs/json) | Rust serialization framework |
+| [base64](https://github.com/marshallpierce/rust-base64) | Base64 encoding/decoding (Rust) |
+| [ureq](https://github.com/algesten/ureq) | HTTP client for checking the recognition sidecar's readiness |
+| [windows-rs](https://github.com/microsoft/windows-rs) | Rust bindings to the Windows API (audio capture, WebView2 interop) |
+| [webview2-com](https://github.com/wravery/webview2-rs) | Rust bindings for WebView2 COM APIs |
 | [Biome](https://biomejs.dev/) | Linting and formatting |
 | [Vitest](https://vitest.dev/) | Unit testing framework |
 | [Testing Library](https://testing-library.com/) | DOM testing utilities |
 | [jsdom](https://github.com/jsdom/jsdom) | DOM environment for tests |
 | [Express](https://expressjs.com/) | Dev proxy server |
 | [cors](https://github.com/expressjs/cors) | CORS middleware for dev proxy |
+| [cross-env](https://github.com/kentcdodds/cross-env) | Cross-platform environment variables for npm scripts |
+| [ESLint](https://eslint.org/) | JavaScript/TypeScript linter |
+| [Prettier](https://prettier.io/) | Code formatter |
+| [node-fetch](https://github.com/node-fetch/node-fetch) | Fetch API for Node.js (dev proxy) |
+| [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) | Inlines the build into a single HTML file |
 
 And a special thanks to the [Nextcloud](https://nextcloud.com/) project for providing an open, self-hostable sync platform that makes apps like this possible without depending on proprietary cloud infrastructure.
 
