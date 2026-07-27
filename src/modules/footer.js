@@ -75,6 +75,11 @@ let mcpActivityTimeout = null;
  * enabled and running — not just whether the user's persisted setting says
  * "enabled" (see settingsMode.js's mcpStatusMismatch handling for why those
  * can disagree, e.g. a failed startup sync).
+ *
+ * `status.listening` is the third condition: the port is fixed, so if another
+ * process already held it the server never bound and nothing is serving, even
+ * though both "enabled" flags read true (see mcp.rs's McpState::listening).
+ * Showing the badge then would claim a server that isn't there.
  */
 async function updateMcpIndicator() {
   if (!IS_MCP_SUPPORTED_PLATFORM) return;
@@ -87,7 +92,7 @@ async function updateMcpIndicator() {
   try {
     const enabled = await isMcpEnabled();
     const status = await getMcpStatus();
-    running = enabled && status.enabled;
+    running = enabled && status.enabled && status.listening;
   } catch (_e) {
     // Bridge not initialized yet — treat as not running.
   }

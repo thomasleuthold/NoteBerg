@@ -68,6 +68,13 @@ export async function renderSettings(container) {
   // would silently show "on" while the server is actually not listening,
   // with nothing telling the user why their AI client can't connect.
   let mcpStatusMismatch = false;
+  // True when MCP is enabled but the server never bound its port at startup —
+  // something else was already on it (see mcp.rs's McpState::listening). This
+  // is deliberately separate from mcpStatusMismatch: that one is a failed
+  // config push, which the Retry button can actually fix, whereas a taken port
+  // needs the conflicting process closed and NoteBerg restarted. Offering
+  // Retry here would be a button that cannot work.
+  let mcpNotListening = false;
   if (isWindows) {
     const { isMcpEnabled, getMcpStatus, listMcpTokens } = await import("../modules/mcpBridge.js");
     mcpEnabled = await isMcpEnabled();
@@ -76,6 +83,7 @@ export async function renderSettings(container) {
       const status = await getMcpStatus();
       mcpPort = status.port;
       mcpStatusMismatch = mcpEnabled && !status.enabled;
+      mcpNotListening = mcpEnabled && !status.listening;
     } catch (_e) {
       // Bridge not initialized yet (e.g. rendered before app init completed).
     }
@@ -370,13 +378,28 @@ export async function renderSettings(container) {
             : ""
         }
 
+        ${
+          mcpNotListening
+            ? `
+        <div class="setting-item mcp-status-mismatch-warning">
+          <div class="setting-label">
+            <span class="setting-description">${t("settings.mcp.notListeningWarning", { port: mcpPort ?? "" })}</span>
+          </div>
+        </div>
+        `
+            : ""
+        }
+
         <div class="setting-item">
           <div class="setting-label">
             <span class="setting-name">${t("settings.mcp.statusLabel")}</span>
             <span class="setting-description" id="mcp-status-info">
               ${
                 mcpEnabled
-                  ? `${mcpTokens.length > 0 ? t("settings.mcp.tokenConfigured") : t("settings.mcp.noToken")}${mcpPort ? t("settings.mcp.portInfo", { port: mcpPort }) : ""}`
+                  ? // The "Listening on ..." suffix is only truthful when the
+                    // server actually bound — suppressed otherwise, since the
+                    // warning above already explains why it isn't.
+                    `${mcpTokens.length > 0 ? t("settings.mcp.tokenConfigured") : t("settings.mcp.noToken")}${mcpPort && !mcpNotListening ? t("settings.mcp.portInfo", { port: mcpPort }) : ""}`
                   : t("settings.mcp.serverDisabled")
               }
             </span>

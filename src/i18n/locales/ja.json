@@ -214,6 +214,7 @@
       "portInfo": " 127.0.0.1:{{port}} で待機中。",
       "statusMismatchWarning": "設定でMCPは有効ですが、今回のセッションではサーバーが正しく起動しませんでした。修正するまでAIクライアントは接続できません。",
       "retrySyncBtn": "再試行",
+      "notListeningWarning": "MCP は有効ですが、NoteBerg の起動時にポート {{port}} が既に使用されていたため、サーバーは実行されていません。そのポートを使用しているプログラム（別の NoteBerg ウィンドウなど）を終了し、NoteBerg を再起動してください。",
       "tokensLabel": "アクセストークン",
       "tokensDesc": "各MCPクライアント（例: Claude Desktop、Cursor）には個別の名前付きトークンを発行してください。アクセスログで区別しやすくなり、他に影響を与えずに1つだけ失効させることができます。",
       "noTokensYet": "アクセストークンはまだ生成されていません。",

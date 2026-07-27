@@ -32,7 +32,14 @@
 //     libraries are not browser pages and do not send `Origin`; only a
 //     browser-originated fetch (the rebinding attack) would carry one. This is
 //     stricter than an allow-list and is safe specifically because this server
-//     has no legitimate browser-facing caller.
+//     has no legitimate browser-facing caller. Checked *before* the
+//     enabled/token checks: the rebinding page is by definition tokenless, so
+//     behind the token check this layer could only ever fire for already-
+//     authenticated callers — real defense in depth requires it run first.
+//   - Request bodies are capped at `MAX_BODY_BYTES`; an oversized body is
+//     rejected with 413 rather than buffered. The server shares its process
+//     with the app, so an unbounded read would be an app-wide OOM, not just a
+//     server-level one.
 //   - Off by default (DESIGN ADR-002 invariant). Tokens are generated in JS
 //     (mcpBridge.js), stored in the OS keyring (same path as the master
 //     password), and pushed into this module's in-memory state via
@@ -50,8 +57,17 @@
 //   - `mcp_set_config`/`mcp_get_status` only ever move `enabled`/`has_token`
 //     state; `mcp_get_status` never returns the token itself, mirroring how
 //     `get_credential` is treated as write-mostly for secrets elsewhere.
+//   - A failed port bind is reported, not swallowed (`McpState::listening`).
+//     The port is fixed, so another process holding it — a second NoteBerg
+//     instance, or anything else that got there first — leaves this server
+//     silently absent. `enabled` alone can't detect that (it's the user's
+//     pushed-in intent, stored whether or not a listener exists), so the UI
+//     would keep asserting "running" while nothing listens and the user's MCP
+//     client fails to connect for no visible reason. Every UI surface must
+//     therefore gate on `enabled && listening`.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
@@ -74,10 +90,33 @@ const MCP_PORT: u16 = 8765;
 /// How long the HTTP handler waits for the webview to answer before giving up.
 const BRIDGE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Hard cap on how much of a POST body is read into memory. Inbound bodies are
+/// JSON-RPC envelopes (a method name plus small scalar params — note ids,
+/// search queries); the largest realistic one is a few hundred bytes, so 1 MiB
+/// is orders of magnitude of headroom. Without a cap, `read_to_string` would
+/// buffer whatever the client sends until the process runs out of memory —
+/// and since the MCP server shares this process with the app itself, that
+/// takes the user's notes down with it, not just the server. Each request is
+/// also handled on its own thread (see `start`), so concurrent uploads would
+/// multiply the cost.
+const MAX_BODY_BYTES: u64 = 1024 * 1024;
+
 pub struct McpState {
     /// Off by default (DESIGN ADR-002 invariant: enable explicitly). Only
     /// meaningful together with `tokens` being non-empty — see `handle_request`.
     pub enabled: AtomicBool,
+    /// Whether the HTTP listener actually bound its port. Distinct from
+    /// `enabled`: `enabled` is the user's *intent*, pushed in from JS, and is
+    /// stored unconditionally whether or not a listener exists. If the bind
+    /// failed (port already taken — another app, or a second NoteBerg instance)
+    /// the server is silently not there, and without this flag every UI signal
+    /// would still read "on": Settings would show the toggle enabled with no
+    /// explanation, and the footer badge — documented as showing only when the
+    /// server "is actually enabled and running" — would keep claiming it is.
+    /// The user's AI client just fails to connect with nothing pointing at why.
+    /// Set once at startup and never mutated afterwards (a bound listener lives
+    /// for the process's lifetime), so it's only ever read after `start`.
+    listening: AtomicBool,
     /// Every currently-valid token, keyed by secret, valued by the
     /// human-readable name the user gave it (DESIGN §2a). Empty until the
     /// user generates at least one via Settings. Requests are rejected (fail
@@ -98,6 +137,8 @@ impl McpState {
             // in by mcpBridge.js shortly after app unlock via mcp_set_config;
             // until then (and on every fresh process start) this is inert.
             enabled: AtomicBool::new(false),
+            // Flipped on by `start` only once the listener has actually bound.
+            listening: AtomicBool::new(false),
             tokens: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             next_request_id: AtomicU64::new(0),
@@ -117,6 +158,10 @@ pub struct McpStatus {
     enabled: bool,
     has_token: bool,
     port: u16,
+    /// False when the port could not be bound at startup — see
+    /// `McpState::listening`. The UI must treat "running" as
+    /// `enabled && listening`, never `enabled` alone.
+    listening: bool,
 }
 
 /// One named token as pushed from JS — mirrors mcpBridge.js's token metadata
@@ -149,8 +194,8 @@ pub fn mcp_set_config(app: AppHandle, enabled: bool, tokens: Vec<McpTokenEntry>)
     *state.tokens.lock().unwrap() = map;
 }
 
-/// Tauri command: report enabled/has-token/port without ever exposing any
-/// token value itself back to JS (JS already owns the token metadata list
+/// Tauri command: report enabled/has-token/port/listening without ever exposing
+/// any token value itself back to JS (JS already owns the token metadata list
 /// independently in IndexedDB settings — this is only for Rust's own state).
 #[tauri::command]
 pub fn mcp_get_status(app: AppHandle) -> McpStatus {
@@ -160,6 +205,7 @@ pub fn mcp_get_status(app: AppHandle) -> McpStatus {
         enabled: state.enabled.load(Ordering::Relaxed),
         has_token,
         port: MCP_PORT,
+        listening: state.listening.load(Ordering::Relaxed),
     }
 }
 
@@ -197,10 +243,15 @@ pub fn start(app: &tauri::App) {
     let server = match tiny_http::Server::http(("127.0.0.1", MCP_PORT)) {
         Ok(server) => server,
         Err(e) => {
+            // `listening` stays false, so `mcp_get_status` reports the failure
+            // and the UI can say so. stderr alone would be invisible to the
+            // user, who'd see an "enabled" toggle and a client that can't
+            // connect, with nothing linking the two.
             eprintln!("[MCP] Failed to bind 127.0.0.1:{}: {}", MCP_PORT, e);
             return;
         }
     };
+    app.state::<McpState>().listening.store(true, Ordering::Relaxed);
     eprintln!("[MCP] Listening on 127.0.0.1:{} (disabled by default)", MCP_PORT);
 
     let app_handle = app.handle().clone();
@@ -218,6 +269,23 @@ pub fn start(app: &tauri::App) {
 
 fn handle_request(app: &AppHandle, mut request: tiny_http::Request) {
     let state = app.state::<McpState>();
+
+    // DNS-rebinding protection (spec-required): reject any request carrying an
+    // Origin header. Real MCP client libraries are not browser pages and do
+    // not send Origin on plain HTTP requests — only a browser-originated fetch
+    // (the rebinding attack this guards against) would ever carry one.
+    //
+    // This runs *first*, before the enabled/token checks, precisely because a
+    // rebinding attacker's page is the one caller that has no token: behind
+    // the token check this layer would only ever fire for callers who had
+    // already authenticated, i.e. never in the scenario it exists for. The
+    // token still is the real security boundary; keeping this check
+    // independently reachable is what makes it defense in depth rather than
+    // dead code that only looks like it.
+    if has_origin_header(&request) {
+        respond(request, 403, "Cross-origin requests are not permitted");
+        return;
+    }
 
     if !state.enabled.load(Ordering::Relaxed) {
         respond(request, 503, "MCP server is disabled");
@@ -238,15 +306,6 @@ fn handle_request(app: &AppHandle, mut request: tiny_http::Request) {
         return;
     };
 
-    // DNS-rebinding protection (spec-required): reject any request carrying
-    // an Origin header. Real MCP client libraries are not browser pages and
-    // do not send Origin on plain HTTP requests — only a browser-originated
-    // fetch (the rebinding attack this guards against) would ever carry one.
-    if has_origin_header(&request) {
-        respond(request, 403, "Cross-origin requests are not permitted");
-        return;
-    }
-
     if request.url() != "/mcp" {
         respond(request, 404, "Not found");
         return;
@@ -255,8 +314,19 @@ fn handle_request(app: &AppHandle, mut request: tiny_http::Request) {
     match *request.method() {
         tiny_http::Method::Post => {
             let mut body = String::new();
-            if let Err(e) = request.as_reader().read_to_string(&mut body) {
-                respond(request, 400, &format!("Failed to read request body: {e}"));
+            // Read at most one byte *past* the cap: `take(MAX_BODY_BYTES)`
+            // alone would silently truncate an oversized body, turning it into
+            // a confusing JSON parse error instead of an honest 413. Reading
+            // one extra byte makes the overflow detectable below.
+            match request.as_reader().take(MAX_BODY_BYTES + 1).read_to_string(&mut body) {
+                Ok(_) => {}
+                Err(e) => {
+                    respond(request, 400, &format!("Failed to read request body: {e}"));
+                    return;
+                }
+            }
+            if body.len() as u64 > MAX_BODY_BYTES {
+                respond(request, 413, "Request body too large");
                 return;
             }
             handle_mcp_post(app, &state, request, &body, &token_name);
@@ -865,6 +935,29 @@ mod tests {
     }
 
     #[test]
+    fn state_starts_not_listening_until_the_bind_succeeds() {
+        // `start` flips this only after tiny_http::Server::http returns Ok, so
+        // a failed bind leaves it false — that's what lets the UI distinguish
+        // "the user enabled it" from "it is actually serving".
+        let state = McpState::new();
+        assert!(!state.listening.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn enabling_the_server_does_not_by_itself_mark_it_listening() {
+        // The port-conflict case: JS pushes enabled=true (the persisted setting
+        // says on), but the bind failed, so nothing is actually serving. These
+        // two flags must stay independent — collapsing them back into one is
+        // exactly the bug this guards, since the UI's "running" state is
+        // `enabled && listening`.
+        let state = McpState::new();
+        state.enabled.store(true, Ordering::Relaxed);
+
+        assert!(state.enabled.load(Ordering::Relaxed));
+        assert!(!state.listening.load(Ordering::Relaxed), "enabled must not imply listening");
+    }
+
+    #[test]
     fn mcp_set_config_filters_out_empty_token_values() {
         // An empty `value` in a pushed token entry is dropped rather than
         // stored — mirrors the old single-token behavior where a revoke
@@ -1077,6 +1170,36 @@ mod tests {
         let value = value.unwrap();
         assert_eq!(value["error"]["code"], json!(-32700));
         assert_eq!(value["id"], Value::Null);
+    }
+
+    #[test]
+    fn oversized_body_is_detected_rather_than_silently_truncated() {
+        // Mirrors the read path in handle_request: a body one byte over the
+        // cap must be *detectable* as an overflow (-> 413), not quietly cut
+        // short and then fed to the JSON parser as if the client had sent it.
+        let oversized = vec![b'x'; (MAX_BODY_BYTES + 1) as usize];
+        let mut body = String::new();
+        oversized
+            .as_slice()
+            .take(MAX_BODY_BYTES + 1)
+            .read_to_string(&mut body)
+            .unwrap();
+        assert!(body.len() as u64 > MAX_BODY_BYTES, "overflow must be visible to the length check");
+    }
+
+    #[test]
+    fn body_at_exactly_the_cap_is_accepted() {
+        // The boundary is inclusive: exactly MAX_BODY_BYTES is a legal body,
+        // so the +1 read must not make a maximal-but-valid request a 413.
+        let at_limit = vec![b'x'; MAX_BODY_BYTES as usize];
+        let mut body = String::new();
+        at_limit
+            .as_slice()
+            .take(MAX_BODY_BYTES + 1)
+            .read_to_string(&mut body)
+            .unwrap();
+        assert_eq!(body.len() as u64, MAX_BODY_BYTES);
+        assert!(!(body.len() as u64 > MAX_BODY_BYTES), "a body exactly at the cap must not be rejected");
     }
 
     #[test]

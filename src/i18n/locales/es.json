@@ -214,6 +214,7 @@
       "portInfo": " Escuchando en 127.0.0.1:{{port}}.",
       "statusMismatchWarning": "MCP está activado en la configuración, pero el servidor no se inició correctamente en esta sesión. Los clientes de IA no podrán conectarse hasta que se solucione.",
       "retrySyncBtn": "Reintentar",
+      "notListeningWarning": "MCP está activado, pero el puerto {{port}} ya estaba en uso cuando se inició NoteBerg, por lo que el servidor no está funcionando. Cierre el programa que utiliza ese puerto (por ejemplo, otra ventana de NoteBerg) y reinicie NoteBerg.",
       "tokensLabel": "Tokens de acceso",
       "tokensDesc": "Cada cliente MCP (p. ej., Claude Desktop, Cursor) debería tener su propio token con nombre, para poder distinguirlos en el registro de acceso y revocar uno sin afectar a los demás.",
       "noTokensYet": "Aún no se ha generado ningún token de acceso.",

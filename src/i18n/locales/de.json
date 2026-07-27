@@ -214,6 +214,7 @@
       "portInfo": " Wartet auf 127.0.0.1:{{port}}.",
       "statusMismatchWarning": "MCP ist in den Einstellungen aktiviert, aber der Server konnte in dieser Sitzung nicht korrekt gestartet werden. KI-Clients können sich erst nach Behebung verbinden.",
       "retrySyncBtn": "Wiederholen",
+      "notListeningWarning": "MCP ist aktiviert, aber Port {{port}} war beim Start von NoteBerg bereits belegt, sodass der Server nicht läuft. Schließen Sie das Programm, das diesen Port verwendet (z. B. ein weiteres NoteBerg-Fenster), und starten Sie NoteBerg neu.",
       "tokensLabel": "Zugriffstoken",
       "tokensDesc": "Jeder MCP-Client (z. B. Claude Desktop, Cursor) sollte ein eigenes benanntes Token erhalten, damit Sie sie im Zugriffsprotokoll unterscheiden und einzeln widerrufen können, ohne die anderen zu beeinträchtigen.",
       "noTokensYet": "Noch keine Zugriffstoken erstellt.",

@@ -214,6 +214,7 @@
       "portInfo": " Listening on 127.0.0.1:{{port}}.",
       "statusMismatchWarning": "MCP is enabled in settings, but the server did not start correctly this session. AI clients cannot connect until this is fixed.",
       "retrySyncBtn": "Retry",
+      "notListeningWarning": "MCP is enabled, but port {{port}} was already in use when NoteBerg started, so the server is not running. Close whatever is using that port (another NoteBerg window, for example) and restart NoteBerg.",
       "tokensLabel": "Access tokens",
       "tokensDesc": "Each MCP client (e.g. Claude Desktop, Cursor) should get its own named token, so you can tell them apart in the access log and revoke one without affecting the others.",
       "noTokensYet": "No access tokens generated yet.",
