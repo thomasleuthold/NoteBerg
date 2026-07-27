@@ -2080,10 +2080,6 @@ export async function fullSync(localNotebooks, localNotes) {
     // Since we don't store lastSyncedEtag in Nextcloud JSON, we compare with _currentFileEtag
     const isModifiedRemotely = local.lastSyncedEtag !== remote._currentFileEtag;
 
-    console.log(
-      `[Sync:classify] note=${local.id} isModifiedLocally=${isModifiedLocally} isModifiedRemotely=${isModifiedRemotely} localEtag=${local.lastSyncedEtag} remoteEtag=${remote._currentFileEtag} local.modified=${local.modified} remote.modified=${remote.modified} local.version=${local.version} remote.version=${remote.version}`,
-    );
-
     if (isModifiedLocally && isModifiedRemotely) {
       const fullLocal = await getFullNote(local);
 
@@ -2111,7 +2107,6 @@ export async function fullSync(localNotebooks, localNotes) {
         }
       }
     } else if (isModifiedLocally) {
-      console.log(`[Sync:classify] note=${local.id} → local only modified, will upload`);
       notesToUpload.push(await getFullNote(local));
     } else if (isModifiedRemotely) {
       // Check if the remote version is actually not newer than our local version.
@@ -2173,13 +2168,8 @@ export async function fullSync(localNotebooks, localNotes) {
           }
         }
       } else {
-        console.log(
-          `[Sync:classify] note=${local.id} → remote modified (remote.modified=${remote.modified} vs local.modified=${local.modified}). Queuing download.`,
-        );
         notesToDownload.push(remote);
       }
-    } else {
-      console.log(`[Sync:classify] note=${local.id} → no changes, skipping`);
     }
   }
 
