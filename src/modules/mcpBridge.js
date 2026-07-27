@@ -450,8 +450,10 @@ async function listResources() {
   const notebooks = await getAllNotebooks();
   const notes = await getAllNotes();
 
-  const notebookHint = "Call list_notes with this notebook's id to see its notes, or search_notes to find something by keyword across all notebooks.";
-  const noteHint = "This is an index entry only. Call get_note with this note's id for its actual content (typed text, recognized handwriting, attachments, etc.) — see get_note's format parameter for the full menu, including recognized_text/strokes_images for handwriting.";
+  const notebookHint =
+    "Call list_notes with this notebook's id to see its notes, or search_notes to find something by keyword across all notebooks.";
+  const noteHint =
+    "This is an index entry only. Call get_note with this note's id for its actual content (typed text, recognized handwriting, attachments, etc.) — see get_note's format parameter for the full menu, including recognized_text/strokes_images for handwriting.";
 
   const resources = [
     ...notebooks.map((nb) => ({
@@ -516,7 +518,8 @@ async function readResource(uri) {
             title: note.title,
             html: note.content ?? "",
             recognizedText: note.recognition?.fullText ?? "",
-            _note: "This is a compact snapshot, not every representation. Call get_note with this note's id and format 'attachments_list', 'strokes_images', 'note_pdf', etc. for images, PDF export, or other formats.",
+            _note:
+              "This is a compact snapshot, not every representation. Call get_note with this note's id and format 'attachments_list', 'strokes_images', 'note_pdf', etc. for images, PDF export, or other formats.",
           }),
         },
       ],
