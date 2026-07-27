@@ -125,6 +125,8 @@
       "themeDesc": "Scegli lo schema colori preferito",
       "light": "Chiaro",
       "dark": "Scuro",
+      "pdfInvertDark": "Inverti le pagine PDF in modalità scura",
+      "pdfInvertDarkDesc": "Rende le annotazioni più visibili sui PDF importati, ma altera i colori originali del PDF",
       "cardSize": "Dimensione schede",
       "cardSizeDesc": "Imposta la dimensione delle schede nota nella panoramica",
       "cardSizeSmall": "Piccola",

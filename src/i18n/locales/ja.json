@@ -125,6 +125,8 @@
       "themeDesc": "お好みの配色を選択してください",
       "light": "ライト",
       "dark": "ダーク",
+      "pdfInvertDark": "ダークモードでPDFページを反転",
+      "pdfInvertDarkDesc": "インポートしたPDFの注釈が見やすくなりますが、PDF本来の色が変わります",
       "cardSize": "カードサイズ",
       "cardSizeDesc": "概要画面でのノートカードのサイズを設定します",
       "cardSizeSmall": "小",

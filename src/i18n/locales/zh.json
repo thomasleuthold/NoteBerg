@@ -125,6 +125,8 @@
       "themeDesc": "选择你喜欢的配色方案",
       "light": "浅色",
       "dark": "深色",
+      "pdfInvertDark": "深色模式下反转PDF页面",
+      "pdfInvertDarkDesc": "让导入PDF上的批注更易于查看，但会改变PDF的原始颜色",
       "cardSize": "卡片大小",
       "cardSizeDesc": "设置概览中笔记卡片的大小",
       "cardSizeSmall": "小",

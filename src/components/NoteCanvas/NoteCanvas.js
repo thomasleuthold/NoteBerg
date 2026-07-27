@@ -1870,6 +1870,7 @@ export class NoteCanvas {
    */
   _onThemeChange() {
     if (!this.renderer) return;
+    this.renderer.invalidatePdfRenderables();
     this.renderer.forceRedraw();
   }
 

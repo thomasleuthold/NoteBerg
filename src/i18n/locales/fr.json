@@ -125,6 +125,8 @@
       "themeDesc": "Choisissez votre palette de couleurs préférée",
       "light": "Clair",
       "dark": "Sombre",
+      "pdfInvertDark": "Inverser les pages PDF en mode sombre",
+      "pdfInvertDarkDesc": "Rend les annotations plus visibles sur les PDF importés, mais modifie les couleurs originales du PDF",
       "cardSize": "Taille des cartes",
       "cardSizeDesc": "Définir la taille des cartes de notes dans l'aperçu",
       "cardSizeSmall": "Petite",

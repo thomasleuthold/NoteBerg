@@ -15,7 +15,12 @@ import {
 } from "../modules/nextcloudSync.js";
 import { getSetting, purgeLocalData, setSetting } from "../modules/storage.js";
 import { performSync } from "../modules/sync.js";
-import { getTheme, setTheme } from "../modules/theme.js";
+import {
+  getPdfInvertDarkMode,
+  getTheme,
+  setPdfInvertDarkMode,
+  setTheme,
+} from "../modules/theme.js";
 import { showLicensesDialog } from "./licensesDialog.js";
 import { showAlertDialog, showConfirmDialog, showTextPrompt } from "./modals.js";
 
@@ -32,6 +37,7 @@ export async function renderSettings(container) {
   const biometricEnabled = false;
 
   const cardSize = (await getSetting("card_size")) || "medium";
+  const pdfInvertDarkMode = getPdfInvertDarkMode();
 
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? false; // Default: disabled
@@ -130,6 +136,21 @@ export async function renderSettings(container) {
               <span class="theme-toggle-label">${t("settings.appearance.dark")}</span>
             </button>
           </div>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">${t("settings.appearance.pdfInvertDark")}</span>
+            <span class="setting-description">${t("settings.appearance.pdfInvertDarkDesc")}</span>
+          </div>
+          <label class="toggle-switch">
+            <input
+              type="checkbox"
+              id="pdf-invert-dark-toggle"
+              ${pdfInvertDarkMode ? "checked" : ""}
+            />
+            <span class="toggle-slider"></span>
+          </label>
         </div>
 
         <div class="setting-item">
@@ -563,6 +584,13 @@ export async function renderSettings(container) {
       }
       toggle.classList.add("active");
     });
+  });
+
+  const pdfInvertDarkToggle = container.querySelector("#pdf-invert-dark-toggle");
+  pdfInvertDarkToggle?.addEventListener("change", () => {
+    // Dispatches themechange itself, so any open note re-renders its PDF
+    // pages with the new inversion setting, same as an actual theme switch would.
+    setPdfInvertDarkMode(pdfInvertDarkToggle.checked);
   });
 
   // Encryption toggles event listeners

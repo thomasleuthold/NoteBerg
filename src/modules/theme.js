@@ -6,9 +6,12 @@
 const THEMES = ["light", "dark"];
 const DEFAULT_THEME = "light";
 const THEME_STORAGE_KEY = "theme";
+const PDF_INVERT_DARK_STORAGE_KEY = "pdf_invert_dark_mode";
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 let currentTheme = DEFAULT_THEME;
+// Default: enabled — imported PDF pages invert in dark mode so annotations stay legible.
+let pdfInvertDarkMode = localStorage.getItem(PDF_INVERT_DARK_STORAGE_KEY) !== "false";
 
 /**
  * Initialize theme system.
@@ -161,4 +164,28 @@ export function cycleTheme() {
  */
 export function getAvailableThemes() {
   return [...THEMES];
+}
+
+/**
+ * Whether imported PDF pages should be inverted while annotating in dark mode.
+ * Off by user choice when preserving the PDF's original colors matters more
+ * than stroke contrast (e.g. color-coded diagrams, scanned photos).
+ * @returns {boolean}
+ */
+export function getPdfInvertDarkMode() {
+  return pdfInvertDarkMode;
+}
+
+/**
+ * Set whether imported PDF pages should be inverted while annotating in dark mode.
+ * @param {boolean} enabled
+ */
+export function setPdfInvertDarkMode(enabled) {
+  pdfInvertDarkMode = !!enabled;
+  localStorage.setItem(PDF_INVERT_DARK_STORAGE_KEY, String(pdfInvertDarkMode));
+  window.dispatchEvent(
+    new CustomEvent("themechange", {
+      detail: { theme: currentTheme },
+    }),
+  );
 }

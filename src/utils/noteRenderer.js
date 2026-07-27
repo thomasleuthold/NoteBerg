@@ -11,10 +11,12 @@ export const MARKER_ALPHA = 0.3;
 
 /**
  * Get color palette for current theme (15 colors)
+ * @param {string} [themeOverride] - Use this theme instead of the live app theme
+ *   (e.g. "light" for PDF export, which always renders on a white page)
  * @returns {string[]} Array of color hex values
  */
-export function getThemePalette() {
-  const theme = getTheme();
+export function getThemePalette(themeOverride) {
+  const theme = themeOverride || getTheme();
 
   if (theme === "dark") {
     // Dark theme: white first, then colors visible on dark backgrounds
@@ -59,10 +61,12 @@ export function getThemePalette() {
 
 /**
  * Get color palette for marker pens (pale/bright colors)
+ * @param {string} [themeOverride] - Use this theme instead of the live app theme
+ *   (e.g. "light" for PDF export, which always renders on a white page)
  * @returns {string[]} Array of color hex values
  */
-export function getMarkerPalette() {
-  const theme = getTheme();
+export function getMarkerPalette(themeOverride) {
+  const theme = themeOverride || getTheme();
 
   if (theme === "dark") {
     return [
@@ -97,16 +101,24 @@ export function getMarkerPalette() {
  * Draw a single stroke on a canvas context
  * @param {CanvasRenderingContext2D} ctx - Canvas context
  * @param {Object} stroke - Stroke data with x, y, width, color/colorIndex
- * @param {string[]|null} palette - Optional color palette (will use theme palette if not provided)
+ * @param {string[]|null} palette - Optional pen color palette (will use theme palette if not provided)
  * @param {boolean} isSelected - Whether the stroke is selected (for highlighting)
  * @param {boolean} fastMode - Skip pressure rendering for performance (use during scroll)
+ * @param {string[]|null} markerPalette - Optional marker color palette (will use theme marker palette if not provided)
  */
-export function drawStroke(ctx, stroke, palette = null, isSelected = false, fastMode = false) {
+export function drawStroke(
+  ctx,
+  stroke,
+  palette = null,
+  isSelected = false,
+  fastMode = false,
+  markerPalette = null,
+) {
   if (!ctx || !stroke.x || stroke.x.length < 2) return;
 
   const isMarker = stroke.type === "marker";
   // Use marker palette if it's a marker, otherwise use provided palette or theme palette
-  const colors = isMarker ? getMarkerPalette() : palette || getThemePalette();
+  const colors = isMarker ? markerPalette || getMarkerPalette() : palette || getThemePalette();
 
   const baseWidth = stroke.width || 2;
   const color =
@@ -569,6 +581,12 @@ function drawTextSnapshot(ctx, draws) {
  * Layers (in order): background fill → background pattern → media (images + first PDF page)
  *                    → strokes → text.
  *
+ * Background/media/strokes are rendered via CanvasRenderer.renderSnapshot() — the
+ * same one-shot rendering path used elsewhere, so thumbnails stay pixel-consistent
+ * with the editor (dark-mode PDF inversion, light-palette strokes on white PDF
+ * pages, etc.). Only the text layer has no CanvasRenderer equivalent and is
+ * still handled here directly.
+ *
  * @param {HTMLCanvasElement} canvas - Target canvas
  * @param {Object} note - Full note object (strokes, background, content HTML, media array)
  */
@@ -577,8 +595,6 @@ export async function renderNoteSnapshot(canvas, note) {
   const thumbWidth = 360;
   const thumbHeight = 500;
   const maxContentWidth = 1200;
-  const scale = thumbWidth / maxContentWidth;
-  const contentHeight = thumbHeight / scale;
 
   canvas.width = thumbWidth * dpr;
   canvas.height = thumbHeight * dpr;
@@ -588,61 +604,27 @@ export async function renderNoteSnapshot(canvas, note) {
 
   ctx.scale(dpr, dpr);
 
-  // 1. Background fill + pattern (via CanvasRenderer for correct theme color + pattern rendering)
-  // Dynamic import keeps pdfjs-dist out of the module graph for test environments.
-  // CanvasRenderer requires a DOM element to mount its internal canvases; detached div satisfies it.
+  // 1-3. Background + media + strokes, in correct z-order, via the shared
+  // one-shot snapshot renderer. Dynamic imports keep pdfjs-dist out of the
+  // module graph for test environments. CanvasRenderer requires a DOM element
+  // to mount its internal canvases; a detached div satisfies it.
   const { CanvasRenderer } = await import("../components/NoteCanvas/CanvasRenderer.js");
+  const { MediaManager } = await import("../components/NoteCanvas/MediaManager.js");
   const detachedMount = document.createElement("div");
   const renderer = new CanvasRenderer(detachedMount, { maxContentWidth });
+  // Media items only need their bounds for renderSnapshot (it loads bitmaps itself
+  // via getRenderedMedia) — construct directly rather than MediaManager.setItems(),
+  // which would additionally kick off its own separate <img> preloading.
+  const mediaManager = new MediaManager(note.id, note.media || []);
+  renderer.setMediaManager(mediaManager);
 
-  // Set strokes empty for this pass — we draw them ourselves after media so z-order is correct.
-  renderer.setData([], note.background || "none");
-  renderer.renderSnapshot(ctx, thumbWidth, thumbHeight);
-  renderer.destroy();
-
-  // 2. Media: images and first PDF page (loaded async, drawn at content-space coordinates)
-  if (Array.isArray(note.media) && note.media.length > 0) {
-    const { getRenderedMedia } = await import("../modules/mediaManager.js");
-    const visibleItems = note.media
-      .filter((item) => !item.deleted && item.y < contentHeight)
-      .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
-
-    // Only render the first PDF page to keep load time reasonable
-    let pdfPageRendered = false;
-
-    await Promise.all(
-      visibleItems.map(async (item) => {
-        if (item.type === "pdf-page") {
-          if (pdfPageRendered) return;
-          pdfPageRendered = true;
-        }
-        const renderable = await getRenderedMedia(item, scale).catch(() => null);
-        if (!renderable) return;
-
-        ctx.save();
-        ctx.scale(scale, scale);
-        if (item.rotation) {
-          const cx = item.x + item.width / 2;
-          const cy = item.y + item.height / 2;
-          ctx.translate(cx, cy);
-          ctx.rotate((item.rotation * Math.PI) / 180);
-          ctx.translate(-cx, -cy);
-        }
-        ctx.drawImage(renderable, item.x, item.y, item.width, item.height);
-        ctx.restore();
-      }),
-    );
-  }
-
-  // 3. Strokes (drawn on top of media, same as in the editor)
-  if (Array.isArray(note.strokes) && note.strokes.length > 0) {
-    const palette = getThemePalette();
-    ctx.save();
-    ctx.scale(scale, scale);
-    note.strokes.forEach((stroke) => {
-      if (!stroke._deleted && !stroke.isDeleted) drawStroke(ctx, stroke, palette);
-    });
-    ctx.restore();
+  renderer.setData(note.strokes || [], note.background || "none");
+  try {
+    // Only the first PDF page is rendered, to keep thumbnail load time reasonable.
+    await renderer.renderSnapshot(ctx, thumbWidth, thumbHeight, { maxPdfPages: 1 });
+  } finally {
+    renderer.destroy();
+    mediaManager.destroy();
   }
 
   // 4. Text layer — inject HTML into a hidden off-screen element so the browser lays it out
