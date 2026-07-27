@@ -13,7 +13,7 @@
  * each token's secret under its own OS keyring entry) and is the single place
  * that pushes them into Rust's in-memory McpState via mcp_set_config — Rust
  * never generates or persists any token itself (see
- * documentation/roadmap/mcp/DESIGN.md ADR-002/§2a and PLAN.md Phase 2/5b). The
+ * documentation/mcp_design.md ADR-002/§2a and roadmap/mcp/PLAN.md Phase 2/5b). The
  * Settings UI (settingsMode.js) calls the exported functions below; it never
  * talks to `invoke("mcp_*")` directly, keeping all MCP logic contained here.
  *
@@ -56,7 +56,7 @@ const MCP_TOKEN_CREDENTIAL_PREFIX = "mcp_token_";
 /**
  * `get_note` format handlers. Each receives the full merged+decrypted note
  * (from storage.js's getNote()) and returns the JSON-serializable payload for
- * that format. See documentation/roadmap/mcp/DESIGN.md §1 for the rationale
+ * that format. See documentation/mcp_design.md §1 for the rationale
  * behind each format's shape.
  */
 const NOTE_FORMAT_HANDLERS = {
@@ -435,21 +435,35 @@ const TOOL_HANDLERS = {
  * List notebooks and notes as MCP resources. A lightweight, browsable index —
  * clients that want full content still go through get_note's format menu;
  * resources/read here returns a compact snapshot, not every representation.
+ *
+ * Each entry's description ends with a short pointer to the tool that
+ * actually does more than this browsable index can: a real client (reported
+ * live) started here, saw a flat list of notebook/note URIs with no
+ * indication that a search_notes/get_note tool surface existed at all, and
+ * had to rediscover it by trial and error. resources/list has no envelope-
+ * level field for a general hint (only per-item name/description/mimeType),
+ * so the hint rides on every item instead — a notebook's real user-authored
+ * description (if any) is kept, with the hint appended after it, not
+ * overwritten.
  */
 async function listResources() {
   const notebooks = await getAllNotebooks();
   const notes = await getAllNotes();
 
+  const notebookHint = "Call list_notes with this notebook's id to see its notes, or search_notes to find something by keyword across all notebooks.";
+  const noteHint = "This is an index entry only. Call get_note with this note's id for its actual content (typed text, recognized handwriting, attachments, etc.) — see get_note's format parameter for the full menu, including recognized_text/strokes_images for handwriting.";
+
   const resources = [
     ...notebooks.map((nb) => ({
       uri: `noteberg://notebook/${nb.id}`,
       name: nb.title || "Untitled notebook",
-      description: nb.description || undefined,
+      description: nb.description ? `${nb.description} — ${notebookHint}` : notebookHint,
       mimeType: "application/json",
     })),
     ...notes.map((n) => ({
       uri: `noteberg://note/${n.id}`,
       name: n.title || "Untitled note",
+      description: noteHint,
       mimeType: "application/json",
     })),
   ];
@@ -502,6 +516,7 @@ async function readResource(uri) {
             title: note.title,
             html: note.content ?? "",
             recognizedText: note.recognition?.fullText ?? "",
+            _note: "This is a compact snapshot, not every representation. Call get_note with this note's id and format 'attachments_list', 'strokes_images', 'note_pdf', etc. for images, PDF export, or other formats.",
           }),
         },
       ],

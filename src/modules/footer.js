@@ -164,14 +164,17 @@ export function initFooter() {
       updateMcpIndicator();
       window.addEventListener("mcp-status-changed", updateMcpIndicator);
 
-      // Pulse green briefly on real MCP traffic — mcpBridge.js's handle()
-      // dispatches this on every tool call, success or failure alike.
+      // Pulse green on real MCP traffic — mcpBridge.js's handle() dispatches
+      // this on every tool call, success or failure alike. Snaps on
+      // immediately, held just long enough for a paint, then released — the
+      // 250ms fade-out (see .mcp-indicator's transition) is what actually
+      // makes the pulse visible for a comfortable duration, not a JS hold.
       window.addEventListener("mcp-activity", () => {
         mcpIndicator.classList.add("mcp-indicator--active");
         clearTimeout(mcpActivityTimeout);
         mcpActivityTimeout = setTimeout(() => {
           mcpIndicator.classList.remove("mcp-indicator--active");
-        }, 500);
+        }, 50);
       });
     }
   }

@@ -201,13 +201,21 @@ input:disabled + .toggle-slider {
   letter-spacing: 0.02em;
   color: var(--color-primary);
   border: 1px solid currentColor;
+  /* Snap to active instantly (no fade-in) so even a very short MCP call is
+     clearly visible; fade back out over 250ms so it reads as a deliberate
+     pulse rather than a flicker. */
   transition:
-    color var(--transition-fast),
-    border-color var(--transition-fast);
+    color 250ms ease-out,
+    border-color 250ms ease-out;
 }
 
 .mcp-indicator--active {
-  color: var(--color-success);
+  /* A stronger, more saturated green than --color-success (#10b981 reads too
+     close in tone to the badge's default blue at this text size) — chosen
+     specifically so this pulse is clearly visible. */
+  color: #16d16a;
+  font-weight: 900;
+  transition: none;
 }
 
 /* ===== Toggle switch disabled state ===== */

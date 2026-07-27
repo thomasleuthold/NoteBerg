@@ -13,7 +13,7 @@ NoteBerg can expose your notebooks to AI assistants (Claude Desktop, and any oth
 - It does not send any of your data anywhere on its own. It only answers requests from an MCP client that you've configured with a token you generated.
 - **You can create multiple named tokens** — one per MCP client (e.g. one for Claude Desktop, one for a work laptop) — so you can tell them apart in the access log and revoke one without affecting the others.
 - A small blue **"MCP"** badge appears in the app's footer, next to the sync status, whenever the server is enabled and actually running. It briefly flashes green on real MCP traffic (a tool call from a connected client), so you can see at a glance when an AI assistant is actively reading your notes.
-- For the technical design and security rationale (why no TLS is needed on a loopback connection, why the token is the real security boundary, how the connection reaches into the app), see [documentation/roadmap/mcp/DESIGN.md](roadmap/mcp/DESIGN.md).
+- For the technical design and security rationale (why no TLS is needed on a loopback connection, why the token is the real security boundary, how the connection reaches into the app), see [documentation/mcp_design.md](mcp_design.md).
 
 ## 1. Enable the MCP server in NoteBerg
 
@@ -165,4 +165,4 @@ If this happens, there isn't a reliable client-side workaround today beyond retr
 - **No macOS/Linux desktop support yet** — the underlying design allows for it later, but it isn't built.
 - The `mcp-remote` bridge is a third-party community package, not something NoteBerg publishes or controls. It's the same pattern other long-running-app MCP integrations use (e.g. Blender's), but if this feature matures, NoteBerg may eventually publish its own small bridge instead.
 
-For the full design rationale, security model, and phased implementation plan, see [documentation/roadmap/mcp/DESIGN.md](roadmap/mcp/DESIGN.md) and [documentation/roadmap/mcp/PLAN.md](roadmap/mcp/PLAN.md).
+For the full design rationale and security model, see [documentation/mcp_design.md](mcp_design.md).

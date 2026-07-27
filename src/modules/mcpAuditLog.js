@@ -6,8 +6,8 @@
  * is unfit for this purpose: in-memory only (nothing survives a restart),
  * capped at 1000 entries with silent oldest-first eviction, JS-only by
  * explicit design (Rust logs never reach it), and casually user-clearable.
- * See documentation/roadmap/mcp/DESIGN.md §2 and PLAN.md Phase 5 for the full
- * rationale.
+ * See documentation/mcp_design.md §2 and roadmap/mcp/PLAN.md Phase 5 for the
+ * full rationale.
  *
  * Owns its own dedicated IndexedDB database (not a new object store in
  * storage.js's shared schema) — keeps this fully within MCP-owned files per

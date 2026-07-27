@@ -107,7 +107,7 @@ async function init() {
     console.log(`Credential migration took ${Math.round(performance.now() - migrateStart)}ms`);
 
     // MCP bridge: only where the Rust side actually exists (see isMcpSupportedPlatform
-    // above and documentation/roadmap/mcp/DESIGN.md). This whole branch is already
+    // above and documentation/mcp_design.md). This whole branch is already
     // unreachable in the Nextcloud build (IS_NEXTCLOUD guard above); this check
     // additionally excludes Android, iOS, and any future desktop OS before its
     // Rust cfg gate is actually added.

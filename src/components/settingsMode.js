@@ -53,7 +53,7 @@ export async function renderSettings(container) {
   }
   const hasLocalRecognition = !!localRecognitionUrl;
 
-  // MCP server status (Windows only — see documentation/roadmap/mcp/DESIGN.md).
+  // MCP server status (Windows only — see documentation/mcp_design.md).
   // Dynamic import so the bridge module stays out of the Android bundle: this
   // whole file also runs on Android (only excluded from the NC build), and a
   // static import here would defeat the tree-shaking main.js relies on.

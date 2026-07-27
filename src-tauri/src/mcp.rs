@@ -8,7 +8,7 @@
 // webview JS bridge -> storage.js -> back. Phase 3 (this revision) replaces
 // the ad-hoc REST route from Phases 0-2 with the actual protocol so a real
 // client (Claude Desktop, etc.) can connect. Still one tool (`list_notebooks`).
-// See documentation/roadmap/mcp/DESIGN.md and PLAN.md.
+// See documentation/mcp_design.md and documentation/roadmap/mcp/PLAN.md.
 //
 // Windows-only for this slice (matches the recognition-sidecar precedent).
 //
@@ -441,7 +441,7 @@ fn tool_descriptors() -> Vec<Value> {
     vec![
         json!({
             "name": "list_notebooks",
-            "description": "List all of the user's NoteBerg notebooks (id, title, description, color, timestamps, noteCount, lastNoteModified). Does not include individual notes.",
+            "description": "List all of the user's NoteBerg notebooks (id, title, description, color, timestamps, noteCount, lastNoteModified). Does not include individual notes — call list_notes with a notebook's id for that. Looking for something by keyword instead of browsing? Use search_notes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -449,7 +449,7 @@ fn tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "list_notes",
-            "description": "List notes (id, title, timestamps, tags, hasStrokes/hasContent/hasRecognition flags, media/recordings id lists — no content) in a given notebook, or all notes across every notebook if notebook_id is omitted.",
+            "description": "List notes (id, title, timestamps, tags, hasStrokes/hasContent/hasRecognition flags, media/recordings id lists — no content) in a given notebook, or all notes across every notebook if notebook_id is omitted. This is an index only — call get_note with a note's id to read its actual content (typed text, recognized handwriting, attachments, etc.). Looking for something by keyword instead of browsing? Use search_notes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -462,7 +462,7 @@ fn tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "get_note",
-            "description": "Get one note's content in a specific format. Use 'metadata' first if you only need title/timestamps/tags.",
+            "description": "Get one note's content in a specific format. Use 'metadata' first if you only need title/timestamps/tags. For handwriting specifically: try 'recognized_text' first (OCR'd text) — if that's empty or garbled, 'strokes_images' renders the actual handwriting as a picture you can read visually instead.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -482,7 +482,7 @@ fn tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "search_notes",
-            "description": "Search all notes' typed text, recognized handwriting, and extracted PDF text for a query. Supports '*' and '?' wildcards. Returns lightweight matches (id, title, notebookId, modified, which sources matched) — call get_note for full content.",
+            "description": "Search all notes' typed text, recognized handwriting, and extracted PDF text for a query. Supports '*' and '?' wildcards. Returns lightweight matches (id, title, notebookId, modified, which sources matched) — call get_note for full content. Looking for checkbox/to-do items specifically? Use get_task_markers instead — it returns structured checked/unchecked state, not just text matches.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
