@@ -118,7 +118,8 @@
       "logging": "Registro eventi",
       "dangerZone": "Zona pericolosa",
       "about": "Informazioni",
-      "help": "Guida"
+      "help": "Guida",
+      "nativeApps": "App desktop e mobili"
     },
     "appearance": {
       "theme": "Tema",
@@ -319,6 +320,12 @@
       "resetBtn": "Reimposta",
       "resetConfirmTitle": "Reimposta la guida",
       "resetConfirmMsg": "I primi suggerimenti riappariranno al prossimo uso di ogni strumento."
+    },
+    "nativeApps": {
+      "intro": "NoteBerg è disponibile anche come app desktop per Windows e come app Android. Offrono in più:",
+      "featureRecognition": "Riconoscimento della scrittura — cerca nelle tue note scritte a mano",
+      "featureOffline": "Uso offline completo, con sincronizzazione in background verso questo Nextcloud",
+      "featureEncryption": "Crittografia locale opzionale protetta da una password principale"
     }
   },
   "modals": {

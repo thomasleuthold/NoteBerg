@@ -22,9 +22,10 @@ import { initRecycleBin } from "./components/recycleBinMode.js";
 import { initI18n } from "./i18n/index.js";
 import { initializeApp } from "./modules/appInit.js";
 import { initBreadcrumb } from "./modules/breadcrumb.js";
+import { migrateCardSizeFromSettings } from "./modules/displayPrefs.js";
 import { initFooter } from "./modules/footer.js";
 import { initRouter, navigateTo } from "./modules/router.js";
-import { initStorage } from "./modules/storage.js";
+import { getSetting, initStorage } from "./modules/storage.js";
 import { initTheme } from "./modules/theme.js";
 import { getIcon } from "./utils/icons.js";
 import { initLogger } from "./utils/logger.js";
@@ -46,6 +47,12 @@ const app = {
 };
 
 /**
+ * Lazily-loaded settingsDialog module exports. Cached on first open so the
+ * popstate handler can check dialog state synchronously (see setupEventListeners).
+ */
+let settingsDialogApi = null;
+
+/**
  * Initialize the application
  */
 async function init() {
@@ -62,6 +69,11 @@ async function init() {
   const loggerStart = performance.now();
   await initLogger();
   console.log(`Logger initialized in ${Math.round(performance.now() - loggerStart)}ms`);
+
+  // Card size moved from the settings store to localStorage (it must persist on
+  // the NC build too, where setSetting is in-memory only). Carry the existing
+  // native value over once, before the overview first reads it.
+  await migrateCardSizeFromSettings(getSetting);
 
   // Initialize i18n (loads saved language preference from storage)
   const i18nStart = performance.now();
@@ -134,10 +146,11 @@ async function init() {
   const componentsStart = performance.now();
   initRouter();
 
-  // Initialize components
+  // Initialize components.
+  // Settings needs no init step any more: the dialog imports and renders the
+  // panel on demand (see settingsDialog.js), rather than a router mode listener
+  // registered up front. That also keeps settingsMode.js out of the startup path.
   if (!IS_NEXTCLOUD) {
-    const { initSettings } = await import("./components/settingsMode.js");
-    initSettings();
     const { initAutoSync } = await import("./modules/autoSync.js");
     initAutoSync();
   }
@@ -175,14 +188,41 @@ function setupEventListeners() {
     });
   }
 
-  // Settings button (Tauri only — no settings panel in Nextcloud build)
-  if (!IS_NEXTCLOUD) {
-    const settingsBtn = document.getElementById("nav-settings");
-    if (settingsBtn) {
-      settingsBtn.innerHTML = getIcon("settings", 24);
-      settingsBtn.addEventListener("click", () => navigateTo("settings"));
-    }
+  // Settings button. Opens a dialog rather than navigating: a mode change would
+  // replace #main-content and tear down an open note (see settingsDialog.js).
+  const settingsBtn = document.getElementById("nav-settings");
+  if (settingsBtn) {
+    settingsBtn.innerHTML = getIcon("settings", 24);
+    settingsBtn.addEventListener("click", async () => {
+      // Cached so the popstate handler below can query dialog state
+      // synchronously; the module still stays out of the initial bundle.
+      settingsDialogApi = await import("./components/settingsDialog.js");
+      await settingsDialogApi.openSettingsDialog();
+    });
   }
+
+  // Android hardware Back closes the settings dialog before it unwinds app
+  // navigation, matching the platform convention that Back dismisses whatever
+  // is on top.
+  //
+  // Capture phase AND synchronous: stopImmediatePropagation only suppresses the
+  // router's popstate handler if it runs before that handler does. An async
+  // listener would resolve its dynamic import a microtask too late, by which
+  // point the router has already navigated. settingsDialog is therefore
+  // imported eagerly here (it is already loaded whenever the dialog is open).
+  window.addEventListener(
+    "popstate",
+    (event) => {
+      if (!settingsDialogApi?.isSettingsDialogOpen()) return;
+
+      event.stopImmediatePropagation();
+      settingsDialogApi.closeSettingsDialog();
+      // Re-push the entry the Back press consumed, so the view underneath stays
+      // where it was rather than having been silently popped.
+      history.pushState(history.state, "");
+    },
+    true,
+  );
 
   // Prevent global browser zoom (Ctrl+Wheel and Pinch-to-Zoom on trackpad)
   window.addEventListener(

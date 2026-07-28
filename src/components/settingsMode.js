@@ -5,6 +5,7 @@
 
 import { APP_FULL_VERSION, APP_NAME } from "../config.js";
 import { changeLanguage, getCurrentLanguage, t } from "../i18n/index.js";
+import { getCardSize, setCardSize } from "../modules/displayPrefs.js";
 import { resetAllHelp } from "../modules/helpGuidance.js";
 import {
   clearCredentials,
@@ -25,6 +26,23 @@ import { showLicensesDialog } from "./licensesDialog.js";
 import { showAlertDialog, showConfirmDialog, showTextPrompt } from "./modals.js";
 
 /**
+ * The Nextcloud build shows only the settings that actually apply there.
+ *
+ * Omitted rather than shown-and-disabled, because Nextcloud already owns these
+ * as platform preferences and a dead control would be worse than none:
+ *  - Theme: theme.js follows NC's own light/dark via MutationObserver, so
+ *    setTheme() would fight it.
+ *  - UI language: i18n reads OC.getLocale(), so a picker would visibly switch
+ *    the UI and then silently revert on the next load.
+ *  - Nextcloud sync: the NC build talks WebDAV directly — it *is* the server,
+ *    there is no connection to configure.
+ *  - Recognition / MCP: Windows-only sidecar and Rust server.
+ *  - Encryption / master password: appInit.js short-circuits in the NC build.
+ *  - Purge local data: there is no local IndexedDB copy to purge.
+ */
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+
+/**
  * Render settings UI
  * @param {HTMLElement} container - Container element to render into
  */
@@ -36,7 +54,7 @@ export async function renderSettings(container) {
   const biometricCapability = { available: false };
   const biometricEnabled = false;
 
-  const cardSize = (await getSetting("card_size")) || "medium";
+  const cardSize = getCardSize();
   const pdfInvertDarkMode = getPdfInvertDarkMode();
 
   // Get encryption settings
@@ -121,6 +139,10 @@ export async function renderSettings(container) {
       <div class="settings-section">
         <h3>${t("settings.sections.appearance")}</h3>
 
+        ${
+          IS_NEXTCLOUD
+            ? ""
+            : `
         <div class="setting-item">
           <div class="setting-label">
             <span class="setting-name">${t("settings.appearance.theme")}</span>
@@ -137,6 +159,8 @@ export async function renderSettings(container) {
             </button>
           </div>
         </div>
+        `
+        }
 
         <div class="setting-item">
           <div class="setting-label">
@@ -177,6 +201,10 @@ export async function renderSettings(container) {
         </div>
       </div>
 
+      ${
+        IS_NEXTCLOUD
+          ? ""
+          : `
       <div class="settings-section">
         <h3>${t("settings.sections.language")}</h3>
 
@@ -269,7 +297,7 @@ export async function renderSettings(container) {
         ${
           !authenticated
             ? `
-        <div class="setting-item">
+        <div class="setting-item setting-item--full">
           <div class="setting-label">
             <span class="setting-name">${t("settings.nextcloud.connectLabel")}</span>
             <span class="setting-description">${t("settings.nextcloud.connectDesc")}</span>
@@ -289,28 +317,30 @@ export async function renderSettings(container) {
           />
         </div>
 
-        <div class="setting-item">
+        <div class="setting-item setting-item--actions">
           <button id="test-connection-btn" class="btn-secondary">${t("settings.nextcloud.testBtn")}</button>
           <button id="connect-nextcloud-btn" class="btn-primary">${t("settings.nextcloud.connectBtn")}</button>
           <span id="connection-status" class="setting-note"></span>
         </div>
 
-        <div class="setting-item" id="login-url-container" style="display: none;">
+        <div class="setting-item setting-item--hidden" id="login-url-container">
           <label for="login-url" class="setting-label">
             <span class="setting-name">${t("settings.nextcloud.loginUrlLabel")}</span>
             <span class="setting-description">${t("settings.nextcloud.loginUrlDesc")}</span>
           </label>
-          <input
-            type="text"
-            id="login-url"
-            class="setting-control setting-control--selectable"
-            readonly
-          />
-          <button id="copy-login-url-btn" class="btn-secondary btn--margin-top">${t("settings.nextcloud.copyUrlBtn")}</button>
+          <div class="setting-item__actions">
+            <input
+              type="text"
+              id="login-url"
+              class="setting-control setting-control--selectable"
+              readonly
+            />
+            <button id="copy-login-url-btn" class="btn-secondary">${t("settings.nextcloud.copyUrlBtn")}</button>
+          </div>
         </div>
         `
             : `
-        <div class="setting-item">
+        <div class="setting-item setting-item--full">
           <div class="setting-label">
             <span class="setting-name">${t("settings.nextcloud.connected")}</span>
             <span class="setting-description">${t("settings.nextcloud.connectedAs", { user: credentials?.loginName || "Unknown" })}</span>
@@ -320,7 +350,7 @@ export async function renderSettings(container) {
           </div>
         </div>
 
-        <div class="setting-item">
+        <div class="setting-item setting-item--actions">
           <button id="sync-now-btn" class="btn-primary">${t("settings.nextcloud.syncNow")}</button>
           <button id="disconnect-btn" class="btn-secondary">${t("settings.nextcloud.disconnect")}</button>
           <span id="sync-status" class="setting-note"></span>
@@ -335,7 +365,7 @@ export async function renderSettings(container) {
         ${
           isWindows
             ? `
-        <div class="setting-item">
+        <div class="setting-item setting-item--full">
           <div class="setting-label">
             <span class="setting-name">${t("settings.recognition.statusLabel")}</span>
             <span class="setting-description" id="recognition-mode-info">
@@ -354,13 +384,13 @@ export async function renderSettings(container) {
           </select>
         </div>
 
-        <div class="setting-item">
+        <div class="setting-item setting-item--actions">
           <button id="test-recognition-btn" class="btn-secondary">${t("settings.recognition.testBtn")}</button>
           <span id="recognition-status" class="setting-note"></span>
         </div>
         `
             : `
-        <div class="setting-item">
+        <div class="setting-item setting-item--full">
           <div class="setting-label">
             <span class="setting-description">${t("settings.recognition.windowsOnly")}</span>
           </div>
@@ -402,7 +432,7 @@ export async function renderSettings(container) {
         ${
           mcpNotListening
             ? `
-        <div class="setting-item mcp-status-mismatch-warning">
+        <div class="setting-item setting-item--full mcp-status-mismatch-warning">
           <div class="setting-label">
             <span class="setting-description">${t("settings.mcp.notListeningWarning", { port: mcpPort ?? "" })}</span>
           </div>
@@ -411,7 +441,7 @@ export async function renderSettings(container) {
             : ""
         }
 
-        <div class="setting-item">
+        <div class="setting-item setting-item--full">
           <div class="setting-label">
             <span class="setting-name">${t("settings.mcp.statusLabel")}</span>
             <span class="setting-description" id="mcp-status-info">
@@ -427,7 +457,7 @@ export async function renderSettings(container) {
           </div>
         </div>
 
-        <div class="setting-item mcp-token-list-item">
+        <div class="setting-item setting-item--full mcp-token-list-item">
           <div class="setting-label">
             <span class="setting-name">${t("settings.mcp.tokensLabel")}</span>
             <span class="setting-description">${t("settings.mcp.tokensDesc")}</span>
@@ -466,12 +496,14 @@ export async function renderSettings(container) {
             <span class="setting-name">${t("settings.mcp.auditLogCountLabel")}</span>
             <span class="setting-description" id="mcp-audit-log-count">${t("settings.mcp.auditLogCountValue", { count: mcpAuditLogCount })}</span>
           </div>
-          <button id="mcp-view-audit-log-btn" class="btn-secondary" ${mcpAuditLogCount === 0 ? "disabled" : ""}>${t("settings.mcp.viewAuditLogBtn")}</button>
-          <button id="mcp-clear-audit-log-btn" class="btn-secondary btn-danger-filled" ${mcpAuditLogCount === 0 ? "disabled" : ""}>${t("settings.mcp.clearAuditLogBtn")}</button>
+          <div class="setting-item__actions">
+            <button id="mcp-view-audit-log-btn" class="btn-secondary" ${mcpAuditLogCount === 0 ? "disabled" : ""}>${t("settings.mcp.viewAuditLogBtn")}</button>
+            <button id="mcp-clear-audit-log-btn" class="btn-secondary btn-danger-filled" ${mcpAuditLogCount === 0 ? "disabled" : ""}>${t("settings.mcp.clearAuditLogBtn")}</button>
+          </div>
         </div>
         `
             : `
-        <div class="setting-item">
+        <div class="setting-item setting-item--full">
           <div class="setting-label">
             <span class="setting-description">${t("settings.mcp.windowsOnly")}</span>
           </div>
@@ -525,21 +557,46 @@ export async function renderSettings(container) {
             <span class="setting-name">${t("settings.dangerZone.purgeLocal")}</span>
             <span class="setting-description">${t("settings.dangerZone.purgeLocalDesc")}</span>
           </div>
-          <button id="purge-local-btn" class="btn-secondary btn-danger-filled">${t("settings.dangerZone.purgeLocalBtn")}</button>
-          <span id="purge-status" class="setting-note"></span>
+          <div class="setting-item__actions">
+            <button id="purge-local-btn" class="btn-secondary btn-danger-filled">${t("settings.dangerZone.purgeLocalBtn")}</button>
+            <span id="purge-status" class="setting-note"></span>
+          </div>
         </div>
 
-        <div class="setting-item">
+        <div class="setting-item setting-item--full">
           <div class="danger-zone-desc">
             ${authenticated ? t("settings.dangerZone.warningConnected") : t("settings.dangerZone.warningDisconnected")}
           </div>
         </div>
       </div>
+      `
+      }
+
+      ${
+        IS_NEXTCLOUD
+          ? `
+      <div class="settings-section">
+        <h3>${t("settings.sections.nativeApps")}</h3>
+
+        <div class="setting-item setting-item--full">
+          <div class="about-info">
+            <p>${t("settings.nativeApps.intro")}</p>
+            <ul class="native-apps-features">
+              <li>${t("settings.nativeApps.featureRecognition")}</li>
+              <li>${t("settings.nativeApps.featureOffline")}</li>
+              <li>${t("settings.nativeApps.featureEncryption")}</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      `
+          : ""
+      }
 
       <div class="settings-section">
         <h3>${t("settings.sections.about")}</h3>
 
-        <div class="setting-item">
+        <div class="setting-item setting-item--full">
           <div class="about-info">
             <p><strong>${APP_NAME}</strong></p>
             <p>${t("settings.about.version", { version: APP_FULL_VERSION })}</p>
@@ -547,7 +604,7 @@ export async function renderSettings(container) {
           </div>
         </div>
 
-        <div class="setting-item">
+        <div class="setting-item setting-item--actions">
           <button id="show-licenses-btn" class="btn-secondary">${t("settings.about.licenses")}</button>
         </div>
       </div>
@@ -562,8 +619,8 @@ export async function renderSettings(container) {
 
   // Card size selector
   const cardSizeSelect = container.querySelector("#card-size-select");
-  cardSizeSelect?.addEventListener("change", async () => {
-    await setSetting("card_size", cardSizeSelect.value);
+  cardSizeSelect?.addEventListener("change", () => {
+    setCardSize(cardSizeSelect.value);
     // Re-render overview if currently visible so the change takes effect immediately
     const overviewContent = document.getElementById("overview-content");
     if (overviewContent?.offsetParent !== null) {
@@ -1005,8 +1062,10 @@ export async function renderSettings(container) {
 
       try {
         await startLoginFlow(serverUrl, (loginUrl) => {
-          // Show the login URL field
-          loginUrlContainer.style.display = "block";
+          // Show the login URL field. Toggled by class, not style.display:
+          // the row is a `display: contents` grid participant, so setting an
+          // inline display would collapse it back into a stacked box.
+          loginUrlContainer.classList.remove("setting-item--hidden");
           loginUrlInput.value = loginUrl;
 
           statusSpan.textContent = t("settings.nextcloud.waitingLogin");
@@ -1033,7 +1092,7 @@ export async function renderSettings(container) {
         });
 
         // Login successful
-        loginUrlContainer.style.display = "none";
+        loginUrlContainer.classList.add("setting-item--hidden");
         statusSpan.textContent = "✓ Connected successfully!";
         statusSpan.style.color = "var(--color-success)";
 
@@ -1045,7 +1104,7 @@ export async function renderSettings(container) {
       } catch (error) {
         console.error("Login flow error caught in settings:", error);
         const errorMessage = error?.message || error?.toString() || "Unknown error occurred";
-        loginUrlContainer.style.display = "none";
+        loginUrlContainer.classList.add("setting-item--hidden");
         statusSpan.textContent = `✗ ${errorMessage}`;
         statusSpan.style.color = "var(--color-error)";
         connectBtn.disabled = false;
@@ -1396,7 +1455,12 @@ async function openMcpAuditLogModal() {
 }
 
 /**
- * Initialize settings component
+ * Initialize settings component.
+ *
+ * Kept for the router's legacy `settings` mode (deep links / direct
+ * navigateTo("settings") calls). The normal entry point is the settings
+ * dialog, which imports renderSettings directly instead of going through a
+ * render event — see settingsDialog.js.
  */
 export function initSettings() {
   // Listen for render settings event from router

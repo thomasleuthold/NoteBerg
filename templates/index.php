@@ -188,7 +188,9 @@ try {
     <div class="toolbar-center">
     </div>
     <div class="toolbar-right">
-      <!-- No settings button in Nextcloud build -->
+      <button id="nav-settings" class="btn-icon" aria-label="Settings" title="Settings">
+        <!-- Icon injected by main.js -->
+      </button>
     </div>
   </header>
 

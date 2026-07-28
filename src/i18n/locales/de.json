@@ -118,7 +118,8 @@
       "logging": "Protokollierung",
       "dangerZone": "Gefahrenzone",
       "about": "Über",
-      "help": "Hilfe-Tipps"
+      "help": "Hilfe-Tipps",
+      "nativeApps": "Desktop- & Mobil-Apps"
     },
     "appearance": {
       "theme": "Design",
@@ -319,6 +320,12 @@
       "resetBtn": "Zurücksetzen",
       "resetConfirmTitle": "Hilfe-Tipps zurücksetzen",
       "resetConfirmMsg": "Die Erst-Tipps werden beim nächsten Verwenden jedes Werkzeugs erneut angezeigt."
+    },
+    "nativeApps": {
+      "intro": "NoteBerg ist auch als Desktop-App für Windows und als Android-App verfügbar. Sie bieten zusätzlich:",
+      "featureRecognition": "Handschrifterkennung — durchsuchen Sie Ihre handschriftlichen Notizen",
+      "featureOffline": "Vollständige Offline-Nutzung mit Hintergrundsynchronisierung zu dieser Nextcloud",
+      "featureEncryption": "Optionale lokale Verschlüsselung, geschützt durch ein Master-Passwort"
     }
   },
   "modals": {

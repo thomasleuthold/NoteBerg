@@ -118,7 +118,8 @@
       "logging": "Logging",
       "dangerZone": "Danger Zone",
       "about": "About",
-      "help": "Help Guidance"
+      "help": "Help Guidance",
+      "nativeApps": "Desktop & Mobile Apps"
     },
     "appearance": {
       "theme": "Theme",
@@ -319,6 +320,12 @@
       "resetBtn": "Reset",
       "resetConfirmTitle": "Reset help guidance",
       "resetConfirmMsg": "This will show the first-use tips again the next time you use each tool."
+    },
+    "nativeApps": {
+      "intro": "NoteBerg is also available as a desktop app for Windows and as an Android app. They add:",
+      "featureRecognition": "Handwriting recognition — search your handwritten notes",
+      "featureOffline": "Full offline use, with background sync to this Nextcloud",
+      "featureEncryption": "Optional local encryption protected by a master password"
     }
   },
   "modals": {

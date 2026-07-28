@@ -893,11 +893,129 @@
   color: var(--text-primary);
 }
 
+/* ==========================================================================
+   Settings Dialog
+   ========================================================================== */
+
+/* Below the shared modal layer (.modal-overlay is z-index 1000) so dialogs that
+   settings itself opens — confirm, alert, prompt, audit log, licenses — stack
+   on top of it rather than behind. */
+.settings-overlay {
+  z-index: 900;
+  padding: var(--spacing-md);
+}
+
+.settings-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(95vw, 1100px);
+  height: min(95vh, 900px);
+  background-color: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.settings-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  border-bottom: 1px solid var(--border-secondary);
+  flex: 0 0 auto;
+}
+
+.settings-dialog__title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Only this pane scrolls, so the header stays visible while the (long) settings
+   list moves under it. */
+.settings-dialog__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Inside the dialog the panel provides its own width; the standalone view's
+   800px cap and auto margins would leave dead space either side. */
+.settings-dialog .settings-panel {
+  max-width: none;
+  margin: 0;
+}
+
+/* The dialog header already shows the title — the panel's own heading would be
+   a second "Settings" directly beneath it. */
+.settings-dialog .settings-header {
+  display: none;
+}
+
+/* Native-app feature list (Nextcloud build only) */
+.native-apps-features {
+  margin: var(--spacing-sm) 0 0;
+  padding-left: 1.25em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+@media (max-width: 768px) {
+  .settings-overlay {
+    padding: 0;
+  }
+
+  /* Full-bleed on phones: 95% of a small screen wastes space on chrome and
+     leaves the panel cramped. */
+  .settings-dialog {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+  }
+}
+
 /* Settings Mode */
+
+/* The grid lives on the panel, not on each section, so ALL controls across the
+   whole panel share one column edge. Per-section grids would size each column
+   to that section's widest control — a section holding only a 48px toggle would
+   put its toggle far left of a section holding a select, which reads as broken
+   alignment. The track is a fixed width (not max-content) so it also does not
+   move as conditional sections appear/disappear (MCP/recognition are
+   Windows-only; the Nextcloud rows swap on auth state). */
 .settings-panel {
+  --settings-control-width: 250px;
+  /* Faint divider between rows within a section. Deliberately weaker than the
+     --border-secondary section rule so the two levels stay distinguishable. */
+  --settings-divider-color: var(--border-primary);
+
+  /* Clearance between a row's divider and its own text. Applied as real
+     padding on the cells rather than as row-gap, because a gap is measured
+     between cell *boxes*: a row whose control is a full-width button has a
+     taller box than its text, which eats the gap and leaves the next row's
+     divider almost touching its label. Padding is immune to that. */
+  --settings-row-padding: var(--spacing-lg);
+
+  display: grid;
+  grid-template-columns: 1fr var(--settings-control-width);
+  /* start, not center: both cells carry the same top inset below the divider,
+     so aligning their top edges keeps that inset honest. Centring would let a
+     cell that is taller than its neighbour (e.g. two stacked buttons beside a
+     two-line label) drift upward toward the divider while its leftover space
+     pooled underneath. */
+  align-items: start;
+  column-gap: var(--spacing-xl);
+  row-gap: 0;
   max-width: 800px;
   margin: 0 auto;
   padding: var(--spacing-xl);
+}
+
+.settings-header {
+  grid-column: 1 / -1;
 }
 
 .settings-header h2 {
@@ -907,30 +1025,116 @@
   color: var(--text-primary);
 }
 
+/* Sections are grouping/semantic only — they hand their rows to the panel grid
+   so the shared column applies across section boundaries. The section's own
+   separator therefore has to be drawn by its heading (below) rather than by a
+   border on the section box, which `display: contents` does not render. */
 .settings-section {
-  margin-bottom: var(--spacing-xl);
-  padding-bottom: var(--spacing-md);
-  border-bottom: 1px solid var(--border-primary);
+  display: contents;
 }
 
-.settings-section:last-child {
-  border-bottom: none;
-}
-
+/* Section rule: --border-secondary rather than --border-primary. The softer
+   primary grey reads as a recessed/bevelled edge against the panel background;
+   the stronger colour keeps the divider flat and deliberate, matching the rest
+   of the UI. */
 .settings-section h3 {
+  grid-column: 1 / -1;
   font-size: 1.25rem;
   font-weight: 600;
-  margin-bottom: var(--spacing-lg);
+  margin-top: var(--spacing-xl);
+  margin-bottom: 0;
+  padding-top: var(--spacing-xl);
+  border-top: 1px solid var(--border-secondary);
   color: var(--text-primary);
 }
 
+/* First section starts at the top of the panel — no rule above it. */
+.settings-section:first-of-type h3 {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* A row is not a box of its own: the label and the control are placed directly
+   into the panel grid (display: contents) so every control lines up on one
+   column edge regardless of the label text length beside it. */
 .setting-item {
-  margin-bottom: var(--spacing-lg);
+  display: contents;
+}
+
+/* Row divider: lighter than the section rule so the hierarchy reads at a
+   glance — strong line = new section, faint line = next setting within it.
+
+   Drawn once per row as a pseudo-element on the label, stretched across the
+   whole panel width. A border on each cell would be the obvious approach but
+   fails on two counts: .setting-item is `display: contents` so there is no row
+   box to put it on, and .toggle-switch cannot take padding/border at all (its
+   slider is absolutely positioned to inset:0 and would stretch to cover it).
+   One pseudo-element sidesteps both and guarantees a single unbroken line. */
+/* Every cell in a row is inset from the divider by the same amount, so the
+   row's content sits a fixed distance below the line no matter which cell is
+   tallest.
+
+   Wrapper elements (the label, and the __actions cell) take *padding*: it is
+   inside their box, so the divider — pinned to the label's padding box — and
+   the cell contents stay locked to the same offset.
+
+   Bare controls take *margin* instead, because padding on a <select>,
+   <button> or .toggle-switch would inflate the control's own painted box
+   (and stretch the toggle's absolutely-positioned slider) rather than adding
+   clearance around it. */
+.setting-item > .setting-label,
+.setting-item__actions {
+  padding-top: var(--settings-row-padding);
+  padding-bottom: var(--settings-row-padding);
+}
+
+.setting-item > .setting-label {
+  position: relative;
+}
+
+.setting-item > .setting-control,
+.setting-item > .toggle-switch,
+.setting-item > .theme-toggle-group,
+.setting-item > button {
+  margin-top: var(--settings-row-padding);
+  margin-bottom: var(--settings-row-padding);
+}
+
+.setting-item > .setting-label::before {
+  content: "";
+  position: absolute;
+  /* Span label + column-gap + control column, i.e. the full row width. */
+  left: 0;
+  right: calc(-1 * (var(--settings-control-width) + var(--spacing-xl)));
+  /* Pinned to the cell's top edge — the padding above provides the clearance. */
+  top: 0;
+  border-top: 1px solid var(--settings-divider-color);
+}
+
+/* Full-width rows already span both columns, so their divider must not extend
+   past the panel's right edge. */
+.setting-item--full > .setting-label::before {
+  right: 0;
 }
 
 .setting-label {
+  grid-column: 1;
   display: block;
-  margin-bottom: var(--spacing-sm);
+  min-width: 0;
+}
+
+/* No divider on the first row of a section — the section rule above it already
+   separates, and stacking both reads as a double line. */
+.settings-section > .setting-item:first-of-type > .setting-label::before {
+  content: none;
+}
+
+/* Rows with no control at all (status text, "Connected as…", platform notices)
+   would otherwise leave an empty second column and read as misaligned. */
+.setting-item--full > .setting-label,
+.setting-item--full > .setting-note {
+  grid-column: 1 / -1;
 }
 
 .setting-name {
@@ -946,9 +1150,12 @@
   color: var(--text-secondary);
 }
 
+/* Selects/inputs fill the shared column, so every dropdown is the same width
+   regardless of its option text. */
 .setting-control {
+  grid-column: 2;
+  justify-self: stretch;
   width: 100%;
-  max-width: 400px;
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
@@ -956,6 +1163,108 @@
   color: var(--text-primary);
   font-family: var(--font-family);
   font-size: 0.875rem;
+}
+
+/* Toggles keep their intrinsic 48px and sit at the column's left edge, so the
+   switch stays visually tied to the label it belongs to. Every toggle in the
+   panel therefore starts at the same x.
+
+   The switch is NOT given the divider border/padding directly: .toggle-slider
+   is absolutely positioned to inset:0 of .toggle-switch, so any padding here
+   would stretch the slider over it and distort the control. The divider for
+   toggle rows comes from the row-spanning pseudo-element on the label, which
+   never touches the switch itself. */
+/* The switch is 24px tall against a label that is usually two lines, so with
+   align-items:start it would sit against the divider. Nudge it down to line up
+   with the label's first line (.setting-name), which is what it names. */
+.setting-item > .toggle-switch {
+  grid-column: 2;
+  justify-self: start;
+  margin-top: calc(var(--settings-row-padding) + 2px);
+}
+
+.setting-item > .theme-toggle-group {
+  grid-column: 2;
+  margin-top: 0;
+}
+
+/* Single-button rows stretch to the shared column so buttons match each other
+   in width rather than being sized by their (i18n-variable) label text. */
+.setting-item > button {
+  grid-column: 2;
+  justify-self: stretch;
+  width: 100%;
+}
+
+/* Button-cluster rows have no .setting-label to hang the divider on, so the
+   row element itself (which here is a real grid item, not display:contents)
+   carries it. */
+.setting-item--actions {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  grid-column: 1 / -1;
+  padding-top: var(--settings-row-padding);
+  padding-bottom: var(--settings-row-padding);
+}
+
+.setting-item--actions::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  border-top: 1px solid var(--settings-divider-color);
+}
+
+.settings-section > .setting-item--actions:first-of-type::before {
+  content: none;
+}
+
+/* Multi-element control cell: two buttons, or an input plus a copy button,
+   sharing the single control column of an otherwise normal labelled row.
+
+   Stacked, not wrapped. Buttons stretch to the full 220px column, so two of
+   them never fit side by side — a `flex-wrap: wrap` row would break onto a
+   second line only in the languages whose labels happen to be long (German
+   "Zugriffsprotokoll anzeigen" wraps where English "View access log" does
+   not), making the row's height and its spacing above the divider vary by
+   locale. Stacking makes that height deliberate and identical everywhere. */
+.setting-item__actions {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--spacing-sm);
+}
+
+/* Nested inside a labelled row: the row's clearance already comes from the
+   __actions cell itself, so the controls within it must not add their own. */
+.setting-item__actions .setting-control {
+  grid-column: auto;
+  width: 100%;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.setting-item__actions > button {
+  width: 100%;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* A trailing status note sits under the buttons rather than stretching. */
+.setting-item__actions > .setting-note {
+  align-self: flex-start;
+}
+
+/* Rows toggled from JS. `display: none` on a `display: contents` row is what
+   we want (it removes the row entirely), but it must come from a class so it
+   can be reverted without an inline display that would break the grid. */
+.setting-item--hidden {
+  display: none;
 }
 
 .setting-control:focus {
@@ -974,18 +1283,82 @@
   color: var(--text-tertiary);
   font-style: italic;
   margin: 0;
-  margin-left: var(--spacing-md);
 }
 
-/* Setting item with buttons */
-.setting-item button {
-  margin-right: var(--spacing-sm);
+/* Spacing between buttons comes from the flex/grid gap, not margins — a
+   trailing margin-right would break the control column's right edge. */
+.setting-item--actions button {
+  flex: 0 0 auto;
 }
 
 .setting-item button:disabled,
 .modal-footer button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Narrow screens (Android): a side-by-side label + control column leaves too
+   little room for either, so collapse to one column and let each control sit
+   directly under the label it belongs to. Proximity still holds — the row gap
+   separates rows more than the label/control pair within a row. */
+@media (max-width: 768px) {
+  .settings-panel {
+    grid-template-columns: 1fr;
+    row-gap: 0;
+  }
+
+  /* The row becomes a real flex box here, so it can carry its own divider and
+     clearance — the per-cell padding/margin used in the two-column layout
+     would stack once the cells sit above each other. */
+  .setting-item {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    padding-top: var(--settings-row-padding);
+    padding-bottom: var(--settings-row-padding);
+  }
+
+  .setting-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    border-top: 1px solid var(--settings-divider-color);
+  }
+
+  .settings-section > .setting-item:first-of-type::before {
+    content: none;
+  }
+
+  /* Divider is on the row now — retract the desktop label-hosted version.
+     .setting-item--actions is NOT reset here: it is itself a .setting-item, so
+     it already picks up the row-level divider above, and clearing it would
+     leave button-cluster rows with no separator at all. */
+  .setting-item > .setting-label::before {
+    content: none;
+  }
+
+  .setting-item--hidden {
+    display: none;
+  }
+
+  .setting-item > .setting-label,
+  .setting-item > .setting-control,
+  .setting-item > .toggle-switch,
+  .setting-item > .theme-toggle-group,
+  .setting-item > button,
+  .setting-item__actions {
+    grid-column: auto;
+    justify-self: auto;
+    width: auto;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
 }
 
 /* MCP token list (Settings > MCP Server) */

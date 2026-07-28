@@ -4,6 +4,7 @@
  */
 
 import { t } from "../i18n/index.js";
+import { getCardSize } from "../modules/displayPrefs.js";
 import { extractPdfText } from "../modules/pdfManager.js";
 import { navigateTo } from "../modules/router.js";
 import {
@@ -18,7 +19,6 @@ import {
   getNotebook,
   getNotesByNotebook,
   getQuickNotes,
-  getSetting,
   moveNote,
   purgeNote,
   purgeNotebook,
@@ -115,7 +115,7 @@ export async function renderOverview(
     `;
 
     // Apply card size class from settings
-    const cardSize = (await getSetting("card_size")) || "medium";
+    const cardSize = getCardSize();
     const overviewContainer = container.querySelector(".overview-container");
     if (overviewContainer) {
       overviewContainer.classList.add(`card-size-${cardSize}`);
