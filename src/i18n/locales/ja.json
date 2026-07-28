@@ -118,8 +118,7 @@
       "logging": "ログ",
       "dangerZone": "危険な操作",
       "about": "このアプリについて",
-      "help": "ヘルプガイド",
-      "nativeApps": "デスクトップ・モバイルアプリ"
+      "help": "ヘルプガイド"
     },
     "appearance": {
       "theme": "テーマ",
@@ -306,7 +305,9 @@
     "about": {
       "description": "手書きノート、テキスト、図形描画に対応したノートアプリです。",
       "version": "バージョン: {{version}}",
-      "licenses": "ライセンス情報"
+      "licenses": "ライセンス情報",
+      "openSource": "NoteBerg はフリーかつオープンソースのソフトウェアです。",
+      "projectLink": "GitHub でプロジェクトを見る"
     },
     "encryption": {
       "enabledLocalTitle": "暗号化が有効になりました",
@@ -320,12 +321,6 @@
       "resetBtn": "リセット",
       "resetConfirmTitle": "ヘルプガイドをリセット",
       "resetConfirmMsg": "各ツールを次に使うときに初回ヒントが再表示されます。"
-    },
-    "nativeApps": {
-      "intro": "NoteBerg は Windows 向けデスクトップアプリと Android アプリもご利用いただけます。次の機能が追加されます:",
-      "featureRecognition": "手書き認識 — 手書きノートを検索できます",
-      "featureOffline": "完全なオフライン利用と、この Nextcloud へのバックグラウンド同期",
-      "featureEncryption": "マスターパスワードで保護される任意のローカル暗号化"
     }
   },
   "modals": {

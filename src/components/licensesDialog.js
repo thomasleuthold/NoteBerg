@@ -3,9 +3,10 @@
  * Shows open source software licenses and attributions
  */
 
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { t } from "../i18n/index.js";
 import { getIcon } from "../utils/icons.js";
+
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 /**
  * Open source libraries and their information
@@ -311,14 +312,24 @@ export function showLicensesDialog() {
 
   document.body.appendChild(overlay);
 
-  // Open all external links via Tauri opener (works on Android; target="_blank" does not)
-  overlay.addEventListener("click", (e) => {
-    const anchor = e.target.closest("a[href]");
-    if (anchor) {
-      e.preventDefault();
-      openUrl(anchor.href).catch((err) => console.error("Failed to open URL:", err));
-    }
-  });
+  // Native builds: route external links through the Tauri opener, because
+  // target="_blank" does nothing in the Android webview.
+  //
+  // The Nextcloud build must NOT do this. There is no Tauri backend there, so
+  // openUrl() rejects — and since preventDefault() has already run, the link
+  // would simply do nothing. In a real browser the anchor's own
+  // target="_blank" already opens a new tab, so we leave the event alone.
+  if (!IS_NEXTCLOUD) {
+    overlay.addEventListener("click", (e) => {
+      const anchor = e.target.closest("a[href]");
+      if (anchor) {
+        e.preventDefault();
+        import("@tauri-apps/plugin-opener")
+          .then(({ openUrl }) => openUrl(anchor.href))
+          .catch((err) => console.error("Failed to open URL:", err));
+      }
+    });
+  }
 
   // Close handlers
   const closeDialog = () => {

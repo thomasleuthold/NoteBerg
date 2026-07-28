@@ -954,13 +954,14 @@
   display: none;
 }
 
-/* Native-app feature list (Nextcloud build only) */
-.native-apps-features {
-  margin: var(--spacing-sm) 0 0;
-  padding-left: 1.25em;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
+/* Project link in the About section */
+.about-link {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.about-link:hover {
+  color: var(--color-primary-hover, var(--color-primary));
 }
 
 @media (max-width: 768px) {
@@ -1048,8 +1049,13 @@
   color: var(--text-primary);
 }
 
-/* First section starts at the top of the panel — no rule above it. */
-.settings-section:first-of-type h3 {
+/* First section starts at the top of the panel — no rule above it, or it would
+   sit directly under the dialog header's own border and read as a double line.
+   Matched via :first-child on the section rather than :first-of-type: every
+   section is a <div>, and .settings-header is a <div> too, so :first-of-type
+   would resolve to the header and never match the first section at all. */
+.settings-section:first-child h3,
+.settings-header + .settings-section h3 {
   margin-top: 0;
   padding-top: 0;
   border-top: none;

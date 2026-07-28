@@ -118,8 +118,7 @@
       "logging": "로그",
       "dangerZone": "위험 구역",
       "about": "정보",
-      "help": "도움말 안내",
-      "nativeApps": "데스크톱 및 모바일 앱"
+      "help": "도움말 안내"
     },
     "appearance": {
       "theme": "테마",
@@ -306,7 +305,9 @@
     "about": {
       "description": "손글씨 노트, 텍스트, 그림을 지원하는 노트 앱입니다.",
       "version": "버전: {{version}}",
-      "licenses": "라이선스 정보"
+      "licenses": "라이선스 정보",
+      "openSource": "NoteBerg는 자유 오픈 소스 소프트웨어입니다.",
+      "projectLink": "GitHub에서 프로젝트 보기"
     },
     "encryption": {
       "enabledLocalTitle": "암호화 활성화됨",
@@ -320,12 +321,6 @@
       "resetBtn": "초기화",
       "resetConfirmTitle": "도움말 안내 초기화",
       "resetConfirmMsg": "각 도구를 다음에 사용할 때 첫 사용 도움말이 다시 표시됩니다."
-    },
-    "nativeApps": {
-      "intro": "NoteBerg는 Windows 데스크톱 앱과 Android 앱으로도 제공됩니다. 다음 기능이 추가됩니다:",
-      "featureRecognition": "필기 인식 — 손으로 쓴 메모를 검색하세요",
-      "featureOffline": "완전한 오프라인 사용 및 이 Nextcloud로의 백그라운드 동기화",
-      "featureEncryption": "마스터 비밀번호로 보호되는 선택적 로컬 암호화"
     }
   },
   "modals": {

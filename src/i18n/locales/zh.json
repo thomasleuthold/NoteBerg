@@ -118,8 +118,7 @@
       "logging": "日志",
       "dangerZone": "危险操作",
       "about": "关于",
-      "help": "帮助引导",
-      "nativeApps": "桌面和移动应用"
+      "help": "帮助引导"
     },
     "appearance": {
       "theme": "主题",
@@ -306,7 +305,9 @@
     "about": {
       "description": "一款支持手写笔记、文本和绘图的笔记应用。",
       "version": "版本：{{version}}",
-      "licenses": "许可信息"
+      "licenses": "许可信息",
+      "openSource": "NoteBerg 是自由开源软件。",
+      "projectLink": "在 GitHub 上查看项目"
     },
     "encryption": {
       "enabledLocalTitle": "加密已启用",
@@ -320,12 +321,6 @@
       "resetBtn": "重置",
       "resetConfirmTitle": "重置帮助引导",
       "resetConfirmMsg": "下次使用各工具时将再次显示首次使用提示。"
-    },
-    "nativeApps": {
-      "intro": "NoteBerg 还提供 Windows 桌面应用和 Android 应用。它们还支持：",
-      "featureRecognition": "手写识别 — 搜索您的手写笔记",
-      "featureOffline": "完全离线使用，并在后台同步到此 Nextcloud",
-      "featureEncryption": "可选的本地加密，由主密码保护"
     }
   },
   "modals": {

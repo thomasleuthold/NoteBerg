@@ -3,7 +3,7 @@
  * Renders the settings panel with theme selection and other preferences
  */
 
-import { APP_FULL_VERSION, APP_NAME } from "../config.js";
+import { APP_FULL_VERSION, APP_NAME, PROJECT_URL } from "../config.js";
 import { changeLanguage, getCurrentLanguage, t } from "../i18n/index.js";
 import { getCardSize, setCardSize } from "../modules/displayPrefs.js";
 import { resetAllHelp } from "../modules/helpGuidance.js";
@@ -572,27 +572,6 @@ export async function renderSettings(container) {
       `
       }
 
-      ${
-        IS_NEXTCLOUD
-          ? `
-      <div class="settings-section">
-        <h3>${t("settings.sections.nativeApps")}</h3>
-
-        <div class="setting-item setting-item--full">
-          <div class="about-info">
-            <p>${t("settings.nativeApps.intro")}</p>
-            <ul class="native-apps-features">
-              <li>${t("settings.nativeApps.featureRecognition")}</li>
-              <li>${t("settings.nativeApps.featureOffline")}</li>
-              <li>${t("settings.nativeApps.featureEncryption")}</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-      `
-          : ""
-      }
-
       <div class="settings-section">
         <h3>${t("settings.sections.about")}</h3>
 
@@ -601,6 +580,15 @@ export async function renderSettings(container) {
             <p><strong>${APP_NAME}</strong></p>
             <p>${t("settings.about.version", { version: APP_FULL_VERSION })}</p>
             <p>${t("settings.about.description")}</p>
+            <p>
+              ${t("settings.about.openSource")}
+              <a
+                href="${PROJECT_URL}"
+                class="about-link"
+                target="_blank"
+                rel="noopener noreferrer"
+              >${t("settings.about.projectLink")}</a>
+            </p>
           </div>
         </div>
 
@@ -610,6 +598,23 @@ export async function renderSettings(container) {
       </div>
     </div>
   `;
+
+  // Open the project link through the Tauri opener on native builds: in the
+  // Android webview target="_blank" does nothing (same reason licensesDialog.js
+  // routes its links this way). In the NC build the anchor is a plain browser
+  // link and needs no interception.
+  const projectLink = container.querySelector(".about-link");
+  if (projectLink && !IS_NEXTCLOUD) {
+    projectLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(projectLink.href);
+      } catch (error) {
+        console.error("Failed to open project URL:", error);
+      }
+    });
+  }
 
   // Language selector
   const languageSelect = container.querySelector("#language-select");

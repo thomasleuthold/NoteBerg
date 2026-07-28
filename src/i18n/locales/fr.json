@@ -118,8 +118,7 @@
       "logging": "Journaux",
       "dangerZone": "Zone de danger",
       "about": "À propos",
-      "help": "Aide",
-      "nativeApps": "Applications de bureau et mobiles"
+      "help": "Aide"
     },
     "appearance": {
       "theme": "Thème",
@@ -306,7 +305,9 @@
     "about": {
       "description": "Une application de prise de notes prenant en charge les notes manuscrites, le texte et les dessins.",
       "version": "Version : {{version}}",
-      "licenses": "Informations de licence"
+      "licenses": "Informations de licence",
+      "openSource": "NoteBerg est un logiciel libre et open source.",
+      "projectLink": "Voir le projet sur GitHub"
     },
     "encryption": {
       "enabledLocalTitle": "Chiffrement activé",
@@ -320,12 +321,6 @@
       "resetBtn": "Réinitialiser",
       "resetConfirmTitle": "Réinitialiser l'aide",
       "resetConfirmMsg": "Les premiers conseils réapparaîtront à la prochaine utilisation de chaque outil."
-    },
-    "nativeApps": {
-      "intro": "NoteBerg est également disponible en application de bureau pour Windows et en application Android. Elles ajoutent :",
-      "featureRecognition": "Reconnaissance de l'écriture — recherchez dans vos notes manuscrites",
-      "featureOffline": "Utilisation hors ligne complète, avec synchronisation en arrière-plan vers ce Nextcloud",
-      "featureEncryption": "Chiffrement local optionnel protégé par un mot de passe maître"
     }
   },
   "modals": {

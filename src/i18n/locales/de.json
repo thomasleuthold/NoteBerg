@@ -118,8 +118,7 @@
       "logging": "Protokollierung",
       "dangerZone": "Gefahrenzone",
       "about": "Über",
-      "help": "Hilfe-Tipps",
-      "nativeApps": "Desktop- & Mobil-Apps"
+      "help": "Hilfe-Tipps"
     },
     "appearance": {
       "theme": "Design",
@@ -306,7 +305,9 @@
     "about": {
       "description": "Eine Notiz-App für handschriftliche Notizen, Text und Zeichnungen.",
       "version": "Version: {{version}}",
-      "licenses": "Lizenzinformationen"
+      "licenses": "Lizenzinformationen",
+      "openSource": "NoteBerg ist freie und quelloffene Software.",
+      "projectLink": "Projekt auf GitHub ansehen"
     },
     "encryption": {
       "enabledLocalTitle": "Verschlüsselung aktiviert",
@@ -320,12 +321,6 @@
       "resetBtn": "Zurücksetzen",
       "resetConfirmTitle": "Hilfe-Tipps zurücksetzen",
       "resetConfirmMsg": "Die Erst-Tipps werden beim nächsten Verwenden jedes Werkzeugs erneut angezeigt."
-    },
-    "nativeApps": {
-      "intro": "NoteBerg ist auch als Desktop-App für Windows und als Android-App verfügbar. Sie bieten zusätzlich:",
-      "featureRecognition": "Handschrifterkennung — durchsuchen Sie Ihre handschriftlichen Notizen",
-      "featureOffline": "Vollständige Offline-Nutzung mit Hintergrundsynchronisierung zu dieser Nextcloud",
-      "featureEncryption": "Optionale lokale Verschlüsselung, geschützt durch ein Master-Passwort"
     }
   },
   "modals": {
