@@ -3,7 +3,7 @@
  * Renders the settings panel with theme selection and other preferences
  */
 
-import { APP_FULL_VERSION, APP_NAME, PROJECT_URL } from "../config.js";
+import { APP_NAME, APP_VERSION_WITH_BUILD, PROJECT_URL } from "../config.js";
 import { changeLanguage, getCurrentLanguage, t } from "../i18n/index.js";
 import { getCardSize, setCardSize } from "../modules/displayPrefs.js";
 import { resetAllHelp } from "../modules/helpGuidance.js";
@@ -578,7 +578,7 @@ export async function renderSettings(container) {
         <div class="setting-item setting-item--full">
           <div class="about-info">
             <p><strong>${APP_NAME}</strong></p>
-            <p>${t("settings.about.version", { version: APP_FULL_VERSION })}</p>
+            <p>${t("settings.about.version", { version: APP_VERSION_WITH_BUILD })}</p>
             <p>${t("settings.about.description")}</p>
             <p>
               ${t("settings.about.openSource")}

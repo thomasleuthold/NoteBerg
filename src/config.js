@@ -11,6 +11,24 @@ export const APP_STAGE = import.meta.env.VITE_APP_STAGE || "";
 export const APP_FULL_VERSION = APP_STAGE ? `${APP_VERSION} (${APP_STAGE})` : APP_VERSION;
 
 /**
+ * Monotonic build counter from package.json.build, incremented on every build
+ * (see sync-version.js). Empty string if unavailable.
+ */
+export const APP_BUILD = import.meta.env.VITE_APP_BUILD || "";
+
+/**
+ * Version string including the build number, e.g. "0.5.38 (RC) #2".
+ *
+ * Used only where the exact build matters — the About section, which is where
+ * users read a version off to report a bug. Deliberately separate from
+ * APP_FULL_VERSION, which the footer badge and the Nextcloud User-Agent use and
+ * which should stay a plain semver label.
+ */
+export const APP_VERSION_WITH_BUILD = APP_BUILD
+  ? `${APP_FULL_VERSION} #${APP_BUILD}`
+  : APP_FULL_VERSION;
+
+/**
  * Public project page. Single source of truth so the About section's link can
  * be repointed (e.g. to a downloads page once the Android app ships) without
  * touching component code or the translations.

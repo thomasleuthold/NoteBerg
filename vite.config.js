@@ -104,21 +104,28 @@ if (id.includes('perspective-transform-nc-inline')) {
  */
 function getAppVersionInfo() {
   let raw = '0.0.0';
+  // package.json.build is the monotonic build counter maintained by
+  // sync-version.js. Surfaced here so the About section can show it — it is the
+  // number that distinguishes two builds of the same semver version, which is
+  // what bug reports need.
+  let build = '';
   try {
     const packagePath = resolve(process.cwd(), 'package.json');
-    raw = JSON.parse(readFileSync(packagePath, 'utf-8')).version || '0.0.0';
+    const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'));
+    raw = pkg.version || '0.0.0';
+    build = pkg.build !== undefined ? String(pkg.build) : '';
   } catch (e) {
     // fall through with default
   }
 
   const match = raw.match(/^(\d+\.\d+\.\d+)(?:-([a-zA-Z]+)(?:\.\d+)?)?$/);
-  if (!match) return { version: raw, stage: '' };
+  if (!match) return { version: raw, stage: '', build };
 
   const [, base, stageRaw = ''] = match;
   const STAGE_LABELS = { rc: 'RC', beta: 'Beta', alpha: 'Alpha' };
   const key = stageRaw.toLowerCase();
   const stage = STAGE_LABELS[key] || (stageRaw ? stageRaw : '');
-  return { version: base, stage };
+  return { version: base, stage, build };
 }
 
 const appVersionInfo = getAppVersionInfo();
@@ -159,6 +166,7 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersionInfo.version),
     'import.meta.env.VITE_APP_STAGE': JSON.stringify(appVersionInfo.stage),
+    'import.meta.env.VITE_APP_BUILD': JSON.stringify(appVersionInfo.build),
     'import.meta.env.VITE_PLATFORM': JSON.stringify(platform),
   },
   build: {
