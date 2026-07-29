@@ -334,6 +334,47 @@ fn audio_recorder_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
+// ── Android status bar appearance ────────────────────────────────────────────
+//
+// enableEdgeToEdge() (MainActivity) draws the WebView behind the Android status
+// bar, so the bar's icon color is the only thing distinguishing it from the app
+// background. The app's light/dark theme is a JS-side toggle independent of the
+// OS theme, so native code has no way to know which one is active unless told —
+// without this, switching the in-app theme leaves status bar icons the wrong
+// color against the new background (e.g. white icons on a white background).
+
+#[cfg(target_os = "android")]
+struct StatusBarPlugin(tauri::plugin::PluginHandle<tauri::Wry>);
+
+#[cfg(target_os = "android")]
+fn status_bar_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::<tauri::Wry>::new("status-bar")
+        .setup(|app, api| {
+            use tauri::Manager;
+            let handle = api.register_android_plugin("eu.noteberg.app", "StatusBarPlugin")?;
+            app.manage(StatusBarPlugin(handle));
+            Ok(())
+        })
+        .build()
+}
+
+/// Set the Android status bar icon appearance. `light: true` gives dark icons
+/// (for a light app background), `false` gives light icons (for a dark background).
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn set_status_bar_appearance(app: tauri::AppHandle, light: bool) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<StatusBarPlugin>()
+        .0
+        .run_mobile_plugin::<()>("setAppearance", serde_json::json!({ "light": light }))
+        .map_err(|e| format!("set_status_bar_appearance: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn set_status_bar_appearance(_light: bool) -> Result<(), String> {
+    Ok(())
+}
+
 // ── Global recording state (Windows) ─────────────────────────────────────────
 #[cfg(target_os = "windows")]
 static WIN_RECORDING: OnceLock<Mutex<Option<win_audio::RecordingState>>> = OnceLock::new();
@@ -714,6 +755,7 @@ pub fn run() {
             native_audio_pause,
             native_audio_resume,
             native_audio_cancel,
+            set_status_bar_appearance,
             #[cfg(target_os = "windows")]
             mcp::mcp_respond,
             #[cfg(target_os = "windows")]
@@ -727,6 +769,7 @@ pub fn run() {
         builder = builder.plugin(pdf_plugin());
         builder = builder.plugin(audio_recorder_plugin());
         builder = builder.plugin(device_key_plugin());
+        builder = builder.plugin(status_bar_plugin());
     }
 
     builder

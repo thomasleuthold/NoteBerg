@@ -976,6 +976,18 @@
     height: 100vh;
     border-radius: 0;
   }
+
+  /* Full-bleed means the header would otherwise sit directly under the Android
+     status bar, overlapping it and pushing the close button out of reach. */
+  .settings-dialog__header {
+    padding-top: max(var(--spacing-lg), var(--safe-area-inset-top));
+    padding-left: max(var(--spacing-xl), var(--safe-area-inset-left));
+    padding-right: max(var(--spacing-xl), var(--safe-area-inset-right));
+  }
+
+  .settings-dialog__body {
+    padding-bottom: var(--safe-area-inset-bottom);
+  }
 }
 
 /* Settings Mode */

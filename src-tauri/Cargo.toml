@@ -13,10 +13,21 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "=2.9.4", features = ["wry"] }
-tauri-runtime = "=2.9.2"
-tauri-runtime-wry = "=2.9.2"
-wry = "=0.53.5"
+tauri = { version = "=2.11.5", features = ["wry"] }
+tauri-runtime = "=2.11.3"
+tauri-runtime-wry = "=2.11.4"
+# No explicit `wry` pin: resolved from tauri-runtime-wry's own manifest, which
+# tracks the wry version tauri actually depends on. The previous exact pin
+# (=0.53.5, matching tauri 2.9.4's wry) would otherwise force cargo to fail
+# resolving once tauri needs a newer wry than that.
+#
+# The three tauri-* crates are pinned to DIFFERENT patch numbers deliberately —
+# each publishes on its own cadence and does not track the umbrella `tauri`
+# crate's version 1:1 (confirmed via `cargo search` against the live index at
+# the time of this bump: tauri=2.11.5, tauri-runtime=2.11.3,
+# tauri-runtime-wry=2.11.4). Pinning all three to the same number, as a prior
+# version of this file did, only works by coincidence and will fail resolution
+# the next time their release cadences diverge further.
 tauri-plugin-http = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"

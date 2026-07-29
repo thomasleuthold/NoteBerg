@@ -11,8 +11,18 @@ default:
 # Development
 # ===========================================================================
 
-# Run the Tauri desktop app in dev mode (rebuilds recognition sidecar first)
+# Run the Tauri desktop app in dev mode (Rust in release profile — see dev-debug for the debug profile)
 dev:
+    # Nearly all day-to-day iteration is JS via Vite HMR, unaffected by the Rust
+    # profile — so this reuses build-w's `release` target tree instead of also
+    # maintaining a separate multi-GB `debug` tree. Switch to `just dev-debug`
+    # when actually debugging Rust code (debug assertions, better backtraces).
+    Get-Process -Name "NoteBerg.Recognition" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*src-tauri*" } | Stop-Process -Force -ErrorAction SilentlyContinue; $true
+    just package-sidecar
+    npm run tauri dev -- --release
+
+# Run the Tauri desktop app in dev mode with Rust in debug profile (costs a separate ~15GB target tree)
+dev-debug:
     Get-Process -Name "NoteBerg.Recognition" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*src-tauri*" } | Stop-Process -Force -ErrorAction SilentlyContinue; $true
     just package-sidecar
     npm run tauri dev
@@ -44,7 +54,7 @@ build-a:
     just sync-version
     if (Test-Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\") { Remove-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\*" -Force -Recurse -ErrorAction SilentlyContinue }
     just patch-android
-    npm run tauri android build -- --apk true
+    npm run tauri android build -- --apk
     New-Item -ItemType Directory -Force -Path builds | Out-Null
     # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\noteberg_android-{{version}}-universal.apk" -Force
     Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}-universal.apk" -Force
@@ -54,7 +64,7 @@ build-aab:
     just sync-version
     if (Test-Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\") { Remove-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\*" -Force -Recurse -ErrorAction SilentlyContinue }
     just patch-android
-    npm run tauri android build -- --aab true
+    npm run tauri android build -- --aab
     New-Item -ItemType Directory -Force -Path builds | Out-Null
     Copy-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}.aab" -Force
 

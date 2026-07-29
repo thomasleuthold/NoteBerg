@@ -208,7 +208,7 @@ jobs:
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/gen/android/app/release.keystore
 
       - name: Build Android APK (all targets)
-        run: npm run tauri android build -- --apk true --target aarch64 armv7 i686 x86_64
+        run: npm run tauri android build -- --apk --target aarch64 armv7 i686 x86_64
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
