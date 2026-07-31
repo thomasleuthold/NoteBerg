@@ -1371,11 +1371,23 @@
   .setting-item__actions {
     grid-column: auto;
     justify-self: auto;
-    width: auto;
     padding-top: 0;
     padding-bottom: 0;
     margin-top: 0;
     margin-bottom: 0;
+  }
+
+  /* Not included in the shared `width: auto` above: unlike a select/button,
+     which should stretch to fill the row, the switch must keep its fixed
+     48x24 box — `.toggle-slider` is absolutely positioned to inset:0 of it,
+     so collapsing its width to auto (no intrinsic content size) collapses the
+     track to nothing, leaving only the knob's shadow ring visible. */
+  .setting-item > .setting-label,
+  .setting-item > .setting-control,
+  .setting-item > .theme-toggle-group,
+  .setting-item > button,
+  .setting-item__actions {
+    width: auto;
   }
 }
 

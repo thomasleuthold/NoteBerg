@@ -25,6 +25,7 @@ import { initBreadcrumb } from "./modules/breadcrumb.js";
 import { migrateCardSizeFromSettings } from "./modules/displayPrefs.js";
 import { initFooter } from "./modules/footer.js";
 import { initRouter, navigateTo } from "./modules/router.js";
+import { initSafeArea } from "./modules/safeArea.js";
 import { getSetting, initStorage } from "./modules/storage.js";
 import { initTheme } from "./modules/theme.js";
 import { getIcon } from "./utils/icons.js";
@@ -84,6 +85,9 @@ async function init() {
   const themeStart = performance.now();
   await initTheme();
   console.log(`Theme initialized in ${Math.round(performance.now() - themeStart)}ms`);
+
+  // Android-only safe-area inset fallback (no-op elsewhere) — see safeArea.js
+  initSafeArea();
 
   // MASTER PASSWORD: Initialize and unlock app (Tauri only)
   if (!IS_NEXTCLOUD) {

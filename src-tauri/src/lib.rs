@@ -375,6 +375,33 @@ async fn set_status_bar_appearance(_light: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// System bar insets (status bar, navigation bar, display cutout) in CSS px (dp).
+/// Fed to JS as a fallback for `env(safe-area-inset-*)`, which was observed to
+/// report 0 on some Android system images (e.g. emulator images) even though the
+/// WebView is drawn edge-to-edge there — see StatusBarPlugin.kt `getInsets`.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SafeAreaInsets {
+    top: f64,
+    bottom: f64,
+    left: f64,
+    right: f64,
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn get_safe_area_insets(app: tauri::AppHandle) -> Result<SafeAreaInsets, String> {
+    use tauri::Manager;
+    app.state::<StatusBarPlugin>()
+        .0
+        .run_mobile_plugin::<SafeAreaInsets>("getInsets", serde_json::json!({}))
+        .map_err(|e| format!("get_safe_area_insets: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn get_safe_area_insets() -> Result<SafeAreaInsets, String> {
+    Ok(SafeAreaInsets { top: 0.0, bottom: 0.0, left: 0.0, right: 0.0 })
+}
+
 // ── Global recording state (Windows) ─────────────────────────────────────────
 #[cfg(target_os = "windows")]
 static WIN_RECORDING: OnceLock<Mutex<Option<win_audio::RecordingState>>> = OnceLock::new();
@@ -756,6 +783,7 @@ pub fn run() {
             native_audio_resume,
             native_audio_cancel,
             set_status_bar_appearance,
+            get_safe_area_insets,
             #[cfg(target_os = "windows")]
             mcp::mcp_respond,
             #[cfg(target_os = "windows")]
