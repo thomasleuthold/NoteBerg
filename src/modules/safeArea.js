@@ -22,10 +22,7 @@ function _isAndroid() {
 
 function _applyInsets(insets) {
   const root = document.documentElement.style;
-  root.setProperty(
-    "--safe-area-inset-top",
-    `max(env(safe-area-inset-top, 0px), ${insets.top}px)`,
-  );
+  root.setProperty("--safe-area-inset-top", `max(env(safe-area-inset-top, 0px), ${insets.top}px)`);
   root.setProperty(
     "--safe-area-inset-bottom",
     `max(env(safe-area-inset-bottom, 0px), ${insets.bottom}px)`,
