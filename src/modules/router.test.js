@@ -42,7 +42,7 @@ afterEach(() => {
 
 describe("initRouter", () => {
   it("resets to the default overview mode", () => {
-    router.navigateTo("settings");
+    router.navigateTo("recyclebin");
     router.initRouter();
     expect(router.getCurrentMode()).toBe("overview");
   });
@@ -50,27 +50,25 @@ describe("initRouter", () => {
 
 describe("navigateTo mode validation", () => {
   it("navigates to a valid mode", () => {
-    router.navigateTo("settings");
-    expect(router.getCurrentMode()).toBe("settings");
+    router.navigateTo("recyclebin");
+    expect(router.getCurrentMode()).toBe("recyclebin");
   });
 
   it("falls back to the default mode for an invalid mode", () => {
     router.navigateTo("not-a-real-mode");
     expect(router.getCurrentMode()).toBe("overview");
   });
+
+  // Settings is a dialog, not a mode (see settingsDialog.js). Navigating to it
+  // must not silently produce a blank view: it is not a mode, so it falls back
+  // to the default like any other unknown name.
+  it("treats settings as an unknown mode", () => {
+    router.navigateTo("settings");
+    expect(router.getCurrentMode()).toBe("overview");
+  });
 });
 
 describe("context clearing rules", () => {
-  // Settings renders as a dialog over the current view: the open note stays
-  // mounted underneath, so its context must survive opening settings — that is
-  // what lets the user return to the same note, scroll position and tool.
-  it("preserves noteId and notebookId when navigating to settings", () => {
-    router.navigateTo("notebook", { noteId: "n1", notebookId: "nb1" });
-    router.navigateTo("settings");
-    expect(router.getCurrentNoteId()).toBe("n1");
-    expect(router.getCurrentNotebookId()).toBe("nb1");
-  });
-
   it("clears noteId and notebookId when navigating to recyclebin", () => {
     router.navigateTo("notebook", { noteId: "n1", notebookId: "nb1" });
     router.navigateTo("recyclebin");
@@ -113,30 +111,22 @@ describe("events", () => {
     window.addEventListener("beforenavigate", before);
     window.addEventListener("navigate", after);
 
-    router.navigateTo("settings", { foo: "bar" });
+    router.navigateTo("recyclebin", { foo: "bar" });
 
     expect(order.map((o) => o[0])).toEqual(["beforenavigate", "navigate"]);
     expect(order[0][1]).toEqual({
-      mode: "settings",
+      mode: "recyclebin",
       params: { foo: "bar" },
       previousMode: "overview",
     });
     expect(order[1][1]).toEqual({
-      mode: "settings",
+      mode: "recyclebin",
       params: { foo: "bar" },
       previousMode: "overview",
     });
 
     window.removeEventListener("beforenavigate", before);
     window.removeEventListener("navigate", after);
-  });
-
-  it("dispatches the mode-specific render event", () => {
-    const handler = vi.fn();
-    window.addEventListener("rendersettings", handler);
-    router.navigateTo("settings");
-    expect(handler).toHaveBeenCalled();
-    window.removeEventListener("rendersettings", handler);
   });
 
   it("dispatches renderoverview with the resolved notebookId", () => {
@@ -177,37 +167,37 @@ describe("events", () => {
 
 describe("DOM view swapping", () => {
   it("creates a mode container and unhides it", () => {
-    router.navigateTo("settings");
-    const container = document.querySelector('[data-mode="settings"]');
+    router.navigateTo("recyclebin");
+    const container = document.querySelector('[data-mode="recyclebin"]');
     expect(container).not.toBeNull();
     expect(container.classList.contains("hidden")).toBe(false);
   });
 
   it("hides previously shown mode containers when switching modes", () => {
-    router.navigateTo("settings");
+    router.navigateTo("notebook");
     router.navigateTo("recyclebin");
-    const settingsContainer = document.querySelector('[data-mode="settings"]');
+    const notebookContainer = document.querySelector('[data-mode="notebook"]');
     const recycleContainer = document.querySelector('[data-mode="recyclebin"]');
-    expect(settingsContainer.classList.contains("hidden")).toBe(true);
+    expect(notebookContainer.classList.contains("hidden")).toBe(true);
     expect(recycleContainer.classList.contains("hidden")).toBe(false);
   });
 
   it("reuses an existing mode container instead of creating a duplicate", () => {
-    router.navigateTo("settings");
+    router.navigateTo("recyclebin");
     router.navigateTo("overview");
-    router.navigateTo("settings");
-    expect(document.querySelectorAll('[data-mode="settings"]')).toHaveLength(1);
+    router.navigateTo("recyclebin");
+    expect(document.querySelectorAll('[data-mode="recyclebin"]')).toHaveLength(1);
   });
 
   it("does nothing when #main-content is missing", () => {
     document.body.innerHTML = "";
-    expect(() => router.navigateTo("settings")).not.toThrow();
+    expect(() => router.navigateTo("recyclebin")).not.toThrow();
   });
 });
 
 describe("goBack", () => {
   it("navigates to overview", () => {
-    router.navigateTo("settings");
+    router.navigateTo("recyclebin");
     router.goBack();
     expect(router.getCurrentMode()).toBe("overview");
   });

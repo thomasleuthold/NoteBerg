@@ -7,15 +7,7 @@ import { APP_NAME, APP_VERSION_WITH_BUILD, PROJECT_URL } from "../config.js";
 import { changeLanguage, getCurrentLanguage, t } from "../i18n/index.js";
 import { getCardSize, setCardSize } from "../modules/displayPrefs.js";
 import { resetAllHelp } from "../modules/helpGuidance.js";
-import {
-  clearCredentials,
-  getStoredCredentials,
-  isAuthenticated,
-  startLoginFlow,
-  testConnection,
-} from "../modules/nextcloudSync.js";
 import { getSetting, purgeLocalData, setSetting } from "../modules/storage.js";
-import { performSync } from "../modules/sync.js";
 import {
   getPdfInvertDarkMode,
   getTheme,
@@ -43,13 +35,36 @@ import { showAlertDialog, showConfirmDialog, showTextPrompt } from "./modals.js"
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 /**
+ * nextcloudSync.js is loaded on demand, never statically.
+ *
+ * It statically imports @tauri-apps/plugin-http and @tauri-apps/plugin-opener,
+ * so a static import here would pull the Tauri runtime into the Nextcloud
+ * browser bundle — which the storage.js → storage.webdav.js alias exists
+ * precisely to avoid. The NC build never renders the sync section (see
+ * IS_NEXTCLOUD above), so it must never load the module either.
+ *
+ * @returns {Promise<typeof import("../modules/nextcloudSync.js")>}
+ */
+function loadNextcloudSync() {
+  return import("../modules/nextcloudSync.js");
+}
+
+/**
  * Render settings UI
  * @param {HTMLElement} container - Container element to render into
  */
 export async function renderSettings(container) {
   const currentTheme = getTheme();
-  const authenticated = await isAuthenticated();
-  const credentials = await getStoredCredentials();
+
+  // The NC build has no connection to configure, so it neither renders the
+  // sync section nor loads the module that backs it.
+  let authenticated = false;
+  let credentials = null;
+  if (!IS_NEXTCLOUD) {
+    const { isAuthenticated, getStoredCredentials } = await loadNextcloudSync();
+    authenticated = await isAuthenticated();
+    credentials = await getStoredCredentials();
+  }
   // Biometric authentication removed for performance
   const biometricCapability = { available: false };
   const biometricEnabled = false;
@@ -1030,6 +1045,7 @@ export async function renderSettings(container) {
       statusSpan.textContent = "";
 
       try {
+        const { testConnection } = await loadNextcloudSync();
         const result = await testConnection(serverUrl);
         if (result.success) {
           statusSpan.textContent = `✓ Connected to Nextcloud ${result.versionstring}`;
@@ -1066,6 +1082,7 @@ export async function renderSettings(container) {
       const copyLoginUrlBtn = container.querySelector("#copy-login-url-btn");
 
       try {
+        const { startLoginFlow } = await loadNextcloudSync();
         await startLoginFlow(serverUrl, (loginUrl) => {
           // Show the login URL field. Toggled by class, not style.display:
           // the row is a `display: contents` grid participant, so setting an
@@ -1128,7 +1145,10 @@ export async function renderSettings(container) {
       syncStatus.style.color = "var(--color-text)";
 
       try {
-        // Use centralized sync logic
+        // Use centralized sync logic. Loaded on demand: sync.js statically
+        // imports nextcloudSync.js, so a static import would defeat the
+        // lazy-loading above (see loadNextcloudSync).
+        const { performSync } = await import("../modules/sync.js");
         const result = await performSync({ silent: false });
 
         if (!result) {
@@ -1168,6 +1188,7 @@ export async function renderSettings(container) {
 
     disconnectBtn?.addEventListener("click", async () => {
       if (confirm(t("settings.nextcloud.disconnectConfirm"))) {
+        const { clearCredentials } = await loadNextcloudSync();
         await clearCredentials();
 
         // Notify footer about auth change
@@ -1261,7 +1282,8 @@ export async function renderSettings(container) {
         await clearAuditLog();
       }
 
-      const isAuth = await isAuthenticated();
+      const { isAuthenticated: isAuthNow } = await loadNextcloudSync();
+      const isAuth = await isAuthNow();
       if (purgeStatus) {
         purgeStatus.textContent = isAuth
           ? t("settings.dangerZone.purgeSuccessStatus")
@@ -1457,24 +1479,4 @@ async function openMcpAuditLogModal() {
       document.removeEventListener("keydown", handleEsc);
     }
   });
-}
-
-/**
- * Initialize settings component.
- *
- * Kept for the router's legacy `settings` mode (deep links / direct
- * navigateTo("settings") calls). The normal entry point is the settings
- * dialog, which imports renderSettings directly instead of going through a
- * render event — see settingsDialog.js.
- */
-export function initSettings() {
-  // Listen for render settings event from router
-  window.addEventListener("rendersettings", async () => {
-    const container = document.getElementById("settings-content");
-    if (container) {
-      await renderSettings(container);
-    }
-  });
-
-  console.log("Settings component initialized");
 }

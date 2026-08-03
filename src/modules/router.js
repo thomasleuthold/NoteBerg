@@ -1,9 +1,13 @@
 /**
  * Router Module
- * Simple view mode routing (overview, notebook, settings, recyclebin)
+ * Simple view mode routing (overview, notebook, recyclebin)
+ *
+ * Settings is deliberately NOT a mode: it renders as a dialog over the current
+ * view so an open note stays mounted underneath (see settingsDialog.js). Use
+ * openSettingsDialog() rather than navigateTo("settings").
  */
 
-const MODES = ["overview", "notebook", "settings", "recyclebin"];
+const MODES = ["overview", "notebook", "recyclebin"];
 const DEFAULT_MODE = "overview";
 
 /**
@@ -89,7 +93,7 @@ export function initRouter() {
 
 /**
  * Navigate to a specific mode
- * @param {string} mode - Mode to navigate to ('overview', 'notebook', 'settings')
+ * @param {string} mode - Mode to navigate to ('overview', 'notebook', 'recyclebin')
  * @param {object} params - Optional parameters (e.g., { noteId: '123' })
  */
 export function navigateTo(mode, params = {}) {
@@ -101,9 +105,6 @@ export function navigateTo(mode, params = {}) {
   const previousMode = currentMode;
   currentMode = mode;
 
-  // Settings deliberately does NOT clear note/notebook context: it renders as a
-  // dialog over the current view, so the open note stays mounted underneath and
-  // must still be the current note when the dialog closes.
   if (mode === "recyclebin") {
     currentNotebookId = null;
     currentNoteId = null;
@@ -187,9 +188,6 @@ function updateView(mode, params) {
     case "notebook":
       renderNotebook(modeContainer, params);
       break;
-    case "settings":
-      renderSettings(modeContainer);
-      break;
     case "recyclebin":
       renderRecycleBin(modeContainer);
       break;
@@ -228,21 +226,6 @@ function renderNotebook(container, params) {
       detail: { noteId, notebookId, taskId, searchQuery },
     }),
   );
-}
-
-/**
- * Render settings mode
- */
-function renderSettings(container) {
-  // This will be populated by the settings component
-  container.innerHTML = `
-    <div class="settings-container">
-      <div id="settings-content"></div>
-    </div>
-  `;
-
-  // Trigger settings render event
-  window.dispatchEvent(new CustomEvent("rendersettings"));
 }
 
 /**

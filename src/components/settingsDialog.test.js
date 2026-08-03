@@ -228,18 +228,33 @@ describe("closing", () => {
     expect(dialog.isSettingsDialogOpen()).toBe(false);
   });
 
-  it("stops reacting to Escape once closed", async () => {
+  it("detaches its Escape handler when closed", async () => {
+    const added = [];
+    const removed = [];
+    const addSpy = vi
+      .spyOn(document, "addEventListener")
+      .mockImplementation(function (type, handler, opts) {
+        if (type === "keydown") added.push(handler);
+        return EventTarget.prototype.addEventListener.call(this, type, handler, opts);
+      });
+    const removeSpy = vi
+      .spyOn(document, "removeEventListener")
+      .mockImplementation(function (type, handler, opts) {
+        if (type === "keydown") removed.push(handler);
+        return EventTarget.prototype.removeEventListener.call(this, type, handler, opts);
+      });
+
     await dialog.openSettingsDialog();
     dialog.closeSettingsDialog();
     flushClose();
 
-    const onClose = vi.fn();
-    window.addEventListener("settingsdialogclose", onClose);
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    window.removeEventListener("settingsdialogclose", onClose);
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
 
-    // A leaked listener would keep firing close events for every Escape press.
-    expect(onClose).not.toHaveBeenCalled();
+    // Every keydown handler the dialog attached must be handed back on close —
+    // a leaked one would keep closing dialogs it no longer owns.
+    expect(added.length).toBeGreaterThan(0);
+    expect(removed).toEqual(expect.arrayContaining(added));
   });
 
   it("restores focus to the element that opened it", async () => {

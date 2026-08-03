@@ -1372,6 +1372,15 @@
     padding-bottom: var(--settings-row-padding);
   }
 
+  /* Only the label/control stacking collapses to one column here — button
+     clusters keep their horizontal, wrapping row. Without this they would
+     inherit the column direction above (same specificity, declared later) and
+     every cluster would become a stack of full-width buttons. */
+  .setting-item--actions {
+    flex-direction: row;
+    align-items: center;
+  }
+
   .setting-item::before {
     content: "";
     position: absolute;

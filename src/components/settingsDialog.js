@@ -100,8 +100,6 @@ export function closeSettingsDialog() {
   // Return focus to whatever opened the dialog (usually the toolbar button).
   if (lastFocusedElement?.isConnected) lastFocusedElement.focus();
   lastFocusedElement = null;
-
-  window.dispatchEvent(new CustomEvent("settingsdialogclose"));
 }
 
 /**
