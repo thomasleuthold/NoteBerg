@@ -192,7 +192,12 @@
   /* Enable smooth touch scrolling */
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  touch-action: pan-x pan-y pinch-zoom;
+  /* pan-x pan-y, deliberately without pinch-zoom: a pinch landing here (margins,
+     padding, or text mode — i.e. outside the canvas, which sets touch-action:none
+     itself) must not become a browser page zoom. Dropping pinch-zoom also stops
+     the compositor claiming the gesture and firing pointercancel, which would
+     abort the canvas's own pinch mid-way. */
+  touch-action: pan-x pan-y;
 }
 
 .editor-content-wrapper.image-mode-active {
@@ -215,7 +220,8 @@
   outline: none;
   z-index: 1;
   background: transparent;
-  touch-action: pan-x pan-y pinch-zoom;
+  /* See .editor-content-wrapper above — pinch here zooms the note, not the page. */
+  touch-action: pan-x pan-y;
 }
 
 #text-editor {
