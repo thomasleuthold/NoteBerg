@@ -26,7 +26,8 @@
       "notes": "노트",
       "search": "검색",
       "markers": "마커",
-      "recycleBin": "휴지통"
+      "recycleBin": "휴지통",
+      "backToNotebooks": "노트북 목록으로 돌아가기"
     },
     "sections": {
       "notebooks": "노트북",

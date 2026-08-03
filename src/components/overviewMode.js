@@ -215,7 +215,12 @@ async function renderNotebookContents(container, notebookId, myToken) {
 
   container.innerHTML = `
     <div class="section-header">
-      <h3>${t("overview.sections.notes")}</h3>
+      <div class="notebook-back-group">
+        <button class="notebook-back-btn" id="notebook-back-btn" title="${t("overview.tabs.backToNotebooks")}" aria-label="${t("overview.tabs.backToNotebooks")}">
+          ${getIcon("arrowLeft", 20)}
+        </button>
+        <h3 class="notebook-back-title">${notebook.title}</h3>
+      </div>
       <button class="btn-primary" id="new-note-btn">${t("overview.actions.newNote")}</button>
     </div>
     <div class="notes-grid">
@@ -224,6 +229,11 @@ async function renderNotebookContents(container, notebookId, myToken) {
   `;
 
   // Attach listeners
+  const backBtn = container.querySelector("#notebook-back-btn");
+  if (backBtn) {
+    backBtn.addEventListener("click", () => navigateTo("overview"));
+  }
+
   const newNoteBtn = container.querySelector("#new-note-btn");
   if (newNoteBtn) {
     newNoteBtn.addEventListener("click", () => {

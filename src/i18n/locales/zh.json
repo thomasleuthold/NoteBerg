@@ -26,7 +26,8 @@
       "notes": "笔记",
       "search": "搜索",
       "markers": "标记",
-      "recycleBin": "回收站"
+      "recycleBin": "回收站",
+      "backToNotebooks": "返回笔记本"
     },
     "sections": {
       "notebooks": "笔记本",

@@ -17,9 +17,16 @@
   /* The layer itself is click-through so the canvas stays visible/legible and
      the user isn't trapped; only the callout box captures clicks. */
   pointer-events: none;
+  /* Highlight color for the callout's stroke (body + tail), tuned per theme
+     so the tour reads clearly against both the dark and light canvas. */
+  --help-overlay-accent: #d69e2e;
 }
 
-/* Optional faint backdrop — subtle, never a full dark scrim, so the arrow can
+[data-theme="dark"] .help-overlay {
+  --help-overlay-accent: #fde68a;
+}
+
+/* Optional faint backdrop — subtle, never a full dark scrim, so the tail can
    still reference the real control behind it. */
 .help-overlay__backdrop {
   position: absolute;
@@ -28,18 +35,39 @@
   pointer-events: none;
 }
 
+/* The callout is one continuous speech-bubble shape, not a box with a
+   separately-drawn arrow: `__bubble-bg` is a single SVG <path> (rounded body
+   + triangular tail on one edge, see buildBubblePath in HelpOverlay.js) that
+   supplies the fill, stroke, and drop-shadow for both the body AND the tail
+   in one unbroken outline, painted behind the plain `__content` div. Because
+   it's one path with one stroke, there is no seam where the tail meets the
+   box regardless of theme or placement. */
 .help-overlay__callout {
   position: absolute;
+  color: var(--text-primary);
+  /* Sized to __content; positioned via inline top/left set by JS. */
+}
+
+.help-overlay__bubble-bg {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25));
+}
+
+.help-overlay__bubble-bg path {
+  fill: var(--bg-primary);
+  stroke: var(--help-overlay-accent);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+.help-overlay__content {
+  position: relative;
   pointer-events: auto;
   box-sizing: border-box;
   width: min(400px, calc(100vw - 24px));
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
   padding: var(--spacing-lg);
-  /* Positioned via inline top/left set by JS. */
 }
 
 .help-overlay__title {
@@ -106,56 +134,4 @@
   background: none;
   color: var(--text-secondary);
   text-decoration: underline;
-}
-
-/* Arrow: a large, solid triangular arrowhead that points at the target control.
-   The element is a 26px box; a CSS-border triangle fills it and points in the
-   direction set by the JS (`--up/--down/--left/--right`). Positioned via inline
-   left/top from JS; a drop-shadow keeps it legible over the canvas. */
-.help-overlay__arrow {
-  position: absolute;
-  width: 26px;
-  height: 26px;
-  pointer-events: none;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
-}
-
-.help-overlay__arrow::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  width: 0;
-  height: 0;
-}
-
-/* Points up (callout sits below the target). */
-.help-overlay__arrow--up::after {
-  border-left: 13px solid transparent;
-  border-right: 13px solid transparent;
-  border-bottom: 15px solid var(--bg-primary);
-  top: -4px;
-}
-
-/* Points down (callout sits above the target). */
-.help-overlay__arrow--down::after {
-  border-left: 13px solid transparent;
-  border-right: 13px solid transparent;
-  border-top: 15px solid var(--bg-primary);
-  bottom: -4px;
-}
-
-/* Points left (callout sits to the right of the target). */
-.help-overlay__arrow--left::after {
-  border-top: 13px solid transparent;
-  border-bottom: 13px solid transparent;
-  border-right: 15px solid var(--bg-primary);
-  left: -4px;
-}
-
-/* Points right (callout sits to the left of the target). */
-.help-overlay__arrow--right::after {
-  border-top: 13px solid transparent;
-  border-bottom: 13px solid transparent;
-  border-left: 15px solid var(--bg-primary);
-  right: -4px;
 }

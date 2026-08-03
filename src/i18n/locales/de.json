@@ -26,7 +26,8 @@
       "notes": "Notizen",
       "search": "Suche",
       "markers": "Markierungen",
-      "recycleBin": "Papierkorb"
+      "recycleBin": "Papierkorb",
+      "backToNotebooks": "Zurück zu den Notizbüchern"
     },
     "sections": {
       "notebooks": "Notizbücher",

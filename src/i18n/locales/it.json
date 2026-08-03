@@ -26,7 +26,8 @@
       "notes": "Note",
       "search": "Cerca",
       "markers": "Indicatori",
-      "recycleBin": "Cestino"
+      "recycleBin": "Cestino",
+      "backToNotebooks": "Torna ai quaderni"
     },
     "sections": {
       "notebooks": "Quaderni",

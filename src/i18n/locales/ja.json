@@ -26,7 +26,8 @@
       "notes": "ノート",
       "search": "検索",
       "markers": "マーカー",
-      "recycleBin": "ごみ箱"
+      "recycleBin": "ごみ箱",
+      "backToNotebooks": "ノートブック一覧に戻る"
     },
     "sections": {
       "notebooks": "ノートブック",

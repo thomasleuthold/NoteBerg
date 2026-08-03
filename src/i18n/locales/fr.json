@@ -26,7 +26,8 @@
       "notes": "Notes",
       "search": "Recherche",
       "markers": "Marqueurs",
-      "recycleBin": "Corbeille"
+      "recycleBin": "Corbeille",
+      "backToNotebooks": "Retour aux carnets"
     },
     "sections": {
       "notebooks": "Carnets",

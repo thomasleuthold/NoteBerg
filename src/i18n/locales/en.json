@@ -26,7 +26,8 @@
       "notes": "Notes",
       "search": "Search",
       "markers": "Markers",
-      "recycleBin": "Recycle Bin"
+      "recycleBin": "Recycle Bin",
+      "backToNotebooks": "Back to Notebooks"
     },
     "sections": {
       "notebooks": "Notebooks",

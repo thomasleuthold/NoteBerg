@@ -26,7 +26,8 @@
       "notes": "Notas",
       "search": "Buscar",
       "markers": "Marcadores",
-      "recycleBin": "Lixeira"
+      "recycleBin": "Lixeira",
+      "backToNotebooks": "Voltar aos cadernos"
     },
     "sections": {
       "notebooks": "Cadernos",
