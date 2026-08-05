@@ -8,7 +8,14 @@
  */
 
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
-import { generateId, updateNote } from "../../modules/storage.js"; // updateNote aliases to webdav in NC build
+// Aliased to storage.webdav.js in the NC build (see vite.config.js). On native,
+// updateNoteCoalesced is a thin passthrough — strokes go via StorageWorker there.
+import {
+  flushNoteWrites,
+  generateId,
+  updateNote,
+  updateNoteCoalesced,
+} from "../../modules/storage.js";
 
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
@@ -188,10 +195,24 @@ export class StrokeManager {
 
   forceSave() {
     if (IS_NEXTCLOUD) {
-      if (!this.isDirty) return;
+      // Not dirty still needs a flush: the newest snapshot may be in flight (or
+      // queued) from an earlier stroke, and destroy() must await it or the last
+      // strokes drawn are lost on close.
+      // Caught for the same reason as the dirty path below: destroy() feeds this
+      // into a Promise.all, and a rejection there would abort the close sequence
+      // in index.js before it dispatches datachange and runs syncOnNoteClose.
+      if (!this.isDirty) {
+        return flushNoteWrites(this.noteId).catch((e) =>
+          console.error("[StrokeManager] WebDAV flush failed:", e),
+        );
+      }
       const activeStrokes = this.strokes.filter((s) => !s._deleted);
       this.isDirty = false;
-      return updateNote(this.noteId, {
+      // Coalescing writer: strokes are re-sent in full on every call, so a
+      // snapshot that has not started yet is safely replaced by a newer one.
+      // Without this the per-stroke writes outpace the network round-trip and
+      // the queue grows for as long as the user keeps drawing.
+      return updateNoteCoalesced(this.noteId, {
         strokes: activeStrokes,
         deletedStrokes: this.deletedStrokes,
       }).catch((e) => console.error("[StrokeManager] WebDAV force save failed:", e));

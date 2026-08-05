@@ -12,8 +12,10 @@
  * `define` to leak into the default project's transform for shared source
  * files (see vitest.config.nextcloud.js for details).
  *
- * Covers: constructor skips Worker creation entirely; forceSave/savePresets
- * call updateNote() (WebDAV) directly instead of posting to the worker.
+ * Covers: constructor skips Worker creation entirely; forceSave writes through
+ * the coalescing writer (and flushes pending writes when not dirty), and
+ * savePresets calls updateNote() (WebDAV) directly instead of posting to the
+ * worker.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,9 +44,15 @@ vi.mock("../../modules/masterPassword.js", () => ({
 // (see the resolve.alias in vitest.config.js), so this mock target is the
 // real NC import path, not a redirect we're choosing in the test.
 const updateNote = vi.fn();
+const updateNoteCoalesced = vi.fn();
+const flushNoteWrites = vi.fn();
 vi.mock("../../modules/storage.js", () => ({
   generateId: vi.fn(() => "mock-id"),
   updateNote: (...args) => updateNote(...args),
+  // Stroke saves go through the coalescing writer: they are re-sent in full on
+  // every call, so a snapshot not yet started is safely replaced by a newer one.
+  updateNoteCoalesced: (...args) => updateNoteCoalesced(...args),
+  flushNoteWrites: (...args) => flushNoteWrites(...args),
 }));
 
 describe("StrokeManager (Nextcloud build)", () => {
@@ -56,6 +64,8 @@ describe("StrokeManager (Nextcloud build)", () => {
     vi.clearAllMocks();
     WorkerCtorSpy.mockClear();
     updateNote.mockResolvedValue(undefined);
+    updateNoteCoalesced.mockResolvedValue(undefined);
+    flushNoteWrites.mockResolvedValue(undefined);
     ({ StrokeManager } = await import("./StrokeManager.js"));
     strokeManager = new StrokeManager(noteId);
   });
@@ -84,7 +94,7 @@ describe("StrokeManager (Nextcloud build)", () => {
     expect(strokeManager.isDirty).toBe(true); // _save() is a no-op under NC; forceSave() does the real write
   });
 
-  it("forceSave calls updateNote (WebDAV) with active strokes when dirty", async () => {
+  it("forceSave writes active strokes through the coalescing writer when dirty", async () => {
     strokeManager.strokes = [
       { id: "a", _deleted: false },
       { id: "b", _deleted: true },
@@ -94,16 +104,49 @@ describe("StrokeManager (Nextcloud build)", () => {
 
     await strokeManager.forceSave();
 
-    expect(updateNote).toHaveBeenCalledWith(noteId, {
+    expect(updateNoteCoalesced).toHaveBeenCalledWith(noteId, {
       strokes: [{ id: "a", _deleted: false }],
       deletedStrokes: ["b"],
     });
+    // Per-stroke writes must not use the plain writer: those queue serially and
+    // never collapse, so drawing outpaces the network and the backlog grows.
+    expect(updateNote).not.toHaveBeenCalled();
     expect(strokeManager.isDirty).toBe(false);
   });
 
-  it("forceSave does not call updateNote when not dirty", async () => {
-    await strokeManager.forceSave();
-    expect(updateNote).not.toHaveBeenCalled();
+  it("forceSave flushes pending writes instead of no-oping when not dirty", async () => {
+    // Not dirty does NOT mean nothing to wait for: the newest snapshot may still
+    // be in flight from an earlier stroke. destroy() awaits forceSave()'s return
+    // value, so returning undefined here would drop the last strokes on close.
+    const pending = strokeManager.forceSave();
+
+    expect(flushNoteWrites).toHaveBeenCalledWith(noteId);
+    expect(updateNoteCoalesced).not.toHaveBeenCalled();
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it("forceSave resolves (not rejects) when a pending flush fails", async () => {
+    // destroy() feeds this promise into a Promise.all. A rejection would abort
+    // the close sequence in index.js before it dispatches datachange and runs
+    // syncOnNoteClose — so a failed flush must be logged, not propagated.
+    flushNoteWrites.mockRejectedValueOnce(new Error("WebDAV flush failed"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(strokeManager.forceSave()).resolves.toBeUndefined();
+
+    expect(consoleSpy).toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it("forceSave resolves (not rejects) when the coalesced write fails", async () => {
+    updateNoteCoalesced.mockRejectedValueOnce(new Error("WebDAV write failed"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    strokeManager.markDirty();
+    await expect(strokeManager.forceSave()).resolves.toBeUndefined();
+
+    expect(consoleSpy).toHaveBeenCalled();
+    consoleSpy.mockRestore();
   });
 
   it("savePresets calls updateNote directly instead of posting to a worker", () => {

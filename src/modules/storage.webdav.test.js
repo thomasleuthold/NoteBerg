@@ -376,6 +376,141 @@ describe("per-note write queue (WebDAV)", () => {
   });
 });
 
+// ── Coalescing writer ─────────────────────────────────────────────────────────
+
+describe("updateNoteCoalesced (WebDAV)", () => {
+  /**
+   * Hold every PUT to n1.json open until released, so writes can be observed
+   * while in flight. `total` counts PUTs ever started (not just pending ones),
+   * which is what the coalescing assertions care about.
+   */
+  function blockPuts() {
+    const pending = [];
+    let total = 0;
+    const base = fetchImpl;
+    fetchImpl = (url, options) => {
+      if (options?.method === "PUT" && url.includes("/notes/n1.json")) {
+        total++;
+        return new Promise((release) => {
+          pending.push(() => release(base(url, options)));
+        });
+      }
+      return base(url, options);
+    };
+    return {
+      total: () => total,
+      pending: () => pending.length,
+      /**
+       * Drain the whole chain. Each released PUT lets the next queued write run,
+       * which only then issues its own PUT (via davMkcol → davPut), so releasing
+       * once is not enough — keep going until no new gate appears.
+       */
+      drain: async () => {
+        for (let i = 0; i < 20 && (pending.length || i < 2); i++) {
+          while (pending.length) pending.shift()();
+          await new Promise((r) => setTimeout(r, 0));
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      },
+    };
+  }
+
+  it("collapses snapshots queued behind an in-flight write into a single PUT", async () => {
+    seedNoteWithMedia();
+    // Prime the path cache so getNote() does not scan notebooks mid-test.
+    await storage.getNote("n1");
+
+    const puts = blockPuts();
+
+    // First call goes in flight and blocks on its PUT.
+    const first = storage.updateNoteCoalesced("n1", { strokes: [{ id: "s1" }] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(puts.total()).toBe(1);
+
+    // Three more strokes arrive while that PUT is still open. Serial queueing
+    // would send three more PUTs; coalescing must collapse them into one.
+    const a = storage.updateNoteCoalesced("n1", { strokes: [{ id: "s1" }, { id: "s2" }] });
+    const b = storage.updateNoteCoalesced("n1", {
+      strokes: [{ id: "s1" }, { id: "s2" }, { id: "s3" }],
+    });
+    const c = storage.updateNoteCoalesced("n1", {
+      strokes: [{ id: "s1" }, { id: "s2" }, { id: "s3" }, { id: "s4" }],
+    });
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+
+    await puts.drain();
+    await Promise.all([first, a, b, c]);
+
+    // Exactly two PUTs: the in-flight one, then one carrying the newest snapshot.
+    expect(puts.total()).toBe(2);
+
+    // The surviving write must be the LATEST snapshot, not an intermediate one.
+    const saved = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/notes/n1.json").content);
+    expect(saved.strokes.map((s) => s.id)).toEqual(["s1", "s2", "s3", "s4"]);
+  });
+
+  it("does not drop fields when different callers coalesce together", async () => {
+    seedNoteWithMedia();
+    await storage.getNote("n1");
+    const puts = blockPuts();
+
+    const first = storage.updateNoteCoalesced("n1", { strokes: [{ id: "s1" }] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Two different field sets collapse into one pending snapshot — the merge
+    // must keep both, not let the later call clobber the earlier one.
+    const pendingA = storage.updateNoteCoalesced("n1", { deletedStrokes: ["gone"] });
+    const pendingB = storage.updateNoteCoalesced("n1", { strokes: [{ id: "s9" }] });
+
+    await puts.drain();
+    await Promise.all([first, pendingA, pendingB]);
+
+    const saved = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/notes/n1.json").content);
+    expect(saved.strokes.map((s) => s.id)).toEqual(["s9"]);
+    expect(saved.deletedStrokes).toEqual(["gone"]);
+  });
+
+  it("flushNoteWrites resolves only after the pending snapshot is written", async () => {
+    seedNoteWithMedia();
+    await storage.getNote("n1");
+    const puts = blockPuts();
+
+    storage.updateNoteCoalesced("n1", { strokes: [{ id: "s1" }] });
+    await new Promise((r) => setTimeout(r, 0));
+    storage.updateNoteCoalesced("n1", { strokes: [{ id: "s1" }, { id: "s2" }] });
+
+    let flushed = false;
+    const flush = storage.flushNoteWrites("n1").then(() => {
+      flushed = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(flushed).toBe(false); // still pending — close must not proceed yet
+
+    await puts.drain();
+    await flush;
+
+    expect(flushed).toBe(true);
+    const saved = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/notes/n1.json").content);
+    expect(saved.strokes.map((s) => s.id)).toEqual(["s1", "s2"]);
+  });
+
+  it("surfaces write failures to the caller instead of swallowing them", async () => {
+    seedNoteWithMedia();
+    await storage.getNote("n1");
+
+    const base = fetchImpl;
+    fetchImpl = (url, options) => {
+      if (options?.method === "PUT" && url.includes("/notes/n1.json")) {
+        return Promise.resolve(plainResponse(507));
+      }
+      return base(url, options);
+    };
+
+    await expect(storage.updateNoteCoalesced("n1", { strokes: [] })).rejects.toThrow(/507/);
+  });
+});
+
 // ── Read cache ────────────────────────────────────────────────────────────────
 
 describe("read cache (WebDAV)", () => {
@@ -396,6 +531,56 @@ describe("read cache (WebDAV)", () => {
     await storage.updateNote("n1", { title: "Changed" });
     const notes = await storage.getNotesByNotebook("nb-a");
     expect(notes.find((n) => n.id === "n1").title).toBe("Changed");
+  });
+
+  it("a note write leaves other folders' listings cached", async () => {
+    // While drawing, every stroke PUTs the open note. A blanket cache clear
+    // would make a concurrent overview render re-download every other folder.
+    seedNoteWithMedia();
+    server.seedJson("/NoteBerg/notebooks/nb-b/notes/n2.json", {
+      id: "n2",
+      notebookId: "nb-b",
+      title: "Note 2",
+      modified: 1000,
+      version: 1,
+    });
+
+    await storage.getNotesByNotebook("nb-a");
+    await storage.getNotesByNotebook("nb-b");
+
+    let otherFolderGets = 0;
+    const base = fetchImpl;
+    fetchImpl = (url, options) => {
+      if ((options?.method ?? "GET") === "GET" && url.includes("/notes/n2.json")) {
+        otherFolderGets++;
+      }
+      return base(url, options);
+    };
+
+    await storage.updateNote("n1", { title: "Changed" });
+
+    // nb-b is untouched by a write to nb-a's note — still served from cache
+    const nbB = await storage.getNotesByNotebook("nb-b");
+    expect(otherFolderGets).toBe(0);
+    expect(nbB.find((n) => n.id === "n2").title).toBe("Note 2");
+
+    // ...while nb-a genuinely re-fetches
+    const nbA = await storage.getNotesByNotebook("nb-a");
+    expect(nbA.find((n) => n.id === "n1").title).toBe("Changed");
+  });
+
+  it("does not let a caller's mutations corrupt the cached copy", async () => {
+    seedNoteWithMedia();
+
+    // First call is a cache miss and hands back its own copy. The second is a
+    // hit — the copy it returns must also be private, or a consumer mutating a
+    // note (overview rendering, mcpBridge) would poison every later reader.
+    await storage.getNotesByNotebook("nb-a");
+    const fromHit = await storage.getNotesByNotebook("nb-a");
+    fromHit.find((n) => n.id === "n1").title = "Mutated by caller";
+
+    const later = await storage.getNotesByNotebook("nb-a");
+    expect(later.find((n) => n.id === "n1").title).toBe("Note 1");
   });
 });
 

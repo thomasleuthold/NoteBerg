@@ -23,6 +23,7 @@ import {
   saveFile,
   saveMediaForNote,
   updateNote,
+  updateNoteCoalesced,
 } from "../../modules/storage.js";
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
@@ -287,15 +288,21 @@ export class NoteCanvas {
     const freshData = await getNote(noteId);
     if (!freshData) return true; // Note deleted?
 
-    // Check strokes count
-    const currentStrokesCount = this.noteData.strokes?.length || 0;
-    const freshStrokesCount = freshData.strokes?.length || 0;
+    // Count only live strokes on both sides. Soft-deleted strokes stay in the
+    // in-memory array (undo needs them) but are filtered out on save, so a raw
+    // length comparison reports a difference after every erase — forever.
+    const isLive = (s) => !s._deleted && !s.isDeleted;
+    const currentStrokesCount = (this.noteData.strokes ?? []).filter(isLive).length;
+    const freshStrokesCount = (freshData.strokes ?? []).filter(isLive).length;
 
     // If local has MORE strokes than DB AND local is dirty (unsaved changes in progress),
     // do not reload — we are ahead because the user is actively drawing.
     // If freshData.synced === true, the DB reflects a downloaded server version and we must
     // reload even if the count decreased (e.g. another device erased strokes).
-    if (currentStrokesCount > freshStrokesCount && freshData.synced === false) {
+    // `synced` is undefined in the Nextcloud build (no local sync state there),
+    // so treat "not explicitly synced" as local-is-ahead rather than falling
+    // through to a reload that would discard in-progress work.
+    if (currentStrokesCount > freshStrokesCount && freshData.synced !== true) {
       return false;
     }
 
@@ -1648,27 +1655,60 @@ export class NoteCanvas {
    * @private
    */
   async _onDataChange(e) {
-    const { noteId, source } = e.detail || {};
+    await this.handleExternalDataChange(e);
+  }
 
-    // Is this change for the currently open note?
-    if (!noteId || noteId !== this.noteId) {
-      return;
-    }
+  /**
+   * Decide whether a `datachange` event should reload the open note, and do it.
+   *
+   * Sole owner of that decision. Previously the guards were split across this
+   * method and a second listener in index.js, which meant each guard only
+   * applied to whichever listener the event happened to route through: events
+   * without a `detail` (sync, overview, recycle bin) bypassed the mid-drawing
+   * deferral here, while an event carrying a matching noteId ran
+   * applyLiveUpdate() twice, concurrently, from both listeners.
+   *
+   * @param {CustomEvent} e - The `datachange` event
+   * @returns {Promise<boolean>} true if the note was reloaded
+   */
+  async handleExternalDataChange(e) {
+    if (!this.noteId) return false;
 
-    // Local saves (own writes) must not trigger applyLiveUpdate — that would
-    // reload from storage and clear the undo history after every keystroke/stroke.
-    if (source === "local") {
-      return;
-    }
+    // Listeners are registered part-way through load(), before isInitialized
+    // flips. In that window index.js owns the event (it rebuilds the instance),
+    // so bail out rather than have both act on it.
+    if (!this.isInitialized) return false;
 
-    // The user is actively drawing. Defer the update until they finish.
+    const { noteId, source } = e?.detail || {};
+
+    // A detail-less event means "something changed somewhere" (sync, overview,
+    // recycle bin). It is not addressed to a note, so it still applies to ours —
+    // the hasContentChanged() check below decides whether anything really moved.
+    if (noteId && noteId !== this.noteId) return false;
+
+    // Local saves (our own writes) must not reload: applyLiveUpdate() rebuilds
+    // noteData from storage and clears the undo history, so reacting to them
+    // wipes undo after every stroke.
+    if (source === "local") return false;
+
+    // The user is actively drawing. Defer until they finish, or the reload
+    // would yank noteData out from under the in-progress stroke.
     if (this.inputHandler?.isDrawing) {
       console.log("[NoteCanvas] Data change detected while drawing. Deferring update.");
       this.pendingLiveUpdate = true;
-      return;
+      return false;
     }
 
+    // Ignore metadata-only churn (e.g. a sync stamping etags) — reloading on
+    // those is what used to make strokes vanish mid-session.
+    const openNoteId = this.noteId;
+    if (!(await this.hasContentChanged(openNoteId))) return false;
+
+    // destroy() may have run during the await above.
+    if (this.noteId !== openNoteId) return false;
+
     await this.applyLiveUpdate();
+    return true;
   }
 
   /**
@@ -3065,7 +3105,11 @@ export class NoteCanvas {
    */
   _saveTasks() {
     if (_IS_NEXTCLOUD) {
-      updateNote(this.noteId, {
+      // Coalesced: scratch-erase calls this via _cleanupOrphanedTasks on every
+      // gesture, and tasks/deletedTasks are re-sent in full each time. Using the
+      // plain writer here queued one uncoalesced GET+PUT per erase, rebuilding
+      // the very backlog the stroke path already avoids.
+      updateNoteCoalesced(this.noteId, {
         tasks: this.noteData.tasks,
         deletedTasks: this.noteData.deletedTasks,
       }).catch((e) => console.error("[NoteCanvas] WebDAV tasks save failed:", e));
@@ -3298,6 +3342,11 @@ export class NoteCanvas {
           this._mediaSaveProgress = null;
           await this._runMediaSave(progress);
         } while (this._mediaSaveDirty && this.noteId && this.mediaManager && this.noteData);
+      } catch (e) {
+        // Log rather than reject: destroy() awaits this promise in a Promise.all,
+        // and a rejection there would abort the close sequence before it
+        // dispatches datachange and runs syncOnNoteClose.
+        console.error("[NoteCanvas] Media save failed:", e);
       } finally {
         this._mediaSaveRunning = null;
       }
@@ -3507,6 +3556,9 @@ export class NoteCanvas {
         const s = this.noteData.strokes[index];
         if (s) {
           s._deleted = true;
+          // Drop from the index: it tracks live strokes only, so an erased
+          // stroke left in a bucket costs every subsequent query.
+          this.spatialIndex.remove(index);
           erasedStrokes.push({ index, id: s.id });
           if (s.id) this.noteData.deletedStrokes.push(s.id);
         }
@@ -3731,6 +3783,8 @@ export class NoteCanvas {
 
         if (this._strokeIntersectsCircle(stroke, contentX, contentY, contentRadius)) {
           stroke._deleted = true;
+          // Keep the index live-only — see SpatialIndex.insert().
+          this.spatialIndex.remove(index);
           newlyErased.push({ index, id: stroke.id });
           if (stroke.id) {
             this.noteData.deletedStrokes.push(stroke.id);
@@ -3810,8 +3864,12 @@ export class NoteCanvas {
         // Split and replace in real-time
         const subStrokes = this._splitStrokeByRemovedPoints(stroke, removedSet);
 
-        // Soft-delete original
+        // Soft-delete original, and drop its index entry — the fragments below
+        // replace it. Without this the index accumulates one dead entry per
+        // erase stroke for the whole session, which is what made long sessions
+        // with erasing progressively slower to render.
         stroke._deleted = true;
+        this.spatialIndex.remove(index);
         if (stroke.id && !this.noteData.deletedStrokes.includes(stroke.id)) {
           this.noteData.deletedStrokes.push(stroke.id);
         }
@@ -4742,6 +4800,28 @@ export class NoteCanvas {
       console.error("[NoteCanvas] PDF export failed:", err);
       await showAlertDialog(t("canvas.pdf.exportError"), err.message);
     }
+  }
+
+  /**
+   * Write any unsaved strokes/text without tearing the canvas down.
+   *
+   * Used when the page is being hidden (tab closed, app backgrounded), where
+   * destroy() never runs. The note stays usable if the user comes back, so this
+   * deliberately does not clean anything up — it only starts the writes.
+   *
+   * @returns {Promise<void>} Settles once the writes land, for callers that can
+   *   wait. The visibilitychange path cannot, but tests and future callers can.
+   */
+  flushPendingSaves() {
+    const pending = [];
+    if (this.textEditorLayer) {
+      this._pendingTextSave = null;
+      this.textEditorLayer.forceSave();
+      if (this._pendingTextSave) pending.push(this._pendingTextSave);
+    }
+    const strokeSave = this.strokeManager?.forceSave();
+    if (strokeSave) pending.push(strokeSave);
+    return Promise.all(pending).then(() => undefined);
   }
 
   /**

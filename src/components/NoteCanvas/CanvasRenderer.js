@@ -845,6 +845,10 @@ export class CanvasRenderer {
       strokeIndices = this.strokes.map((_, i) => i);
     }
 
+    // Tracks whether this repaint painted the in-progress stroke in full, so the
+    // incremental cursor can be re-based below (see drawDirectStroke).
+    let _activeRedrawnInFull = false;
+
     // Separate markers and pens to draw markers first (behind pens)
     const markers = [];
     const pens = [];
@@ -915,6 +919,12 @@ export class CanvasRenderer {
           ? lightPalette
           : this.palette;
         sharedDrawStroke(this.ctx, this.activeStroke, activePalette, false, false);
+        // This repaint just drew the active stroke in full, so the incremental
+        // cursor drawDirectStroke() keeps must be re-based to match. Leaving it
+        // where it was would make the next incremental call resume past the
+        // points we just painted — harmless — but the real hazard is the
+        // opposite case below.
+        _activeRedrawnInFull = true;
       }
 
       // Draw highlights
@@ -1015,6 +1025,24 @@ export class CanvasRenderer {
       }
     } finally {
       this.ctx.restore();
+    }
+
+    // A repaint clears the whole buffer canvas. drawDirectStroke() paints the
+    // in-progress stroke incrementally, resuming from lastDrawnPointIndex — so
+    // after a clear, every point below that cursor has been wiped and would
+    // never be repainted, leaving the live stroke jagged with missing segments
+    // until the finished stroke is committed and drawn from the spatial index.
+    //
+    // Re-base the cursor to match what is actually on the canvas now:
+    //  - active stroke repainted in full  → cursor moves to its last segment
+    //  - active stroke absent from this repaint → cursor resets so the next
+    //    incremental call redraws the stroke from the beginning.
+    if (this.activeStrokeId) {
+      if (_activeRedrawnInFull) {
+        this.lastDrawnPointIndex = Math.max(0, (this.activeStroke?.x.length ?? 1) - 1);
+      } else {
+        this.lastDrawnPointIndex = 0;
+      }
     }
 
     this._lastRenderWasFastMode = fastMode;

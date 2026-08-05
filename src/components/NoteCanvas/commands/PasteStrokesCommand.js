@@ -47,6 +47,8 @@ export class PasteStrokesCommand {
       const stroke = noteCanvas.noteData.strokes[index];
       if (stroke && !stroke._deleted) {
         stroke._deleted = true;
+        // Mirrors the insert() in redo(): the index tracks live strokes only.
+        noteCanvas.spatialIndex?.remove(index);
         if (!noteCanvas.noteData.deletedStrokes.includes(stroke.id)) {
           noteCanvas.noteData.deletedStrokes.push(stroke.id);
         }

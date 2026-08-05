@@ -110,6 +110,58 @@ describe("CanvasRenderer", () => {
     expect(renderer.activeStrokeId).toBe("s1");
   });
 
+  // A buffer repaint clears the canvas. The in-progress stroke is painted
+  // incrementally from lastDrawnPointIndex, so if that cursor survives a clear
+  // unchanged, the points below it are wiped and never repainted — the live
+  // stroke shows as jagged with missing segments until the finished stroke is
+  // committed. Erasing makes repaints frequent, which is when it shows up.
+  describe("in-progress stroke survives a buffer repaint", () => {
+    function liveStroke(points) {
+      return {
+        id: "live",
+        x: points.map((_, i) => i * 10),
+        y: points.map((_, i) => i * 10),
+        pressure: points.map(() => 0.5),
+        colorIndex: 0,
+        width: 2,
+      };
+    }
+
+    it("rebases the incremental cursor when the repaint drew the active stroke", () => {
+      renderer.resize(800, 600);
+      const stroke = liveStroke(new Array(6));
+
+      renderer.drawDirectStroke(stroke);
+      expect(renderer.lastDrawnPointIndex).toBeGreaterThan(0);
+
+      // A repaint mid-stroke: render() supplies the active stroke, so
+      // _drawBuffer paints it in full.
+      renderer.render(0, 600, 0, stroke);
+
+      // Canvas now holds the whole stroke, so the cursor must point at its end —
+      // not at a stale earlier offset.
+      expect(renderer.lastDrawnPointIndex).toBe(stroke.x.length - 1);
+    });
+
+    it("resets the cursor when the repaint did NOT draw the active stroke", () => {
+      renderer.resize(800, 600);
+      const stroke = liveStroke(new Array(6));
+
+      renderer.drawDirectStroke(stroke);
+      const cursorBefore = renderer.lastDrawnPointIndex;
+      expect(cursorBefore).toBeGreaterThan(0);
+
+      // forceRedraw() (e.g. from an erase command) clears the buffer. With no
+      // active stroke supplied, the live stroke is wiped off the canvas.
+      renderer.activeStroke = null;
+      renderer.forceRedraw("test");
+
+      // The cursor must go back to 0 so the next incremental draw repaints the
+      // stroke from its start; otherwise the wiped segments never come back.
+      expect(renderer.lastDrawnPointIndex).toBe(0);
+    });
+  });
+
   it("draws selection bounds and handles", () => {
     renderer.resize(800, 600);
     const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 100 };

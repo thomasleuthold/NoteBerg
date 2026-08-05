@@ -42,6 +42,9 @@ export class EraseStrokesCommand {
       const stroke = noteCanvas.noteData.strokes[index];
       if (stroke && !stroke._deleted) {
         stroke._deleted = true;
+        // The index holds live strokes only, so a soft delete must drop the
+        // entry — otherwise every query keeps paying for erased content.
+        noteCanvas.spatialIndex?.remove(index);
         if (id && !noteCanvas.noteData.deletedStrokes.includes(id)) {
           noteCanvas.noteData.deletedStrokes.push(id);
         }
@@ -63,6 +66,9 @@ export class EraseStrokesCommand {
       const stroke = noteCanvas.noteData.strokes[index];
       if (stroke?._deleted) {
         stroke._deleted = false;
+        // Restore the index entry redo() dropped — _deleted is cleared first so
+        // insert() accepts it.
+        noteCanvas.spatialIndex?.insert(stroke, index);
         if (id) {
           const delIdx = noteCanvas.noteData.deletedStrokes.indexOf(id);
           if (delIdx !== -1) {
