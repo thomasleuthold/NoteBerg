@@ -14,15 +14,23 @@ import { fileURLToPath } from 'url';
  * Uses `npm version <newversion>` so the change is committed + tagged (and fires the
  * "version" npm script that regenerates all derived files). Requires a clean tree.
  *
+ * With --no-git: rewrites package.json only — no commit, no tag — which lifts the
+ * clean-tree requirement. Use while other work is still in flight. The "version"
+ * npm script does NOT fire in this mode, so sync-version.js is invoked directly to
+ * keep info.xml / tauri.conf.json / Cargo.toml in step. Nothing is staged; commit
+ * and tag yourself when the tree settles.
+ *
  * This does NOT touch the build counter — that is bumped only by `just bump-build`.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packagePath = resolve(__dirname, 'package.json');
 
-const stage = (process.argv[2] || '').toLowerCase();
+const args = process.argv.slice(2);
+const noGit = args.includes('--no-git');
+const stage = (args.find((a) => !a.startsWith('--')) || '').toLowerCase();
 if (stage !== 'beta' && stage !== 'rc') {
-  console.error('Usage: node set-prerelease.js <beta|rc>');
+  console.error('Usage: node set-prerelease.js <beta|rc> [--no-git]');
   process.exit(1);
 }
 
@@ -43,5 +51,15 @@ if (currentStage.toLowerCase() === stage) {
 const newVersion = `${base}-${stage}.1`;
 console.log(`Setting pre-release: ${currentVersion} -> ${newVersion}`);
 
-// npm version <exact> commits, tags, and runs the "version" script (sync-version + git add).
-execSync(`npm version ${newVersion}`, { stdio: 'inherit', cwd: __dirname });
+if (noGit) {
+  // --no-git-tag-version writes package.json only: no commit, no tag, and no
+  // clean-tree check. It also skips the "version" npm script, so the derived
+  // files are regenerated here instead.
+  execSync(`npm version ${newVersion} --no-git-tag-version`, { stdio: 'inherit', cwd: __dirname });
+  execSync('node sync-version.js', { stdio: 'inherit', cwd: __dirname });
+  console.log(`\nVersion set to ${newVersion} — not committed or tagged (--no-git).`);
+  console.log('Commit the version files and tag manually when your tree is ready.');
+} else {
+  // npm version <exact> commits, tags, and runs the "version" script (sync-version + git add).
+  execSync(`npm version ${newVersion}`, { stdio: 'inherit', cwd: __dirname });
+}

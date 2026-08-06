@@ -131,9 +131,15 @@ function getAppVersionInfo() {
 const appVersionInfo = getAppVersionInfo();
 
 const platform = process.env.VITE_PLATFORM || 'tauri';
-// Dev container uses /apps-extra/; production Nextcloud uses /apps/
-// Override with: VITE_NC_BASE=/apps/noteberg/ npm run build:nextcloud
-const ncBase = process.env.VITE_NC_BASE || '/apps-extra/noteberg/';
+// NC build uses a RELATIVE base so lazy-loaded chunk URLs resolve against the
+// importing module's own URL. An absolute base (e.g. '/apps/noteberg/') is baked
+// into every dynamic import() at build time and breaks on any NC installed under
+// a path prefix: a server at /nextcloud/ would request /apps/noteberg/js/foo.js,
+// which 404s into the SSO login page (YunoHost) and gets blocked as text/html.
+// The static entry is unaffected — Util::addScript() generates that URL
+// server-side via NC's URL generator, which already knows the webroot.
+// VITE_NC_BASE is still honoured if explicitly set, for the container recipes.
+const ncBase = process.env.VITE_NC_BASE || './';
 const base = platform === 'nextcloud' ? ncBase : '/';
 
 export default defineConfig({
@@ -179,8 +185,13 @@ export default defineConfig({
     rollupOptions: platform === 'nextcloud' ? {
       input: resolve(process.cwd(), 'src/main.js'),
       output: {
-        entryFileNames: 'js/noteberg-main.js',
-        chunkFileNames: 'js/[name].js',
+        entryFileNames: 'js/noteberg-main.mjs',
+        // Content-hashed chunk names. The entry stays stable because
+        // Util::addScript() must be able to name it, and NC's own versioning
+        // busts its cache. Chunks get hashes so a stale file from an earlier
+        // build can never shadow a fresh one — mangled export names are not
+        // stable across builds, and a mismatch is a hard module-load error.
+        chunkFileNames: 'js/[name]-[hash].js',
         assetFileNames: (info) =>
           info.name?.endsWith('.css') ? 'css/noteberg-styles.css' : 'assets/[name][extname]',
       },

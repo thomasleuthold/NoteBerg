@@ -99,7 +99,15 @@ build-nc:
     just sync-version
 
     # 1. Build JS/CSS for Nextcloud (NC version = appinfo/info.xml, now synced to package.json)
-    $env:VITE_NC_BASE = "/apps/noteberg/"; npm run build:nextcloud
+    # Wipe js/ and css/ first: outDir is the repo root with emptyOutDir=false, so
+    # Vite never cleans them. Stale chunks from an earlier build otherwise survive,
+    # get copied into the tarball, and shadow fresh ones at runtime (mangled export
+    # names are not stable across builds -> "doesn't provide an export named 'n'").
+    if (Test-Path "js")  { Remove-Item -Recurse -Force "js" }
+    if (Test-Path "css") { Remove-Item -Recurse -Force "css" }
+    # No VITE_NC_BASE: the default relative base makes chunk URLs resolve against
+    # the importing module, so the build works on any webroot (/, /nextcloud/, ...).
+    npm run build:nextcloud
 
     # 2. Assemble app into a clean temp directory
     if (Test-Path "build-nc-tmp") { Remove-Item -Recurse -Force "build-nc-tmp" }
@@ -142,7 +150,7 @@ nc-down:
 
 # Rebuild JS/CSS into the dev container (8080) — hard reload after. Requires: just nc-up
 nc-dev-push:
-    $env:VITE_NC_BASE = "/apps-extra/noteberg/"; npm run build:nextcloud
+    npm run build:nextcloud
     Write-Host "Built for nc-up (8080) — hard reload http://localhost:8080"
 
 # Tests the published package as a real user would — no volume mount, no cache tricks
@@ -169,8 +177,14 @@ nc-test-down:
 # Requires: just nc-test container running
 # Rebuild and push local assets into the running nc-test container for rapid CSS iteration
 nc-test-push:
-    $env:VITE_NC_BASE = "/apps-writable/noteberg/"; npm run build:nextcloud
-    podman cp js/noteberg-main.js noteberg-nc-test:/var/www/html/apps-writable/noteberg/js/noteberg-main.js
+    # Wipe js/ and css/ first — see the note in build-nc. Stale chunks otherwise linger.
+    if (Test-Path "js")  { Remove-Item -Recurse -Force "js" }
+    if (Test-Path "css") { Remove-Item -Recurse -Force "css" }
+    npm run build:nextcloud
+    # Copy the whole js/ dir, not just the entry: chunks carry content hashes, so
+    # their filenames change between builds and must be replaced wholesale.
+    podman exec noteberg-nc-test rm -rf /var/www/html/apps-writable/noteberg/js
+    podman cp js noteberg-nc-test:/var/www/html/apps-writable/noteberg/
     podman cp css/noteberg-styles.css noteberg-nc-test:/var/www/html/apps-writable/noteberg/css/noteberg-styles.css
     podman cp templates/index.php noteberg-nc-test:/var/www/html/apps-writable/noteberg/templates/index.php
     podman cp img noteberg-nc-test:/var/www/html/apps-writable/noteberg/
@@ -197,7 +211,7 @@ nc-test33-down:
 
 # Rebuild JS/CSS into the NC33 test container (8082) — hard reload after. Requires: just nc-test33
 nc-test33-push:
-    $env:VITE_NC_BASE = "/custom_apps/noteberg/"; npm run build:nextcloud
+    npm run build:nextcloud
     Write-Host "Built for nc-test33 (8082) — hard reload http://localhost:8082"
 
 # Restart the Podman machine when it gets into a broken state
