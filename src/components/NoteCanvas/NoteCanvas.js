@@ -911,6 +911,7 @@ export class NoteCanvas {
             this.renderer.forceRedraw();
           }
           this._renderPdfControls();
+          await this._updateNavigatorSubjects();
           this.historyManager?.push(new InsertMediaCommand(insertedPages, fileId));
 
           const lastPage = pages[pages.length - 1];
@@ -2246,6 +2247,10 @@ export class NoteCanvas {
 
       // Record undo command for drawing
       this.historyManager?.push(new DrawStrokeCommand(stroke, newIndex));
+
+      if (stroke.type === "marker") {
+        this._updateNavigatorSubjects();
+      }
     }
 
     // After stroke is finished, check if a deferred update is pending.
@@ -4779,6 +4784,8 @@ export class NoteCanvas {
       this.renderer.forceRedraw();
     }
     this._renderPdfControls();
+    this._pdfOutline = null;
+    await this._updateNavigatorSubjects();
   }
 
   /**
