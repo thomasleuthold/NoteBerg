@@ -251,15 +251,20 @@ fct:
 # ===========================================================================
 # package.json.version = semver base + optional pre-release label (npm-managed).
 # package.json.build   = monotonic build counter (moved ONLY by `just bump-build`).
-# All of bump*/set-rc/bump-rc below run `npm version`, which fires the "version"
-# npm script (regenerates derived files + git add), then commits + tags.
-# They REQUIRE a clean git tree.
+# None of the recipes below touch git: they rewrite package.json and regenerate the
+# derived files (tauri.conf.json, Cargo.toml, info.xml), nothing more. No commit,
+# no tag, no clean-tree requirement — so they can be run with work in flight.
+# Commit and tag yourself when the tree is ready:
+#
+#   git commit -am "0.5.39" && git tag v0.5.39
 #
 #   0.5.33         -- just set-rc rc   --> 0.5.33-rc.1   (start a pre-release)
 #   0.5.33-rc.1    -- just bump-rc     --> 0.5.33-rc.2   (next pre-release)
 #   0.5.33-beta.2  -- just bump-rc     --> 0.5.33-beta.3 (bumps whatever stage is set)
 #   0.5.33-beta.2  -- just set-rc rc   --> 0.5.33-rc.1   (switch stage, counter resets)
-#   0.5.33-rc.4    -- just bump        --> 0.5.34        (drop label, next patch)
+#   0.5.33-rc.4    -- just unset-rc    --> 0.5.33        (promote to final, same base)
+#   0.5.33-rc.4    -- just bump        --> 0.5.33        (drop label, no patch advance)
+#   0.5.33         -- just bump        --> 0.5.34        (next patch)
 
 # Print the current version state (semver, stage, build, versionCode, wix); no writes
 version-info:
@@ -282,31 +287,28 @@ set-rc stage:
 bump-rc:
     node bump-prerelease.js
 
-# Bump patch and sync; from a pre-release this DROPS the label: 0.5.33-rc.4 -> 0.5.33
+# Promote a pre-release to final, keeping the base: 0.5.33-rc.4 -> 0.5.33; no-op if already final
+unset-rc:
+    node unset-prerelease.js
+
+# Bump patch and sync; from a pre-release this only DROPS the label: 0.5.33-rc.4 -> 0.5.33
 bump:
-    npm version patch
+    npm version patch --no-git-tag-version
+    node sync-version.js
 
 # Bump minor and sync (drops any pre-release label): 0.5.33-rc.4 -> 0.6.0
 bump-minor:
-    npm version minor
+    npm version minor --no-git-tag-version
+    node sync-version.js
 
 # Bump major and sync (drops any pre-release label): 0.5.33-rc.4 -> 1.0.0
 bump-major:
-    npm version major
+    npm version major --no-git-tag-version
+    node sync-version.js
 
 # Push to the GitHub mirror (default: main branch)
 push-gh branch="main":
     git push github {{branch}}
-
-# Run this only at release time, after CHANGELOG.md/README/docs are updated and committed on gitea
-# Publish a release to the public GitHub mirror: pushes main + a matching vX.Y.Z tag
-release-gh:
-    if ((git status --porcelain) -ne $null) { Write-Error "Working tree not clean — commit or stash first."; exit 1 }
-    if ((git rev-parse --abbrev-ref HEAD) -ne "main") { Write-Error "Not on main — checkout main before releasing."; exit 1 }
-    git push origin main
-    git push origin --tags
-    git push github main
-    git push github "v{{version}}"
 
 # ===========================================================================
 # Utilities

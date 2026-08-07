@@ -48,7 +48,7 @@
 ### Also available on other platforms
 - Android: native app via Google Play open testing: https://play.google.com/store/apps/details?id=eu.noteberg.app
 - Windows: desktop installer from GitHub Releases: https://github.com/thomasleuthold/NoteBerg/releases (unsigned build; Windows may warn about an unknown publisher)]]></description>
-	<version>0.5.39-rc.1</version>
+	<version>0.5.39</version>
 	<release-date>2026-07-21</release-date>
 	<licence>MIT</licence>
 	<author mail="noteberg@posteo.org">Thomas Leuthold</author>
