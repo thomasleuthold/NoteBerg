@@ -135,8 +135,9 @@ describe("NoteCanvas Commands", () => {
       // Undo: should mark as deleted
       cmd.undo(noteCanvas);
       expect(newStroke._deleted).toBe(true);
-      // Soft delete: spatial index is not modified on undo
-      expect(noteCanvas.spatialIndex.remove).not.toHaveBeenCalled();
+      // The index holds live strokes only, so undo must drop the entry redo()
+      // added — otherwise every later query pays for a stroke never drawn.
+      expect(noteCanvas.spatialIndex.remove).toHaveBeenCalledWith(index);
       expect(noteCanvas.strokeManager.markDirty).toHaveBeenCalled();
       expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalled();
 
@@ -157,16 +158,18 @@ describe("NoteCanvas Commands", () => {
       // Simulate the action that happened (s1 deleted)
       mockStrokes[0]._deleted = true;
 
-      // Undo: restore s1
+      // Undo: restore s1. The spatial index holds live strokes only, so the
+      // entry dropped when s1 was erased has to be put back — otherwise the
+      // restored stroke is in noteData but never queried, and so never drawn.
       cmd.undo(noteCanvas);
       expect(mockStrokes[0]._deleted).toBe(false);
-      // Soft delete restoration: spatial index is not modified
-      expect(noteCanvas.spatialIndex.insert).not.toHaveBeenCalled();
+      expect(noteCanvas.spatialIndex.insert).toHaveBeenCalledWith(mockStrokes[0], 0);
 
-      // Redo: delete s1
+      // Redo: delete s1 again — and drop it from the index, so queries stop
+      // paying for erased content for the rest of the session.
       cmd.redo(noteCanvas);
       expect(mockStrokes[0]._deleted).toBe(true);
-      expect(noteCanvas.spatialIndex.remove).not.toHaveBeenCalled();
+      expect(noteCanvas.spatialIndex.remove).toHaveBeenCalledWith(0);
     });
   });
 
@@ -451,6 +454,8 @@ describe("NoteCanvas Commands", () => {
       cmd.undo(noteCanvas);
 
       expect(pasted._deleted).toBe(true);
+      // Symmetric with redo()'s insert(): the index tracks live strokes only.
+      expect(noteCanvas.spatialIndex.remove).toHaveBeenCalledWith(index);
       expect(noteCanvas.noteData.deletedStrokes).toContain("p1");
       expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenCalledWith(new Set(), null);
       expect(noteCanvas.selectionOverlay.hide).toHaveBeenCalled();
@@ -515,6 +520,35 @@ describe("NoteCanvas Commands", () => {
       expect(noteCanvas.strokeManager.markDirty).toHaveBeenCalled();
       expect(noteCanvas.strokeManager.forceSave).toHaveBeenCalled();
       expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalled();
+    });
+
+    it("keeps the spatial index in step with _deleted on both paths", () => {
+      // The index holds live strokes only. The part eraser is the worst case:
+      // it soft-deletes an original and appends fragments, once per erase
+      // gesture. If the dead original is left indexed, every later query walks
+      // it — the cost that made long erasing sessions render progressively
+      // slower while pure writing stayed fast.
+      const sub1 = { id: "sub1", x: [1], y: [1], _deleted: true };
+      mockStrokes.push(sub1);
+      noteCanvas.noteData.deletedStrokes.push("sub1");
+
+      const operation = makeOperation({
+        originalIndex: 0,
+        originalId: "s1",
+        subStrokeIndices: [2],
+      });
+      const cmd = new EraseStrokePartsCommand([operation]);
+
+      cmd.redo(noteCanvas);
+      expect(noteCanvas.spatialIndex.remove).toHaveBeenCalledWith(0); // original dropped
+      expect(noteCanvas.spatialIndex.insert).toHaveBeenCalledWith(sub1, 2); // fragment added
+
+      noteCanvas.spatialIndex.remove.mockClear();
+      noteCanvas.spatialIndex.insert.mockClear();
+
+      cmd.undo(noteCanvas);
+      expect(noteCanvas.spatialIndex.insert).toHaveBeenCalledWith(mockStrokes[0], 0); // original back
+      expect(noteCanvas.spatialIndex.remove).toHaveBeenCalledWith(2); // fragment dropped
     });
 
     it("undo restores the original stroke and deletes the sub-strokes", () => {

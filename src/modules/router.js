@@ -1,14 +1,86 @@
 /**
  * Router Module
- * Simple view mode routing (overview, notebook, settings, recyclebin)
+ * Simple view mode routing (overview, notebook, recyclebin)
+ *
+ * Settings is deliberately NOT a mode: it renders as a dialog over the current
+ * view so an open note stays mounted underneath (see settingsDialog.js). Use
+ * openSettingsDialog() rather than navigateTo("settings").
  */
 
-const MODES = ["overview", "notebook", "settings", "recyclebin"];
+const MODES = ["overview", "notebook", "recyclebin"];
 const DEFAULT_MODE = "overview";
+
+/**
+ * History integration exists to stop Android's hardware Back from exiting the
+ * app (see pushHistoryEntry). It is deliberately OFF in the Nextcloud build:
+ * there the app is embedded in Nextcloud's own page, whose URL and history
+ * belong to NC. Pushing our entries there would make the browser Back button
+ * step through our internal views instead of leaving the app, hijacking
+ * navigation the host page owns.
+ */
+const HISTORY_ENABLED = import.meta.env.VITE_PLATFORM !== "nextcloud";
 
 let currentMode = DEFAULT_MODE;
 let currentNoteId = null;
 let currentNotebookId = null;
+
+/**
+ * True while we are navigating *because* of a popstate event. Suppresses the
+ * pushState inside navigateTo, which would otherwise re-add the entry the user
+ * just popped and make Back a no-op that never unwinds.
+ */
+let isPoppingState = false;
+
+/**
+ * Android's hardware Back is handled by WryActivity.onKeyDown, which calls
+ * mWebView.goBack() only when mWebView.canGoBack() is true — otherwise it falls
+ * through to super and finishes the Activity, i.e. exits the app. A SPA that
+ * never touches history has exactly one entry, so canGoBack() is always false
+ * and Back always exits, even from inside a note.
+ *
+ * Pushing a history entry per navigation gives the WebView real entries to go
+ * back through, so Back unwinds note → notebook → overview and only exits from
+ * the root. No Kotlin change is needed (and WryActivity.kt is generated code
+ * that must not be edited).
+ */
+function pushHistoryEntry(mode, params) {
+  if (!HISTORY_ENABLED) return;
+  if (isPoppingState) return;
+  if (typeof history === "undefined" || typeof history.pushState !== "function") return;
+
+  const state = { nbMode: mode, nbParams: params };
+
+  // The very first navigation replaces the initial entry rather than adding a
+  // second one — otherwise the root overview would need two Back presses to
+  // leave the app.
+  if (history.state?.nbMode === undefined) {
+    history.replaceState(state, "");
+    return;
+  }
+
+  history.pushState(state, "");
+}
+
+function handlePopState(event) {
+  const state = event.state;
+  // Not one of ours (e.g. an entry owned by the host page) — leave it alone.
+  if (!state || state.nbMode === undefined) return;
+
+  isPoppingState = true;
+  try {
+    navigateTo(state.nbMode, state.nbParams || {});
+  } finally {
+    isPoppingState = false;
+  }
+}
+
+// Bound once at module load, not in initRouter(): initRouter can be called more
+// than once, and each call would otherwise add another listener that drives its
+// own navigation per Back press. removeEventListener before add would not help
+// across module reloads, since it can only remove *this* instance's handler.
+if (HISTORY_ENABLED && typeof window !== "undefined") {
+  window.addEventListener("popstate", handlePopState);
+}
 
 /**
  * Initialize router
@@ -21,7 +93,7 @@ export function initRouter() {
 
 /**
  * Navigate to a specific mode
- * @param {string} mode - Mode to navigate to ('overview', 'notebook', 'settings')
+ * @param {string} mode - Mode to navigate to ('overview', 'notebook', 'recyclebin')
  * @param {object} params - Optional parameters (e.g., { noteId: '123' })
  */
 export function navigateTo(mode, params = {}) {
@@ -33,8 +105,7 @@ export function navigateTo(mode, params = {}) {
   const previousMode = currentMode;
   currentMode = mode;
 
-  // Clear notebook/note context when navigating to overview, settings, or recycle bin
-  if (mode === "settings" || mode === "recyclebin") {
+  if (mode === "recyclebin") {
     currentNotebookId = null;
     currentNoteId = null;
   } else if (mode === "overview") {
@@ -54,6 +125,11 @@ export function navigateTo(mode, params = {}) {
       currentNotebookId = params.notebookId;
     }
   }
+
+  // Record the destination so Android's hardware Back can unwind through the
+  // app instead of exiting it. Must happen before the render events fire, so a
+  // listener that navigates again stacks its entry on top of this one.
+  pushHistoryEntry(mode, params);
 
   // Dispatch before-navigate event while the current view is still visible.
   // Listeners can do synchronous DOM reads (e.g. getBoundingClientRect) here.
@@ -112,9 +188,6 @@ function updateView(mode, params) {
     case "notebook":
       renderNotebook(modeContainer, params);
       break;
-    case "settings":
-      renderSettings(modeContainer);
-      break;
     case "recyclebin":
       renderRecycleBin(modeContainer);
       break;
@@ -153,21 +226,6 @@ function renderNotebook(container, params) {
       detail: { noteId, notebookId, taskId, searchQuery },
     }),
   );
-}
-
-/**
- * Render settings mode
- */
-function renderSettings(container) {
-  // This will be populated by the settings component
-  container.innerHTML = `
-    <div class="settings-container">
-      <div id="settings-content"></div>
-    </div>
-  `;
-
-  // Trigger settings render event
-  window.dispatchEvent(new CustomEvent("rendersettings"));
 }
 
 /**

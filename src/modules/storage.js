@@ -484,6 +484,22 @@ export async function updateNote(id, updates) {
   return updated;
 }
 
+/**
+ * API-compatible counterpart to the WebDAV backend's coalescing writer.
+ *
+ * Native builds write strokes through StorageWorker (off-thread IndexedDB),
+ * which drains far faster than strokes arrive, so there is no backlog to
+ * collapse and nothing to coalesce. This exists purely so modules shared with
+ * the Nextcloud build can import the same name — see storage.webdav.js for the
+ * implementation that actually coalesces.
+ */
+export async function updateNoteCoalesced(id, updates) {
+  await updateNote(id, updates);
+}
+
+/** No-op on native: IndexedDB writes are awaited directly by their callers. */
+export async function flushNoteWrites() {}
+
 export async function deleteNote(id) {
   const note = await db.get("notes", id);
   if (!note) throw new Error("Note not found");

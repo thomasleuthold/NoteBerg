@@ -50,8 +50,11 @@ export class DrawStrokeCommand {
     stroke._deleted = true;
     noteCanvas.noteData.deletedStrokes.push(this.strokeId);
 
-    // Note: We don't remove from spatial index (soft delete pattern)
-    // The renderer checks _deleted flag
+    // The spatial index holds live strokes only, so a soft delete must drop the
+    // entry — mirroring the insert() in redo(). Leaving it indexed is invisible
+    // (the renderer filters _deleted) but makes every later query pay for a
+    // stroke that is never drawn.
+    noteCanvas.spatialIndex?.remove(this.strokeIndex);
 
     noteCanvas.strokesChanged = true;
     noteCanvas.strokeManager.markDirty();

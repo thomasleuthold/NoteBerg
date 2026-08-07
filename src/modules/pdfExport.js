@@ -362,8 +362,11 @@ function drawStrokesOnPage(
   const scaleX = pdfPageW / contentPageW;
   const scaleY = pdfPageH / contentPageH;
 
-  const penPalette = getThemePalette();
-  const markerPalette = getMarkerPalette();
+  // PDF pages are always white, regardless of the app's live theme — always use
+  // the light-mode stroke/marker palette so exported ink stays legible, even
+  // when exporting while dark theme is active.
+  const penPalette = getThemePalette("light");
+  const markerPalette = getMarkerPalette("light");
 
   const pageBottom = contentPageY + contentPageH;
 

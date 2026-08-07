@@ -14,9 +14,11 @@ import { fileURLToPath } from 'url';
  * `just set-rc <rc|beta>` first. This guard is why we don't use a bare
  * `npm version prerelease`, which would silently produce "0.5.34-0".
  *
- * Uses `npm version prerelease --preid <stage>` so the stage label is preserved
- * and the change is committed + tagged (firing the "version" npm script).
- * Requires a clean git tree. Does NOT touch the build counter.
+ * Uses `npm version prerelease --preid <stage>` so the stage label is preserved.
+ * Rewrites package.json only — no commit, no tag, no clean-tree requirement.
+ * `--no-git-tag-version` also suppresses the "version" npm script, so
+ * sync-version.js is invoked directly to regenerate the derived files.
+ * Does NOT touch the build counter.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,4 +41,9 @@ if (!stage) {
 }
 
 console.log(`Bumping pre-release: ${currentVersion} (stage ${stage}) ...`);
-execSync(`npm version prerelease --preid ${stage}`, { stdio: 'inherit', cwd: __dirname });
+execSync(`npm version prerelease --preid ${stage} --no-git-tag-version`, {
+  stdio: 'inherit',
+  cwd: __dirname,
+});
+execSync('node sync-version.js', { stdio: 'inherit', cwd: __dirname });
+console.log('\nNot committed or tagged — commit the version files when your tree is ready.');

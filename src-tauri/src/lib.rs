@@ -2,6 +2,9 @@ use std::sync::Mutex;
 #[cfg(target_os = "windows")]
 use std::sync::OnceLock;
 
+#[cfg(target_os = "windows")]
+mod mcp;
+
 // ── Windows native audio recording ───────────────────────────────────────────
 //
 // Uses cpal for cross-platform WASAPI capture and hound for WAV encoding.
@@ -329,6 +332,74 @@ fn audio_recorder_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             Ok(())
         })
         .build()
+}
+
+// ── Android status bar appearance ────────────────────────────────────────────
+//
+// enableEdgeToEdge() (MainActivity) draws the WebView behind the Android status
+// bar, so the bar's icon color is the only thing distinguishing it from the app
+// background. The app's light/dark theme is a JS-side toggle independent of the
+// OS theme, so native code has no way to know which one is active unless told —
+// without this, switching the in-app theme leaves status bar icons the wrong
+// color against the new background (e.g. white icons on a white background).
+
+#[cfg(target_os = "android")]
+struct StatusBarPlugin(tauri::plugin::PluginHandle<tauri::Wry>);
+
+#[cfg(target_os = "android")]
+fn status_bar_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::<tauri::Wry>::new("status-bar")
+        .setup(|app, api| {
+            use tauri::Manager;
+            let handle = api.register_android_plugin("eu.noteberg.app", "StatusBarPlugin")?;
+            app.manage(StatusBarPlugin(handle));
+            Ok(())
+        })
+        .build()
+}
+
+/// Set the Android status bar icon appearance. `light: true` gives dark icons
+/// (for a light app background), `false` gives light icons (for a dark background).
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn set_status_bar_appearance(app: tauri::AppHandle, light: bool) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<StatusBarPlugin>()
+        .0
+        .run_mobile_plugin::<()>("setAppearance", serde_json::json!({ "light": light }))
+        .map_err(|e| format!("set_status_bar_appearance: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn set_status_bar_appearance(_light: bool) -> Result<(), String> {
+    Ok(())
+}
+
+/// System bar insets (status bar, navigation bar, display cutout) in CSS px (dp).
+/// Fed to JS as a fallback for `env(safe-area-inset-*)`, which was observed to
+/// report 0 on some Android system images (e.g. emulator images) even though the
+/// WebView is drawn edge-to-edge there — see StatusBarPlugin.kt `getInsets`.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SafeAreaInsets {
+    top: f64,
+    bottom: f64,
+    left: f64,
+    right: f64,
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn get_safe_area_insets(app: tauri::AppHandle) -> Result<SafeAreaInsets, String> {
+    use tauri::Manager;
+    app.state::<StatusBarPlugin>()
+        .0
+        .run_mobile_plugin::<SafeAreaInsets>("getInsets", serde_json::json!({}))
+        .map_err(|e| format!("get_safe_area_insets: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn get_safe_area_insets() -> Result<SafeAreaInsets, String> {
+    Ok(SafeAreaInsets { top: 0.0, bottom: 0.0, left: 0.0, right: 0.0 })
 }
 
 // ── Global recording state (Windows) ─────────────────────────────────────────
@@ -711,6 +782,14 @@ pub fn run() {
             native_audio_pause,
             native_audio_resume,
             native_audio_cancel,
+            set_status_bar_appearance,
+            get_safe_area_insets,
+            #[cfg(target_os = "windows")]
+            mcp::mcp_respond,
+            #[cfg(target_os = "windows")]
+            mcp::mcp_set_config,
+            #[cfg(target_os = "windows")]
+            mcp::mcp_get_status,
         ]);
 
     #[cfg(target_os = "android")]
@@ -718,6 +797,7 @@ pub fn run() {
         builder = builder.plugin(pdf_plugin());
         builder = builder.plugin(audio_recorder_plugin());
         builder = builder.plugin(device_key_plugin());
+        builder = builder.plugin(status_bar_plugin());
     }
 
     builder
@@ -728,6 +808,7 @@ pub fn run() {
                 // microphone privacy list (required for getUserMedia to find the device).
                 register_audio_privacy();
                 spawn_recognition_sidecar(_app)?;
+                mcp::start(_app);
             }
             Ok(())
         })

@@ -60,6 +60,8 @@ if (!globalThis.ResizeObserver) {
 vi.mock("../../modules/storage.js", () => ({
   getNote: vi.fn(),
   updateNote: vi.fn(),
+  updateNoteCoalesced: vi.fn(() => Promise.resolve()),
+  flushNoteWrites: vi.fn(() => Promise.resolve()),
   deleteNote: vi.fn(),
   deleteFile: vi.fn(() => Promise.resolve()), // Return a promise
   saveFile: vi.fn((blob) => Promise.resolve(`file-${blob.size}`)),
@@ -845,6 +847,206 @@ describe("NoteCanvas Class", () => {
       await p1;
       expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
       expect(ctx._mediaSaveRunning).toBeNull();
+    });
+  });
+
+  // ── hasContentChanged ───────────────────────────────────────────────────────
+  // Gates whether a `datachange` event reloads the note. A false positive here
+  // is destructive: applyLiveUpdate() rebuilds noteData from storage and clears
+  // the undo history, so a reload after every stroke leaves nothing to undo.
+  describe("hasContentChanged", () => {
+    let canvas;
+    let getNote;
+
+    beforeEach(async () => {
+      ({ getNote } = await import("../../modules/storage.js"));
+      canvas = Object.create(NoteCanvas.prototype);
+      canvas.noteId = "n1";
+    });
+
+    it("ignores soft-deleted strokes when comparing counts", async () => {
+      // Erasing leaves the stroke in memory but drops it from what gets saved,
+      // so a raw length comparison would report a change after every erase.
+      canvas.noteData = {
+        strokes: [{ id: "a" }, { id: "b", _deleted: true }],
+        background: "grid",
+      };
+      getNote.mockResolvedValue({
+        strokes: [{ id: "a" }],
+        background: "grid",
+      });
+
+      expect(await canvas.hasContentChanged("n1")).toBe(false);
+    });
+
+    it("does not reload when local is ahead and the stored copy is not a synced download", async () => {
+      // `synced` is undefined in the Nextcloud build. Treating that as "safe to
+      // reload" discarded in-progress work and wiped undo.
+      canvas.noteData = {
+        strokes: [{ id: "a" }, { id: "b" }],
+        background: "grid",
+      };
+      getNote.mockResolvedValue({ strokes: [{ id: "a" }], background: "grid" });
+
+      expect(await canvas.hasContentChanged("n1")).toBe(false);
+    });
+
+    it("still reloads when the stored copy is a synced download with fewer strokes", async () => {
+      // Another device erased a stroke — that must reach us.
+      canvas.noteData = {
+        strokes: [{ id: "a" }, { id: "b" }],
+        background: "grid",
+      };
+      getNote.mockResolvedValue({
+        strokes: [{ id: "a" }],
+        background: "grid",
+        synced: true,
+      });
+
+      expect(await canvas.hasContentChanged("n1")).toBe(true);
+    });
+
+    it("reports a change when a stroke was genuinely added remotely", async () => {
+      canvas.noteData = { strokes: [{ id: "a" }], background: "grid" };
+      getNote.mockResolvedValue({
+        strokes: [{ id: "a" }, { id: "b" }],
+        background: "grid",
+      });
+
+      expect(await canvas.hasContentChanged("n1")).toBe(true);
+    });
+
+    it("reports a change when the background changed", async () => {
+      canvas.noteData = { strokes: [{ id: "a" }], background: "grid" };
+      getNote.mockResolvedValue({ strokes: [{ id: "a" }], background: "blank" });
+
+      expect(await canvas.hasContentChanged("n1")).toBe(true);
+    });
+  });
+
+  // ── flushPendingSaves ───────────────────────────────────────────────────────
+  // Closing the tab/app never runs destroy(), so without an explicit flush the
+  // last strokes drawn are never written. Regression guard for exactly that.
+  describe("flushPendingSaves", () => {
+    it("forces a stroke save and resolves once it lands", async () => {
+      const canvas = Object.create(NoteCanvas.prototype);
+      let resolveSave;
+      const save = new Promise((r) => {
+        resolveSave = r;
+      });
+      canvas.strokeManager = { forceSave: vi.fn(() => save) };
+      canvas.textEditorLayer = null;
+
+      let settled = false;
+      const p = canvas.flushPendingSaves().then(() => {
+        settled = true;
+      });
+
+      expect(canvas.strokeManager.forceSave).toHaveBeenCalled();
+      await Promise.resolve();
+      expect(settled).toBe(false); // must not resolve before the write lands
+
+      resolveSave();
+      await p;
+      expect(settled).toBe(true);
+    });
+
+    it("also flushes pending text and does not throw without a stroke manager", async () => {
+      const canvas = Object.create(NoteCanvas.prototype);
+      canvas.strokeManager = null;
+      canvas.textEditorLayer = {
+        forceSave: vi.fn(function () {
+          canvas._pendingTextSave = Promise.resolve();
+        }),
+      };
+
+      await expect(canvas.flushPendingSaves()).resolves.toBeUndefined();
+      expect(canvas.textEditorLayer.forceSave).toHaveBeenCalled();
+    });
+  });
+
+  // ── handleExternalDataChange ────────────────────────────────────────────────
+  // Single owner of "should this datachange reload the open note?". The guards
+  // used to be split between this method and a second listener in index.js, so
+  // each guard only applied to whichever listener the event routed through.
+  describe("handleExternalDataChange", () => {
+    let canvas;
+
+    function makeCanvas(overrides = {}) {
+      const c = Object.create(NoteCanvas.prototype);
+      c.noteId = "n1";
+      c.isInitialized = true;
+      c.inputHandler = { isDrawing: false };
+      c.pendingLiveUpdate = false;
+      c.hasContentChanged = vi.fn(async () => true);
+      c.applyLiveUpdate = vi.fn(async () => {});
+      return Object.assign(c, overrides);
+    }
+
+    beforeEach(() => {
+      canvas = makeCanvas();
+    });
+
+    it("reloads on a detail-less event (sync, overview, recycle bin)", async () => {
+      // sync.js dispatches with no detail. This used to miss _onDataChange
+      // entirely (it returned early on !noteId), so those reloads bypassed the
+      // mid-drawing deferral below.
+      await expect(canvas.handleExternalDataChange(new CustomEvent("datachange"))).resolves.toBe(
+        true,
+      );
+      expect(canvas.applyLiveUpdate).toHaveBeenCalled();
+    });
+
+    it("defers a detail-less event while the user is drawing", async () => {
+      canvas.inputHandler.isDrawing = true;
+
+      await canvas.handleExternalDataChange(new CustomEvent("datachange"));
+
+      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
+      expect(canvas.pendingLiveUpdate).toBe(true);
+    });
+
+    it("ignores our own local writes", async () => {
+      await canvas.handleExternalDataChange(
+        new CustomEvent("datachange", { detail: { noteId: "n1", source: "local" } }),
+      );
+      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
+    });
+
+    it("ignores an event addressed to a different note", async () => {
+      await canvas.handleExternalDataChange(
+        new CustomEvent("datachange", { detail: { noteId: "other" } }),
+      );
+      expect(canvas.hasContentChanged).not.toHaveBeenCalled();
+      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
+    });
+
+    it("does not reload when only metadata changed", async () => {
+      canvas.hasContentChanged = vi.fn(async () => false);
+
+      await expect(canvas.handleExternalDataChange(new CustomEvent("datachange"))).resolves.toBe(
+        false,
+      );
+      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
+    });
+
+    it("stands down while the instance is still loading (index.js rebuilds it)", async () => {
+      canvas.isInitialized = false;
+
+      await canvas.handleExternalDataChange(new CustomEvent("datachange"));
+
+      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
+    });
+
+    it("does not reload if the note was closed during the content check", async () => {
+      canvas.hasContentChanged = vi.fn(async () => {
+        canvas.noteId = null; // destroy() ran mid-await
+        return true;
+      });
+
+      await canvas.handleExternalDataChange(new CustomEvent("datachange"));
+
+      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
     });
   });
 });

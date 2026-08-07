@@ -6,9 +6,36 @@
 const THEMES = ["light", "dark"];
 const DEFAULT_THEME = "light";
 const THEME_STORAGE_KEY = "theme";
+const PDF_INVERT_DARK_STORAGE_KEY = "pdf_invert_dark_mode";
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 let currentTheme = DEFAULT_THEME;
+// Default: enabled — imported PDF pages invert in dark mode so annotations stay legible.
+let pdfInvertDarkMode = localStorage.getItem(PDF_INVERT_DARK_STORAGE_KEY) !== "false";
+
+// Detect Android via user agent — reliable in Tauri's Android WebView.
+function _isAndroid() {
+  return typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
+}
+
+/**
+ * Sync the Android status bar icon color with the app theme.
+ *
+ * enableEdgeToEdge (MainActivity.kt) draws the WebView behind the status bar,
+ * so the bar's icon color is the only thing distinguishing it from the app
+ * background. The in-app theme is independent of the OS theme, so without this
+ * the status bar can end up with light icons over the app's light background
+ * (or the reverse), making the clock/battery/connection icons unreadable.
+ */
+async function _syncAndroidStatusBar(theme) {
+  if (!_isAndroid()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_status_bar_appearance", { light: theme === "light" });
+  } catch {
+    // Non-Tauri (dev browser) or command unavailable — status bar is not ours to control there.
+  }
+}
 
 /**
  * Initialize theme system.
@@ -127,6 +154,8 @@ export async function setTheme(theme) {
   // Save to localStorage
   localStorage.setItem(THEME_STORAGE_KEY, theme);
 
+  _syncAndroidStatusBar(theme);
+
   // Dispatch theme change event
   window.dispatchEvent(
     new CustomEvent("themechange", {
@@ -161,4 +190,28 @@ export function cycleTheme() {
  */
 export function getAvailableThemes() {
   return [...THEMES];
+}
+
+/**
+ * Whether imported PDF pages should be inverted while annotating in dark mode.
+ * Off by user choice when preserving the PDF's original colors matters more
+ * than stroke contrast (e.g. color-coded diagrams, scanned photos).
+ * @returns {boolean}
+ */
+export function getPdfInvertDarkMode() {
+  return pdfInvertDarkMode;
+}
+
+/**
+ * Set whether imported PDF pages should be inverted while annotating in dark mode.
+ * @param {boolean} enabled
+ */
+export function setPdfInvertDarkMode(enabled) {
+  pdfInvertDarkMode = !!enabled;
+  localStorage.setItem(PDF_INVERT_DARK_STORAGE_KEY, String(pdfInvertDarkMode));
+  window.dispatchEvent(
+    new CustomEvent("themechange", {
+      detail: { theme: currentTheme },
+    }),
+  );
 }

@@ -7,6 +7,7 @@
     "restore": "Wiederherstellen",
     "save": "Speichern",
     "ok": "OK",
+    "next": "Next",
     "loading": "Laden...",
     "error": "Fehler",
     "untitled": "Ohne Titel",
@@ -25,7 +26,8 @@
       "notes": "Notizen",
       "search": "Suche",
       "markers": "Markierungen",
-      "recycleBin": "Papierkorb"
+      "recycleBin": "Papierkorb",
+      "backToNotebooks": "Zurück zu den Notizbüchern"
     },
     "sections": {
       "notebooks": "Notizbücher",
@@ -113,6 +115,7 @@
       "security": "Sicherheit",
       "nextcloud": "Nextcloud-Sync",
       "recognition": "Handschrifterkennung",
+      "mcp": "MCP Server (AI Integration)",
       "logging": "Protokollierung",
       "dangerZone": "Gefahrenzone",
       "about": "Über",
@@ -123,6 +126,8 @@
       "themeDesc": "Wähle dein bevorzugtes Farbschema",
       "light": "Hell",
       "dark": "Dunkel",
+      "pdfInvertDark": "PDF-Seiten im Dunkelmodus invertieren",
+      "pdfInvertDarkDesc": "Macht Anmerkungen auf importierten PDFs besser sichtbar, verändert aber die Originalfarben des PDFs",
       "cardSize": "Kartengröße",
       "cardSizeDesc": "Größe der Notizkarten in der Übersicht festlegen",
       "cardSizeSmall": "Klein",
@@ -201,6 +206,57 @@
         "zh-CN": "Chinesisch (Vereinfacht)"
       }
     },
+    "mcp": {
+      "windowsOnly": "Der MCP-Server ist nur in der Windows-App verfügbar.",
+      "enableLabel": "MCP-Server aktivieren",
+      "enableDesc": "Ermöglicht KI-Assistenten (z. B. Claude Desktop), über eine lokale, tokengeschützte Verbindung auf Ihre Notizbücher und Notizen zuzugreifen. Standardmäßig deaktiviert.",
+      "statusLabel": "Status",
+      "serverDisabled": "MCP-Server ist deaktiviert.",
+      "tokenConfigured": "Zugriffstoken konfiguriert.",
+      "noToken": "Noch kein Zugriffstoken erstellt.",
+      "portInfo": " Wartet auf 127.0.0.1:{{port}}.",
+      "statusMismatchWarning": "MCP ist in den Einstellungen aktiviert, aber der Server konnte in dieser Sitzung nicht korrekt gestartet werden. KI-Clients können sich erst nach Behebung verbinden.",
+      "retrySyncBtn": "Wiederholen",
+      "notListeningWarning": "MCP ist aktiviert, aber Port {{port}} war beim Start von NoteBerg bereits belegt, sodass der Server nicht läuft. Schließen Sie das Programm, das diesen Port verwendet (z. B. ein weiteres NoteBerg-Fenster), und starten Sie NoteBerg neu.",
+      "tokensLabel": "Zugriffstoken",
+      "tokensDesc": "Jeder MCP-Client (z. B. Claude Desktop, Cursor) sollte ein eigenes benanntes Token erhalten, damit Sie sie im Zugriffsprotokoll unterscheiden und einzeln widerrufen können, ohne die anderen zu beeinträchtigen.",
+      "noTokensYet": "Noch keine Zugriffstoken erstellt.",
+      "generateTokenBtn": "Neues Token erstellen",
+      "revokeTokenBtn": "Widerrufen",
+      "revokeConfirmTitle": "Dieses Zugriffstoken widerrufen?",
+      "revokeConfirmMsg": "Dadurch wird der MCP-Zugriff für jeden Client, der dieses Token verwendet, sofort deaktiviert. Sie können jederzeit ein neues Token erstellen.",
+      "revokeConfirmBtn": "Widerrufen",
+      "tokenNamePromptTitle": "Dieses Zugriffstoken benennen",
+      "tokenNamePromptMsg": "Geben Sie diesem Token einen Namen, damit Sie erkennen, zu welchem Client es gehört (z. B. „Claude Desktop“, „Arbeitslaptop“).",
+      "tokenNamePromptPlaceholder": "Claude Desktop",
+      "unnamedToken": "Unbenanntes Token",
+      "tokenGeneratedTitle": "Zugriffstoken erstellt",
+      "tokenShownOnceWarningCopied": "Dieses Token wird nur einmal angezeigt und wurde in Ihre Zwischenablage kopiert. Fügen Sie es jetzt in die Konfiguration Ihres MCP-Clients ein — nach Schließen dieses Dialogs kann es nicht erneut angezeigt werden.",
+      "tokenShownOnceWarning": "Dieses Token wird nur einmal angezeigt und konnte nicht automatisch kopiert werden. Kopieren Sie es jetzt — nach Schließen dieses Dialogs kann es nicht erneut angezeigt werden.",
+      "copyTokenBtn": "Kopieren",
+      "auditLogEnableLabel": "MCP-Zugriff protokollieren",
+      "auditLogEnableDesc": "Führt eine dauerhafte Aufzeichnung jeder Anfrage über die MCP-Verbindung (welches Tool, wann, Erfolg/Fehler) — getrennt von den allgemeinen Debug-Protokollen unten und unbeeinflusst von deren Löschung.",
+      "auditLogCountLabel": "Protokolleinträge",
+      "auditLogCountValue": "{{count}} erfasst",
+      "clearAuditLogBtn": "Zugriffsprotokoll löschen",
+      "clearAuditLogConfirmTitle": "MCP-Zugriffsprotokoll löschen?",
+      "clearAuditLogConfirmMsg": "Dies löscht dauerhaft den aufgezeichneten Verlauf der MCP-Tool-Aufrufe. Dies kann nicht rückgängig gemacht werden.",
+      "clearAuditLogConfirmBtn": "Löschen",
+      "viewAuditLogBtn": "Zugriffsprotokoll anzeigen",
+      "auditLogModalTitle": "MCP-Zugriffsprotokoll",
+      "auditLogColTime": "Zeit",
+      "auditLogColToken": "Token",
+      "auditLogColTool": "Tool",
+      "auditLogColArgs": "Argumente",
+      "auditLogColOutcome": "Ergebnis",
+      "auditLogColDuration": "Dauer",
+      "auditLogTokenUnknown": "Unbekannt",
+      "auditLogOutcomeOk": "OK",
+      "auditLogOutcomeError": "Fehler",
+      "auditLogPageInfo": "{{start}}–{{end}} von {{total}}",
+      "auditLogPrevPage": "◀ Zurück",
+      "auditLogNextPage": "Weiter ▶"
+    },
     "logging": {
       "logLevel": "Protokollstufe",
       "logLevelDesc": "Minimale Stufe für die Protokollierung festlegen",
@@ -250,7 +306,9 @@
     "about": {
       "description": "Eine Notiz-App für handschriftliche Notizen, Text und Zeichnungen.",
       "version": "Version: {{version}}",
-      "licenses": "Lizenzinformationen"
+      "licenses": "Lizenzinformationen",
+      "openSource": "NoteBerg ist freie und quelloffene Software.",
+      "projectLink": "Projekt auf GitHub ansehen"
     },
     "encryption": {
       "enabledLocalTitle": "Verschlüsselung aktiviert",
@@ -386,7 +444,8 @@
     "lastSyncedTooltip": "Zuletzt synchronisiert {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
     "syncFailedTooltip": "Synchronisierung fehlgeschlagen: {{error}}",
     "unknownError": "unbekannter Fehler",
-    "recognitionRunning": "Handschrifterkennung läuft…"
+    "recognitionRunning": "Handschrifterkennung läuft…",
+    "mcpRunning": "MCP server is running — AI assistants can access your notebooks"
   },
   "breadcrumb": {
     "home": "Startseite",

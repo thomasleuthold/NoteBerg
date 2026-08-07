@@ -140,6 +140,11 @@
   height: 0;
 }
 
+/* Explicit fallback (not just var(--x)): .toggle-switch sits inside
+   .setting-item, which is `display: contents` on desktop — a mode some older
+   Android WebViews fail to inherit custom properties through, so the var()
+   resolves to nothing and the slider paints transparent/invisible against the
+   dialog background. The fallback guarantees a visible track even then. */
 .toggle-slider {
   position: absolute;
   cursor: pointer;
@@ -147,11 +152,14 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--border-secondary);
+  background-color: var(--border-secondary, #a0aec0);
   transition: 0.3s;
   border-radius: 24px;
 }
 
+/* Same display:contents inheritance risk applies here; also a box-shadow ring
+   so the knob has a visible edge independent of the track color in either
+   theme, since --border-secondary in light mode (#a0aec0) is close to white. */
 .toggle-slider:before {
   position: absolute;
   content: "";
@@ -159,17 +167,20 @@
   width: 18px;
   left: 3px;
   bottom: 3px;
-  background-color: white;
+  background-color: #ffffff;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.15),
+    0 1px 2px rgb(0 0 0 / 0.25);
   transition: 0.3s;
   border-radius: 50%;
 }
 
 input:checked + .toggle-slider {
-  background-color: var(--color-primary);
+  background-color: var(--color-primary, #2c5282);
 }
 
 input:focus + .toggle-slider {
-  box-shadow: 0 0 0 2px var(--color-primary-light);
+  box-shadow: 0 0 0 2px var(--color-primary-light, #bee3f8);
 }
 
 input:checked + .toggle-slider:before {
@@ -187,6 +198,35 @@ input:disabled + .toggle-slider {
   align-items: center;
   margin-left: 16px;
   color: var(--color-primary);
+}
+
+/* ===== MCP indicator (footer badge, Windows only) ===== */
+.mcp-indicator {
+  display: none;
+  align-items: center;
+  margin-left: 16px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-primary);
+  border: 1px solid currentColor;
+  /* Snap to active instantly (no fade-in) so even a very short MCP call is
+     clearly visible; fade back out over 250ms so it reads as a deliberate
+     pulse rather than a flicker. */
+  transition:
+    color 250ms ease-out,
+    border-color 250ms ease-out;
+}
+
+.mcp-indicator--active {
+  /* A stronger, more saturated green than --color-success (#10b981 reads too
+     close in tone to the badge's default blue at this text size) — chosen
+     specifically so this pulse is clearly visible. */
+  color: #16d16a;
+  font-weight: 900;
+  transition: none;
 }
 
 /* ===== Toggle switch disabled state ===== */

@@ -7,6 +7,7 @@
     "restore": "복원",
     "save": "저장",
     "ok": "확인",
+    "next": "Next",
     "loading": "불러오는 중...",
     "error": "오류",
     "untitled": "제목 없음",
@@ -25,7 +26,8 @@
       "notes": "노트",
       "search": "검색",
       "markers": "마커",
-      "recycleBin": "휴지통"
+      "recycleBin": "휴지통",
+      "backToNotebooks": "노트북 목록으로 돌아가기"
     },
     "sections": {
       "notebooks": "노트북",
@@ -113,6 +115,7 @@
       "security": "보안",
       "nextcloud": "Nextcloud 동기화",
       "recognition": "손글씨 인식",
+      "mcp": "MCP Server (AI Integration)",
       "logging": "로그",
       "dangerZone": "위험 구역",
       "about": "정보",
@@ -123,6 +126,8 @@
       "themeDesc": "선호하는 색상 구성표를 선택하세요",
       "light": "라이트",
       "dark": "다크",
+      "pdfInvertDark": "다크 모드에서 PDF 페이지 반전",
+      "pdfInvertDarkDesc": "가져온 PDF의 주석을 더 잘 보이게 하지만 PDF의 원래 색상이 바뀝니다",
       "cardSize": "카드 크기",
       "cardSizeDesc": "개요에서 노트 카드의 크기를 설정합니다",
       "cardSizeSmall": "작게",
@@ -201,6 +206,57 @@
         "zh-CN": "중국어(간체)"
       }
     },
+    "mcp": {
+      "windowsOnly": "MCP 서버는 Windows 앱에서만 사용할 수 있습니다.",
+      "enableLabel": "MCP 서버 활성화",
+      "enableDesc": "AI 어시스턴트(예: Claude Desktop)가 로컬 토큰 보호 연결을 통해 노트북과 노트를 읽을 수 있도록 합니다. 기본값은 꺼짐입니다.",
+      "statusLabel": "상태",
+      "serverDisabled": "MCP 서버가 비활성화되어 있습니다.",
+      "tokenConfigured": "액세스 토큰이 설정되었습니다.",
+      "noToken": "아직 생성된 액세스 토큰이 없습니다.",
+      "portInfo": " 127.0.0.1:{{port}}에서 대기 중입니다.",
+      "statusMismatchWarning": "설정에서 MCP가 활성화되어 있지만 이번 세션에서 서버가 제대로 시작되지 않았습니다. 문제가 해결될 때까지 AI 클라이언트가 연결할 수 없습니다.",
+      "retrySyncBtn": "재시도",
+      "notListeningWarning": "MCP가 활성화되어 있지만 NoteBerg를 시작할 때 포트 {{port}}이(가) 이미 사용 중이어서 서버가 실행되지 않았습니다. 해당 포트를 사용하는 프로그램(예: 다른 NoteBerg 창)을 종료한 후 NoteBerg를 다시 시작하세요.",
+      "tokensLabel": "액세스 토큰",
+      "tokensDesc": "각 MCP 클라이언트(예: Claude Desktop, Cursor)에는 고유한 이름의 토큰을 발급하세요. 액세스 로그에서 구분하기 쉽고, 다른 토큰에 영향을 주지 않고 하나만 취소할 수 있습니다.",
+      "noTokensYet": "아직 생성된 액세스 토큰이 없습니다.",
+      "generateTokenBtn": "새 토큰 생성",
+      "revokeTokenBtn": "취소",
+      "revokeConfirmTitle": "이 액세스 토큰을 취소하시겠습니까?",
+      "revokeConfirmMsg": "이 토큰을 사용하는 모든 클라이언트의 MCP 액세스가 즉시 비활성화됩니다. 언제든지 새 토큰을 생성할 수 있습니다.",
+      "revokeConfirmBtn": "취소",
+      "tokenNamePromptTitle": "이 액세스 토큰의 이름 지정",
+      "tokenNamePromptMsg": "어느 클라이언트의 것인지 알아볼 수 있도록 이 토큰에 이름을 지정하세요(예: \"Claude Desktop\", \"업무용 노트북\").",
+      "tokenNamePromptPlaceholder": "Claude Desktop",
+      "unnamedToken": "이름 없는 토큰",
+      "tokenGeneratedTitle": "액세스 토큰이 생성되었습니다",
+      "tokenShownOnceWarningCopied": "이 토큰은 한 번만 표시되며 클립보드에 복사되었습니다. 지금 MCP 클라이언트 설정에 붙여넣으세요 — 이 대화상자를 닫으면 다시 볼 수 없습니다.",
+      "tokenShownOnceWarning": "이 토큰은 한 번만 표시되며 자동으로 복사되지 않았습니다. 지금 복사하세요 — 이 대화상자를 닫으면 다시 볼 수 없습니다.",
+      "copyTokenBtn": "복사",
+      "auditLogEnableLabel": "MCP 액세스 기록",
+      "auditLogEnableDesc": "MCP 연결을 통한 모든 요청(어떤 도구, 언제, 성공/실패)의 영구 기록을 유지합니다 — 아래의 일반 디버그 로그와는 별도이며, 그것을 지워도 영향을 받지 않습니다.",
+      "auditLogCountLabel": "액세스 로그 항목",
+      "auditLogCountValue": "{{count}}건 기록됨",
+      "clearAuditLogBtn": "액세스 로그 지우기",
+      "clearAuditLogConfirmTitle": "MCP 액세스 로그를 지우시겠습니까?",
+      "clearAuditLogConfirmMsg": "기록된 MCP 도구 호출 내역이 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "clearAuditLogConfirmBtn": "지우기",
+      "viewAuditLogBtn": "액세스 로그 보기",
+      "auditLogModalTitle": "MCP 액세스 로그",
+      "auditLogColTime": "시간",
+      "auditLogColToken": "토큰",
+      "auditLogColTool": "도구",
+      "auditLogColArgs": "인수",
+      "auditLogColOutcome": "결과",
+      "auditLogColDuration": "소요 시간",
+      "auditLogTokenUnknown": "알 수 없음",
+      "auditLogOutcomeOk": "성공",
+      "auditLogOutcomeError": "오류",
+      "auditLogPageInfo": "{{total}}건 중 {{start}}–{{end}}",
+      "auditLogPrevPage": "◀ 이전",
+      "auditLogNextPage": "다음 ▶"
+    },
     "logging": {
       "logLevel": "로그 수준",
       "logLevelDesc": "로깅을 위한 최소 심각도 수준을 설정합니다",
@@ -250,7 +306,9 @@
     "about": {
       "description": "손글씨 노트, 텍스트, 그림을 지원하는 노트 앱입니다.",
       "version": "버전: {{version}}",
-      "licenses": "라이선스 정보"
+      "licenses": "라이선스 정보",
+      "openSource": "NoteBerg는 자유 오픈 소스 소프트웨어입니다.",
+      "projectLink": "GitHub에서 프로젝트 보기"
     },
     "encryption": {
       "enabledLocalTitle": "암호화 활성화됨",
@@ -386,7 +444,8 @@
     "lastSyncedTooltip": "마지막 동기화 {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
     "syncFailedTooltip": "동기화 실패: {{error}}",
     "unknownError": "알 수 없는 오류",
-    "recognitionRunning": "손글씨 인식 실행 중…"
+    "recognitionRunning": "손글씨 인식 실행 중…",
+    "mcpRunning": "MCP server is running — AI assistants can access your notebooks"
   },
   "breadcrumb": {
     "home": "홈",

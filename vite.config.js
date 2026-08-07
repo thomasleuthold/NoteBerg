@@ -104,29 +104,42 @@ if (id.includes('perspective-transform-nc-inline')) {
  */
 function getAppVersionInfo() {
   let raw = '0.0.0';
+  // package.json.build is the monotonic build counter maintained by
+  // sync-version.js. Surfaced here so the About section can show it — it is the
+  // number that distinguishes two builds of the same semver version, which is
+  // what bug reports need.
+  let build = '';
   try {
     const packagePath = resolve(process.cwd(), 'package.json');
-    raw = JSON.parse(readFileSync(packagePath, 'utf-8')).version || '0.0.0';
+    const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'));
+    raw = pkg.version || '0.0.0';
+    build = pkg.build !== undefined ? String(pkg.build) : '';
   } catch (e) {
     // fall through with default
   }
 
   const match = raw.match(/^(\d+\.\d+\.\d+)(?:-([a-zA-Z]+)(?:\.\d+)?)?$/);
-  if (!match) return { version: raw, stage: '' };
+  if (!match) return { version: raw, stage: '', build };
 
   const [, base, stageRaw = ''] = match;
   const STAGE_LABELS = { rc: 'RC', beta: 'Beta', alpha: 'Alpha' };
   const key = stageRaw.toLowerCase();
   const stage = STAGE_LABELS[key] || (stageRaw ? stageRaw : '');
-  return { version: base, stage };
+  return { version: base, stage, build };
 }
 
 const appVersionInfo = getAppVersionInfo();
 
 const platform = process.env.VITE_PLATFORM || 'tauri';
-// Dev container uses /apps-extra/; production Nextcloud uses /apps/
-// Override with: VITE_NC_BASE=/apps/noteberg/ npm run build:nextcloud
-const ncBase = process.env.VITE_NC_BASE || '/apps-extra/noteberg/';
+// NC build uses a RELATIVE base so lazy-loaded chunk URLs resolve against the
+// importing module's own URL. An absolute base (e.g. '/apps/noteberg/') is baked
+// into every dynamic import() at build time and breaks on any NC installed under
+// a path prefix: a server at /nextcloud/ would request /apps/noteberg/js/foo.js,
+// which 404s into the SSO login page (YunoHost) and gets blocked as text/html.
+// The static entry is unaffected — Util::addScript() generates that URL
+// server-side via NC's URL generator, which already knows the webroot.
+// VITE_NC_BASE is still honoured if explicitly set, for the container recipes.
+const ncBase = process.env.VITE_NC_BASE || './';
 const base = platform === 'nextcloud' ? ncBase : '/';
 
 export default defineConfig({
@@ -159,6 +172,7 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersionInfo.version),
     'import.meta.env.VITE_APP_STAGE': JSON.stringify(appVersionInfo.stage),
+    'import.meta.env.VITE_APP_BUILD': JSON.stringify(appVersionInfo.build),
     'import.meta.env.VITE_PLATFORM': JSON.stringify(platform),
   },
   build: {
@@ -171,8 +185,13 @@ export default defineConfig({
     rollupOptions: platform === 'nextcloud' ? {
       input: resolve(process.cwd(), 'src/main.js'),
       output: {
-        entryFileNames: 'js/noteberg-main.js',
-        chunkFileNames: 'js/[name].js',
+        entryFileNames: 'js/noteberg-main.mjs',
+        // Content-hashed chunk names. The entry stays stable because
+        // Util::addScript() must be able to name it, and NC's own versioning
+        // busts its cache. Chunks get hashes so a stale file from an earlier
+        // build can never shadow a fresh one — mangled export names are not
+        // stable across builds, and a mismatch is a hard module-load error.
+        chunkFileNames: 'js/[name]-[hash].js',
         assetFileNames: (info) =>
           info.name?.endsWith('.css') ? 'css/noteberg-styles.css' : 'assets/[name][extname]',
       },

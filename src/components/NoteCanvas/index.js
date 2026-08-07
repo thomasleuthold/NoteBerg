@@ -101,6 +101,21 @@ export function initNoteCanvasComponent() {
     }
   });
 
+  // Closing the tab/app does not run the "navigate" handler below, so a stroke
+  // drawn moments earlier would never be written. visibilitychange→hidden is the
+  // only teardown signal mobile browsers deliver reliably (beforeunload is not
+  // fired when the OS kills a backgrounded tab), so flush there.
+  //
+  // Note this cannot await: the page may be gone before a promise settles. It
+  // starts the write and relies on the browser keeping the in-flight request
+  // alive, which is why an extra pause before closing still helps on a slow
+  // connection. It is strictly better than the previous behaviour, where
+  // nothing was started at all.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") return;
+    noteCanvasInstance?.flushPendingSaves?.();
+  });
+
   // Listen for navigation to clean up when leaving notebook mode
   window.addEventListener("navigate", async (e) => {
     if (e.detail?.previousMode === "notebook" && noteCanvasInstance) {
@@ -116,32 +131,35 @@ export function initNoteCanvasComponent() {
     }
   });
 
-  // Listen for data changes to refresh if current note was updated externally
+  // Listen for data changes to refresh if the open note was updated externally.
+  //
+  // NoteCanvas.handleExternalDataChange owns the decision (own-write filtering,
+  // mid-drawing deferral, content-diff check) — it must not be duplicated here,
+  // or a guard added to one path silently fails to apply to the other. This
+  // listener only covers the case NoteCanvas cannot handle for itself: an
+  // instance that exists but never finished loading has to be rebuilt.
   window.addEventListener("datachange", async () => {
     if (!noteCanvasInstance?.noteId) return;
 
+    if (noteCanvasInstance.isInitialized) {
+      // NoteCanvas has its own listener; it reloads itself.
+      return;
+    }
+
     const noteId = noteCanvasInstance.noteId;
     const container = noteCanvasInstance.containerElement;
+    if (!container) return;
 
-    // Check if content actually changed to avoid unnecessary reloads (e.g. on sync metadata update)
-    // This prevents "vanishing strokes" when auto-sync updates the note status while drawing
-    const changed = await noteCanvasInstance.hasContentChanged(noteId);
-    if (!changed) {
-      return;
-    }
+    if (!(await noteCanvasInstance.hasContentChanged(noteId))) return;
 
-    // Re-check instance validity after async operation (could have been destroyed during await)
-    if (!noteCanvasInstance || noteCanvasInstance.noteId !== noteId) {
-      return;
-    }
+    // Re-check after the await — the instance may have been destroyed or
+    // replaced (and a replacement may have initialized in the meantime).
+    if (!noteCanvasInstance || noteCanvasInstance.noteId !== noteId) return;
+    if (noteCanvasInstance.isInitialized) return;
 
-    if (noteCanvasInstance.isInitialized) {
-      await noteCanvasInstance.applyLiveUpdate();
-    } else if (container) {
-      noteCanvasInstance.destroy();
-      noteCanvasInstance = new NoteCanvas(container);
-      await noteCanvasInstance.load(noteId);
-    }
+    noteCanvasInstance.destroy();
+    noteCanvasInstance = new NoteCanvas(container);
+    await noteCanvasInstance.load(noteId);
   });
 }
 

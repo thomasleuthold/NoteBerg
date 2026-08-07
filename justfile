@@ -11,8 +11,18 @@ default:
 # Development
 # ===========================================================================
 
-# Run the Tauri desktop app in dev mode (rebuilds recognition sidecar first)
+# Run the Tauri desktop app in dev mode (Rust in release profile — see dev-debug for the debug profile)
 dev:
+    # Nearly all day-to-day iteration is JS via Vite HMR, unaffected by the Rust
+    # profile — so this reuses build-w's `release` target tree instead of also
+    # maintaining a separate multi-GB `debug` tree. Switch to `just dev-debug`
+    # when actually debugging Rust code (debug assertions, better backtraces).
+    Get-Process -Name "NoteBerg.Recognition" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*src-tauri*" } | Stop-Process -Force -ErrorAction SilentlyContinue; $true
+    just package-sidecar
+    npm run tauri dev -- --release
+
+# Run the Tauri desktop app in dev mode with Rust in debug profile (costs a separate ~15GB target tree)
+dev-debug:
     Get-Process -Name "NoteBerg.Recognition" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*src-tauri*" } | Stop-Process -Force -ErrorAction SilentlyContinue; $true
     just package-sidecar
     npm run tauri dev
@@ -44,7 +54,7 @@ build-a:
     just sync-version
     if (Test-Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\") { Remove-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\*" -Force -Recurse -ErrorAction SilentlyContinue }
     just patch-android
-    npm run tauri android build -- --apk true
+    npm run tauri android build -- --apk
     New-Item -ItemType Directory -Force -Path builds | Out-Null
     # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\noteberg_android-{{version}}-universal.apk" -Force
     Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}-universal.apk" -Force
@@ -54,7 +64,7 @@ build-aab:
     just sync-version
     if (Test-Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\") { Remove-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\*" -Force -Recurse -ErrorAction SilentlyContinue }
     just patch-android
-    npm run tauri android build -- --aab true
+    npm run tauri android build -- --aab
     New-Item -ItemType Directory -Force -Path builds | Out-Null
     Copy-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}.aab" -Force
 
@@ -89,7 +99,15 @@ build-nc:
     just sync-version
 
     # 1. Build JS/CSS for Nextcloud (NC version = appinfo/info.xml, now synced to package.json)
-    $env:VITE_NC_BASE = "/apps/noteberg/"; npm run build:nextcloud
+    # Wipe js/ and css/ first: outDir is the repo root with emptyOutDir=false, so
+    # Vite never cleans them. Stale chunks from an earlier build otherwise survive,
+    # get copied into the tarball, and shadow fresh ones at runtime (mangled export
+    # names are not stable across builds -> "doesn't provide an export named 'n'").
+    if (Test-Path "js")  { Remove-Item -Recurse -Force "js" }
+    if (Test-Path "css") { Remove-Item -Recurse -Force "css" }
+    # No VITE_NC_BASE: the default relative base makes chunk URLs resolve against
+    # the importing module, so the build works on any webroot (/, /nextcloud/, ...).
+    npm run build:nextcloud
 
     # 2. Assemble app into a clean temp directory
     if (Test-Path "build-nc-tmp") { Remove-Item -Recurse -Force "build-nc-tmp" }
@@ -132,7 +150,7 @@ nc-down:
 
 # Rebuild JS/CSS into the dev container (8080) — hard reload after. Requires: just nc-up
 nc-dev-push:
-    $env:VITE_NC_BASE = "/apps-extra/noteberg/"; npm run build:nextcloud
+    npm run build:nextcloud
     Write-Host "Built for nc-up (8080) — hard reload http://localhost:8080"
 
 # Tests the published package as a real user would — no volume mount, no cache tricks
@@ -159,8 +177,14 @@ nc-test-down:
 # Requires: just nc-test container running
 # Rebuild and push local assets into the running nc-test container for rapid CSS iteration
 nc-test-push:
-    $env:VITE_NC_BASE = "/apps-writable/noteberg/"; npm run build:nextcloud
-    podman cp js/noteberg-main.js noteberg-nc-test:/var/www/html/apps-writable/noteberg/js/noteberg-main.js
+    # Wipe js/ and css/ first — see the note in build-nc. Stale chunks otherwise linger.
+    if (Test-Path "js")  { Remove-Item -Recurse -Force "js" }
+    if (Test-Path "css") { Remove-Item -Recurse -Force "css" }
+    npm run build:nextcloud
+    # Copy the whole js/ dir, not just the entry: chunks carry content hashes, so
+    # their filenames change between builds and must be replaced wholesale.
+    podman exec noteberg-nc-test rm -rf /var/www/html/apps-writable/noteberg/js
+    podman cp js noteberg-nc-test:/var/www/html/apps-writable/noteberg/
     podman cp css/noteberg-styles.css noteberg-nc-test:/var/www/html/apps-writable/noteberg/css/noteberg-styles.css
     podman cp templates/index.php noteberg-nc-test:/var/www/html/apps-writable/noteberg/templates/index.php
     podman cp img noteberg-nc-test:/var/www/html/apps-writable/noteberg/
@@ -187,7 +211,7 @@ nc-test33-down:
 
 # Rebuild JS/CSS into the NC33 test container (8082) — hard reload after. Requires: just nc-test33
 nc-test33-push:
-    $env:VITE_NC_BASE = "/custom_apps/noteberg/"; npm run build:nextcloud
+    npm run build:nextcloud
     Write-Host "Built for nc-test33 (8082) — hard reload http://localhost:8082"
 
 # Restart the Podman machine when it gets into a broken state
@@ -227,15 +251,20 @@ fct:
 # ===========================================================================
 # package.json.version = semver base + optional pre-release label (npm-managed).
 # package.json.build   = monotonic build counter (moved ONLY by `just bump-build`).
-# All of bump*/set-rc/bump-rc below run `npm version`, which fires the "version"
-# npm script (regenerates derived files + git add), then commits + tags.
-# They REQUIRE a clean git tree.
+# None of the recipes below touch git: they rewrite package.json and regenerate the
+# derived files (tauri.conf.json, Cargo.toml, info.xml), nothing more. No commit,
+# no tag, no clean-tree requirement — so they can be run with work in flight.
+# Commit and tag yourself when the tree is ready:
+#
+#   git commit -am "0.5.39" && git tag v0.5.39
 #
 #   0.5.33         -- just set-rc rc   --> 0.5.33-rc.1   (start a pre-release)
 #   0.5.33-rc.1    -- just bump-rc     --> 0.5.33-rc.2   (next pre-release)
 #   0.5.33-beta.2  -- just bump-rc     --> 0.5.33-beta.3 (bumps whatever stage is set)
 #   0.5.33-beta.2  -- just set-rc rc   --> 0.5.33-rc.1   (switch stage, counter resets)
-#   0.5.33-rc.4    -- just bump        --> 0.5.34        (drop label, next patch)
+#   0.5.33-rc.4    -- just unset-rc    --> 0.5.33        (promote to final, same base)
+#   0.5.33-rc.4    -- just bump        --> 0.5.33        (drop label, no patch advance)
+#   0.5.33         -- just bump        --> 0.5.34        (next patch)
 
 # Print the current version state (semver, stage, build, versionCode, wix); no writes
 version-info:
@@ -258,31 +287,28 @@ set-rc stage:
 bump-rc:
     node bump-prerelease.js
 
-# Bump patch and sync; from a pre-release this DROPS the label: 0.5.33-rc.4 -> 0.5.33
+# Promote a pre-release to final, keeping the base: 0.5.33-rc.4 -> 0.5.33; no-op if already final
+unset-rc:
+    node unset-prerelease.js
+
+# Bump patch and sync; from a pre-release this only DROPS the label: 0.5.33-rc.4 -> 0.5.33
 bump:
-    npm version patch
+    npm version patch --no-git-tag-version
+    node sync-version.js
 
 # Bump minor and sync (drops any pre-release label): 0.5.33-rc.4 -> 0.6.0
 bump-minor:
-    npm version minor
+    npm version minor --no-git-tag-version
+    node sync-version.js
 
 # Bump major and sync (drops any pre-release label): 0.5.33-rc.4 -> 1.0.0
 bump-major:
-    npm version major
+    npm version major --no-git-tag-version
+    node sync-version.js
 
 # Push to the GitHub mirror (default: main branch)
 push-gh branch="main":
     git push github {{branch}}
-
-# Run this only at release time, after CHANGELOG.md/README/docs are updated and committed on gitea
-# Publish a release to the public GitHub mirror: pushes main + a matching vX.Y.Z tag
-release-gh:
-    if ((git status --porcelain) -ne $null) { Write-Error "Working tree not clean — commit or stash first."; exit 1 }
-    if ((git rev-parse --abbrev-ref HEAD) -ne "main") { Write-Error "Not on main — checkout main before releasing."; exit 1 }
-    git push origin main
-    git push origin --tags
-    git push github main
-    git push github "v{{version}}"
 
 # ===========================================================================
 # Utilities

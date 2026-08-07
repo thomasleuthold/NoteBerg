@@ -8,4 +8,11 @@ html {
 body {
   height: 100dvh;
   overflow: hidden;
+  /* Backstop against WebView page zoom. The viewport meta already disables it,
+     but touch-action is enforced by the compositor, so it still holds when the
+     main thread is busy and the JS touchmove guard in main.js arrives too late.
+     pan-x pan-y, not none: the app has many scroll containers (settings dialog,
+     modals, overview list, .mode-container) that declare no touch-action of their
+     own, and `none` here would leave them unscrollable on touch. */
+  touch-action: pan-x pan-y;
 }

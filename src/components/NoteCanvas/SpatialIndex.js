@@ -26,6 +26,12 @@ export class SpatialIndex {
 
     for (let i = 0; i < strokes.length; i++) {
       const stroke = strokes[i];
+      // Soft-deleted strokes stay in noteData.strokes (undo needs them, and the
+      // array index is the index key), but they must never enter a bucket:
+      // query() walks every reference it finds and the renderer only filters
+      // _deleted afterwards, so indexing them makes every frame pay for content
+      // that is not drawn.
+      if (stroke?._deleted || stroke?.isDeleted) continue;
       const bounds = this._getStrokeBounds(stroke);
 
       if (!bounds) continue;
@@ -53,6 +59,10 @@ export class SpatialIndex {
    * @param {number} index - Index of the stroke in the strokes array
    */
   insert(stroke, index) {
+    // Mirrors build(): never index a soft-deleted stroke. Callers re-insert on
+    // undo (DrawStrokeCommand/EraseStrokesCommand clear _deleted first), so
+    // skipping here cannot strand a stroke that should be visible.
+    if (stroke?._deleted || stroke?.isDeleted) return;
     const bounds = this._getStrokeBounds(stroke);
     if (!bounds) return;
 
@@ -82,9 +92,12 @@ export class SpatialIndex {
     const endBucket = Math.floor(bounds.maxY / this.bucketHeight);
 
     for (let bucket = startBucket; bucket <= endBucket; bucket++) {
-      if (this.buckets.has(bucket)) {
-        this.buckets.get(bucket).delete(index);
-      }
+      const entries = this.buckets.get(bucket);
+      if (!entries) continue;
+      entries.delete(index);
+      // Drop the bucket once it is empty — query() iterates the bucket range and
+      // would otherwise keep visiting Sets that can never yield a hit.
+      if (entries.size === 0) this.buckets.delete(bucket);
     }
     this.strokeBounds.delete(index);
   }
@@ -138,11 +151,14 @@ export class SpatialIndex {
       }
     }
 
-    // Strokes are already mostly in draw order since buckets store them by insertion.
-    // Only sort if we have strokes from multiple buckets that might be out of order.
-    // For most cases, insertion sort would be O(n) on nearly-sorted data,
-    // but we can skip entirely if single bucket or result is small.
-    if (result.length > 1 && endBucket > startBucket) {
+    // Draw order IS array order, so the result must always be sorted ascending.
+    // A single bucket used to be safe to skip because indices were only ever
+    // appended in ascending order — but undoing an erase re-inserts an older
+    // index, which lands at the END of the bucket's Set. Skipping the sort then
+    // renders the restored stroke on top of strokes drawn after it, until the
+    // next full build(). Insertion sort is O(n) on already-sorted input, so
+    // always running it costs almost nothing in the common case.
+    if (result.length > 1) {
       // Use insertion sort - O(n) for nearly-sorted data (much faster than quicksort)
       for (let i = 1; i < result.length; i++) {
         const key = result[i];
