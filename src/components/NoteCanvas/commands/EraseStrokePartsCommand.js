@@ -32,6 +32,9 @@ export class EraseStrokePartsCommand {
       const original = noteCanvas.noteData.strokes[originalIndex];
       if (original && !original._deleted) {
         original._deleted = true;
+        // The spatial index tracks live strokes only — keep it in step with
+        // _deleted on every flip, or queries return strokes that aren't drawn.
+        noteCanvas.spatialIndex?.remove(originalIndex);
         if (originalId && !noteCanvas.noteData.deletedStrokes.includes(originalId)) {
           noteCanvas.noteData.deletedStrokes.push(originalId);
         }
@@ -42,6 +45,7 @@ export class EraseStrokePartsCommand {
         const s = noteCanvas.noteData.strokes[index];
         if (s) {
           s._deleted = false;
+          noteCanvas.spatialIndex?.insert(s, index);
           const delIdx = noteCanvas.noteData.deletedStrokes.indexOf(stroke.id);
           if (delIdx !== -1) {
             noteCanvas.noteData.deletedStrokes.splice(delIdx, 1);
@@ -66,6 +70,8 @@ export class EraseStrokePartsCommand {
       const original = noteCanvas.noteData.strokes[originalIndex];
       if (original?._deleted) {
         original._deleted = false;
+        // _deleted is cleared first so insert() accepts the stroke.
+        noteCanvas.spatialIndex?.insert(original, originalIndex);
         if (originalId) {
           const delIdx = noteCanvas.noteData.deletedStrokes.indexOf(originalId);
           if (delIdx !== -1) {
@@ -79,6 +85,7 @@ export class EraseStrokePartsCommand {
         const s = noteCanvas.noteData.strokes[index];
         if (s && !s._deleted) {
           s._deleted = true;
+          noteCanvas.spatialIndex?.remove(index);
           if (stroke.id && !noteCanvas.noteData.deletedStrokes.includes(stroke.id)) {
             noteCanvas.noteData.deletedStrokes.push(stroke.id);
           }

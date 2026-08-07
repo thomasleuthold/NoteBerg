@@ -8,6 +8,9 @@
   --color-secondary: #94a3b8;
   --color-success: #34d399;
   --color-danger: #f87171;
+  /* Dark, desaturated red — a light tint would blow out against the dark
+     surface and fight the light --color-danger text it carries. */
+  --color-danger-light: #45222a;
   --color-warning: #fbbf24;
 
   /* Background colors */

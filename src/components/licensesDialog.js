@@ -3,9 +3,10 @@
  * Shows open source software licenses and attributions
  */
 
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { t } from "../i18n/index.js";
 import { getIcon } from "../utils/icons.js";
+
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 /**
  * Open source libraries and their information
@@ -165,6 +166,90 @@ const licenses = [
     license: "MIT License",
     licenseUrl: "https://github.com/PolyMeilex/rfd/blob/master/LICENSE",
   },
+  {
+    name: "tiny_http",
+    description: "Minimal HTTP server library — powers the local MCP server (AI integration)",
+    url: "https://github.com/tiny-http/tiny-http",
+    license: "MIT License / Apache License 2.0",
+    licenseUrl: "https://github.com/tiny-http/tiny-http/blob/master/LICENSE-MIT",
+  },
+  {
+    name: "serde",
+    description: "Serialization/deserialization framework for Rust",
+    url: "https://github.com/serde-rs/serde",
+    license: "MIT License / Apache License 2.0",
+    licenseUrl: "https://github.com/serde-rs/serde/blob/master/LICENSE-MIT",
+  },
+  {
+    name: "serde_json",
+    description: "JSON support for serde",
+    url: "https://github.com/serde-rs/json",
+    license: "MIT License / Apache License 2.0",
+    licenseUrl: "https://github.com/serde-rs/json/blob/master/LICENSE-MIT",
+  },
+  {
+    name: "base64",
+    description: "Base64 encoding/decoding for Rust",
+    url: "https://github.com/marshallpierce/rust-base64",
+    license: "MIT License / Apache License 2.0",
+    licenseUrl: "https://github.com/marshallpierce/rust-base64/blob/main/LICENSE-MIT",
+  },
+  {
+    name: "ureq",
+    description: "Simple HTTP client for Rust (used to check the recognition sidecar's readiness)",
+    url: "https://github.com/algesten/ureq",
+    license: "MIT License / Apache License 2.0",
+    licenseUrl: "https://github.com/algesten/ureq/blob/main/LICENSE-MIT",
+  },
+  {
+    name: "windows-rs",
+    description: "Rust bindings to the Windows API (audio capture, WebView2 interop)",
+    url: "https://github.com/microsoft/windows-rs",
+    license: "MIT License / Apache License 2.0",
+    licenseUrl: "https://github.com/microsoft/windows-rs/blob/master/license-mit",
+  },
+  {
+    name: "webview2-com",
+    description: "Rust bindings for WebView2 COM APIs",
+    url: "https://github.com/wravery/webview2-rs",
+    license: "MIT License",
+    licenseUrl: "https://github.com/wravery/webview2-rs/blob/master/LICENSE.md",
+  },
+  {
+    name: "cross-env",
+    description: "Cross-platform environment variables for npm scripts",
+    url: "https://github.com/kentcdodds/cross-env",
+    license: "MIT License",
+    licenseUrl: "https://github.com/kentcdodds/cross-env/blob/main/LICENSE.md",
+  },
+  {
+    name: "ESLint",
+    description: "JavaScript/TypeScript linter",
+    url: "https://eslint.org/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/eslint/eslint/blob/main/LICENSE",
+  },
+  {
+    name: "Prettier",
+    description: "Opinionated code formatter",
+    url: "https://prettier.io/",
+    license: "MIT License",
+    licenseUrl: "https://github.com/prettier/prettier/blob/main/LICENSE",
+  },
+  {
+    name: "node-fetch",
+    description: "A light-weight module that brings the Fetch API to Node.js",
+    url: "https://github.com/node-fetch/node-fetch",
+    license: "MIT License",
+    licenseUrl: "https://github.com/node-fetch/node-fetch/blob/main/LICENSE.md",
+  },
+  {
+    name: "vite-plugin-singlefile",
+    description: "Vite plugin to inline a build's JS/CSS into a single HTML file",
+    url: "https://github.com/richardtallent/vite-plugin-singlefile",
+    license: "MIT License",
+    licenseUrl: "https://github.com/richardtallent/vite-plugin-singlefile/blob/main/LICENSE",
+  },
 ];
 
 /**
@@ -227,14 +312,24 @@ export function showLicensesDialog() {
 
   document.body.appendChild(overlay);
 
-  // Open all external links via Tauri opener (works on Android; target="_blank" does not)
-  overlay.addEventListener("click", (e) => {
-    const anchor = e.target.closest("a[href]");
-    if (anchor) {
-      e.preventDefault();
-      openUrl(anchor.href).catch((err) => console.error("Failed to open URL:", err));
-    }
-  });
+  // Native builds: route external links through the Tauri opener, because
+  // target="_blank" does nothing in the Android webview.
+  //
+  // The Nextcloud build must NOT do this. There is no Tauri backend there, so
+  // openUrl() rejects — and since preventDefault() has already run, the link
+  // would simply do nothing. In a real browser the anchor's own
+  // target="_blank" already opens a new tab, so we leave the event alone.
+  if (!IS_NEXTCLOUD) {
+    overlay.addEventListener("click", (e) => {
+      const anchor = e.target.closest("a[href]");
+      if (anchor) {
+        e.preventDefault();
+        import("@tauri-apps/plugin-opener")
+          .then(({ openUrl }) => openUrl(anchor.href))
+          .catch((err) => console.error("Failed to open URL:", err));
+      }
+    });
+  }
 
   // Close handlers
   const closeDialog = () => {

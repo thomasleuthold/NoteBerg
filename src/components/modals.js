@@ -719,6 +719,101 @@ export function showPasswordPrompt(title, message) {
 }
 
 /**
+ * Show a plain single-line text prompt (title/message/placeholder in, entered
+ * string or null on cancel out). Mirrors showPasswordPrompt's structure with
+ * a text input instead of password, and without the non-empty-to-confirm
+ * gate (callers that need a required field should validate the result).
+ * @param {string} title
+ * @param {string} message
+ * @param {string} [placeholder]
+ * @param {string} [defaultValue]
+ * @returns {Promise<string|null>}
+ */
+export function showTextPrompt(title, message, placeholder = "", defaultValue = "") {
+  return new Promise((resolve) => {
+    const existingModal = document.getElementById("modal-overlay");
+    if (existingModal) {
+      existingModal.remove();
+    }
+
+    const modalHtml = `
+      <div id="modal-overlay" class="modal-overlay">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 class="modal-title">${title}</h3>
+            <button class="modal-close" aria-label="${t("modals.close")}">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="modal-text-prompt-message">${message}</p>
+            <div class="form-field">
+              <input
+                type="text"
+                id="text-prompt-input"
+                class="form-input"
+                placeholder="${placeholder}"
+              />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary modal-cancel">${t("common.cancel")}</button>
+            <button class="btn-primary modal-confirm">${t("common.next")}</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML("beforeend", modalHtml);
+
+    const overlay = document.getElementById("modal-overlay");
+    const confirmBtn = overlay.querySelector(".modal-confirm");
+    const cancelBtn = overlay.querySelector(".modal-cancel");
+    const closeBtn = overlay.querySelector(".modal-close");
+    const textInput = document.getElementById("text-prompt-input");
+    textInput.value = defaultValue;
+
+    const closeModal = (value = null) => {
+      overlay.classList.add("modal-closing");
+      setTimeout(() => {
+        overlay.remove();
+        resolve(value);
+      }, 200);
+    };
+
+    confirmBtn.addEventListener("click", () => closeModal(textInput.value));
+    cancelBtn.addEventListener("click", () => closeModal(null));
+    closeBtn.addEventListener("click", () => closeModal(null));
+    let mousedownOnOverlay = false;
+    overlay.addEventListener("mousedown", (e) => {
+      mousedownOnOverlay = e.target === overlay;
+    });
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay && mousedownOnOverlay) closeModal(null);
+    });
+
+    const handleEsc = (e) => {
+      if (e.key === "Escape") {
+        closeModal(null);
+        document.removeEventListener("keydown", handleEsc);
+      }
+    };
+    document.addEventListener("keydown", handleEsc);
+
+    const handleEnter = (e) => {
+      if (e.key === "Enter") {
+        closeModal(textInput.value);
+        document.removeEventListener("keydown", handleEnter);
+      }
+    };
+    textInput.addEventListener("keydown", handleEnter);
+
+    setTimeout(() => {
+      textInput.focus();
+      textInput.select();
+    }, 100);
+  });
+}
+
+/**
  * Show conflict resolution dialog
  * @param {Object} local - Local version
  * @param {Object} remote - Remote version

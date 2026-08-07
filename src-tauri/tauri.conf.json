@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "NoteBerg",
-  "version": "0.5.37",
+  "version": "0.5.39",
   "identifier": "eu.noteberg.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' blob: data: mediastream:; connect-src 'self' http: https:; script-src 'self' blob: 'unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' blob: data: mediastream:;",
+      "csp": "default-src 'self' blob: data: mediastream:; connect-src 'self' ipc: http://ipc.localhost; script-src 'self' blob: 'unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' blob: data: mediastream:;",
       "capabilities": [
         "default",
         "android"
@@ -48,11 +48,11 @@
       "wix": {
         "bannerPath": "icons/msi2.bmp",
         "dialogImagePath": "icons/msi1.bmp",
-        "version": "0.5.37.2"
+        "version": "0.5.39.1"
       }
     },
     "android": {
-      "versionCode": 537002
+      "versionCode": 539001
     }
   }
 }

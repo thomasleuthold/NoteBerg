@@ -1,5 +1,6 @@
 <?php
 \OCP\Util::addStyle('noteberg', 'noteberg-styles');
+\OCP\Util::addScript('noteberg', 'noteberg-main');
 
 // Detect Nextcloud dark mode server-side via OCP public API.
 // NC 29+ stores the preference in the 'core' app under key 'theme' (value 'dark').
@@ -188,7 +189,9 @@ try {
     <div class="toolbar-center">
     </div>
     <div class="toolbar-right">
-      <!-- No settings button in Nextcloud build -->
+      <button id="nav-settings" class="btn-icon" aria-label="Settings" title="Settings">
+        <!-- Icon injected by main.js -->
+      </button>
     </div>
   </header>
 
@@ -208,5 +211,3 @@ try {
     </div>
   </footer>
 </div>
-<!-- Vite bundle uses import.meta — must load as type="module" with CSP nonce -->
-<script type="module" src="<?php p(link_to('noteberg', 'js/noteberg-main.js')); ?>" nonce="<?php p($_['cspNonce']); ?>"></script>

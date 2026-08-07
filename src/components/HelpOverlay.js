@@ -23,7 +23,10 @@ let activeTour = null;
 
 const CALLOUT_GAP = 16; // px between target and callout
 const VIEWPORT_MARGIN = 12; // keep callout this far from the viewport edge
-const ARROW_HALF = 13; // half the arrow's bounding box (matches CSS 26px)
+const TAIL_HALF = 13; // half the tail's base width, px
+const TAIL_LENGTH = 15; // how far the tail pokes out from the callout body, px
+const BUBBLE_RADIUS = 12; // corner radius, px — matches --radius-lg (0.75rem @ 16px root)
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 /**
  * Start (or resume) a help tour.
@@ -63,15 +66,26 @@ export function startHelpTour(id, steps, opts = {}) {
   backdrop.className = "help-overlay__backdrop";
   layer.appendChild(backdrop);
 
-  const arrow = document.createElement("div");
-  arrow.className = "help-overlay__arrow";
-  layer.appendChild(arrow);
-
+  // The callout is one continuous speech-bubble shape: an SVG path (rounded
+  // body + a triangular tail on one edge) painted behind a plain content div.
+  // One path == one stroke, so the tail is never visually separate from the
+  // box (see buildBubblePath).
   const callout = document.createElement("div");
   callout.className = "help-overlay__callout";
+
+  const bubbleBg = document.createElementNS(SVG_NS, "svg");
+  bubbleBg.setAttribute("class", "help-overlay__bubble-bg");
+  const bubblePath = document.createElementNS(SVG_NS, "path");
+  bubbleBg.appendChild(bubblePath);
+  callout.appendChild(bubbleBg);
+
+  const content = document.createElement("div");
+  content.className = "help-overlay__content";
+  callout.appendChild(content);
+
   layer.appendChild(callout);
 
-  const state = { id, steps, index, layer, callout, arrow, labels };
+  const state = { id, steps, index, layer, callout, bubbleBg, bubblePath, content, labels };
   activeTour = state;
 
   const onResize = () => positionStep(state);
@@ -109,22 +123,22 @@ export function repositionActiveTour() {
 }
 
 function renderStep(state) {
-  const { steps, index, callout, labels } = state;
+  const { steps, index, content, labels } = state;
   const step = steps[index];
   const total = steps.length;
   const isLast = index === total - 1;
 
-  callout.innerHTML = "";
+  content.innerHTML = "";
 
   const title = document.createElement("h3");
   title.className = "help-overlay__title";
   title.textContent = step.title;
-  callout.appendChild(title);
+  content.appendChild(title);
 
   const body = document.createElement("p");
   body.className = "help-overlay__body";
   body.textContent = step.body;
-  callout.appendChild(body);
+  content.appendChild(body);
 
   const footer = document.createElement("div");
   footer.className = "help-overlay__footer";
@@ -165,7 +179,7 @@ function renderStep(state) {
   });
   footer.appendChild(nextBtn);
 
-  callout.appendChild(footer);
+  content.appendChild(footer);
 
   positionStep(state);
 }
@@ -177,16 +191,18 @@ function goTo(state, nextIndex) {
 }
 
 /**
- * Position the callout near the current step's target and point the arrow at it.
- * Read-only against the target element. Falls back to a centered callout with a
- * hidden arrow if the target is missing or off-screen.
+ * Position the callout near the current step's target and point its tail at
+ * it. Read-only against the target element. Falls back to a centered callout
+ * with no tail if the target is missing or off-screen.
  */
 function positionStep(state) {
-  const { steps, index, callout, arrow } = state;
+  const { steps, index, callout, content } = state;
   const target = steps[index]?.target;
 
-  const cw = callout.offsetWidth;
-  const ch = callout.offsetHeight;
+  // `content` (not `callout`) carries the visible padding/box — the callout
+  // wrapper is sized to match it exactly, so it's the right box to measure.
+  const cw = content.offsetWidth;
+  const ch = content.offsetHeight;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
@@ -198,11 +214,11 @@ function positionStep(state) {
       ? target.getBoundingClientRect()
       : null;
 
-  // No usable target → center the callout, hide the arrow.
+  // No usable target → center the callout, plain rounded-rect (no tail).
   if (!rect || (rect.width === 0 && rect.height === 0)) {
     callout.style.left = `${clampLeft((vw - cw) / 2)}px`;
     callout.style.top = `${clampTop((vh - ch) / 2)}px`;
-    arrow.style.display = "none";
+    setBubblePath(state, cw, ch, null);
     return;
   }
 
@@ -238,34 +254,88 @@ function positionStep(state) {
   callout.style.left = `${left}px`;
   callout.style.top = `${top}px`;
 
-  positionArrow(arrow, placement, { left, top, cw, ch }, { targetCX, targetCY });
-}
-
-function positionArrow(arrow, placement, callout, target) {
-  arrow.style.display = "block";
-  const { left, top, cw, ch } = callout;
-  const { targetCX, targetCY } = target;
-
-  // The arrowhead points toward the target: callout below → arrow points up, etc.
-  const dir = { below: "up", above: "down", right: "left", left: "right" }[placement];
-  arrow.className = `help-overlay__arrow help-overlay__arrow--${dir}`;
-
-  let ax;
-  let ay;
-
-  if (placement === "below" || placement === "above") {
-    // Tip aligned to target's X, clamped to stay within the callout's span.
-    ax = Math.max(left + ARROW_HALF + 6, Math.min(targetCX, left + cw - ARROW_HALF - 6));
-    ay = placement === "below" ? top : top + ch;
+  // The tail sits on the edge facing the target: callout below → tail on top
+  // edge (points up), etc. Its position along that edge tracks the target's
+  // center, clamped so the tail's base stays clear of the rounded corners.
+  const side = { below: "top", above: "bottom", right: "left", left: "right" }[placement];
+  let tailPos;
+  if (side === "top" || side === "bottom") {
+    tailPos = Math.max(
+      BUBBLE_RADIUS + TAIL_HALF,
+      Math.min(targetCX - left, cw - BUBBLE_RADIUS - TAIL_HALF),
+    );
   } else {
-    ay = Math.max(top + ARROW_HALF + 6, Math.min(targetCY, top + ch - ARROW_HALF - 6));
-    ax = placement === "right" ? left : left + cw;
+    tailPos = Math.max(
+      BUBBLE_RADIUS + TAIL_HALF,
+      Math.min(targetCY - top, ch - BUBBLE_RADIUS - TAIL_HALF),
+    );
   }
 
-  // Position by the arrow's bounding box (2*ARROW_HALF square) so the tip lands
-  // on the callout edge and the head sticks out toward the target.
-  arrow.style.left = `${ax - ARROW_HALF}px`;
-  arrow.style.top = `${ay - ARROW_HALF}px`;
+  setBubblePath(state, cw, ch, { side, tailPos });
+}
+
+/** Build the single continuous speech-bubble outline and apply it to the SVG. */
+function setBubblePath(state, cw, ch, tail) {
+  const { bubbleBg, bubblePath } = state;
+  const pad = TAIL_LENGTH; // extra SVG canvas so the tail can poke outside the body rect
+  bubbleBg.setAttribute("width", cw + pad * 2);
+  bubbleBg.setAttribute("height", ch + pad * 2);
+  bubbleBg.style.left = `${-pad}px`;
+  bubbleBg.style.top = `${-pad}px`;
+  // Body rect drawn at a (pad, pad) offset within the padded SVG canvas.
+  bubblePath.setAttribute("d", buildBubblePath(cw, ch, BUBBLE_RADIUS, pad, tail));
+}
+
+/**
+ * Build an SVG path for a rounded rect of size cw x ch, offset by `off` into
+ * the SVG canvas, with one edge optionally interrupted by a triangular tail
+ * (`{side, tailPos}`, tailPos measured along that edge from the rect's own
+ * top/left corner). Returns one continuous closed path — body and tail are
+ * literally the same outline, so there is no seam where they meet.
+ */
+function buildBubblePath(cw, ch, r, off, tail) {
+  const x0 = off;
+  const y0 = off;
+  const x1 = off + cw;
+  const y1 = off + ch;
+
+  // Each corner is a simple 90° arc; edges are built as line commands, with
+  // the tail (if it's on that edge) spliced in as two extra points.
+  const edge = (side, from, to) => {
+    if (!tail || tail.side !== side) return `L ${to.x} ${to.y}`;
+    const t = off + tail.tailPos;
+    if (side === "top" || side === "bottom") {
+      const apex = side === "top" ? y0 - TAIL_LENGTH : y1 + TAIL_LENGTH;
+      const dir = from.x < to.x ? 1 : -1;
+      return (
+        `L ${t - dir * TAIL_HALF} ${from.y} ` +
+        `L ${t} ${apex} ` +
+        `L ${t + dir * TAIL_HALF} ${from.y} ` +
+        `L ${to.x} ${to.y}`
+      );
+    }
+    const apex = side === "left" ? x0 - TAIL_LENGTH : x1 + TAIL_LENGTH;
+    const dir = from.y < to.y ? 1 : -1;
+    return (
+      `L ${from.x} ${t - dir * TAIL_HALF} ` +
+      `L ${apex} ${t} ` +
+      `L ${from.x} ${t + dir * TAIL_HALF} ` +
+      `L ${to.x} ${to.y}`
+    );
+  };
+
+  return [
+    `M ${x0 + r} ${y0}`,
+    edge("top", { x: x0 + r, y: y0 }, { x: x1 - r, y: y0 }),
+    `A ${r} ${r} 0 0 1 ${x1} ${y0 + r}`,
+    edge("right", { x: x1, y: y0 + r }, { x: x1, y: y1 - r }),
+    `A ${r} ${r} 0 0 1 ${x1 - r} ${y1}`,
+    edge("bottom", { x: x1 - r, y: y1 }, { x: x0 + r, y: y1 }),
+    `A ${r} ${r} 0 0 1 ${x0} ${y1 - r}`,
+    edge("left", { x: x0, y: y1 - r }, { x: x0, y: y0 + r }),
+    `A ${r} ${r} 0 0 1 ${x0 + r} ${y0}`,
+    "Z",
+  ].join(" ");
 }
 
 /** End the tour: mark seen, remove all DOM + listeners. Idempotent. */

@@ -10,7 +10,11 @@ import { generateId, getFile, saveFile } from "./storage.js";
 // directory prefix (trailing slash) — PDF.js appends "jbig2.wasm" and
 // "jbig2_nowasm_fallback.js" to it. Both files live in public/pdfjs-wasm/
 // so they're copied verbatim (no hash) and reachable at a stable URL.
-const jbig2WasmDirUrl = `${import.meta.env.BASE_URL}pdfjs-wasm/`;
+// Resolved against this module's own URL rather than import.meta.env.BASE_URL:
+// the NC build uses a relative base, and BASE_URL ('./') would resolve against
+// the document URL, which differs per route. import.meta.url is always correct.
+// public/ assets land next to the js/ output dir, hence the '../' hop.
+const jbig2WasmDirUrl = new URL("../pdfjs-wasm/", import.meta.url).href;
 
 const _workerBlob = new Blob([pdfjsWorkerSrc], { type: "text/javascript" });
 pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(_workerBlob);

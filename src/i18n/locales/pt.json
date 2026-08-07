@@ -7,6 +7,7 @@
     "restore": "Restaurar",
     "save": "Salvar",
     "ok": "OK",
+    "next": "Next",
     "loading": "Carregando...",
     "error": "Erro",
     "untitled": "Sem título",
@@ -25,7 +26,8 @@
       "notes": "Notas",
       "search": "Buscar",
       "markers": "Marcadores",
-      "recycleBin": "Lixeira"
+      "recycleBin": "Lixeira",
+      "backToNotebooks": "Voltar aos cadernos"
     },
     "sections": {
       "notebooks": "Cadernos",
@@ -113,6 +115,7 @@
       "security": "Segurança",
       "nextcloud": "Sincronização Nextcloud",
       "recognition": "Reconhecimento de escrita",
+      "mcp": "MCP Server (AI Integration)",
       "logging": "Registros",
       "dangerZone": "Zona de risco",
       "about": "Sobre",
@@ -123,6 +126,8 @@
       "themeDesc": "Escolha seu esquema de cores preferido",
       "light": "Claro",
       "dark": "Escuro",
+      "pdfInvertDark": "Inverter páginas de PDF no modo escuro",
+      "pdfInvertDarkDesc": "Facilita a visualização de anotações em PDFs importados, mas altera as cores originais do PDF",
       "cardSize": "Tamanho dos cartões",
       "cardSizeDesc": "Defina o tamanho dos cartões de nota na visão geral",
       "cardSizeSmall": "Pequeno",
@@ -201,6 +206,57 @@
         "zh-CN": "Chinês (simplificado)"
       }
     },
+    "mcp": {
+      "windowsOnly": "O servidor MCP só está disponível no aplicativo Windows.",
+      "enableLabel": "Ativar servidor MCP",
+      "enableDesc": "Permite que assistentes de IA (ex.: Claude Desktop) leiam seus cadernos e notas por meio de uma conexão local protegida por token. Desativado por padrão.",
+      "statusLabel": "Status",
+      "serverDisabled": "O servidor MCP está desativado.",
+      "tokenConfigured": "Token de acesso configurado.",
+      "noToken": "Nenhum token de acesso gerado ainda.",
+      "portInfo": " Ouvindo em 127.0.0.1:{{port}}.",
+      "statusMismatchWarning": "O MCP está ativado nas configurações, mas o servidor não iniciou corretamente nesta sessão. Os clientes de IA não poderão se conectar até que isso seja corrigido.",
+      "retrySyncBtn": "Repetir",
+      "notListeningWarning": "O MCP está ativado, mas a porta {{port}} já estava em uso quando o NoteBerg foi iniciado, por isso o servidor não está em execução. Feche o programa que está a utilizar essa porta (por exemplo, outra janela do NoteBerg) e reinicie o NoteBerg.",
+      "tokensLabel": "Tokens de acesso",
+      "tokensDesc": "Cada cliente MCP (ex.: Claude Desktop, Cursor) deve ter seu próprio token nomeado, para que você possa diferenciá-los no registro de acesso e revogar um sem afetar os demais.",
+      "noTokensYet": "Nenhum token de acesso gerado ainda.",
+      "generateTokenBtn": "Gerar novo token",
+      "revokeTokenBtn": "Revogar",
+      "revokeConfirmTitle": "Revogar este token de acesso?",
+      "revokeConfirmMsg": "Isso desativa imediatamente o acesso MCP para qualquer cliente que use este token. Você pode gerar um novo token a qualquer momento.",
+      "revokeConfirmBtn": "Revogar",
+      "tokenNamePromptTitle": "Nomear este token de acesso",
+      "tokenNamePromptMsg": "Dê um nome a este token para reconhecer a qual cliente ele pertence (ex.: \"Claude Desktop\", \"Notebook do trabalho\").",
+      "tokenNamePromptPlaceholder": "Claude Desktop",
+      "unnamedToken": "Token sem nome",
+      "tokenGeneratedTitle": "Token de acesso gerado",
+      "tokenShownOnceWarningCopied": "Este token é exibido apenas uma vez e foi copiado para sua área de transferência. Cole-o agora na configuração do seu cliente MCP — não será possível vê-lo novamente após fechar esta caixa de diálogo.",
+      "tokenShownOnceWarning": "Este token é exibido apenas uma vez e não pôde ser copiado automaticamente. Copie-o agora — não será possível vê-lo novamente após fechar esta caixa de diálogo.",
+      "copyTokenBtn": "Copiar",
+      "auditLogEnableLabel": "Registrar acesso MCP",
+      "auditLogEnableDesc": "Mantém um registro permanente de cada solicitação feita pela conexão MCP (qual ferramenta, quando, sucesso/falha) — separado dos logs de depuração gerais abaixo e não afetado ao limpá-los.",
+      "auditLogCountLabel": "Entradas do registro de acesso",
+      "auditLogCountValue": "{{count}} registradas",
+      "clearAuditLogBtn": "Limpar registro de acesso",
+      "clearAuditLogConfirmTitle": "Limpar registro de acesso MCP?",
+      "clearAuditLogConfirmMsg": "Isso exclui permanentemente o histórico registrado de chamadas de ferramentas MCP. Esta ação não pode ser desfeita.",
+      "clearAuditLogConfirmBtn": "Limpar",
+      "viewAuditLogBtn": "Ver registro de acesso",
+      "auditLogModalTitle": "Registro de acesso MCP",
+      "auditLogColTime": "Hora",
+      "auditLogColToken": "Token",
+      "auditLogColTool": "Ferramenta",
+      "auditLogColArgs": "Argumentos",
+      "auditLogColOutcome": "Resultado",
+      "auditLogColDuration": "Duração",
+      "auditLogTokenUnknown": "Desconhecido",
+      "auditLogOutcomeOk": "OK",
+      "auditLogOutcomeError": "Erro",
+      "auditLogPageInfo": "{{start}}–{{end}} de {{total}}",
+      "auditLogPrevPage": "◀ Anterior",
+      "auditLogNextPage": "Próximo ▶"
+    },
     "logging": {
       "logLevel": "Nível de registro",
       "logLevelDesc": "Defina o nível mínimo de gravidade para os registros",
@@ -250,7 +306,9 @@
     "about": {
       "description": "Um aplicativo de anotações com suporte para notas manuscritas, texto e desenhos.",
       "version": "Versão: {{version}}",
-      "licenses": "Informações de licença"
+      "licenses": "Informações de licença",
+      "openSource": "O NoteBerg é software livre e de código aberto.",
+      "projectLink": "Ver o projeto no GitHub"
     },
     "encryption": {
       "enabledLocalTitle": "Criptografia ativada",
@@ -386,7 +444,8 @@
     "lastSyncedTooltip": "Última sincronização {{time}} · ↑{{uploaded}} ↓{{downloaded}}",
     "syncFailedTooltip": "Falha na sincronização: {{error}}",
     "unknownError": "erro desconhecido",
-    "recognitionRunning": "Reconhecimento de escrita em execução…"
+    "recognitionRunning": "Reconhecimento de escrita em execução…",
+    "mcpRunning": "MCP server is running — AI assistants can access your notebooks"
   },
   "breadcrumb": {
     "home": "Início",

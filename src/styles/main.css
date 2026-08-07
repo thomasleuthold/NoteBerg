@@ -8,6 +8,9 @@
   --color-secondary-hover: #475569;
   --color-success: #10b981;
   --color-danger: #ef4444;
+  /* Tinted background for danger/warning callouts (e.g. the MCP status
+     warning), light enough to carry --color-danger text on top. */
+  --color-danger-light: #fee2e2;
   --color-error: #ef4444;
   --color-warning: #f59e0b;
 

@@ -101,4 +101,9 @@ export async function changeLanguage(lang) {
     getCurrentNoteId: nId,
   } = await import("../modules/router.js");
   updateBreadcrumb(mode(), nbId(), nId());
+
+  // Overlays live outside the router's view tree, so the re-render above never
+  // reaches them — the settings dialog (which is where the language is actually
+  // changed) would otherwise keep its old strings until reopened.
+  window.dispatchEvent(new CustomEvent("languagechange", { detail: { lang } }));
 }

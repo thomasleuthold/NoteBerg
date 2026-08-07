@@ -82,9 +82,13 @@ async function _updateTombstone(path, mutate) {
 
 // ─── Read cache ───────────────────────────────────────────────────────────────
 // The overview re-fetches every notebook JSON and every note JSON (including
-// strokes) on each render. Cache folder listings briefly; every local write
-// invalidates the whole cache, so staleness is limited to changes made by
-// OTHER clients within the TTL — the next render after that re-fetches.
+// strokes) on each render. Cache folder listings briefly; a local write
+// invalidates only the entries its path can affect, so staleness is limited to
+// changes made by OTHER clients within the TTL — the next render re-fetches.
+//
+// Invalidation is path-scoped rather than a blanket clear: while drawing, every
+// stroke triggers a note PUT, and a full clear would make any concurrent
+// overview render re-download every note in the folder.
 
 const CACHE_TTL_MS = 15000;
 const _readCache = new Map(); // key → { ts, data }
@@ -92,16 +96,57 @@ const _readCache = new Map(); // key → { ts, data }
 function _cacheGet(key) {
   const hit = _readCache.get(key);
   if (!hit || Date.now() - hit.ts > CACHE_TTL_MS) return null;
-  // Clone so callers can mutate their copy, same contract as a fresh fetch
+  // Clone so callers can mutate their copy, same contract as a fresh fetch.
+  // Callers do mutate: _getNotesInFolder deletes .thumbnail, _normalizeNote
+  // rewrites array fields in place.
   return structuredClone(hit.data);
 }
 
+/**
+ * Store `data` and return the caller's own copy.
+ *
+ * The cache must not share a reference with the caller — consumers (overview
+ * rendering, mcpBridge) treat these results as theirs to mutate. Cloning once
+ * here and handing back the clone keeps that guarantee at one clone per miss
+ * instead of the two a store-clone + get-clone pair would cost.
+ */
 function _cacheSet(key, data) {
-  _readCache.set(key, { ts: Date.now(), data: structuredClone(data) });
+  _readCache.set(key, { ts: Date.now(), data });
+  return structuredClone(data);
 }
 
-function _invalidateReadCache() {
-  _readCache.clear();
+/**
+ * Drop the cache entries a write to `path` can affect.
+ *
+ * Cache keys are "notebooks" and "notes:<folder>". A write to
+ * <folder>/<file>.json can only invalidate the listing of its own parent
+ * folder, plus "notebooks" when it touches a _notebook.json. Anything we cannot
+ * confidently map (folder MOVE/COPY/DELETE, which can relocate whole trees)
+ * falls back to a full clear.
+ */
+function _invalidateReadCache(path) {
+  if (!path) {
+    _readCache.clear();
+    return;
+  }
+
+  // Folder-level operations can move or remove arbitrary subtrees — the set of
+  // affected listings is not derivable from the path alone.
+  const isFile = path.endsWith(".json");
+  if (!isFile) {
+    _readCache.clear();
+    return;
+  }
+
+  const folder = path.slice(0, path.lastIndexOf("/"));
+  _readCache.delete(`notes:${folder}`);
+
+  // Notebook metadata lives at <root>/notebooks/<id>/_notebook.json. Tombstones
+  // retire whole notebooks (or notes within one), so they can change which
+  // notebooks the overview lists.
+  if (path.endsWith("/_notebook.json") || path.endsWith("/_tombstones.json")) {
+    _readCache.delete("notebooks");
+  }
 }
 
 // ─── WebDAV helpers ────────────────────────────────────────────────────────────
@@ -154,7 +199,7 @@ async function davPutWithRetry(path, options, retries = 3) {
 }
 
 async function davPut(path, data, extraHeaders = {}) {
-  _invalidateReadCache();
+  _invalidateReadCache(path);
   await davPutWithRetry(path, {
     method: "PUT",
     headers: {
@@ -182,7 +227,7 @@ async function davPutBinary(path, blob) {
 }
 
 async function davDelete(path) {
-  _invalidateReadCache();
+  _invalidateReadCache(path);
   const res = await fetch(`${getWebDAVBase()}${path}`, {
     method: "DELETE",
     headers: {
@@ -241,6 +286,8 @@ async function davMkcol(path) {
 
 /** Server-side MOVE or COPY (works on files and folders, recursive). */
 async function _davMoveOrCopy(method, from, to) {
+  // Full clear: this touches two locations and may relocate a whole subtree,
+  // so the affected listings are not derivable from a single path.
   _invalidateReadCache();
   const res = await fetch(`${getWebDAVBase()}${from}`, {
     method,
@@ -396,9 +443,7 @@ async function _getAllNotebooksRaw() {
   const notebooks = await Promise.all(
     notebookIds.map((id) => davGet(getNotebookPath(id)).catch(() => null)),
   );
-  const result = notebooks.filter(Boolean);
-  _cacheSet("notebooks", result);
-  return result;
+  return _cacheSet("notebooks", notebooks.filter(Boolean));
 }
 
 export async function getAllNotebooks() {
@@ -645,11 +690,13 @@ async function _getNotesInFolder(folder, notebookId) {
     const paths = await davList(folder);
     const noteFiles = paths.filter((p) => p.endsWith(".json") && !p.includes("_tombstones"));
     const fetched = await Promise.all(noteFiles.map((p) => davGet(p).catch(() => null)));
-    notes = fetched.filter(Boolean).map((n) => {
-      delete n.thumbnail;
-      return n;
-    });
-    _cacheSet(`notes:${folder}`, notes);
+    notes = _cacheSet(
+      `notes:${folder}`,
+      fetched.filter(Boolean).map((n) => {
+        delete n.thumbnail;
+        return n;
+      }),
+    );
   }
   for (const n of notes) {
     _notePathCache.set(n.id, notebookId);
@@ -686,23 +733,109 @@ function _enqueueWrite(id, fn) {
   return next;
 }
 
+/**
+ * Read-merge-write a note and announce the change.
+ *
+ * The single place that defines note-update semantics — how `modified` is
+ * stamped, how `version` is bumped, and the shape of the `datachange` payload.
+ * Both writers below go through here so the two can never drift apart.
+ *
+ * Caller must already hold the per-note write queue (see _enqueueWrite): this
+ * does an unguarded read-modify-write and would race otherwise.
+ *
+ * @param {string} id - Note id
+ * @param {Object} updates - Fields to merge into the note
+ * @returns {Promise<Object>} The written note
+ */
+async function _applyNoteUpdate(id, updates) {
+  const existing = await getNote(id);
+  if (!existing) throw new Error("Note not found");
+  const updated = {
+    ...existing,
+    ...updates,
+    modified: Date.now(),
+    version: (existing.version || 0) + 1,
+  };
+  await _putNote(updated);
+  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }));
+  return updated;
+}
+
 export function updateNote(id, updates) {
   return _enqueueWrite(id, async () => {
-    const existing = await getNote(id);
-    if (!existing) throw new Error("Note not found");
-    const updated = {
-      ...existing,
-      ...updates,
-      modified: Date.now(),
-      version: (existing.version || 0) + 1,
-    };
-    await _putNote(updated);
+    const updated = await _applyNoteUpdate(id, updates);
     console.log("Note updated:", id);
-    window.dispatchEvent(
-      new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }),
-    );
     return updated;
   });
+}
+
+// ─── Coalescing writer (high-frequency fields) ────────────────────────────────
+// A note is stored as one JSON file, so a PUT always writes the whole note.
+// While drawing, updateNote() is called once per stroke; each call costs a
+// network GET + PUT. When strokes arrive faster than a round-trip completes,
+// _enqueueWrite's strictly-serial chain grows without bound and every queued
+// job later fires its own main-thread parse/serialize burst — which is what
+// makes preview strokes stutter and tear the longer a session runs.
+//
+// The insight: once a newer snapshot of the same fields exists, any older
+// pending snapshot is redundant, because the PUT is whole-file anyway. So a
+// write that has NOT started yet is replaced rather than queued behind. That
+// bounds the pipeline at one in-flight request plus one pending snapshot, no
+// matter how fast the user draws.
+//
+// This is not a debounce: there is no timer and no idle guess. A save starts
+// the instant the connection is free; only already-obsolete snapshots collapse.
+
+const _pendingCoalesced = new Map(); // noteId → { updates, promise, resolve, reject }
+
+/**
+ * Queue a whole-note update, collapsing snapshots that are superseded before
+ * they start. Callers that must not lose an update (title, media, tasks…)
+ * should use updateNote() — only fields that are re-sent in full on every call
+ * are safe here.
+ *
+ * @param {string} id - Note id
+ * @param {Object} updates - Fields to merge into the note
+ * @returns {Promise<void>} Resolves when this snapshot (or a newer one that
+ *   superseded it) has been written.
+ */
+export function updateNoteCoalesced(id, updates) {
+  const pending = _pendingCoalesced.get(id);
+
+  // A snapshot is already waiting for the in-flight write to finish. Overwrite
+  // its payload — it has not been sent, so nothing is lost — and hand back the
+  // same promise so earlier callers still settle when the newer write lands.
+  if (pending) {
+    pending.updates = { ...pending.updates, ...updates };
+    return pending.promise;
+  }
+
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  const entry = { updates: { ...updates }, promise, resolve, reject };
+  _pendingCoalesced.set(id, entry);
+
+  // Chain onto the shared per-note queue so coalesced writes still serialize
+  // against ordinary updateNote()/deleteNote() calls for the same file.
+  _enqueueWrite(id, async () => {
+    // Claim the snapshot as it exists now; further calls start a new entry.
+    _pendingCoalesced.delete(id);
+    await _applyNoteUpdate(id, entry.updates);
+  }).then(entry.resolve, entry.reject);
+
+  return promise;
+}
+
+/**
+ * Await any coalesced write still pending for `id`, so callers that must not
+ * lose the last snapshot (note close, navigation) can flush deterministically.
+ */
+export function flushNoteWrites(id) {
+  return _pendingCoalesced.get(id)?.promise ?? _writeQueues.get(id) ?? Promise.resolve();
 }
 
 export function saveNote(note) {

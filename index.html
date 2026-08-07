@@ -2,7 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- user-scalable=no / maximum-scale=1: the note canvas implements its own
+         pinch-zoom (NoteCanvas._onPointerMoveNav). WebView page zoom would fight
+         it, and once the page is zoomed the 100dvh app box no longer matches the
+         visual viewport — the header slides under the Android status bar and the
+         footer off-screen. Only the Tauri/Android build reads this file; the
+         Nextcloud build enters via src/main.js and owns its own viewport. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <meta
       name="description"
       content="A note-taking app supporting handwritten notes, text, and drawings"

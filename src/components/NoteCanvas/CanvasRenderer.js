@@ -7,7 +7,7 @@
  */
 
 import { clearRenderCache, getRenderedMedia } from "../../modules/mediaManager.js";
-import { getTheme } from "../../modules/theme.js";
+import { getPdfInvertDarkMode, getTheme } from "../../modules/theme.js";
 import {
   MARKER_ALPHA,
   drawBackgroundPattern as sharedDrawBackgroundPattern,
@@ -32,10 +32,19 @@ const HIGHLIGHT_LINE_WIDTH = 2;
  * groupId into a single beginPath…stroke() call so their alpha doesn't stack.
  * @param {CanvasRenderingContext2D} ctx
  * @param {object[]} markerStrokes - Array of marker stroke objects
- * @param {string[]} palette - Theme palette (unused for markers, but kept for signature parity)
+ * @param {string[]} palette - Pen palette, passed through to sharedDrawStroke for single-stroke groups
  * @param {Set<string>} [selectedIds] - Set of selected stroke IDs (for selection highlight)
+ * @param {(stroke: object) => string[]} [getMarkerColorsForStroke] - Resolves the marker
+ *   palette to use for a given stroke (defaults to the live theme marker palette).
+ *   Lets callers use the light palette for strokes on an un-inverted PDF page.
  */
-function drawMarkersGrouped(ctx, markerStrokes, palette, selectedIds = null) {
+function drawMarkersGrouped(
+  ctx,
+  markerStrokes,
+  palette,
+  selectedIds = null,
+  getMarkerColorsForStroke = null,
+) {
   if (markerStrokes.length === 0) return;
 
   // Group by groupId, falling back to individual stroke id
@@ -50,16 +59,19 @@ function drawMarkersGrouped(ctx, markerStrokes, palette, selectedIds = null) {
     groups.get(key).push(stroke);
   }
 
-  const colors = sharedGetMarkerPalette();
-
   for (const key of groupOrder) {
     const group = groups.get(key);
     const first = group[0];
     const isSelected = selectedIds != null && group.some((s) => selectedIds.has(s.id));
+    // All sub-strokes in a group share one drawn path/color; the group's first
+    // stroke position decides which palette the whole group uses.
+    const colors = getMarkerColorsForStroke
+      ? getMarkerColorsForStroke(first)
+      : sharedGetMarkerPalette();
 
     if (group.length === 1) {
       // Single stroke — delegate to shared draw (handles edge cases)
-      sharedDrawStroke(ctx, first, palette, isSelected, false);
+      sharedDrawStroke(ctx, first, palette, isSelected, false, colors);
     } else {
       // Multiple sub-strokes from the same original — draw as one flat-alpha path.
       // Selection underline pass (drawn at full opacity beneath the marker color).
@@ -436,7 +448,10 @@ export class CanvasRenderer {
     this.ctx.translate(0, -this.bufferTop);
 
     // Setup styles manually since we are drawing incrementally
-    const colors = this.palette || sharedGetThemePalette();
+    const uninvertedPdfBounds = this._getUninvertedPdfBounds();
+    const colors = this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds)
+      ? sharedGetThemePalette("light")
+      : this.palette || sharedGetThemePalette();
     const color =
       stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
     this.ctx.strokeStyle = color;
@@ -509,6 +524,11 @@ export class CanvasRenderer {
       this.markerPalette = sharedGetMarkerPalette();
     }
 
+    const uninvertedPdfBounds = this._getUninvertedPdfBounds();
+    const needsLight = this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds);
+    const penPalette = needsLight ? sharedGetThemePalette("light") : this.palette;
+    const markerColors = needsLight ? sharedGetMarkerPalette("light") : this.markerPalette;
+
     if (isFinished) {
       // Final draw: Commit to main canvas
       this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
@@ -516,7 +536,7 @@ export class CanvasRenderer {
       this.ctx.save();
       this.ctx.translate(0, -this.bufferTop);
       // Use sharedDrawStroke to ensure consistent rendering with final result
-      sharedDrawStroke(this.ctx, stroke, this.palette);
+      sharedDrawStroke(this.ctx, stroke, penPalette, false, false, markerColors);
       this.ctx.restore();
 
       // Reset state
@@ -537,7 +557,7 @@ export class CanvasRenderer {
       this.overlayCtx.translate(offsetX, 0);
       this.overlayCtx.scale(this.zoomScale, this.zoomScale);
       this.overlayCtx.translate(-this.contentScrollLeft, -this.contentScrollTop);
-      sharedDrawStroke(this.overlayCtx, stroke, this.palette);
+      sharedDrawStroke(this.overlayCtx, stroke, penPalette, false, false, markerColors);
       this.overlayCtx.restore();
     }
   }
@@ -825,6 +845,10 @@ export class CanvasRenderer {
       strokeIndices = this.strokes.map((_, i) => i);
     }
 
+    // Tracks whether this repaint painted the in-progress stroke in full, so the
+    // incremental cursor can be re-based below (see drawDirectStroke).
+    let _activeRedrawnInFull = false;
+
     // Separate markers and pens to draw markers first (behind pens)
     const markers = [];
     const pens = [];
@@ -845,12 +869,23 @@ export class CanvasRenderer {
     this.ctx.translate(0, -this.bufferTop);
 
     try {
+      // Un-inverted (white) PDF page bounds — strokes starting on one of these
+      // need the light palette even in dark theme, to stay visible against the
+      // page's actual (white) color. Computed once per draw pass.
+      const uninvertedPdfBounds = this._getUninvertedPdfBounds();
+      const lightPalette = uninvertedPdfBounds.length > 0 ? sharedGetThemePalette("light") : null;
+      const lightMarkerPalette =
+        uninvertedPdfBounds.length > 0 ? sharedGetMarkerPalette("light") : null;
+
       // Helper to draw a list of pen indices (no grouping needed)
       const drawList = (indices) => {
         for (const index of indices) {
           const stroke = this.strokes[index];
           const isSelected = this.selectedStrokeIndices.has(index);
-          sharedDrawStroke(this.ctx, stroke, this.palette, isSelected, fastMode);
+          const strokePalette = this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds)
+            ? lightPalette
+            : this.palette;
+          sharedDrawStroke(this.ctx, stroke, strokePalette, isSelected, fastMode);
         }
       };
 
@@ -861,7 +896,17 @@ export class CanvasRenderer {
       const selectedIds = new Set(
         [...this.selectedStrokeIndices].map((i) => this.strokes[i]?.id).filter(Boolean),
       );
-      drawMarkersGrouped(this.ctx, markerStrokes, this.palette, selectedIds);
+      const getMarkerColorsForStroke = (stroke) =>
+        this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds)
+          ? lightMarkerPalette
+          : this.markerPalette || sharedGetMarkerPalette();
+      drawMarkersGrouped(
+        this.ctx,
+        markerStrokes,
+        this.palette,
+        selectedIds,
+        getMarkerColorsForStroke,
+      );
       // Draw pens on top
       drawList(pens);
 
@@ -870,7 +915,16 @@ export class CanvasRenderer {
         // If active stroke is marker, it should technically be drawn before pens,
         // but for responsiveness we draw it on top during creation.
         // It will be sorted correctly once finished and added to the main list.
-        sharedDrawStroke(this.ctx, this.activeStroke, this.palette, false, false);
+        const activePalette = this._strokeNeedsLightPalette(this.activeStroke, uninvertedPdfBounds)
+          ? lightPalette
+          : this.palette;
+        sharedDrawStroke(this.ctx, this.activeStroke, activePalette, false, false);
+        // This repaint just drew the active stroke in full, so the incremental
+        // cursor drawDirectStroke() keeps must be re-based to match. Leaving it
+        // where it was would make the next incremental call resume past the
+        // points we just painted — harmless — but the real hazard is the
+        // opposite case below.
+        _activeRedrawnInFull = true;
       }
 
       // Draw highlights
@@ -971,6 +1025,24 @@ export class CanvasRenderer {
       }
     } finally {
       this.ctx.restore();
+    }
+
+    // A repaint clears the whole buffer canvas. drawDirectStroke() paints the
+    // in-progress stroke incrementally, resuming from lastDrawnPointIndex — so
+    // after a clear, every point below that cursor has been wiped and would
+    // never be repainted, leaving the live stroke jagged with missing segments
+    // until the finished stroke is committed and drawn from the spatial index.
+    //
+    // Re-base the cursor to match what is actually on the canvas now:
+    //  - active stroke repainted in full  → cursor moves to its last segment
+    //  - active stroke absent from this repaint → cursor resets so the next
+    //    incremental call redraws the stroke from the beginning.
+    if (this.activeStrokeId) {
+      if (_activeRedrawnInFull) {
+        this.lastDrawnPointIndex = Math.max(0, (this.activeStroke?.x.length ?? 1) - 1);
+      } else {
+        this.lastDrawnPointIndex = 0;
+      }
     }
 
     this._lastRenderWasFastMode = fastMode;
@@ -1074,6 +1146,53 @@ export class CanvasRenderer {
    * Note: This method is called from _drawMedia which already has ctx.translate(0, -this.bufferTop) applied.
    * Do NOT apply another bufferTop translation here.
    */
+  /**
+   * Bounding boxes (content space) of visible PDF pages that are currently
+   * rendered un-inverted, i.e. genuinely white — either because theme is
+   * light (nothing is inverted) or because the "invert PDF pages in dark
+   * mode" setting is off. Strokes starting inside these boxes need the light
+   * palette to stay legible; strokes elsewhere use the live theme palette.
+   * Recomputed once per draw pass, not per stroke.
+   * @returns {Array<{x:number,y:number,width:number,height:number}>}
+   * @private
+   */
+  _getUninvertedPdfBounds() {
+    if (!this.mediaManager) return [];
+    if (getTheme() === "dark" && getPdfInvertDarkMode()) return []; // pages are inverted — dark palette is fine everywhere
+    return this.mediaManager
+      .getItems()
+      .filter((item) => item.type === "pdf-page")
+      .map((item) => ({ x: item.x, y: item.y, width: item.width, height: item.height }));
+  }
+
+  /**
+   * Whether theme is dark and this stroke's start point falls on an
+   * un-inverted (white) PDF page, so it needs the light palette instead of
+   * the dark-mode one to stay visible.
+   * @private
+   */
+  _strokeNeedsLightPalette(stroke, uninvertedPdfBounds) {
+    if (getTheme() !== "dark" || uninvertedPdfBounds.length === 0) return false;
+    if (!stroke.x || stroke.x.length === 0) return false;
+    const px = stroke.x[0];
+    const py = stroke.y[0];
+    return uninvertedPdfBounds.some(
+      (b) => px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height,
+    );
+  }
+
+  /**
+   * Draw a PDF page's rendered bitmap. In dark theme, item.renderable is
+   * already the inverted bitmap (inverted once at render time in
+   * getRenderedMedia/renderPdfPage) so the always-white PDF page reads as
+   * dark and the dark-mode stroke palette stays legible on it — no per-frame
+   * filter cost here.
+   * @private
+   */
+  _drawPdfRenderable(item) {
+    this.ctx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
+  }
+
   _drawPdfPage(item, _fastMode) {
     // 1. Try to draw existing renderable if it matches current scale
     if (
@@ -1081,7 +1200,7 @@ export class CanvasRenderer {
       item.renderableScale === this.resolutionScale &&
       item.renderable.width > 0
     ) {
-      this.ctx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
+      this._drawPdfRenderable(item);
       // Draw page break and selection even for cached pages
       this._drawPdfPageBreak(item);
       if (item.id === this.selectedMediaId) {
@@ -1094,7 +1213,7 @@ export class CanvasRenderer {
 
     // 2. If we have an existing renderable but scale mismatch (e.g. zooming), draw it anyway as placeholder
     if (item.renderable && item.renderable.width > 0) {
-      this.ctx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
+      this._drawPdfRenderable(item);
     }
 
     // 3. Trigger load for correct scale if not already loading
@@ -1104,7 +1223,7 @@ export class CanvasRenderer {
       item.loading = true;
       this.activePdfLoads++;
 
-      getRenderedMedia(item, this.resolutionScale)
+      getRenderedMedia(item, this.resolutionScale, { invertForDarkTheme: true })
         .then((renderable) => {
           item.loading = false;
           this.activePdfLoads--;
@@ -1459,12 +1578,38 @@ export class CanvasRenderer {
   }
 
   /**
-   * Render a snapshot of the note (e.g. for thumbnail)
+   * Release all cached PDF page renderables so they reload on next draw.
+   * Needed on theme change: rendered PDF bitmaps are inverted for dark theme
+   * (see mediaManager.getRenderedMedia), and that inversion is baked in at
+   * render time rather than reapplied per-frame, so a live theme toggle
+   * would otherwise keep showing pages rendered for the previous theme.
+   */
+  invalidatePdfRenderables() {
+    if (!this.mediaManager) return;
+    for (const item of this.mediaManager.getItems()) {
+      if (item.type === "pdf-page" && item.renderable) {
+        this._releaseItemMemory(item);
+      }
+    }
+  }
+
+  /**
+   * Render a full one-shot snapshot of the note (background + media + strokes)
+   * into a target canvas context, e.g. for a thumbnail. Unlike the live render()
+   * loop, this awaits each media item's bitmap before drawing rather than relying
+   * on already-cached item.renderable — needed because a freshly constructed
+   * renderer (as used for thumbnails) has nothing cached yet. Media is drawn
+   * before strokes so z-order matches the editor.
    * @param {CanvasRenderingContext2D} targetCtx
    * @param {number} width - Target width
    * @param {number} height - Target height
+   * @param {Object} [options]
+   * @param {number} [options.maxPdfPages] - Cap how many pdf-page items are rendered
+   *   (in document order), to keep load time reasonable for small previews. Default: unlimited.
+   * @returns {Promise<{bgColor: string}>}
    */
-  renderSnapshot(targetCtx, width, height) {
+  async renderSnapshot(targetCtx, width, height, options = {}) {
+    const { maxPdfPages = Infinity } = options;
     // Calculate scale to fit content width into target width
     // We assume we want to capture the full width of the note
     const scale = width / this.maxContentWidth;
@@ -1483,6 +1628,7 @@ export class CanvasRenderer {
     // Ensure palette is ready
     if (!this.palette) {
       this.palette = sharedGetThemePalette();
+      this.markerPalette = sharedGetMarkerPalette();
     }
 
     // 1. Background
@@ -1496,35 +1642,55 @@ export class CanvasRenderer {
       );
     }
 
-    // 2. Media
-    if (this.mediaManager) {
-      const items = this.mediaManager.getItems();
-      for (const item of items) {
-        // Visibility check (simple Y bounds)
-        if (item.y > contentHeight || item.y + item.height < 0) continue;
+    // 2. Media — await each item's bitmap (PDF pages and images alike) since
+    // nothing is pre-cached on a freshly constructed renderer.
+    let visibleItems = this.mediaManager
+      ? this.mediaManager
+          .getItems()
+          .filter((item) => !item.deleted && item.y <= contentHeight && item.y + item.height >= 0)
+      : [];
 
-        targetCtx.save();
-
-        if (item.type === "pdf-page" && item.renderable) {
-          targetCtx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
-        } else if (item.type === "image" && item.fileId) {
-          const img = this.mediaManager.getImage(item.fileId);
-          if (img) {
-            if (item.rotation) {
-              const cx = item.x + item.width / 2;
-              const cy = item.y + item.height / 2;
-              targetCtx.translate(cx, cy);
-              targetCtx.rotate((item.rotation * Math.PI) / 180);
-              targetCtx.translate(-cx, -cy);
-            }
-            targetCtx.drawImage(img, item.x, item.y, item.width, item.height);
-          }
-        }
-        targetCtx.restore();
-      }
+    if (Number.isFinite(maxPdfPages)) {
+      let pdfPageCount = 0;
+      visibleItems = visibleItems.filter((item) => {
+        if (item.type !== "pdf-page") return true;
+        pdfPageCount++;
+        return pdfPageCount <= maxPdfPages;
+      });
     }
 
-    // 3. Strokes
+    await Promise.all(
+      visibleItems.map(async (item) => {
+        if (item.type === "pdf-page") {
+          item.renderable = await getRenderedMedia(item, scale, { invertForDarkTheme: true }).catch(
+            () => null,
+          );
+        } else if (item.type === "image" && item.fileId) {
+          item.renderable = await getRenderedMedia(item, scale).catch(() => null);
+        }
+      }),
+    );
+
+    for (const item of visibleItems) {
+      if (!item.renderable) continue;
+      targetCtx.save();
+      if (item.rotation) {
+        const cx = item.x + item.width / 2;
+        const cy = item.y + item.height / 2;
+        targetCtx.translate(cx, cy);
+        targetCtx.rotate((item.rotation * Math.PI) / 180);
+        targetCtx.translate(-cx, -cy);
+      }
+      targetCtx.drawImage(item.renderable, item.x, item.y, item.width, item.height);
+      targetCtx.restore();
+    }
+
+    // 3. Strokes — same light-palette-on-white-PDF logic as the live editor.
+    const uninvertedPdfBounds = this._getUninvertedPdfBounds();
+    const lightPalette = uninvertedPdfBounds.length > 0 ? sharedGetThemePalette("light") : null;
+    const lightMarkerPalette =
+      uninvertedPdfBounds.length > 0 ? sharedGetMarkerPalette("light") : null;
+
     // Query spatial index for top region
     const strokeIndices = this.spatialIndex
       ? this.spatialIndex.query(0, contentHeight)
@@ -1542,9 +1708,16 @@ export class CanvasRenderer {
     }
 
     // Draw markers (grouped by groupId to preserve flat alpha), then pens
-    drawMarkersGrouped(targetCtx, markers, this.palette);
+    const getMarkerColorsForStroke = (stroke) =>
+      this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds)
+        ? lightMarkerPalette
+        : this.markerPalette || sharedGetMarkerPalette();
+    drawMarkersGrouped(targetCtx, markers, this.palette, null, getMarkerColorsForStroke);
     for (const stroke of pens) {
-      sharedDrawStroke(targetCtx, stroke, this.palette, false, false);
+      const strokePalette = this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds)
+        ? lightPalette
+        : this.palette;
+      sharedDrawStroke(targetCtx, stroke, strokePalette, false, false);
     }
 
     targetCtx.restore();
