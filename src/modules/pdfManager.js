@@ -6,15 +6,25 @@ import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?raw";
 import { generateId, getFile, saveFile } from "./storage.js";
 
-// JBig2/CCITT Fax scanned PDFs need the WASM decoder. wasmUrl must be a
-// directory prefix (trailing slash) — PDF.js appends "jbig2.wasm" and
-// "jbig2_nowasm_fallback.js" to it. Both files live in public/pdfjs-wasm/
-// so they're copied verbatim (no hash) and reachable at a stable URL.
+// Scanned PDFs need WASM decoders: JBig2/CCITT Fax and JPEG2000 (JPX).
+// wasmUrl must be a directory prefix (trailing slash) — PDF.js appends the
+// filename itself ("jbig2.wasm", "openjpeg.wasm", ...). The files live in
+// public/pdfjs-wasm/ so they're copied verbatim (no hash) and reachable at a
+// stable URL, and must be kept in step with the pdfjs-dist version on upgrade
+// (source: node_modules/pdfjs-dist/wasm/).
+//
+// Only the .wasm decoders are vendored, not the *_nowasm_fallback.js files:
+// those are loaded via dynamic import() rather than fetch, which SSO proxies
+// are liable to intercept and answer with HTML, and they are unreachable on
+// our targets anyway (Tauri/Chromium and modern NC browsers all have WASM).
+// Missing them is safe — pdf.js warns and leaves the image undecoded.
+// qcms_bg.wasm (ICC colour) is likewise omitted: it would alter rendering of
+// ICC-profiled PDFs, and CMYK support needs the separate iccUrl option too.
 // Resolved against this module's own URL rather than import.meta.env.BASE_URL:
 // the NC build uses a relative base, and BASE_URL ('./') would resolve against
 // the document URL, which differs per route. import.meta.url is always correct.
 // public/ assets land next to the js/ output dir, hence the '../' hop.
-const jbig2WasmDirUrl = new URL("../pdfjs-wasm/", import.meta.url).href;
+const pdfWasmDirUrl = new URL("../pdfjs-wasm/", import.meta.url).href;
 
 const _workerBlob = new Blob([pdfjsWorkerSrc], { type: "text/javascript" });
 pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(_workerBlob);
@@ -44,7 +54,7 @@ export async function importPdf(file, onProgress) {
 
   // 2. Load the PDF to get dimensions
   const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: jbig2WasmDirUrl });
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: pdfWasmDirUrl });
   const pdfDocument = await loadingTask.promise;
 
   const pages = [];
@@ -96,7 +106,7 @@ async function getPdfDocument(fileId) {
       throw new Error(`PDF file not found: ${fileId}`);
     }
     const arrayBuffer = await blob.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: jbig2WasmDirUrl });
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: pdfWasmDirUrl });
     return loadingTask.promise;
   })();
 
