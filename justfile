@@ -123,6 +123,13 @@ build-nc:
     Copy-Item -Recurse "css"       "build-nc-tmp\noteberg\"
     Copy-Item -Recurse "assets"    "build-nc-tmp\noteberg\" -ErrorAction SilentlyContinue
 
+    # 2b. Stage the changelog as appinfo/CHANGELOG.md — that is where the NC App
+    # Store reads release notes from. The top section's heading is rewritten to
+    # the info.xml version on the way in, since the store only shows a section
+    # whose version matches. Must run AFTER the appinfo copy above, which would
+    # otherwise overwrite it. The repo's CHANGELOG.md is not modified.
+    powershell -File scripts/stage-nc-changelog.ps1 -Destination "build-nc-tmp\noteberg\appinfo\CHANGELOG.md"
+
     # 3. Code-sign via occ in the Nextcloud dev container (must be running: just nc-up)
     Write-Host "Code-signing app via occ in Nextcloud container..."
     podman exec noteberg-nc bash -c "php /var/www/html/occ integrity:sign-app --privateKey=/var/www/html/apps-extra/noteberg/noteberg.key --certificate=/var/www/html/apps-extra/noteberg/noteberg.crt --path=/var/www/html/apps-extra/noteberg/build-nc-tmp/noteberg"
