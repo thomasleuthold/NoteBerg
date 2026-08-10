@@ -2,6 +2,8 @@
 # Set shell for Windows compatibility
 set shell := ["powershell.exe", "-c"]
 version := `node -p "require('./package.json').version"`
+build := `node -p "require('./package.json').build"`
+dist := "C:\\Users\\ThL\\Nextcloud\\DEV\\NoteBerg\\Dist"
 
 # Default recipe (show available commands, in semantic source order)
 default:
@@ -47,7 +49,7 @@ build-w:
     just package-sidecar
     npm run tauri build
     New-Item -ItemType Directory -Force -Path dist | Out-Null
-    $msi = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if (-not $msi) { Write-Error "No MSI found in src-tauri\target\release\bundle\msi — did 'npm run tauri build' produce an MSI target?"; exit 1 }; Copy-Item -Path $msi.FullName -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_windows-{{version}}.msi" -Force
+    $msi = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if (-not $msi) { Write-Error "No MSI found in src-tauri\target\release\bundle\msi — did 'npm run tauri build' produce an MSI target?"; exit 1 }; powershell -File scripts/publish-artifact.ps1 -Source $msi.FullName -Destination "{{dist}}\noteberg_windows-{{version}}.{{build}}.msi"
 
 # Build the Android app (APK) and copy to the Dist share
 build-a:
@@ -56,8 +58,7 @@ build-a:
     just patch-android
     npm run tauri android build -- --apk
     New-Item -ItemType Directory -Force -Path builds | Out-Null
-    # Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "builds\noteberg_android-{{version}}-universal.apk" -Force
-    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}-universal.apk" -Force
+    powershell -File scripts/publish-artifact.ps1 -Source "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk" -Destination "{{dist}}\noteberg_android-{{version}}.{{build}}-universal.apk"
 
 # Build the Android app bundle (AAB) and copy to the Dist share
 build-aab:
@@ -66,7 +67,7 @@ build-aab:
     just patch-android
     npm run tauri android build -- --aab
     New-Item -ItemType Directory -Force -Path builds | Out-Null
-    Copy-Item -Path "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_android-{{version}}.aab" -Force
+    powershell -File scripts/publish-artifact.ps1 -Source "src-tauri\gen\android\app\build\outputs\bundle\universalRelease\app-universal-release.aab" -Destination "{{dist}}\noteberg_android-{{version}}.{{build}}.aab"
 
 # Build all targets: Windows, Android APK, Android AAB, and Nextcloud app
 build-all:
@@ -130,7 +131,9 @@ build-nc:
     powershell -File scripts/package-nc-release.ps1
 
     # 6. Copy the packaged tarball (+ signature) to the Dist share, like the other build-* recipes
-    $ncver = (Select-Xml -Path appinfo/info.xml -XPath "//version").Node.InnerText; Copy-Item -Path "builds\noteberg_nextcloud-$ncver.tar.gz" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_nextcloud-$ncver.tar.gz" -Force; Copy-Item -Path "builds\noteberg_nextcloud-$ncver.tar.gz.sig" -Destination "C:\Users\ThL\Nextcloud\DEV\NoteBerg\Dist\noteberg_nextcloud-$ncver.tar.gz.sig" -Force
+    # The published name carries the build number; any -rc.N suffix stays last, so
+    # "0.5.40-rc.2" build 7 publishes as "noteberg_nextcloud-0.5.40.7-rc.2.tar.gz".
+    $ncver = (Select-Xml -Path appinfo/info.xml -XPath "//version").Node.InnerText; $m = [regex]::Match($ncver, '^(\d+\.\d+\.\d+)(.*)$'); $ncname = $m.Groups[1].Value + ".{{build}}" + $m.Groups[2].Value; powershell -File scripts/publish-artifact.ps1 -Source "builds\noteberg_nextcloud-$ncver.tar.gz" -Destination "{{dist}}\noteberg_nextcloud-$ncname.tar.gz"; powershell -File scripts/publish-artifact.ps1 -Source "builds\noteberg_nextcloud-$ncver.tar.gz.sig" -Destination "{{dist}}\noteberg_nextcloud-$ncname.tar.gz.sig"
 
     # 7. Cleanup temp dir
     Remove-Item -Recurse -Force "build-nc-tmp"
