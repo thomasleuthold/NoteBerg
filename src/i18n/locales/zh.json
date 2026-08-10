@@ -47,6 +47,9 @@
       "noNotesInNotebook": "此笔记本中还没有笔记。",
       "noTasks": "未找到任务。"
     },
+    "preview": {
+      "loading": "正在加载预览…"
+    },
     "search": {
       "placeholder": "搜索笔记...",
       "button": "搜索",

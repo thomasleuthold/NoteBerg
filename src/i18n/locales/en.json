@@ -47,6 +47,9 @@
       "noNotesInNotebook": "No notes in this notebook yet.",
       "noTasks": "No tasks found."
     },
+    "preview": {
+      "loading": "Loading preview…"
+    },
     "search": {
       "placeholder": "Search notes...",
       "button": "Search",

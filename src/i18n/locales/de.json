@@ -47,6 +47,9 @@
       "noNotesInNotebook": "Noch keine Notizen in diesem Notizbuch.",
       "noTasks": "Keine Aufgaben gefunden."
     },
+    "preview": {
+      "loading": "Vorschau wird geladen…"
+    },
     "search": {
       "placeholder": "Notizen durchsuchen...",
       "button": "Suchen",

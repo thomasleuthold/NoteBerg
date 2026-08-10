@@ -47,6 +47,9 @@
       "noNotesInNotebook": "このノートブックにはまだノートがありません。",
       "noTasks": "タスクが見つかりません。"
     },
+    "preview": {
+      "loading": "プレビューを読み込み中…"
+    },
     "search": {
       "placeholder": "ノートを検索...",
       "button": "検索",

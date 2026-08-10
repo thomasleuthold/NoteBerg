@@ -47,6 +47,9 @@
       "noNotesInNotebook": "Aucune note dans ce carnet pour l'instant.",
       "noTasks": "Aucune tâche trouvée."
     },
+    "preview": {
+      "loading": "Chargement de l'aperçu…"
+    },
     "search": {
       "placeholder": "Rechercher des notes...",
       "button": "Rechercher",

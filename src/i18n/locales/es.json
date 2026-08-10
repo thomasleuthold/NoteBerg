@@ -47,6 +47,9 @@
       "noNotesInNotebook": "Todavía no hay notas en este cuaderno.",
       "noTasks": "No se encontraron tareas."
     },
+    "preview": {
+      "loading": "Cargando vista previa…"
+    },
     "search": {
       "placeholder": "Buscar notas...",
       "button": "Buscar",

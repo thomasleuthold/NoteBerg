@@ -47,6 +47,9 @@
       "noNotesInNotebook": "Nessuna nota ancora in questo quaderno.",
       "noTasks": "Nessuna attività trovata."
     },
+    "preview": {
+      "loading": "Caricamento anteprima…"
+    },
     "search": {
       "placeholder": "Cerca note...",
       "button": "Cerca",

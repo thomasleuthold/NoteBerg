@@ -47,6 +47,9 @@
       "noNotesInNotebook": "이 노트북에는 아직 노트가 없습니다.",
       "noTasks": "할 일을 찾을 수 없습니다."
     },
+    "preview": {
+      "loading": "미리보기 로드 중…"
+    },
     "search": {
       "placeholder": "노트 검색...",
       "button": "검색",
