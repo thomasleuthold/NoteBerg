@@ -8,6 +8,9 @@ vi.mock("../../utils/noteRenderer.js", () => ({
   drawStroke: vi.fn(),
   getThemePalette: vi.fn(() => ["#000000", "#ff0000"]),
   getMarkerPalette: vi.fn(() => ["#000000", "#ff0000"]),
+  // Mirrors the real mapping's contract (monotonic, scales with baseWidth)
+  // without pinning this test to the tuning constants.
+  getPressureWidth: vi.fn((p, baseWidth) => Math.max(0.5, baseWidth * (0.35 + p))),
   MARKER_MAX_ALPHA: 0.6,
 }));
 
@@ -29,6 +32,7 @@ describe("CanvasRenderer", () => {
   let viewportElement;
   let renderer;
   let mockCtx;
+  let contextOptions;
 
   beforeEach(() => {
     viewportElement = document.createElement("div");
@@ -57,8 +61,14 @@ describe("CanvasRenderer", () => {
 
     // Mock HTMLCanvasElement.getContext
     // We need to spy on the prototype to affect the canvas created inside the class
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((type) => {
-      if (type === "2d") return mockCtx;
+    // Records the options each context was requested with, so tests can assert
+    // the low-latency hint on the buffer (first 2d context created).
+    contextOptions = [];
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((type, options) => {
+      if (type === "2d") {
+        contextOptions.push(options);
+        return mockCtx;
+      }
       return null;
     });
 
@@ -108,6 +118,136 @@ describe("CanvasRenderer", () => {
 
     // Verify it tracks state
     expect(renderer.activeStrokeId).toBe("s1");
+  });
+
+  // Writing feel: the gap between the stylus tip and the rendered preview ink.
+  // Both of these trade nothing but latency, so a regression here is silent —
+  // the app still draws correctly, just further behind the pen.
+  describe("live stroke latency", () => {
+    it("requests a low-latency context for the buffer canvas", () => {
+      // The buffer is where in-progress ink lands. Without the hint the paint
+      // waits a full compositor frame before it reaches the screen.
+      expect(contextOptions[0]).toMatchObject({ desynchronized: true });
+    });
+
+    it("paints an opaque page background into the buffer bitmap", () => {
+      // A desynchronized context can be promoted to its own compositing plane,
+      // where the element's CSS background-color no longer shows through the
+      // transparent parts of the bitmap — the canvas renders black in light
+      // theme. The buffer must carry its own background, not rely on CSS.
+      renderer.resize(800, 600);
+      renderer.render(0, 600);
+
+      expect(mockCtx.fillRect).toHaveBeenCalledWith(
+        0,
+        0,
+        renderer.canvas.width,
+        renderer.canvas.height,
+      );
+    });
+
+    it("resolves the stroke colour once per stroke, not once per pointer move", () => {
+      // Colour resolution walks every media item and can rebuild a palette
+      // array. At stylus sample rate that ran on the lowest-latency path in the
+      // app; the inputs cannot change mid-stroke, so it belongs outside the loop.
+      const getItems = vi.fn(() => []);
+      renderer.setMediaManager({ getItems });
+
+      const stroke = {
+        id: "s-colour",
+        x: [0, 10, 20],
+        y: [0, 0, 0],
+        pressure: [0.5, 0.5, 0.5],
+        colorIndex: 0,
+        width: 2,
+      };
+
+      renderer.drawDirectStroke(stroke);
+      const afterFirstMove = getItems.mock.calls.length;
+
+      for (let i = 0; i < 5; i++) {
+        stroke.x.push(30 + i * 10);
+        stroke.y.push(0);
+        stroke.pressure.push(0.5);
+        renderer.drawDirectStroke(stroke);
+      }
+
+      expect(getItems.mock.calls.length).toBe(afterFirstMove);
+    });
+
+    it("re-resolves the colour for the next stroke", () => {
+      // The cache is keyed to the active stroke id. If it leaked across
+      // strokes, a pen colour change would not take effect until the buffer
+      // happened to repaint.
+      renderer.setMediaManager({ getItems: vi.fn(() => []) });
+
+      const first = {
+        id: "s-a",
+        x: [0, 10, 20],
+        y: [0, 0, 0],
+        pressure: [0.5, 0.5, 0.5],
+        colorIndex: 0,
+        width: 2,
+      };
+      renderer.drawDirectStroke(first);
+      const firstColor = mockCtx.strokeStyle;
+
+      const second = { ...first, id: "s-b", colorIndex: 1 };
+      renderer.drawDirectStroke(second);
+
+      expect(mockCtx.strokeStyle).not.toBe(firstColor);
+    });
+
+    it("does not desynchronize the overlay canvas", () => {
+      // The overlay clears and repaints a whole path per move (marker preview,
+      // lasso trail), where an unsynchronized present would tear visibly.
+      expect(contextOptions[1]?.desynchronized).toBeFalsy();
+    });
+
+    it("draws ink all the way to the newest point while still drawing", () => {
+      // Midpoint smoothing ends the committed curve halfway between the last
+      // two points. If the remainder is only drawn once the stroke finishes,
+      // the ink permanently trails the stylus by half a sample.
+      const stroke = {
+        id: "s-tail",
+        x: [0, 10, 20],
+        y: [0, 0, 0],
+        pressure: [0.5, 0.5, 0.5],
+        colorIndex: 0,
+        width: 2,
+      };
+
+      renderer.drawDirectStroke(stroke); // still drawing — isFinished omitted
+
+      expect(mockCtx.lineTo).toHaveBeenCalledWith(20, 0);
+    });
+
+    it("re-draws the tail from the same geometry on the next move instead of extending it", () => {
+      // The tail is provisional. The next move must lay the real curve over that
+      // same region starting from the midpoint it already used; if the tail were
+      // committed, the following segment would start from the tip instead and
+      // the curve would kink at every sample.
+      const stroke = {
+        id: "s-tail2",
+        x: [0, 10, 20],
+        y: [0, 0, 0],
+        pressure: [0.5, 0.5, 0.5],
+        colorIndex: 0,
+        width: 2,
+      };
+
+      renderer.drawDirectStroke(stroke);
+      mockCtx.moveTo.mockClear();
+
+      // Next sample arrives; the curve through P2 must be drawn from mid(P1,P2),
+      // the same point the provisional tail started at.
+      stroke.x.push(30);
+      stroke.y.push(0);
+      stroke.pressure.push(0.5);
+      renderer.drawDirectStroke(stroke);
+
+      expect(mockCtx.moveTo).toHaveBeenCalledWith(15, 0);
+    });
   });
 
   // A buffer repaint clears the canvas. The in-progress stroke is painted

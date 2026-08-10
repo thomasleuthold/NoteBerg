@@ -13,6 +13,7 @@ import {
   drawBackgroundPattern as sharedDrawBackgroundPattern,
   drawStroke as sharedDrawStroke,
   getMarkerPalette as sharedGetMarkerPalette,
+  getPressureWidth as sharedGetPressureWidth,
   getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
 import {
@@ -154,6 +155,7 @@ export class CanvasRenderer {
     this.activeStroke = null; // Stroke currently being drawn
     this.selectedStrokeIndices = new Set();
     this.activeStrokeId = null; // ID of the stroke currently being drawn incrementally
+    this._activeStrokeColor = null; // Resolved colour of activeStrokeId (see drawDirectStroke)
     this.selectedMediaId = null; // ID of selected media item
     this.lastDrawnPointIndex = 0; // Index of the last point processed in the active stroke
     this.selectionBounds = null;
@@ -203,7 +205,14 @@ export class CanvasRenderer {
     this.canvas = document.createElement("canvas");
     this.canvas.className = "sliding-buffer-canvas";
 
-    this.ctx = this.canvas.getContext("2d");
+    // desynchronized: low-latency hint. Lets the compositor present ink without
+    // waiting for the normal frame queue, which is the largest single source of
+    // the gap between the stylus tip and the drawn preview stroke. Unsupported
+    // browsers ignore the hint and render normally.
+    // Not applied to the overlay: it clears and repaints a full path per move
+    // (marker preview, lasso trail), where tearing would be visible. The buffer
+    // only ever gets thin opaque segments appended, so tearing is not observable.
+    this.ctx = this.canvas.getContext("2d", { desynchronized: true });
     this.viewportElement.appendChild(this.canvas);
 
     // Create overlay canvas for UI (cursor, selection)
@@ -380,6 +389,22 @@ export class CanvasRenderer {
   }
 
   /**
+   * Resolve the page background colour painted into the buffer bitmap.
+   *
+   * Reads the same CSS variable the canvas element used to rely on, so the
+   * canvas keeps following the active theme — including Nextcloud's own
+   * theming, which overrides these variables server-side. Falls back to the
+   * theme's default only when the variable is unavailable (e.g. jsdom).
+   * @private
+   * @returns {string} A CSS colour string
+   */
+  _getPageBackgroundColor() {
+    const fromCss = getComputedStyle(this.viewportElement).getPropertyValue("--bg-primary")?.trim();
+    if (fromCss) return fromCss;
+    return getTheme() === "dark" ? "#1e1e2e" : "#ffffff";
+  }
+
+  /**
    * Main render method - called on every scroll
    * @param {number} scrollTop - Current scroll position (in screen pixels)
    * @param {number} viewportHeight - Current viewport height
@@ -433,6 +458,12 @@ export class CanvasRenderer {
     if (this.activeStrokeId !== stroke.id) {
       this.activeStrokeId = stroke.id;
       this.lastDrawnPointIndex = 0;
+      // The colour a stroke draws in depends only on its start point, the
+      // theme, and PDF page layout — none of which change while a single
+      // stroke is being drawn. Resolving it per pointer move meant walking
+      // every media item and rebuilding a palette array at stylus sample rate.
+      // Scoped to this stroke id, so it cannot outlive the stroke.
+      this._activeStrokeColor = null;
     }
 
     // Special handling for markers: draw full path on overlay to avoid alpha accumulation
@@ -447,19 +478,24 @@ export class CanvasRenderer {
     this.ctx.save();
     this.ctx.translate(0, -this.bufferTop);
 
-    // Setup styles manually since we are drawing incrementally
-    const uninvertedPdfBounds = this._getUninvertedPdfBounds();
-    const colors = this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds)
-      ? sharedGetThemePalette("light")
-      : this.palette || sharedGetThemePalette();
-    const color =
-      stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
-    this.ctx.strokeStyle = color;
+    // Setup styles manually since we are drawing incrementally. Resolved once
+    // per stroke (see the cache reset above), not once per pointer move.
+    if (this._activeStrokeColor === null) {
+      const uninvertedPdfBounds = this._getUninvertedPdfBounds();
+      const colors = this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds)
+        ? sharedGetThemePalette("light")
+        : this.palette || sharedGetThemePalette();
+      this._activeStrokeColor =
+        stroke.colorIndex !== undefined ? colors[stroke.colorIndex] : stroke.color || colors[0];
+    }
+    this.ctx.strokeStyle = this._activeStrokeColor;
     this.ctx.lineCap = "round";
     this.ctx.lineJoin = "round";
 
     const baseWidth = stroke.width || 2;
-    const getWidth = (p) => Math.max(0.5, baseWidth * (0.5 + p));
+    // Shared with the final render (drawStroke) so the live preview and the
+    // committed stroke cannot drift apart.
+    const getWidth = (p) => sharedGetPressureWidth(p, baseWidth);
 
     // Start from where we left off
     let i = this.lastDrawnPointIndex;
@@ -492,19 +528,28 @@ export class CanvasRenderer {
 
     this.lastDrawnPointIndex = i;
 
-    // Draw tail segment if finished: Mid(last-1, last) -> P(last)
+    // Tail segment: Mid(last-1, last) -> P(last).
+    //
+    // The committed curve above stops at the midpoint between the last two
+    // points, so the ink always trails the stylus by roughly half a sample.
+    // Drawing the tail on every move (not just on the final call) closes that
+    // gap. It is deliberately NOT committed - lastDrawnPointIndex stays put, so
+    // the next move re-draws the same region from the same starting geometry.
+    // Overdrawing is invisible here because pen strokes are opaque round-capped
+    // lines; markers are translucent and would accumulate alpha, but they return
+    // early above via _drawMarkerPreview and never reach this path.
+    const last = pointCount - 1;
+    const prev = last - 1;
+    const midX = (stroke.x[prev] + stroke.x[last]) / 2;
+    const midY = (stroke.y[prev] + stroke.y[last]) / 2;
+
+    this.ctx.beginPath();
+    this.ctx.lineWidth = getWidth(stroke.pressure[last]);
+    this.ctx.moveTo(midX, midY);
+    this.ctx.lineTo(stroke.x[last], stroke.y[last]);
+    this.ctx.stroke();
+
     if (isFinished) {
-      const last = pointCount - 1;
-      const prev = last - 1;
-      const midX = (stroke.x[prev] + stroke.x[last]) / 2;
-      const midY = (stroke.y[prev] + stroke.y[last]) / 2;
-
-      this.ctx.beginPath();
-      this.ctx.lineWidth = getWidth(stroke.pressure[last]);
-      this.ctx.moveTo(midX, midY);
-      this.ctx.lineTo(stroke.x[last], stroke.y[last]);
-      this.ctx.stroke();
-
       // Reset for next stroke
       this.activeStrokeId = null;
       this.lastDrawnPointIndex = 0;
@@ -807,10 +852,18 @@ export class CanvasRenderer {
 
     const startTime = performance.now();
 
-    // Clear canvas
+    // Clear canvas, then paint the page colour into the bitmap itself.
+    //
+    // The CSS background-color on .sliding-buffer-canvas is not sufficient: a
+    // desynchronized context can be promoted to its own compositing/overlay
+    // plane, where the element background no longer shows through the
+    // transparent parts of the bitmap and the canvas renders black. Painting it
+    // here makes the buffer opaque and independent of how it is composited.
     this.ctx.save();
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.fillStyle = this._getPageBackgroundColor();
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.ctx.restore();
 
     // Ensure palette is current
@@ -1585,6 +1638,9 @@ export class CanvasRenderer {
    * would otherwise keep showing pages rendered for the previous theme.
    */
   invalidatePdfRenderables() {
+    // A theme switch also changes which palette an in-progress stroke draws
+    // in, so drop the colour cached for it (see drawDirectStroke).
+    this._activeStrokeColor = null;
     if (!this.mediaManager) return;
     for (const item of this.mediaManager.getItems()) {
       if (item.type === "pdf-page" && item.renderable) {
