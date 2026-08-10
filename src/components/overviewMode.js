@@ -27,6 +27,7 @@ import {
 } from "../modules/storage.js";
 // getAllNotes / getNotesByNotebook / getQuickNotes now return lightweight index entries
 // (no strokes, no content, no recognition). Use getNote(id) when full content is needed.
+import { bindGuardedClick } from "../utils/asyncAction.js";
 import { getIcon } from "../utils/icons.js";
 import {
   drawStroke,
@@ -515,9 +516,10 @@ async function renderRecycleBinTab(container, myToken) {
     `;
   }
 
-  // Restore buttons
+  // Restore buttons. Guarded: the button stays in the DOM for the whole restore,
+  // so an unguarded handler would run it again on a second click.
   container.querySelectorAll(".btn-restore").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    bindGuardedClick(btn, async () => {
       try {
         if (btn.dataset.type === "notebook") {
           await restoreNotebook(btn.dataset.id);
@@ -531,9 +533,10 @@ async function renderRecycleBinTab(container, myToken) {
     });
   });
 
-  // Purge buttons
+  // Purge buttons. Guarded for the same reason as restore above — and here a
+  // second run would also stack a second confirmation dialog on top of the first.
   container.querySelectorAll(".btn-purge").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    bindGuardedClick(btn, async () => {
       let message =
         "Are you sure you want to permanently delete this item? This will remove it from all synced devices and cannot be undone.";
       if (btn.dataset.type === "notebook") {

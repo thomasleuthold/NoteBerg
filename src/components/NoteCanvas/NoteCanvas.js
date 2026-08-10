@@ -869,10 +869,14 @@ export class NoteCanvas {
         });
 
         if (pages.length > 0) {
-          const viewport = this.scroller.getViewportBounds();
-          const startY = viewport.top + 50;
+          // Anchor the stack at the very top of the canvas. Only one PDF may be
+          // imported per note (guarded above), so its pages *are* the document
+          // and must line up with the stroke and text layers, which both start
+          // at content Y=0. Inserting at the scroll position instead would push
+          // page 1 down by an arbitrary amount — every later page chains off its
+          // bottom, so that offset shifts the whole document, not just the gap.
           const targetWidth = this.maxContentWidth || 1200;
-          let currentY = startY;
+          let currentY = 0;
 
           const insertedPages = [];
           for (const page of pages) {
@@ -914,7 +918,11 @@ export class NoteCanvas {
           await this._updateNavigatorSubjects();
           this.historyManager?.push(new InsertMediaCommand(insertedPages, fileId));
 
-          const lastPage = pages[pages.length - 1];
+          // Measure the pages we actually inserted, not the raw ones from
+          // importPdf: those carry unscaled PDF-point dimensions and their own
+          // y values, so an A4 import under-reported the bottom by roughly half
+          // and left the canvas too short to scroll to the end.
+          const lastPage = insertedPages[insertedPages.length - 1];
           const bottom = lastPage.y + lastPage.height;
           if (bottom > this.contentHeight) {
             this._expandCanvas(bottom - this.contentHeight + 500);

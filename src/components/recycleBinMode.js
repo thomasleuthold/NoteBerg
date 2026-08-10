@@ -11,6 +11,7 @@ import {
   restoreNote,
   restoreNotebook,
 } from "../modules/storage.js";
+import { bindGuardedClick } from "../utils/asyncAction.js";
 import { getIcon } from "../utils/icons.js";
 import { showAlertDialog, showConfirmDialog } from "./modals.js";
 
@@ -154,7 +155,9 @@ function attachRecycleBinListeners(container) {
   // Restore buttons
   const restoreBtns = container.querySelectorAll(".btn-restore");
   restoreBtns.forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    // Guarded: the button stays in the DOM for the whole restore, so an
+    // unguarded handler would run it again on a second click.
+    bindGuardedClick(btn, async () => {
       const type = btn.dataset.type;
       const id = btn.dataset.id;
 
@@ -176,7 +179,9 @@ function attachRecycleBinListeners(container) {
   // Purge buttons
   const purgeBtns = container.querySelectorAll(".btn-purge");
   purgeBtns.forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    // Guarded for the same reason as restore above — and here a second run would
+    // also stack a second confirmation dialog on top of the first.
+    bindGuardedClick(btn, async () => {
       const type = btn.dataset.type;
       const id = btn.dataset.id;
 

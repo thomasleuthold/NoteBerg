@@ -469,22 +469,51 @@ export function showConfirmDialog({
     document.body.insertAdjacentHTML("beforeend", modalHtml);
 
     const overlay = document.getElementById("confirm-modal");
-    const confirmBtn = overlay.querySelector(".modal-confirm");
-    const cancelBtn = overlay.querySelector(".modal-cancel");
+    // Scoped to `button`: the dialog element itself also carries .modal-confirm
+    // (as a width modifier — see layout.css), and a bare .modal-confirm lookup
+    // matches that wrapper first, leaving the confirm button with no listener.
+    const confirmBtn = overlay.querySelector("button.modal-confirm");
+    const cancelBtn = overlay.querySelector("button.modal-cancel");
 
     const closeModal = () => {
       overlay.remove();
     };
 
+    // onConfirm may be slow (it is awaited before the dialog closes), so without
+    // a guard the button stays live for its whole duration and a second click
+    // runs it again — see the same fix in modals.js showModal. Mark in-flight
+    // before the first await, and block cancel so an in-flight action cannot be
+    // abandoned half-done.
+    let confirming = false;
+    const confirmIdleLabel = confirmBtn.textContent;
+
     confirmBtn.addEventListener("click", async () => {
-      if (onConfirm) {
-        await onConfirm();
+      if (confirming) return;
+      confirming = true;
+      confirmBtn.disabled = true;
+      cancelBtn.disabled = true;
+      confirmBtn.textContent = t("common.working");
+      confirmBtn.classList.add("btn-busy");
+      try {
+        if (onConfirm) {
+          await onConfirm();
+        }
+        closeModal();
+        resolve(true);
+      } catch (error) {
+        // Leave the dialog open so the user can retry or cancel; the caller's
+        // promise stays pending, matching the cancel-less error path elsewhere.
+        console.error("[MasterPasswordModals] Confirm action failed:", error);
+        confirming = false;
+        confirmBtn.disabled = false;
+        cancelBtn.disabled = false;
+        confirmBtn.textContent = confirmIdleLabel;
+        confirmBtn.classList.remove("btn-busy");
       }
-      closeModal();
-      resolve(true);
     });
 
     cancelBtn.addEventListener("click", () => {
+      if (confirming) return;
       closeModal();
       resolve(false);
     });
@@ -494,6 +523,7 @@ export function showConfirmDialog({
       mousedownOnOverlay = e.target === overlay;
     });
     overlay.addEventListener("click", (e) => {
+      if (confirming) return;
       if (e.target === overlay && mousedownOnOverlay) {
         closeModal();
         resolve(false);

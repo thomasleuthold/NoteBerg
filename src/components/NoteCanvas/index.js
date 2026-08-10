@@ -34,6 +34,52 @@ function startFirstNoteTour() {
 let noteCanvasInstance = null;
 
 /**
+ * Monotonic token identifying the most recently started rendernotebook.
+ *
+ * The handler clears the container and then awaits load(), so two renders in
+ * quick succession (two navigations — e.g. a double-submitted create) used to
+ * interleave: both instances finished loading and both appended themselves, but
+ * only the later one was kept in noteCanvasInstance. The earlier became an
+ * orphan — unreachable yet still live, holding its listeners, autosave timer and
+ * worker handles, and still able to write to the DB. Each render captures the
+ * token at entry and tears itself down if a newer one has begun.
+ */
+let renderToken = 0;
+
+/**
+ * Tear down an instance the app is finished with.
+ *
+ * destroy() is null-guarded throughout (textEditorLayer, strokeManager and the
+ * rest are only touched when present), so it is safe on an instance whose load()
+ * never completed — and calling it is necessary there, since a partial instance
+ * can still hold a worker connection and half-built layers.
+ */
+function releaseInstance(instance) {
+  if (!instance) return;
+  instance.destroy();
+}
+
+/**
+ * Remove the DOM a superseded render mounted into the shared container.
+ *
+ * destroy() tears down state and workers but deliberately leaves the DOM alone —
+ * it relies on the next render clearing the container. That assumption breaks
+ * when renders overlap, because the winner cleared the container *before* the
+ * loser finished mounting, leaving two editors stacked in it.
+ *
+ * Only the instance that currently owns the container may clear it: if the
+ * winning render has already mounted, wiping the container here would blank the
+ * view. So this clears only while the winner is still loading — recognisable
+ * because nothing has been mounted since (`noteCanvasInstance` is not yet
+ * initialized). The winner clears the container itself before mounting, so any
+ * leftovers in the other case are removed there.
+ */
+function clearSupersededMount(container) {
+  if (noteCanvasInstance?.isInitialized) return;
+  container.innerHTML = "";
+}
+
+/**
  * Initialize the NoteCanvas component
  * Sets up event listeners for router integration
  */
@@ -55,9 +101,11 @@ export function initNoteCanvasComponent() {
       return;
     }
 
+    const myToken = ++renderToken;
+
     // Clean up previous instance if exists
     if (noteCanvasInstance) {
-      noteCanvasInstance.destroy();
+      releaseInstance(noteCanvasInstance);
       noteCanvasInstance = null;
     }
 
@@ -73,10 +121,32 @@ export function initNoteCanvasComponent() {
     // Clear container
     container.innerHTML = "";
 
-    // Create and load new instance
+    // Create and load new instance. Held locally as well as in the module slot:
+    // if a newer render supersedes this one mid-load, the module slot already
+    // belongs to that render and only this reference can still reach the
+    // instance that has to be torn down.
+    //
+    // NoteCanvas mounts directly into the shared container (it sets the
+    // container's own class and layout, so an intermediate wrapper would break
+    // the flex chain from #notebook-editor-container). Ownership is therefore
+    // tracked by token, and a superseded render clears only what it appended.
+    let instance = null;
     try {
-      noteCanvasInstance = new NoteCanvas(container);
-      await noteCanvasInstance.load(noteId, { searchQuery, taskId });
+      instance = new NoteCanvas(container);
+      noteCanvasInstance = instance;
+      await instance.load(noteId, { searchQuery, taskId });
+
+      if (myToken !== renderToken) {
+        // A newer render started while this one was loading. Tear this instance
+        // down rather than leaving it live and unreachable. Its DOM is left to
+        // the winning render: if that render has already cleared the container
+        // and mounted, this instance's nodes are gone with it; if it is still
+        // loading, it will clear them before mounting.
+        releaseInstance(instance);
+        clearSupersededMount(container);
+        return;
+      }
+
       // First-ever note open on this device: show the 7-step toolbar tour.
       // No-op after the first time (flag persisted in localStorage). The second
       // load() call site below is a live re-render of an already-open note, not
@@ -84,6 +154,20 @@ export function initNoteCanvasComponent() {
       startFirstNoteTour();
     } catch (error) {
       console.error("[NoteCanvas] Failed to initialize:", error);
+
+      // A failed load that has already been superseded must not clear the newer
+      // render's DOM, show its error over that render, or overwrite the module
+      // slot with its own dead instance.
+      if (myToken !== renderToken) {
+        releaseInstance(instance);
+        clearSupersededMount(container);
+        return;
+      }
+
+      // The failed instance is never returned to, so drop it rather than leaving
+      // it in the module slot where teardown paths would treat it as current.
+      releaseInstance(instance);
+      noteCanvasInstance = null;
 
       // Show error message in container. Built via textContent (not innerHTML)
       // since error.message may echo untrusted data (e.g. a corrupted note field).
@@ -157,9 +241,21 @@ export function initNoteCanvasComponent() {
     if (!noteCanvasInstance || noteCanvasInstance.noteId !== noteId) return;
     if (noteCanvasInstance.isInitialized) return;
 
-    noteCanvasInstance.destroy();
-    noteCanvasInstance = new NoteCanvas(container);
-    await noteCanvasInstance.load(noteId);
+    // This rebuild is a render in its own right, so it claims a token like any
+    // other. Without one, a rendernotebook starting mid-rebuild would be
+    // silently overwritten by the instance created here.
+    const myToken = ++renderToken;
+
+    releaseInstance(noteCanvasInstance);
+    const instance = new NoteCanvas(container);
+    noteCanvasInstance = instance;
+    await instance.load(noteId);
+
+    if (myToken !== renderToken) {
+      // A rendernotebook started mid-rebuild and owns the container now.
+      releaseInstance(instance);
+      clearSupersededMount(container);
+    }
   });
 }
 

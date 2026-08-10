@@ -95,10 +95,12 @@ package-sidecar:
 # Output: builds/noteberg_nextcloud-<version>.tar.gz + builds/noteberg_nextcloud-<version>.tar.gz.sig
 # Build, code-sign, and package the Nextcloud app release (tar.gz + .sig)
 build-nc:
-    # 0. Sync info.xml <version> from package.json (keeps NC in lockstep)
+    # 0. Sync the info.xml <version> BASE from package.json (keeps NC in lockstep).
+    #    Any hand-set pre-release suffix ("-rc.2") in info.xml is preserved — that
+    #    is the only place RC stages live. Check the printed version before shipping.
     just sync-version
 
-    # 1. Build JS/CSS for Nextcloud (NC version = appinfo/info.xml, now synced to package.json)
+    # 1. Build JS/CSS for Nextcloud (NC version = appinfo/info.xml, base now synced)
     # Wipe js/ and css/ first: outDir is the repo root with emptyOutDir=false, so
     # Vite never cleans them. Stale chunks from an earlier build otherwise survive,
     # get copied into the tarball, and shadow fresh ones at runtime (mangled export
@@ -249,7 +251,7 @@ fct:
 # ===========================================================================
 # Version / release management
 # ===========================================================================
-# package.json.version = semver base + optional pre-release label (npm-managed).
+# package.json.version = plain semver, no pre-release label (npm-managed).
 # package.json.build   = monotonic build counter (moved ONLY by `just bump-build`).
 # None of the recipes below touch git: they rewrite package.json and regenerate the
 # derived files (tauri.conf.json, Cargo.toml, info.xml), nothing more. No commit,
@@ -258,15 +260,20 @@ fct:
 #
 #   git commit -am "0.5.39" && git tag v0.5.39
 #
-#   0.5.33         -- just set-rc rc   --> 0.5.33-rc.1   (start a pre-release)
-#   0.5.33-rc.1    -- just bump-rc     --> 0.5.33-rc.2   (next pre-release)
-#   0.5.33-beta.2  -- just bump-rc     --> 0.5.33-beta.3 (bumps whatever stage is set)
-#   0.5.33-beta.2  -- just set-rc rc   --> 0.5.33-rc.1   (switch stage, counter resets)
-#   0.5.33-rc.4    -- just unset-rc    --> 0.5.33        (promote to final, same base)
-#   0.5.33-rc.4    -- just bump        --> 0.5.33        (drop label, no patch advance)
-#   0.5.33         -- just bump        --> 0.5.34        (next patch)
+#   0.5.33  -- just bump        --> 0.5.34  (next patch)
+#   0.5.33  -- just bump-minor  --> 0.6.0
+#   0.5.33  -- just bump-major  --> 1.0.0
+#
+# RC / pre-release stages are Nextcloud-only and are NOT managed here. Edit
+# appinfo/info.xml by hand:
+#
+#   <version>0.5.33-rc.2</version>
+#
+# `just sync-version` keeps the base (0.5.33) in lockstep with package.json and
+# preserves the "-rc.2" suffix, so a manual stage survives every build. Remove the
+# suffix by hand to publish a final release to the NC store.
 
-# Print the current version state (semver, stage, build, versionCode, wix); no writes
+# Print the current version state (semver, build, versionCode, wix, NC version); no writes
 version-info:
     node sync-version.js --info
 
@@ -278,30 +285,17 @@ sync-version:
 bump-build:
     node sync-version.js --bump-build
 
-# Usage: just set-rc rc | just set-rc beta
-# Set the pre-release stage, starting at .1 (switching stage resets the counter; no-op if already set)
-set-rc stage:
-    node set-prerelease.js {{stage}}
-
-# Bump the current pre-release counter (rc.1 -> rc.2); FAILS if no pre-release is set (use set-rc first)
-bump-rc:
-    node bump-prerelease.js
-
-# Promote a pre-release to final, keeping the base: 0.5.33-rc.4 -> 0.5.33; no-op if already final
-unset-rc:
-    node unset-prerelease.js
-
-# Bump patch and sync; from a pre-release this only DROPS the label: 0.5.33-rc.4 -> 0.5.33
+# Bump patch and sync: 0.5.33 -> 0.5.34 (any info.xml RC suffix is preserved)
 bump:
     npm version patch --no-git-tag-version
     node sync-version.js
 
-# Bump minor and sync (drops any pre-release label): 0.5.33-rc.4 -> 0.6.0
+# Bump minor and sync: 0.5.33 -> 0.6.0
 bump-minor:
     npm version minor --no-git-tag-version
     node sync-version.js
 
-# Bump major and sync (drops any pre-release label): 0.5.33-rc.4 -> 1.0.0
+# Bump major and sync: 0.5.33 -> 1.0.0
 bump-major:
     npm version major --no-git-tag-version
     node sync-version.js

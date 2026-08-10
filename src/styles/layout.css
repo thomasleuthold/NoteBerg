@@ -1349,6 +1349,49 @@
   cursor: not-allowed;
 }
 
+/* Busy state while an async confirm (create/save) is in flight. The write can be
+   slow on the Nextcloud build, where it goes over WebDAV rather than to
+   IndexedDB; without visible progress a slow create reads as an unregistered
+   keypress, which is what prompts a user to confirm a second time. */
+.modal-overlay.modal-busy {
+  cursor: progress;
+}
+
+.modal-footer .btn-busy {
+  /* Hold the idle width so swapping in the busy label does not resize the
+     footer and shift the Cancel button under the pointer. */
+  min-width: 8ch;
+}
+
+.modal-footer .btn-busy::before {
+  content: "";
+  display: inline-block;
+  width: 0.75em;
+  height: 0.75em;
+  margin-inline-end: 0.5em;
+  vertical-align: -0.05em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: modal-busy-spin 0.6s linear infinite;
+}
+
+@keyframes modal-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect users who have asked for reduced motion: keep the indicator, drop the
+   spin. */
+@media (prefers-reduced-motion: reduce) {
+  .modal-footer .btn-busy::before {
+    animation: none;
+    border-top-color: currentColor;
+    opacity: 0.5;
+  }
+}
+
 /* Narrow screens (Android): a side-by-side label + control column leaves too
    little room for either, so collapse to one column and let each control sit
    directly under the label it belongs to. Proximity still holds — the row gap

@@ -96,11 +96,13 @@ if (id.includes('perspective-transform-nc-inline')) {
 
 
 /**
- * Read the labeled version from package.json (single source of truth) and split
- * it into a clean base version and a human pre-release stage.
- *   "0.5.33-rc.4"  -> { version: "0.5.33", stage: "RC" }
- *   "0.5.33-beta.1"-> { version: "0.5.33", stage: "Beta" }
- *   "0.5.33"       -> { version: "0.5.33", stage: "" }
+ * Read the version from package.json (single source of truth for the base
+ * version across all platforms).
+ *   "0.5.33" -> { version: "0.5.33", build: "2" }
+ *
+ * package.json holds plain semver only — pre-release labels ("-rc.2") are a
+ * Nextcloud-store concern and live solely in appinfo/info.xml, so nothing here
+ * has to strip or interpret them. A stray suffix is tolerated defensively.
  */
 function getAppVersionInfo() {
   let raw = '0.0.0';
@@ -118,14 +120,10 @@ function getAppVersionInfo() {
     // fall through with default
   }
 
-  const match = raw.match(/^(\d+\.\d+\.\d+)(?:-([a-zA-Z]+)(?:\.\d+)?)?$/);
-  if (!match) return { version: raw, stage: '', build };
+  const match = raw.match(/^(\d+\.\d+\.\d+)(?:-.*)?$/);
+  if (!match) return { version: raw, build };
 
-  const [, base, stageRaw = ''] = match;
-  const STAGE_LABELS = { rc: 'RC', beta: 'Beta', alpha: 'Alpha' };
-  const key = stageRaw.toLowerCase();
-  const stage = STAGE_LABELS[key] || (stageRaw ? stageRaw : '');
-  return { version: base, stage, build };
+  return { version: match[1], build };
 }
 
 const appVersionInfo = getAppVersionInfo();
@@ -171,7 +169,6 @@ export default defineConfig({
   },
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersionInfo.version),
-    'import.meta.env.VITE_APP_STAGE': JSON.stringify(appVersionInfo.stage),
     'import.meta.env.VITE_APP_BUILD': JSON.stringify(appVersionInfo.build),
     'import.meta.env.VITE_PLATFORM': JSON.stringify(platform),
   },

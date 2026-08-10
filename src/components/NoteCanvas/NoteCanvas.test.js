@@ -372,6 +372,67 @@ describe("NoteCanvas Class", () => {
       );
     });
 
+    it("anchors imported PDF pages at the top of the canvas", async () => {
+      // The pages *are* the document, so they must line up with the stroke and
+      // text layers, which both start at content Y=0. Inserting at the scroll
+      // position left a gap above page 1 (and shifted every page below it).
+      importPdf.mockResolvedValue({
+        pages: [
+          { id: "page1", type: "pdf-page", width: 500, height: 700 },
+          { id: "page2", type: "pdf-page", width: 500, height: 700 },
+        ],
+        fileId: "pdf-file-id",
+      });
+      await noteCanvas.load("note-1");
+
+      // Import while scrolled away from the top — the old code anchored to
+      // viewport.top, so this is what made the offset arbitrary.
+      noteCanvas.scroller.getViewportBounds = vi.fn(() => ({
+        top: 900,
+        bottom: 1900,
+        left: 0,
+        right: 1200,
+        height: 1000,
+        width: 1200,
+      }));
+
+      await noteCanvas.insertPdf();
+
+      const pdfPages = noteCanvas.noteData.media.filter((m) => m.type === "pdf-page");
+      expect(pdfPages).toHaveLength(2);
+      expect(pdfPages[0].y).toBe(0);
+      // Pages chain directly onto each other, with no gap between them.
+      expect(pdfPages[1].y).toBe(pdfPages[0].height);
+    });
+
+    it("expands the canvas to fit the scaled page stack", async () => {
+      // importPdf returns raw PDF-point dimensions; pages are scaled up to the
+      // canvas width on insert. Measuring the raw pages under-reported the
+      // bottom by the scale factor, leaving the canvas too short to reach the
+      // end of the document.
+      importPdf.mockResolvedValue({
+        pages: [
+          { id: "page1", type: "pdf-page", width: 595, height: 842, y: 0 },
+          { id: "page2", type: "pdf-page", width: 595, height: 842, y: 842 },
+        ],
+        fileId: "pdf-file-id",
+      });
+      await noteCanvas.load("note-1");
+      const expandSpy = vi.spyOn(noteCanvas, "_expandCanvas");
+
+      await noteCanvas.insertPdf();
+
+      const pdfPages = noteCanvas.noteData.media.filter((m) => m.type === "pdf-page");
+      const actualBottom = pdfPages[1].y + pdfPages[1].height;
+      // Scaled to 1200 wide, two A4 pages are ~3400px tall — well beyond the
+      // ~1684px the raw dimensions would have suggested.
+      expect(actualBottom).toBeGreaterThan(3000);
+
+      if (actualBottom > noteCanvas.contentHeight) {
+        expect(expandSpy).toHaveBeenCalledWith(actualBottom - noteCanvas.contentHeight + 500);
+      }
+    });
+
     it("should delete a PDF and create an undo command", async () => {
       mockNoteData.pdfSource = "pdf-file-id";
       mockNoteData.media.push({ id: "page1", type: "pdf-page" });
