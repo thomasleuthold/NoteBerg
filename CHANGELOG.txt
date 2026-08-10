@@ -6,7 +6,7 @@ Google Play release notes (max 500 characters) are kept in
 play-release-notes.txt.
 
 
-0.5.40 - unreleased
+0.5.41 - unreleased
 -------------------
 
 Added

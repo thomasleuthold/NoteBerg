@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - 0.5.40
+## [Unreleased] - 0.5.41
 
 ### Added
 - **All platforms**: handwriting drawn on an imported PDF is now exported as real PDF ink annotations instead of being flattened into the page image. The strokes stay vector-sharp at any zoom, and other PDF readers list them as annotations you can select or remove
