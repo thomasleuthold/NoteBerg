@@ -116,6 +116,135 @@ describe("getRenderedMedia caching", () => {
   });
 });
 
+describe("concurrent render deduplication", () => {
+  // The crash on low-end Android traced back to two overlapping renders of the
+  // same page+scale (trivially produced by pinch-zoom) both completing and both
+  // writing the cache key, orphaning one full-page bitmap per collision.
+  it("joins an in-flight render instead of starting a second one", async () => {
+    const restoreCanvas = stubCanvas();
+    let resolvePage;
+    loadPdfPage.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePage = resolve;
+      }),
+    );
+
+    const item = { id: "m1", type: "pdf-page", fileId: "f1", pageIndex: 1 };
+    const first = mediaManager.getRenderedMedia(item, 1.0);
+    const second = mediaManager.getRenderedMedia(item, 1.0);
+
+    resolvePage(makePdfPage());
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(loadPdfPage).toHaveBeenCalledTimes(1);
+    // Both callers must observe the very same object — two distinct canvases
+    // would mean one is orphaned while still referenced by a renderer.
+    expect(a).toBe(b);
+    restoreCanvas();
+  });
+
+  it("lets a failed render be retried rather than caching the rejection", async () => {
+    loadPdfPage.mockRejectedValueOnce(new Error("PDF file not found"));
+    const item = { id: "m1", type: "pdf-page", fileId: "f1", pageIndex: 1 };
+
+    expect(await mediaManager.getRenderedMedia(item, 1.0)).toBeNull();
+
+    const restoreCanvas = stubCanvas();
+    loadPdfPage.mockResolvedValue(makePdfPage());
+    expect(await mediaManager.getRenderedMedia(item, 1.0)).not.toBeNull();
+    restoreCanvas();
+  });
+});
+
+describe("cache bounding", () => {
+  /** Render `count` distinct pages of the given natural size, oldest first. */
+  async function fillCache(count, { pageW = 1200, pageH = 1697, scale = 1.0 } = {}) {
+    loadPdfPage.mockResolvedValue(makePdfPage(pageW, pageH));
+    const items = Array.from({ length: count }, (_, i) => ({
+      id: `p${i}`,
+      type: "pdf-page",
+      fileId: "f1",
+      pageIndex: i + 1,
+      width: pageW,
+    }));
+    const rendered = [];
+    for (const item of items) {
+      rendered.push(await mediaManager.getRenderedMedia(item, scale));
+    }
+    // Let the deferred disposal microtasks run.
+    await Promise.resolve();
+    await Promise.resolve();
+    return { items, rendered };
+  }
+
+  it("evicts by total bytes, not just entry count", async () => {
+    const restoreCanvas = stubCanvas();
+    // MAX_CACHE_BYTES is 96MB. A 1200x1697 page is ~7.8MB, so 13 pages
+    // (~101MB) must push the oldest out even though the entry count is under
+    // MAX_CACHE_ENTRIES (24). Bounding by count alone was the gap that still
+    // let a low-end device OOM: bitmap size varies ~16x across the zoom range.
+    const { items, rendered } = await fillCache(13);
+
+    expect(rendered[0].width).toBe(0); // oldest disposed
+
+    loadPdfPage.mockClear();
+    await mediaManager.getRenderedMedia(items[0], 1.0);
+    expect(loadPdfPage).toHaveBeenCalledTimes(1); // evicted -> re-rendered
+    restoreCanvas();
+  });
+
+  it("keeps many small bitmaps that fit within the byte budget", async () => {
+    const restoreCanvas = stubCanvas();
+    // Tiny pages: 15 of them stay well under the byte cap and under the entry
+    // cap, so nothing should be evicted.
+    const { items } = await fillCache(15, { pageW: 80, pageH: 100 });
+
+    loadPdfPage.mockClear();
+    await mediaManager.getRenderedMedia(items[0], 1.0);
+    expect(loadPdfPage).not.toHaveBeenCalled(); // still cached
+    restoreCanvas();
+  });
+
+  it("never evicts the entry it is about to return", async () => {
+    const restoreCanvas = stubCanvas();
+    // A single page far larger than the whole byte budget must still come back
+    // usable — evicting it to satisfy the bound would hand back a dead bitmap.
+    loadPdfPage.mockResolvedValue(makePdfPage(6000, 9000));
+    const huge = { id: "huge", type: "pdf-page", fileId: "f1", pageIndex: 1, width: 6000 };
+
+    const result = await mediaManager.getRenderedMedia(huge, 1.0);
+    await Promise.resolve();
+
+    expect(result).not.toBeNull();
+    expect(result.width).toBeGreaterThan(0);
+    restoreCanvas();
+  });
+
+  it("treats a cache hit as a use, so it is not the next eviction victim", async () => {
+    const restoreCanvas = stubCanvas();
+    loadPdfPage.mockResolvedValue(makePdfPage(1200, 1697));
+
+    const first = { id: "p0", type: "pdf-page", fileId: "f1", pageIndex: 1, width: 1200 };
+    await mediaManager.getRenderedMedia(first, 1.0);
+
+    // Fill past the byte cap, refreshing `first` midway so it is no longer the
+    // least-recently-used entry and some other page is evicted instead.
+    for (let i = 1; i < 14; i++) {
+      await mediaManager.getRenderedMedia(
+        { id: `p${i}`, type: "pdf-page", fileId: "f1", pageIndex: i + 1, width: 1200 },
+        1.0,
+      );
+      if (i === 5) await mediaManager.getRenderedMedia(first, 1.0); // refresh
+    }
+    await Promise.resolve();
+
+    loadPdfPage.mockClear();
+    await mediaManager.getRenderedMedia(first, 1.0);
+    expect(loadPdfPage).not.toHaveBeenCalled(); // still cached
+    restoreCanvas();
+  });
+});
+
 describe("clearRenderCache", () => {
   it("removes all cached scales for a given item id only", async () => {
     const restoreCanvas = stubCanvas();

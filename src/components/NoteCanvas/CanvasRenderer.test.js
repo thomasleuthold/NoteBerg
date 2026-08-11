@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearRenderCache, getRenderedMedia } from "../../modules/mediaManager.js";
+import { getPdfInvertDarkMode, getTheme } from "../../modules/theme.js";
 import { drawBackgroundPattern as mockDrawBackgroundPattern } from "../../utils/noteRenderer.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 
@@ -26,6 +28,12 @@ vi.mock("./NoteCanvas.js", () => ({
 
 vi.mock("../../modules/mediaManager.js", () => ({
   getRenderedMedia: vi.fn(),
+  clearRenderCache: vi.fn(),
+}));
+
+vi.mock("../../modules/theme.js", () => ({
+  getTheme: vi.fn(() => "light"),
+  getPdfInvertDarkMode: vi.fn(() => false),
 }));
 
 describe("CanvasRenderer", () => {
@@ -450,6 +458,433 @@ describe("CanvasRenderer", () => {
     it("keeps an item exactly at the keep zone boundary", () => {
       const item = { y: 3100, height: 0 }; // y === keepBottom
       expect(renderer._isItemInKeepZone(item)).toBe(true);
+    });
+  });
+
+  describe("in-flight PDF render invalidation", () => {
+    // Regression cover for two field-reported failures on low-end Android:
+    // pinch-zooming a long scanned PDF would freeze the page ("zoom sticks"),
+    // and continuing to pinch closed the app (renderer OOM / use-after-free).
+    // Both trace back to an async render resolving after the state it was
+    // requested for is gone.
+    let item;
+    let mediaItems;
+
+    /** A stand-in for a rendered page bitmap, distinguishable per render. */
+    function makeRenderable(tag) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 100;
+      canvas.height = 100;
+      canvas.dataset.tag = tag;
+      return canvas;
+    }
+
+    beforeEach(() => {
+      item = {
+        id: "page-1",
+        type: "pdf-page",
+        fileId: "f1",
+        pageIndex: 1,
+        x: 0,
+        y: 0,
+        width: 600,
+        height: 800,
+      };
+      mediaItems = [item];
+      renderer.setMediaManager({ getItems: () => mediaItems });
+      // Put the item inside the keep zone so storage is not rejected for
+      // position reasons — the assertions below isolate scale/generation.
+      renderer.viewportHeight = 600;
+      renderer.bufferTop = 0;
+      renderer.bufferHeight = 1800;
+      renderer.selectedMediaId = null;
+    });
+
+    it("discards a render that resolves after the resolution scale changed", async () => {
+      let resolveRender;
+      getRenderedMedia.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveRender = resolve;
+        }),
+      );
+
+      renderer.resolutionScale = 1;
+      renderer._drawPdfPage(item, false);
+      expect(item.loading).toBe(true);
+
+      // Zoom changes while the render is still in flight.
+      renderer.resolutionScale = 2;
+      renderer._renderGeneration++;
+
+      resolveRender(makeRenderable("stale"));
+      await vi.waitFor(() => expect(item.loading).toBe(false));
+
+      // The stale bitmap must not be adopted: doing so left renderableScale
+      // permanently mismatched against resolutionScale, so every subsequent
+      // frame re-requested the page and the view never converged.
+      expect(item.renderable).toBeFalsy();
+      expect(renderer.activePdfLoads).toBe(0);
+    });
+
+    it("accepts a render that resolves while still current", async () => {
+      const renderable = makeRenderable("fresh");
+      getRenderedMedia.mockResolvedValueOnce(renderable);
+
+      renderer.resolutionScale = 1.5;
+      renderer._drawPdfPage(item, false);
+
+      await vi.waitFor(() => expect(item.loading).toBe(false));
+
+      expect(item.renderable).toBe(renderable);
+      expect(item.renderableScale).toBe(1.5);
+    });
+
+    it("does not destroy a resolved bitmap it declines to store", async () => {
+      const renderable = makeRenderable("declined");
+      getRenderedMedia.mockResolvedValueOnce(renderable);
+
+      renderer.resolutionScale = 1;
+      renderer._drawPdfPage(item, false);
+      renderer._renderGeneration++; // supersede before it lands
+
+      await vi.waitFor(() => expect(item.loading).toBe(false));
+
+      // The bitmap is owned by the mediaManager cache, which may still be
+      // handing it to a concurrent caller (thumbnails share that cache).
+      // Zeroing it here is what made drawImage throw InvalidStateError.
+      expect(renderable.width).toBe(100);
+      expect(renderable.height).toBe(100);
+    });
+
+    it("bumps the generation when the resolution scale changes", () => {
+      renderer.zoomScale = 1;
+      renderer._resizeCanvasBitmap();
+      const before = renderer._renderGeneration;
+
+      renderer.zoomScale = 2;
+      renderer._resizeCanvasBitmap();
+
+      expect(renderer._renderGeneration).toBeGreaterThan(before);
+    });
+
+    it("does not bump the generation when the resolution scale is unchanged", () => {
+      renderer.zoomScale = 1;
+      renderer._resizeCanvasBitmap();
+      const before = renderer._renderGeneration;
+
+      renderer._resizeCanvasBitmap();
+
+      expect(renderer._renderGeneration).toBe(before);
+    });
+
+    it("releases item memory without zeroing the shared bitmap", () => {
+      const renderable = makeRenderable("released");
+      item.renderable = renderable;
+      item.renderableScale = 1;
+
+      renderer._releaseItemMemory(item);
+
+      expect(item.renderable).toBeNull();
+      expect(item.renderableScale).toBeNull();
+      // Disposal is the cache's responsibility (clearRenderCache), not ours.
+      expect(clearRenderCache).toHaveBeenCalledWith("page-1");
+      expect(renderable.width).toBe(100);
+    });
+
+    it("invalidates in-flight renders on theme change even with no bitmap yet", () => {
+      const before = renderer._renderGeneration;
+      item.renderable = null; // still loading when the theme flips
+      renderer.invalidatePdfRenderables();
+      expect(renderer._renderGeneration).toBeGreaterThan(before);
+    });
+  });
+
+  describe("zoom bitmap geometry", () => {
+    // The canvas bitmap is stretched onto its CSS box by the browser. If the two
+    // axes end up with different bitmap-to-CSS ratios, the image is squashed
+    // along one of them — seen in the field as a brief directional distortion
+    // while pinch-zooming a PDF.
+    beforeEach(() => {
+      renderer.resize(1000, 800); // viewportWidth := maxContentWidth (1200), bufferHeight := 2400
+    });
+
+    /** Ratio of bitmap pixels to CSS pixels on each axis. */
+    function axisScales() {
+      return {
+        x: renderer.canvas.width / Number.parseFloat(renderer.canvas.style.width),
+        y: renderer.canvas.height / Number.parseFloat(renderer.canvas.style.height),
+      };
+    }
+
+    it("keeps the horizontal and vertical bitmap scales equal across zoom levels", () => {
+      // 1.3 and 1.7 quantize to distinct half-steps and give bitmap dimensions
+      // whose independent rounding previously diverged between the axes.
+      for (const zoom of [1, 1.3, 1.7, 2, 2.4]) {
+        renderer.zoomScale = zoom;
+        renderer._resizeCanvasBitmap();
+        const { x, y } = axisScales();
+        expect(x).toBeCloseTo(y, 10);
+      }
+    });
+
+    it("quantizes resolutionScale so small zoom deltas do not reallocate the bitmap", () => {
+      renderer.zoomScale = 1.6;
+      renderer._resizeCanvasBitmap();
+      const width = renderer.canvas.width;
+      const height = renderer.canvas.height;
+      const generation = renderer._renderGeneration;
+
+      // A nudge within the same half-step must not touch the bitmap at all:
+      // each reallocation is multiple megabytes and discards the painted buffer.
+      renderer.zoomScale = 1.7;
+      renderer._resizeCanvasBitmap();
+
+      expect(renderer.canvas.width).toBe(width);
+      expect(renderer.canvas.height).toBe(height);
+      expect(renderer._renderGeneration).toBe(generation);
+    });
+  });
+
+  describe("PDF bounds caching and lookup", () => {
+    // These bounds decide which palette a stroke draws in, so a stale cache
+    // shows up as wrong stroke colours on PDF pages. The lookup was also
+    // O(strokes x pages) per repaint before being indexed.
+    let mediaItems;
+    let mediaManager;
+
+    function makePage(id, y, { height = 800, x = 0, width = 600 } = {}) {
+      return { id, type: "pdf-page", x, y, width, height };
+    }
+
+    beforeEach(() => {
+      mediaItems = [makePage("p1", 0), makePage("p2", 800), makePage("p3", 1600)];
+      mediaManager = {
+        version: 0,
+        getItems: () => mediaItems,
+      };
+      renderer.setMediaManager(mediaManager);
+      getTheme.mockReturnValue("light"); // light theme -> pages are un-inverted
+    });
+
+    it("returns one bounds entry per PDF page, sorted by y", () => {
+      const bounds = renderer._getUninvertedPdfBounds();
+      expect(bounds.map((b) => b.y)).toEqual([0, 800, 1600]);
+    });
+
+    it("reuses the cached array while media is unchanged", () => {
+      const first = renderer._getUninvertedPdfBounds();
+      const second = renderer._getUninvertedPdfBounds();
+      expect(second).toBe(first); // identity: no rebuild, no allocation
+    });
+
+    it("rebuilds when the media version changes", () => {
+      const first = renderer._getUninvertedPdfBounds();
+      mediaItems.push(makePage("p4", 2400));
+      mediaManager.version++;
+
+      const second = renderer._getUninvertedPdfBounds();
+      expect(second).not.toBe(first);
+      expect(second).toHaveLength(4);
+    });
+
+    it("sorts pages that are not stored in y order", () => {
+      mediaItems = [makePage("p3", 1600), makePage("p1", 0), makePage("p2", 800)];
+      mediaManager.version++;
+      expect(renderer._getUninvertedPdfBounds().map((b) => b.y)).toEqual([0, 800, 1600]);
+    });
+
+    describe("_strokeNeedsLightPalette", () => {
+      beforeEach(() => {
+        getTheme.mockReturnValue("dark");
+        getPdfInvertDarkMode.mockReturnValue(false); // pages stay white in dark theme
+      });
+
+      /** Stroke whose first point is at (x, y). */
+      const strokeAt = (x, y) => ({ x: [x], y: [y] });
+
+      it("matches a stroke on the first page", () => {
+        const bounds = renderer._getUninvertedPdfBounds();
+        expect(renderer._strokeNeedsLightPalette(strokeAt(100, 50), bounds)).toBe(true);
+      });
+
+      it("matches a stroke on a middle page", () => {
+        const bounds = renderer._getUninvertedPdfBounds();
+        expect(renderer._strokeNeedsLightPalette(strokeAt(100, 900), bounds)).toBe(true);
+      });
+
+      it("matches a stroke on the last page", () => {
+        const bounds = renderer._getUninvertedPdfBounds();
+        expect(renderer._strokeNeedsLightPalette(strokeAt(100, 1700), bounds)).toBe(true);
+      });
+
+      it("matches at exact page boundaries", () => {
+        const bounds = renderer._getUninvertedPdfBounds();
+        expect(renderer._strokeNeedsLightPalette(strokeAt(0, 0), bounds)).toBe(true);
+        expect(renderer._strokeNeedsLightPalette(strokeAt(600, 800), bounds)).toBe(true);
+      });
+
+      it("rejects a stroke below every page", () => {
+        const bounds = renderer._getUninvertedPdfBounds();
+        expect(renderer._strokeNeedsLightPalette(strokeAt(100, 5000), bounds)).toBe(false);
+      });
+
+      it("rejects a stroke horizontally outside the page", () => {
+        const bounds = renderer._getUninvertedPdfBounds();
+        expect(renderer._strokeNeedsLightPalette(strokeAt(2000, 50), bounds)).toBe(false);
+      });
+
+      it("rejects a stroke in a vertical gap between pages", () => {
+        mediaItems = [makePage("p1", 0, { height: 100 }), makePage("p2", 1000, { height: 100 })];
+        mediaManager.version++;
+        const bounds = renderer._getUninvertedPdfBounds();
+        expect(renderer._strokeNeedsLightPalette(strokeAt(100, 500), bounds)).toBe(false);
+      });
+
+      it("finds a match on a tall page that an earlier short page overlaps", () => {
+        // The backward walk is bounded by the tallest page; a naive bound that
+        // stopped at the first non-matching page would miss this.
+        mediaItems = [
+          makePage("tall", 0, { height: 3000 }),
+          makePage("short", 100, { height: 50 }),
+        ];
+        mediaManager.version++;
+        const bounds = renderer._getUninvertedPdfBounds();
+        expect(renderer._strokeNeedsLightPalette(strokeAt(100, 2500), bounds)).toBe(true);
+      });
+
+      it("agrees with a brute-force scan across many random points", () => {
+        // Guards the binary search against off-by-one errors the fixed cases
+        // above might not surface.
+        mediaItems = Array.from({ length: 40 }, (_, i) => makePage(`p${i}`, i * 800));
+        mediaManager.version++;
+        const bounds = renderer._getUninvertedPdfBounds();
+        const bruteForce = (px, py) =>
+          bounds.some((b) => px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height);
+
+        for (let i = 0; i < 300; i++) {
+          const px = (i * 137) % 900;
+          const py = (i * 523) % 34000;
+          expect(renderer._strokeNeedsLightPalette(strokeAt(px, py), bounds)).toBe(
+            bruteForce(px, py),
+          );
+        }
+      });
+    });
+  });
+
+  describe("media culling", () => {
+    function makeItems(count) {
+      return Array.from({ length: count }, (_, i) => ({
+        id: `p${i}`,
+        type: "pdf-page",
+        x: 0,
+        y: i * 800,
+        width: 600,
+        height: 800,
+      }));
+    }
+
+    it("returns only items overlapping the range, in array (z) order", () => {
+      const items = makeItems(40);
+      renderer.setMediaManager({ version: 0, getItems: () => items });
+
+      const visible = renderer._getItemsOverlapping(items, 8000, 10000);
+      const ids = visible.map((i) => i.id);
+
+      expect(ids).toEqual(["p9", "p10", "p11", "p12"]);
+      // Array order preserved so z-order is unchanged.
+      const indices = visible.map((i) => items.indexOf(i));
+      expect([...indices].sort((a, b) => a - b)).toEqual(indices);
+    });
+
+    it("agrees with a brute-force filter for both small and indexed lists", () => {
+      // 8 items takes the linear path, 40 takes the sorted-index path.
+      for (const count of [8, 40]) {
+        const items = makeItems(count);
+        renderer.setMediaManager({ version: 0, getItems: () => items });
+
+        for (const top of [0, 750, 3200, 100000]) {
+          const bottom = top + 1500;
+          const expected = items.filter((i) => i.y + i.height >= top && i.y <= bottom);
+          expect(renderer._getItemsOverlapping(items, top, bottom)).toEqual(expected);
+        }
+      }
+    });
+
+    it("rebuilds its index when media changes", () => {
+      const items = makeItems(40);
+      const manager = { version: 0, getItems: () => items };
+      renderer.setMediaManager(manager);
+      renderer._getItemsOverlapping(items, 0, 1000);
+
+      // Move a page into the queried range and bump the version.
+      items[30].y = 500;
+      manager.version++;
+
+      const ids = renderer._getItemsOverlapping(items, 0, 1000).map((i) => i.id);
+      expect(ids).toContain("p30");
+    });
+
+    it("handles items taller than the query range", () => {
+      const items = makeItems(40);
+      items[0].height = 20000; // one very tall page spanning many others
+      renderer.setMediaManager({ version: 0, getItems: () => items });
+
+      const ids = renderer._getItemsOverlapping(items, 15000, 16000).map((i) => i.id);
+      expect(ids).toContain("p0");
+    });
+  });
+
+  describe("zoom re-render scheduling", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      renderer.resize(1000, 800);
+      renderer.setContentSize(1200, 100000);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("coalesces a pinch into a single debounced re-render", () => {
+      const repositionSpy = vi.spyOn(renderer, "_repositionBuffer");
+
+      // Simulate a pinch: many zoom steps well inside the debounce window.
+      for (let i = 1; i <= 20; i++) {
+        renderer.setZoom(1 + i * 0.05, { scrollTop: i * 10, scrollLeft: 0 });
+      }
+      // Nothing heavy may run while the fingers are still moving.
+      expect(repositionSpy).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(renderer.zoomRenderDebounce + 10);
+      expect(repositionSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("settles using the live scroll position, not one captured mid-gesture", () => {
+      const repositionSpy = vi.spyOn(renderer, "_repositionBuffer");
+
+      renderer.setZoom(2, { scrollTop: 1000, scrollLeft: 0 });
+      // The view keeps moving after that first zoom step.
+      renderer.setZoom(2, { scrollTop: 8000, scrollLeft: 0 });
+
+      vi.advanceTimersByTime(renderer.zoomRenderDebounce + 10);
+
+      // 8000 screen px / zoom 2 = 4000 content px. Using the stale 1000 would
+      // reposition the buffer to the wrong part of the document.
+      expect(repositionSpy).toHaveBeenCalledWith(4000);
+    });
+
+    it("cancels a pending debounced pass when an immediate zoom supersedes it", () => {
+      renderer.setZoom(1.5, { scrollTop: 500, scrollLeft: 0 });
+      const repositionSpy = vi.spyOn(renderer, "_repositionBuffer");
+
+      // Pointer-up settle.
+      renderer.setZoom(1.5, { scrollTop: 500, scrollLeft: 0, immediate: true });
+      expect(repositionSpy).toHaveBeenCalledTimes(1);
+
+      // The superseded timer must not fire a second full redraw.
+      vi.advanceTimersByTime(renderer.zoomRenderDebounce + 10);
+      expect(repositionSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

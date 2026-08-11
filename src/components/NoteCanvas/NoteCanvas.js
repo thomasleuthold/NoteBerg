@@ -90,6 +90,10 @@ const SCRATCH_DIRECTION_THRESHOLD = 8; // Minimum movement to register direction
 const SCRATCH_MIN_DIRECTION_CHANGES = 4; // Minimum back-and-forth changes (4 turns = 5 segments)
 const SCRATCH_ERASE_PADDING = 15; // Padding around gesture bounds for erasing
 
+// Shared empty result for the stroke-task lookup, so the common "no tasks" case
+// allocates nothing on the per-frame path. Never mutated.
+const EMPTY_TASKS = Object.freeze([]);
+
 /**
  * Compute selection handle positions for a given bounds
  * @param {Object} bounds - {minX, minY, maxX, maxY}
@@ -993,25 +997,65 @@ export class NoteCanvas {
    * Update position of PDF controls to stick to the first page
    * @private
    */
-  _updatePdfControlsPosition() {
-    const controls = this.containerElement.querySelector(".note-canvas__pdf-controls");
-    if (!controls) return;
-
-    const pdfPages = this.mediaManager.getItems().filter((i) => i.type === "pdf-page");
-    if (pdfPages.length === 0) return;
-
-    // Find first page (min Y)
-    let firstPage = pdfPages[0];
-    for (let i = 1; i < pdfPages.length; i++) {
-      if (pdfPages[i].y < firstPage.y) firstPage = pdfPages[i];
-    }
-
+  /**
+   * Scroll/zoom values shared by every per-frame overlay update.
+   *
+   * The six _update* methods called from the scroll RAF each used to re-read
+   * scroll offsets and viewport size from the scroller and recompute the same
+   * centering offset. Reading them once per frame and threading the result
+   * through removes that repetition (and the repeated layout reads behind it).
+   * @private
+   * @returns {{scrollLeft:number, scrollTop:number, viewportWidth:number,
+   *   viewportHeight:number, offsetX:number, zoom:number}}
+   */
+  _getFrameContext() {
     const scrollLeft = this.scroller.getScrollLeft();
     const scrollTop = this.scroller.getScrollTop();
-    const viewportWidth = this.scroller.getViewportSize().width;
+    const { width: viewportWidth, height: viewportHeight } = this.scroller.getViewportSize();
     const scaledContentWidth = this.maxContentWidth * this.zoomScale;
     const offsetX =
       scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+    return {
+      scrollLeft,
+      scrollTop,
+      viewportWidth,
+      viewportHeight,
+      offsetX,
+      zoom: this.zoomScale,
+    };
+  }
+
+  /**
+   * The topmost PDF page, cached against MediaManager.version.
+   *
+   * Previously recomputed on every scroll frame via a filter over all media
+   * items — a full array allocation per frame on a long PDF, for a value that
+   * only changes when media does.
+   * @private
+   * @returns {Object|null}
+   */
+  _getFirstPdfPage() {
+    const version = this.mediaManager?.version ?? -1;
+    if (this._firstPdfPageVersion === version) return this._firstPdfPageCache;
+
+    let firstPage = null;
+    for (const item of this.mediaManager?.getItems() || []) {
+      if (item.type !== "pdf-page") continue;
+      if (!firstPage || item.y < firstPage.y) firstPage = item;
+    }
+    this._firstPdfPageCache = firstPage;
+    this._firstPdfPageVersion = version;
+    return firstPage;
+  }
+
+  _updatePdfControlsPosition(frame = null) {
+    const controls = this.containerElement.querySelector(".note-canvas__pdf-controls");
+    if (!controls) return;
+
+    const firstPage = this._getFirstPdfPage();
+    if (!firstPage) return;
+
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
 
     const pageRightX = firstPage.x + firstPage.width;
     const pageTopY = firstPage.y;
@@ -1726,10 +1770,19 @@ export class NoteCanvas {
    * @private
    */
   _onScroll(scrollTop, scrollLeft, viewportHeight) {
-    if (this._isZooming) return;
-
-    // Store pending scroll data (overwrites previous if not yet processed)
+    // Always record the latest position, even mid-pinch. The scroll events a
+    // pinch generates (VirtualScroller.setZoom writes scrollTop/scrollLeft to
+    // keep the fixed point anchored) used to be discarded outright, so the
+    // renderer's idea of the scroll position went stale for the whole gesture
+    // and the end-of-gesture render snapped the view back to the last position
+    // it knew about.
     this._pendingScroll = { scrollTop, scrollLeft, viewportHeight };
+
+    // During a pinch, only the bookkeeping above runs: setZoom already drives
+    // the visual transform each move, so scheduling a second render here would
+    // duplicate that work at gesture rate on exactly the devices least able to
+    // afford it.
+    if (this._isZooming) return;
 
     // Schedule render on next animation frame (coalesces multiple scroll events)
     if (!this._scrollRafId) {
@@ -1765,12 +1818,15 @@ export class NoteCanvas {
           scrollLeft,
           this.strokeManager?.currentStroke,
         );
-        this._updateMediaOverlay();
-        this._updateSelectionOverlay();
-        this._updateTaskCheckboxes();
-        this._updatePdfTextLayers();
-        this._updateTextEditorLayer();
-        this._updatePdfControlsPosition();
+        // Read scroll/zoom geometry once and share it across every overlay
+        // update, rather than each re-querying the scroller for the same values.
+        const frame = this._getFrameContext();
+        this._updateMediaOverlay(frame);
+        this._updateSelectionOverlay(frame);
+        this._updateTaskCheckboxes(frame);
+        this._updatePdfTextLayers(frame);
+        this._updateTextEditorLayer(frame);
+        this._updatePdfControlsPosition(frame);
       });
     }
   }
@@ -1779,25 +1835,18 @@ export class NoteCanvas {
    * Update PDF text layer positions
    * @private
    */
-  _updatePdfTextLayers() {
+  _updatePdfTextLayers(frame = null) {
     if (!this.pdfTextLayerManager) return;
 
+    const { scrollLeft, scrollTop, viewportHeight, offsetX } = frame || this._getFrameContext();
     const viewportBounds = this.scroller.getViewportBounds();
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
-    const { height: viewportHeight, width: viewportWidth } = this.scroller.getViewportSize();
-
-    // Calculate centering offset
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const centeringOffset =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
     this.pdfTextLayerManager.update(
       viewportBounds,
       this.zoomScale,
       scrollLeft,
       scrollTop,
-      centeringOffset,
+      offsetX,
       viewportHeight,
     );
   }
@@ -1806,18 +1855,11 @@ export class NoteCanvas {
    * Update text editor layer position based on current scroll and zoom
    * @private
    */
-  _updateTextEditorLayer() {
+  _updateTextEditorLayer(frame = null) {
     if (!this.textEditorLayer) return;
 
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
-    const { width: viewportWidth } = this.scroller.getViewportSize();
-
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const centeringOffset =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
-
-    this.textEditorLayer.update(this.zoomScale, scrollLeft, scrollTop, centeringOffset);
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
+    this.textEditorLayer.update(this.zoomScale, scrollLeft, scrollTop, offsetX);
   }
 
   /**
@@ -2575,6 +2617,11 @@ export class NoteCanvas {
     const state = this.mediaDragState;
     const item = state.item;
 
+    // This mutates item geometry in place rather than going through
+    // MediaManager.updateItem(), so bump the version explicitly — the
+    // renderer's cached PDF page bounds are keyed on it.
+    this.mediaManager.version++;
+
     if (state.mode === "move") {
       const dx = x - state.startX;
       const dy = y - state.startY;
@@ -2651,7 +2698,7 @@ export class NoteCanvas {
    * Update media overlay position
    * @private
    */
-  _updateMediaOverlay() {
+  _updateMediaOverlay(frame = null) {
     if (!this.mediaOverlay) return;
 
     // The overlay tracks either the selected image or (mouse only) the hovered one.
@@ -2665,15 +2712,10 @@ export class NoteCanvas {
       return;
     }
 
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
+    // Read the rect only once past the early-returns above: getBoundingClientRect
+    // forces layout, and on most scroll frames no overlay is shown at all.
     const viewport = this.scroller.getViewportElement().getBoundingClientRect();
-
-    // Calculate offset (centering)
-    const viewportWidth = this.scroller.getViewportSize().width;
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const offsetX =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
     if (this.selectedMediaId) {
       // show() is idempotent and (re)asserts the selected state + visibility.
@@ -2696,7 +2738,7 @@ export class NoteCanvas {
    * Update selection overlay position
    * @private
    */
-  _updateSelectionOverlay() {
+  _updateSelectionOverlay(frame = null) {
     const bounds = this.renderer?.selectionBounds;
 
     if (!this.selectionOverlay?.isVisible && !bounds) return;
@@ -2705,14 +2747,9 @@ export class NoteCanvas {
       return;
     }
 
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
+    // Layout read deferred past the early-returns, as in _updateMediaOverlay.
     const viewport = this.scroller.getViewportElement().getBoundingClientRect();
-
-    const viewportWidth = this.scroller.getViewportSize().width;
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const offsetX =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
     if (this.selectionOverlay.isVisible) {
       this.selectionOverlay.updatePosition(
@@ -2732,15 +2769,10 @@ export class NoteCanvas {
    * Update task checkbox positions (placeholder for Phase 3)
    * @private
    */
-  _updateTaskCheckboxes() {
+  _updateTaskCheckboxes(frame = null) {
     if (!this.taskCheckboxLayer) return;
-    const strokeTasks = (this.noteData?.tasks || []).filter((t) => t.type === "stroke");
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
-    const viewportWidth = this.scroller.getViewportSize().width;
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const offsetX =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+    const strokeTasks = this._getStrokeTasks();
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
 
     this.taskCheckboxLayer.update(
       strokeTasks,
@@ -2750,6 +2782,35 @@ export class NoteCanvas {
       scrollTop,
       offsetX,
     );
+  }
+
+  /**
+   * Stroke-type tasks, cached against the tasks array.
+   *
+   * This runs on every scroll frame; re-filtering the note's task list each time
+   * is pure per-frame garbage. Some call sites replace the array (filter) and
+   * others mutate it in place (push/splice), so the key is identity *and*
+   * length — a cheap check that self-heals rather than depending on every
+   * present and future mutation site remembering to invalidate. Editing a task's
+   * `type` in place without changing the length is not a case that occurs: type
+   * is assigned at creation.
+   * @private
+   */
+  _getStrokeTasks() {
+    const tasks = this.noteData?.tasks;
+    if (!tasks || tasks.length === 0) return EMPTY_TASKS;
+    if (
+      this._strokeTasksSource === tasks &&
+      this._strokeTasksSourceLength === tasks.length &&
+      this._strokeTasksCache
+    ) {
+      return this._strokeTasksCache;
+    }
+    const strokeTasks = tasks.filter((t) => t.type === "stroke");
+    this._strokeTasksSource = tasks;
+    this._strokeTasksSourceLength = tasks.length;
+    this._strokeTasksCache = strokeTasks;
+    return strokeTasks;
   }
 
   /**
@@ -4610,6 +4671,17 @@ export class NoteCanvas {
         if (this._isZooming) {
           this._isZooming = false;
           if (this.renderer) {
+            // Drop any scroll frame queued from before/during the pinch: it
+            // carries a position captured under the old zoom and would render
+            // the view at a stale offset after the settle below.
+            if (this._scrollRafId) {
+              cancelAnimationFrame(this._scrollRafId);
+              this._scrollRafId = null;
+            }
+            this._pendingScroll = null;
+            // Settle at the scroller's authoritative position rather than a
+            // re-derived one, so the final frame matches where the fingers left
+            // the content.
             this.setZoom(this.zoomScale, { immediate: true });
           }
         }
@@ -4710,7 +4782,13 @@ export class NoteCanvas {
 
       const scrollTop = this.scroller?.getScrollTop() || 0;
       const scrollLeft = this.scroller?.getScrollLeft() || 0;
+      // Supply the live viewport height so an immediate (settle) zoom can
+      // resize the buffer: zooming out grows the content area covered by the
+      // viewport, and without this the buffer stays sized for the old zoom and
+      // leaves unpainted bands until the next leapfrog.
+      const viewportHeight = this.scroller?.getViewportSize().height;
       this.renderer.setZoom(scale, {
+        viewportHeight,
         ...options,
         scrollTop,
         scrollLeft,

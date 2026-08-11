@@ -138,6 +138,107 @@ window.scrollTo = vi.fn();
 window.requestAnimationFrame = vi.fn((cb) => setTimeout(cb, 0));
 window.cancelAnimationFrame = vi.fn((id) => clearTimeout(id));
 
+describe("per-frame caches", () => {
+  // _getStrokeTasks and _getFirstPdfPage run on every scroll frame. They are
+  // pure functions of noteData.tasks / the media list, so they are exercised
+  // directly on a minimal object rather than through the full canvas harness.
+  let host;
+
+  beforeEach(async () => {
+    const { NoteCanvas } = await import("./NoteCanvas.js");
+    host = Object.create(NoteCanvas.prototype);
+  });
+
+  describe("_getStrokeTasks", () => {
+    it("filters to stroke-type tasks", () => {
+      host.noteData = {
+        tasks: [
+          { id: "a", type: "stroke" },
+          { id: "b", type: "text" },
+          { id: "c", type: "stroke" },
+        ],
+      };
+      expect(host._getStrokeTasks().map((t) => t.id)).toEqual(["a", "c"]);
+    });
+
+    it("returns the same array while tasks are unchanged", () => {
+      host.noteData = { tasks: [{ id: "a", type: "stroke" }] };
+      expect(host._getStrokeTasks()).toBe(host._getStrokeTasks());
+    });
+
+    it("recomputes when the tasks array is replaced", () => {
+      host.noteData = { tasks: [{ id: "a", type: "stroke" }] };
+      host._getStrokeTasks();
+
+      host.noteData.tasks = [
+        { id: "a", type: "stroke" },
+        { id: "b", type: "stroke" },
+      ];
+      expect(host._getStrokeTasks()).toHaveLength(2);
+    });
+
+    it("recomputes when a task is pushed in place", () => {
+      // Several call sites push onto the existing array rather than replacing
+      // it, so identity alone would serve a stale list forever.
+      host.noteData = { tasks: [{ id: "a", type: "stroke" }] };
+      expect(host._getStrokeTasks()).toHaveLength(1);
+
+      host.noteData.tasks.push({ id: "b", type: "stroke" });
+      expect(host._getStrokeTasks()).toHaveLength(2);
+    });
+
+    it("recomputes when a task is spliced out in place", () => {
+      host.noteData = {
+        tasks: [
+          { id: "a", type: "stroke" },
+          { id: "b", type: "stroke" },
+        ],
+      };
+      expect(host._getStrokeTasks()).toHaveLength(2);
+
+      host.noteData.tasks.splice(0, 1);
+      expect(host._getStrokeTasks()).toHaveLength(1);
+    });
+
+    it("returns an empty list when there are no tasks", () => {
+      host.noteData = {};
+      expect(host._getStrokeTasks()).toEqual([]);
+      host.noteData = { tasks: [] };
+      expect(host._getStrokeTasks()).toEqual([]);
+    });
+  });
+
+  describe("_getFirstPdfPage", () => {
+    it("returns the page with the smallest y, regardless of array order", () => {
+      const items = [
+        { id: "p2", type: "pdf-page", y: 800 },
+        { id: "p1", type: "pdf-page", y: 0 },
+        { id: "img", type: "image", y: -500 }, // must be ignored
+      ];
+      host.mediaManager = { version: 0, getItems: () => items };
+      expect(host._getFirstPdfPage().id).toBe("p1");
+    });
+
+    it("reuses the cached page until the media version changes", () => {
+      const items = [{ id: "p1", type: "pdf-page", y: 100 }];
+      const manager = { version: 0, getItems: () => items };
+      host.mediaManager = manager;
+      expect(host._getFirstPdfPage().id).toBe("p1");
+
+      items.unshift({ id: "p0", type: "pdf-page", y: 0 });
+      expect(host._getFirstPdfPage().id).toBe("p1"); // still cached
+
+      manager.version++;
+      expect(host._getFirstPdfPage().id).toBe("p0");
+    });
+
+    it("returns null when there are no PDF pages", () => {
+      host.mediaManager = { version: 0, getItems: () => [{ id: "i", type: "image", y: 0 }] };
+      expect(host._getFirstPdfPage()).toBeNull();
+    });
+  });
+});
+
 describe("NoteCanvas Class", () => {
   let container;
   let noteCanvas;

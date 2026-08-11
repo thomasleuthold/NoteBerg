@@ -150,6 +150,42 @@ describe("MediaManager", () => {
     vi.unstubAllGlobals();
   });
 
+  describe("version counter", () => {
+    // Consumers (CanvasRenderer's PDF bounds and y-index caches, NoteCanvas's
+    // first-page cache) key their per-frame caches on this. A mutation that
+    // fails to bump it leaves those caches stale — wrong stroke palette on PDF
+    // pages, or pages culled from the draw.
+    it("bumps on every mutation", () => {
+      const item = { id: "m1", type: "pdf-page", x: 0, y: 0, width: 10, height: 10 };
+      const other = { id: "m2", type: "pdf-page", x: 0, y: 20, width: 10, height: 10 };
+
+      const mutations = [
+        () => mediaManager.setItems([item, other]),
+        () => mediaManager.addItem({ id: "m3", type: "pdf-page", x: 0, y: 40 }),
+        () => mediaManager.updateItem("m1", { y: 500 }),
+        () => mediaManager.moveItemToFront("m1"),
+        () => mediaManager.moveItemToBack("m1"),
+        () => mediaManager.removeItem("m3"),
+      ];
+
+      for (const mutate of mutations) {
+        const before = mediaManager.version;
+        mutate();
+        expect(mediaManager.version).toBeGreaterThan(before);
+      }
+    });
+
+    it("does not bump when a mutation is a no-op", () => {
+      mediaManager.setItems([{ id: "m1", type: "image", x: 0, y: 0 }]);
+      const before = mediaManager.version;
+
+      mediaManager.updateItem("does-not-exist", { y: 1 });
+      mediaManager.moveItemToFront("m1"); // already the only (front) item
+
+      expect(mediaManager.version).toBe(before);
+    });
+  });
+
   it("handles image load errors gracefully", async () => {
     const { getFile } = await import("../../modules/storage.js");
     getFile.mockRejectedValue(new Error("File not found"));

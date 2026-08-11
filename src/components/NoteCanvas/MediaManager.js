@@ -14,6 +14,15 @@ export class MediaManager {
     this.noteId = noteId;
     this.mediaItems = initialMedia; // [{ id, type: 'image', x, y, width, height, fileId, rotation }]
 
+    // Bumped on every structural change to mediaItems (add/remove/reorder/
+    // geometry update). Consumers derive per-draw data from this list — the
+    // renderer caches PDF page bounds, which are hit once per stroke on a hot
+    // path — and compare this counter to know when their cache is stale.
+    // A counter rather than callbacks: mutations happen from many places
+    // (undo/redo commands, sync, direct edits), and each new call site would
+    // otherwise have to remember to notify.
+    this.version = 0;
+
     // Cache for loaded image elements and blob URLs
     this.images = new Map(); // fileId -> HTMLImageElement
     this.blobUrls = new Map(); // fileId -> string (blob URL)
@@ -44,6 +53,7 @@ export class MediaManager {
    */
   setItems(items) {
     this.mediaItems = items || [];
+    this.version++;
     // Trigger load for image items only — pdf-page items are rendered via pdfManager, not as <img>
     for (const item of this.mediaItems) {
       if (item.fileId && item.type === "image") {
@@ -57,6 +67,7 @@ export class MediaManager {
    */
   addItem(item) {
     this.mediaItems.push(item);
+    this.version++;
     // Trigger load immediately for image items only
     if (item.fileId && item.type === "image") {
       this._loadImage(item.fileId);
@@ -83,6 +94,7 @@ export class MediaManager {
     }
 
     this.mediaItems = this.mediaItems.filter((i) => i.id !== id);
+    this.version++;
   }
 
   /**
@@ -94,6 +106,7 @@ export class MediaManager {
     if (index !== -1 && index < this.mediaItems.length - 1) {
       const item = this.mediaItems.splice(index, 1)[0];
       this.mediaItems.push(item);
+      this.version++;
     }
   }
 
@@ -106,6 +119,7 @@ export class MediaManager {
     if (index !== -1 && index > 0) {
       const item = this.mediaItems.splice(index, 1)[0];
       this.mediaItems.unshift(item);
+      this.version++;
     }
   }
 
@@ -118,6 +132,7 @@ export class MediaManager {
     const item = this.mediaItems.find((i) => i.id === id);
     if (item) {
       Object.assign(item, updates);
+      this.version++;
     }
   }
 

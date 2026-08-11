@@ -190,6 +190,16 @@ export class CanvasRenderer {
     this.maxConcurrentPdfLoads = 2;
     this._pdfQueueCheckTimeout = null;
 
+    // Invalidation token for in-flight async PDF renders. Bumped whenever the
+    // render target changes in a way that makes a pending result obsolete
+    // (zoom/resolution change, item memory release, theme-driven invalidation).
+    // A render that resolves against a stale generation is discarded rather than
+    // written to item.renderable: assigning a bitmap rendered for a superseded
+    // scale left _drawPdfPage permanently seeing renderableScale !== resolutionScale,
+    // so it re-requested the page every frame and the view stopped converging —
+    // the "zoom gets stuck" symptom.
+    this._renderGeneration = 0;
+
     // Track if initial draw has happened
     this._needsInitialDraw = true;
 
@@ -364,11 +374,22 @@ export class CanvasRenderer {
   _resizeCanvasBitmap() {
     const dpr = window.devicePixelRatio || 1;
 
-    // Calculate resolution scale (for crisp rendering when zoomed in)
-    this.resolutionScale = Math.min(
-      Math.max(1.0, this.zoomScale * dpr),
-      this.maxResolutionScale * dpr,
-    );
+    // Calculate resolution scale (for crisp rendering when zoomed in).
+    // Quantized to 0.5 steps: the bitmap is reallocated whenever this value
+    // changes, and a continuous pinch would otherwise produce a distinct scale
+    // (and a fresh multi-megabyte allocation) on every single pointermove.
+    // Matches the rounding mediaManager applies to its own cache key, so a zoom
+    // step that reallocates the buffer is also one that re-renders PDF pages.
+    const rawScale = Math.min(Math.max(1.0, this.zoomScale * dpr), this.maxResolutionScale * dpr);
+    const previousResolutionScale = this.resolutionScale;
+    this.resolutionScale = Math.ceil(rawScale * 2) / 2;
+
+    // A changed resolution obsoletes every PDF render still in flight: their
+    // results would land with renderableScale != resolutionScale and trigger an
+    // endless re-request loop. Bumping the generation makes those results drop.
+    if (this.resolutionScale !== previousResolutionScale) {
+      this._renderGeneration++;
+    }
 
     // Canvas bitmap size
     const bitmapWidth = Math.round(this.viewportWidth * this.resolutionScale);
@@ -379,9 +400,14 @@ export class CanvasRenderer {
       this.canvas.width = bitmapWidth;
       this.canvas.height = bitmapHeight;
 
-      // CSS size matches content dimensions (before zoom transform)
-      this.canvas.style.width = `${this.viewportWidth}px`;
-      this.canvas.style.height = `${this.bufferHeight}px`;
+      // CSS size is derived back from the *rounded* bitmap rather than from the
+      // requested content size. Rounding width and height independently gives
+      // the two axes slightly different effective scales (bufferHeight is ~3x
+      // viewportWidth, so the rounding error lands differently on each), and
+      // stretching that bitmap onto a fixed CSS box squashes the image along
+      // one axis — visible as a brief directional distortion while zooming.
+      this.canvas.style.width = `${bitmapWidth / this.resolutionScale}px`;
+      this.canvas.style.height = `${bitmapHeight / this.resolutionScale}px`;
     }
 
     // Set transform for resolution scaling
@@ -783,6 +809,12 @@ export class CanvasRenderer {
    * @param {number} scrollLeft - Scroll left position in screen coordinates
    */
   _slideCanvas(scrollTop, scrollLeft = 0) {
+    // Record the position the canvas is actually showing. render() also sets
+    // this, but it is suppressed during a pinch, and the debounced zoom redraw
+    // needs a live value to reposition the buffer against when it fires.
+    this.contentScrollTop = scrollTop;
+    this.contentScrollLeft = scrollLeft / (this.zoomScale || 1);
+
     // Calculate offset from buffer top
     const offset = this.bufferTop - scrollTop;
 
@@ -835,6 +867,9 @@ export class CanvasRenderer {
 
     this._qualityRenderTimeout = setTimeout(() => {
       this._qualityRenderTimeout = null;
+      // A pending PDF queue check will do its own full-quality redraw shortly;
+      // skip this one rather than repaint the whole buffer twice.
+      if (this._pdfQueueCheckTimeout) return;
       // Only re-render if last render was in fast mode
       if (this._lastRenderWasFastMode) {
         this._drawBuffer(false);
@@ -1107,6 +1142,66 @@ export class CanvasRenderer {
    * @private
    * @param {boolean} fastMode - Use faster rendering (lower quality)
    */
+  /**
+   * Media items overlapping a Y range, in original array order (z-order).
+   *
+   * Maintains an index sorted by item.y, cached against MediaManager.version, so
+   * culling costs O(log n + visible) instead of a full scan of every item on
+   * every repaint. Falls back to a linear filter for small lists, where the
+   * bookkeeping would cost more than it saves.
+   * @private
+   * @returns {Array<Object>}
+   */
+  _getItemsOverlapping(items, top, bottom) {
+    // Below this size a plain scan is cheaper than maintaining the index.
+    if (items.length < 16) {
+      return items.filter((item) => item.y + item.height >= top && item.y <= bottom);
+    }
+
+    const version = this.mediaManager.version ?? -1;
+    if (!this._mediaYIndex || this._mediaYIndexVersion !== version) {
+      // Store positions alongside items so the visible subset can be restored to
+      // array order after the range query.
+      const index = items.map((item, i) => ({ item, i }));
+      index.sort((a, b) => a.item.y - b.item.y);
+      let maxHeight = 0;
+      for (const entry of index) {
+        if (entry.item.height > maxHeight) maxHeight = entry.item.height;
+      }
+      this._mediaYIndex = index;
+      this._mediaYIndexMaxHeight = maxHeight;
+      this._mediaYIndexVersion = version;
+    }
+
+    const index = this._mediaYIndex;
+
+    // First entry whose y could still reach `top`, bounded by the tallest item.
+    const cutoff = top - this._mediaYIndexMaxHeight;
+    let lo = 0;
+    let hi = index.length - 1;
+    let start = index.length;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (index[mid].item.y >= cutoff) {
+        start = mid;
+        hi = mid - 1;
+      } else {
+        lo = mid + 1;
+      }
+    }
+
+    const hits = [];
+    for (let i = start; i < index.length; i++) {
+      const entry = index[i];
+      // Sorted by y: everything beyond this point starts below the buffer.
+      if (entry.item.y > bottom) break;
+      if (entry.item.y + entry.item.height >= top) hits.push(entry);
+    }
+
+    hits.sort((a, b) => a.i - b.i); // restore z-order
+    return hits.map((entry) => entry.item);
+  }
+
   _drawMedia(fastMode = false) {
     const items = this.mediaManager.getItems();
     if (!items || items.length === 0) return;
@@ -1122,15 +1217,14 @@ export class CanvasRenderer {
 
     const bufferBottom = this.bufferTop + this.bufferHeight;
 
-    // Sort by z-index if available, otherwise draw in order
-    // TODO: Add z-index support to data model
+    // Draw order is array order (z-order), so the list itself must not be
+    // reordered. Instead, an index sorted by y lets us visit only the items that
+    // can overlap the buffer — a 400-page PDF previously paid a full scan per
+    // repaint just to reject ~397 of them. The visible subset is re-sorted back
+    // into array order to preserve z-order.
+    const visible = this._getItemsOverlapping(items, this.bufferTop, bufferBottom);
 
-    for (const item of items) {
-      // Culling: Skip items not visible in the current buffer
-      if (item.y + item.height < this.bufferTop || item.y > bufferBottom) {
-        continue;
-      }
-
+    for (const item of visible) {
       if (item.type === "pdf-page") {
         this._drawPdfPage(item, fastMode);
         continue;
@@ -1212,10 +1306,38 @@ export class CanvasRenderer {
   _getUninvertedPdfBounds() {
     if (!this.mediaManager) return [];
     if (getTheme() === "dark" && getPdfInvertDarkMode()) return []; // pages are inverted — dark palette is fine everywhere
-    return this.mediaManager
-      .getItems()
-      .filter((item) => item.type === "pdf-page")
-      .map((item) => ({ x: item.x, y: item.y, width: item.width, height: item.height }));
+
+    // Cached: this used to rebuild an array of one object per PDF page on every
+    // draw pass (and again per stroke start, and per marker preview frame). On a
+    // scanned book that is hundreds of allocations per repaint, on the same path
+    // that repaints while scrolling. Keyed on MediaManager.version so any
+    // add/remove/reorder/geometry change rebuilds it.
+    const version = this.mediaManager.version ?? -1;
+    if (this._pdfBoundsCache && this._pdfBoundsCacheVersion === version) {
+      return this._pdfBoundsCache;
+    }
+
+    const bounds = [];
+    for (const item of this.mediaManager.getItems()) {
+      if (item.type !== "pdf-page") continue;
+      bounds.push({ x: item.x, y: item.y, width: item.width, height: item.height });
+    }
+    // Sorted by y so _strokeNeedsLightPalette can binary-search instead of
+    // scanning every page for every stroke. Pages are normally already stacked
+    // in ascending y, making this a no-op comparison pass.
+    bounds.sort((a, b) => a.y - b.y);
+
+    // Tallest page, used to bound the backward walk in the lookup below: no page
+    // starting more than this far above a point can still contain it.
+    let maxHeight = 0;
+    for (const b of bounds) {
+      if (b.height > maxHeight) maxHeight = b.height;
+    }
+
+    this._pdfBoundsCache = bounds;
+    this._pdfBoundsMaxHeight = maxHeight;
+    this._pdfBoundsCacheVersion = version;
+    return bounds;
   }
 
   /**
@@ -1229,9 +1351,35 @@ export class CanvasRenderer {
     if (!stroke.x || stroke.x.length === 0) return false;
     const px = stroke.x[0];
     const py = stroke.y[0];
-    return uninvertedPdfBounds.some(
-      (b) => px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height,
-    );
+
+    // Binary search for the last page starting at or above py, then walk back
+    // over the few pages that could still contain the point. Pages are stacked
+    // vertically and effectively non-overlapping, so this terminates almost
+    // immediately — the previous linear .some() was O(pages) for every stroke,
+    // i.e. O(strokes x pages) per repaint.
+    let lo = 0;
+    let hi = uninvertedPdfBounds.length - 1;
+    let candidate = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (uninvertedPdfBounds[mid].y <= py) {
+        candidate = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+
+    // Walk back only as far as the tallest page could reach. Any page starting
+    // above that cutoff ends before py and cannot contain it, whatever its own
+    // height. Normally stops after one or two iterations.
+    const cutoff = py - (this._pdfBoundsMaxHeight || 0);
+    for (let i = candidate; i >= 0; i--) {
+      const b = uninvertedPdfBounds[i];
+      if (b.y < cutoff) break;
+      if (px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height) return true;
+    }
+    return false;
   }
 
   /**
@@ -1276,41 +1424,41 @@ export class CanvasRenderer {
       item.loading = true;
       this.activePdfLoads++;
 
-      getRenderedMedia(item, this.resolutionScale, { invertForDarkTheme: true })
+      // Capture the scale and generation this render was requested for, so the
+      // result can be matched against the state that is current when it lands.
+      const requestedScale = this.resolutionScale;
+      const requestedGeneration = this._renderGeneration;
+
+      getRenderedMedia(item, requestedScale, { invertForDarkTheme: true })
         .then((renderable) => {
           item.loading = false;
           this.activePdfLoads--;
+
+          // Discard superseded results. The bitmap itself is owned by the
+          // mediaManager cache (which dedupes and disposes on eviction), so it
+          // must NOT be closed here — a concurrent caller may legitimately be
+          // using the very same object.
+          const isCurrent =
+            requestedGeneration === this._renderGeneration &&
+            requestedScale === this.resolutionScale;
 
           // Only store if item is still within a reasonable range of the viewport
           // This prevents storing bitmaps for pages that were scrolled past quickly
           const inKeepZone = this._isItemInKeepZone(item);
 
-          if (inKeepZone && renderable) {
-            // If replacing an existing bitmap (e.g. zoom level change), close the old one first
-            if (item.renderable && typeof item.renderable.close === "function") {
-              item.renderable.close();
-            }
+          if (isCurrent && inKeepZone && renderable) {
             item.renderable = renderable;
-            item.renderableScale = this.resolutionScale;
+            item.renderableScale = requestedScale;
             // Don't call forceRedraw directly - use debounced queue check instead
             // This prevents cascading redraws when many pages load in succession
-          } else if (renderable) {
-            // CRITICAL: If we are not keeping this bitmap (scrolled away), we MUST close it immediately.
-            // Otherwise it leaks in GPU memory until GC kicks in (which is too slow).
-            if (typeof renderable.close === "function") {
-              renderable.close();
-            } else if (renderable.width !== undefined) {
-              renderable.width = 0;
-              renderable.height = 0;
-            }
-            // Don't forceRedraw - item is off-screen anyway
-          } else if (inKeepZone) {
+          } else if (isCurrent && inKeepZone) {
             // No renderable and still in view - mark as error to prevent infinite retry loop
             item.error = true;
             // Debounced redraw will show error state
           }
-          // Note: If not in keep zone and no renderable, do nothing - item is off-screen
-          // The next scroll will trigger a fresh load if needed
+          // Otherwise: stale generation/scale, or the item scrolled out of the
+          // keep zone. Drop the reference and let the cache's LRU eviction free
+          // it. The next draw re-requests at the then-current scale.
 
           // Schedule a debounced redraw to show loaded pages and pick up queued ones
           this._schedulePdfQueueCheck();
@@ -1505,21 +1653,21 @@ export class CanvasRenderer {
   }
 
   _releaseItemMemory(item) {
-    // CRITICAL: Clear the render cache FIRST, before destroying the renderable.
-    // Otherwise the cache holds a reference to a destroyed canvas/bitmap,
-    // causing getRenderedMedia to return corrupted resources.
+    // Invalidate any in-flight render for this item so its result is discarded
+    // rather than written back onto the item we are about to release.
+    this._renderGeneration++;
+
+    // Hand ownership back to the cache, which disposes the backing store once
+    // the entry is dropped and no longer reachable by any caller.
+    //
+    // The renderable is deliberately NOT zeroed here: the same canvas may still
+    // be referenced by a concurrent snapshot render (thumbnails share this
+    // global cache) or by an in-flight getRenderedMedia awaiting the same key.
+    // Zeroing a canvas another path is about to drawImage() throws
+    // InvalidStateError, and repeatedly orphaning full-page scanned bitmaps is
+    // what exhausted memory on low-end Android.
     clearRenderCache(item.id);
 
-    if (item.renderable) {
-      // Explicitly close ImageBitmap to free GPU memory immediately
-      if (typeof item.renderable.close === "function") {
-        item.renderable.close();
-      } else if (item.renderable.width !== undefined) {
-        // If it's a canvas, resize to 0 to free backing store
-        item.renderable.width = 0;
-        item.renderable.height = 0;
-      }
-    }
     item.renderable = null;
     item.renderableScale = null;
     // Do NOT reset item.loading = false here.
@@ -1540,6 +1688,13 @@ export class CanvasRenderer {
     }
     this._pdfQueueCheckTimeout = setTimeout(() => {
       this._pdfQueueCheckTimeout = null;
+      // This full-quality redraw satisfies any pending quality pass too — both
+      // timers call _drawBuffer over the same buffer, and letting the other fire
+      // afterwards would repaint every stroke and page a second time for nothing.
+      if (this._qualityRenderTimeout) {
+        clearTimeout(this._qualityRenderTimeout);
+        this._qualityRenderTimeout = null;
+      }
       // Redraw to show newly loaded pages and trigger loading for queued pages
       this.forceRedraw();
     }, 100); // Debounce to batch multiple load completions
@@ -1596,25 +1751,35 @@ export class CanvasRenderer {
     const screenScrollLeft = options.scrollLeft || 0;
 
     if (options.immediate) {
-      // Immediate full re-render at new resolution
+      // Immediate full re-render at new resolution. Cancel any pending debounced
+      // pass: this settle supersedes it, and letting it fire afterwards would
+      // repeat the same full redraw for nothing.
+      if (this.zoomRenderTimeout) {
+        clearTimeout(this.zoomRenderTimeout);
+        this.zoomRenderTimeout = null;
+      }
       this._resizeCanvasBitmap();
       if (options.scrollTop !== undefined) {
         this._repositionBuffer(contentScrollTop);
         this._cleanupOffscreenResources();
       }
+    } else if (this.zoomRenderTimeout) {
+      // A re-render is already pending; the pending timer will pick up whatever
+      // zoom/scroll is current when it fires. Restarting it on every pointermove
+      // would keep pushing the redraw out for the whole gesture.
     } else {
-      // Debounced full re-render - capture current scale
-      const targetScale = scale;
-      if (this.zoomRenderTimeout) {
-        clearTimeout(this.zoomRenderTimeout);
-      }
+      // Debounced full re-render. Nothing about the current zoom step is
+      // captured here: the CSS transform applied below already shows the new
+      // scale, and reallocating the buffer bitmap (viewportWidth x ~3 viewports
+      // x resolutionScale — several MB) plus a full stroke/media redraw per
+      // pointermove is the bulk of the pinch cost on low-end devices. The timer
+      // reads live state when it fires, so it always settles on the final zoom
+      // and the true scroll position rather than a value captured 150ms ago.
       this.zoomRenderTimeout = setTimeout(() => {
-        // Use the captured targetScale, not this.zoomScale which may have changed
+        this.zoomRenderTimeout = null;
         this._resizeCanvasBitmap();
-        if (options.scrollTop !== undefined) {
-          this._repositionBuffer(options.scrollTop / targetScale);
-          this._cleanupOffscreenResources();
-        }
+        this._repositionBuffer(this.contentScrollTop);
+        this._cleanupOffscreenResources();
       }, this.zoomRenderDebounce);
     }
 
@@ -1641,6 +1806,10 @@ export class CanvasRenderer {
     // A theme switch also changes which palette an in-progress stroke draws
     // in, so drop the colour cached for it (see drawDirectStroke).
     this._activeStrokeColor = null;
+    // Bump unconditionally: a page still loading when the theme flips has no
+    // renderable yet, so the loop below would skip it and let it resolve with
+    // the previous theme's inversion baked in.
+    this._renderGeneration++;
     if (!this.mediaManager) return;
     for (const item of this.mediaManager.getItems()) {
       if (item.type === "pdf-page" && item.renderable) {
@@ -1728,7 +1897,11 @@ export class CanvasRenderer {
     );
 
     for (const item of visibleItems) {
-      if (!item.renderable) continue;
+      // Bitmaps are awaited above and drawn here a tick later, so an LRU
+      // eviction in the shared render cache may have released one in between.
+      // A zero-sized source makes drawImage throw InvalidStateError and would
+      // abort the whole thumbnail, so skip rather than draw.
+      if (!item.renderable?.width || !item.renderable.height) continue;
       targetCtx.save();
       if (item.rotation) {
         const cx = item.x + item.width / 2;
@@ -1786,6 +1959,7 @@ export class CanvasRenderer {
   destroy() {
     if (this.zoomRenderTimeout) {
       clearTimeout(this.zoomRenderTimeout);
+      this.zoomRenderTimeout = null;
     }
 
     if (this._qualityRenderTimeout) {
