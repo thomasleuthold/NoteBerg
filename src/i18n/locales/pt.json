@@ -526,6 +526,15 @@
       "sendToBack": "Enviar para trás",
       "delete": "Excluir"
     },
+    "camera": {
+      "errorTitle": "Câmara indisponível",
+      "insecureContext": "A câmara só pode ser utilizada através de uma ligação segura (HTTPS). Esta aplicação está a ser servida por HTTP simples, pelo que o navegador bloqueia totalmente o acesso à câmara. Abra a aplicação através de HTTPS ou utilize «Inserir imagem» para adicionar uma foto existente.",
+      "unsupported": "Este navegador não suporta captura pela câmara. Utilize «Inserir imagem» para adicionar uma foto existente.",
+      "permissionDenied": "O acesso à câmara foi negado. Permita o acesso à câmara para este site nas definições do navegador e tente novamente.",
+      "noCamera": "Não foi encontrada nenhuma câmara neste dispositivo. Utilize «Inserir imagem» para adicionar uma foto existente.",
+      "inUse": "A câmara está a ser utilizada por outra aplicação. Feche-a e tente novamente.",
+      "failed": "Não foi possível iniciar a câmara. Tente novamente ou utilize «Inserir imagem» para adicionar uma foto existente."
+    },
     "pdf": {
       "delete": "Excluir PDF",
       "deleteConfirmTitle": "Excluir PDF",

@@ -113,6 +113,107 @@ describe("MediaManager", () => {
     expect(hit).toBeNull();
   });
 
+  describe("pending insert placeholders", () => {
+    // A placeholder is shown as soon as an image insert starts, before the file
+    // has been encoded and stored. It has no fileId until resolvePendingItem
+    // attaches one.
+    const placeholder = {
+      id: "p1",
+      type: "image",
+      pending: true,
+      x: 200,
+      y: 200,
+      width: 100,
+      height: 100,
+      rotation: 0,
+    };
+
+    it("does not attempt to load a file for a placeholder", async () => {
+      const { getFile } = await import("../../modules/storage.js");
+      mediaManager.addItem({ ...placeholder });
+      expect(getFile).not.toHaveBeenCalledWith(undefined);
+    });
+
+    it("is not selectable by hit test while pending", () => {
+      mediaManager.addItem({ ...placeholder });
+      // Dead centre of the placeholder — a resolved image here would be hit.
+      expect(mediaManager.hitTest(250, 250)).toBeNull();
+    });
+
+    it("becomes selectable once resolved", async () => {
+      const { getFile } = await import("../../modules/storage.js");
+      getFile.mockResolvedValue(new Blob(["fake"], { type: "image/jpeg" }));
+
+      mediaManager.addItem({ ...placeholder });
+      mediaManager.resolvePendingItem("p1", "f-new");
+
+      const hit = mediaManager.hitTest(250, 250);
+      expect(hit).not.toBeNull();
+      expect(hit.id).toBe("p1");
+    });
+
+    it("attaches the file, applies final geometry and clears the pending flag", async () => {
+      const { getFile } = await import("../../modules/storage.js");
+      getFile.mockResolvedValue(new Blob(["fake"], { type: "image/jpeg" }));
+
+      mediaManager.addItem({ ...placeholder });
+      const resolved = mediaManager.resolvePendingItem("p1", "f-new", {
+        width: 320,
+        height: 240,
+      });
+
+      expect(resolved).toBe(true);
+      const item = mediaManager.getItems().find((i) => i.id === "p1");
+      expect(item.fileId).toBe("f-new");
+      expect(item.width).toBe(320);
+      expect(item.height).toBe(240);
+      // Must be absent, not undefined: the item is serialized into the note JSON.
+      expect("pending" in item).toBe(false);
+      // Resolving is what triggers the real image to load.
+      expect(getFile).toHaveBeenCalledWith("f-new");
+    });
+
+    // x/y are the top-left corner, so applying a new size alone would pin the
+    // image to that corner and make it visibly jump as the real dimensions
+    // replace the 4:3 estimate. Keeping the centre fixed means only the aspect
+    // ratio changes on screen.
+    it("keeps the placeholder's centre when the final size differs", async () => {
+      const { getFile } = await import("../../modules/storage.js");
+      getFile.mockResolvedValue(new Blob(["fake"], { type: "image/jpeg" }));
+
+      mediaManager.addItem({ ...placeholder }); // 200,200 100x100 → centre 250,250
+      mediaManager.resolvePendingItem("p1", "f-new", { width: 320, height: 240 });
+
+      const item = mediaManager.getItems().find((i) => i.id === "p1");
+      expect(item.x + item.width / 2).toBe(250);
+      expect(item.y + item.height / 2).toBe(250);
+    });
+
+    it("leaves position untouched when no final geometry is supplied", async () => {
+      const { getFile } = await import("../../modules/storage.js");
+      getFile.mockResolvedValue(new Blob(["fake"], { type: "image/jpeg" }));
+
+      mediaManager.addItem({ ...placeholder });
+      mediaManager.resolvePendingItem("p1", "f-new");
+
+      const item = mediaManager.getItems().find((i) => i.id === "p1");
+      expect(item.x).toBe(200);
+      expect(item.y).toBe(200);
+    });
+
+    it("reports failure when the placeholder is already gone", () => {
+      // The note was closed or the insert undone while processing was in flight.
+      expect(mediaManager.resolvePendingItem("missing", "f-new")).toBe(false);
+    });
+
+    it("bumps version so renderers refresh derived state", () => {
+      mediaManager.addItem({ ...placeholder });
+      const before = mediaManager.version;
+      mediaManager.resolvePendingItem("p1", "f-new");
+      expect(mediaManager.version).toBeGreaterThan(before);
+    });
+  });
+
   it("loads image on demand and caches it once the Image element fires onload", async () => {
     const { getFile } = await import("../../modules/storage.js");
     const blob = new Blob(["fake-image"], { type: "image/png" });

@@ -526,6 +526,15 @@
       "sendToBack": "Arrière-plan",
       "delete": "Supprimer"
     },
+    "camera": {
+      "errorTitle": "Caméra indisponible",
+      "insecureContext": "La caméra ne peut être utilisée que via une connexion sécurisée (HTTPS). Cette application est servie en HTTP simple, le navigateur bloque donc totalement l'accès à la caméra. Veuillez ouvrir l'application via HTTPS ou utiliser « Insérer une image » pour ajouter une photo existante.",
+      "unsupported": "Ce navigateur ne prend pas en charge la capture par caméra. Veuillez utiliser « Insérer une image » pour ajouter une photo existante.",
+      "permissionDenied": "L'accès à la caméra a été refusé. Veuillez autoriser l'accès à la caméra pour ce site dans les paramètres de votre navigateur, puis réessayer.",
+      "noCamera": "Aucune caméra n'a été trouvée sur cet appareil. Veuillez utiliser « Insérer une image » pour ajouter une photo existante.",
+      "inUse": "La caméra est actuellement utilisée par une autre application. Veuillez la fermer et réessayer.",
+      "failed": "La caméra n'a pas pu être démarrée. Veuillez réessayer ou utiliser « Insérer une image » pour ajouter une photo existante."
+    },
     "pdf": {
       "delete": "Supprimer le PDF",
       "deleteConfirmTitle": "Supprimer le PDF",

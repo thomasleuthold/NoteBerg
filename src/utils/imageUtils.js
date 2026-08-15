@@ -65,18 +65,79 @@ export function pickImages(multiple = true) {
 }
 
 /**
- * Capture image from camera using HTML5 file input with capture attribute
- * Falls back to getUserMedia if cancelled
+ * Whether camera capture can work at all in this context.
+ *
+ * `navigator.mediaDevices` is undefined — not merely permission-gated — outside
+ * a secure context. A Nextcloud instance reached over plain HTTP by hostname or
+ * LAN IP (http://nextcloud.local, http://192.168.x.x) therefore has no camera
+ * API whatsoever, which is indistinguishable at the call site from the user
+ * cancelling unless it is checked up front.
+ * @returns {boolean}
+ */
+export function isCameraAvailable() {
+  return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+}
+
+/**
+ * Explain why the camera is unavailable, or null if it is available.
+ *
+ * Separated from isCameraAvailable so the UI can both hide the control AND give
+ * a reason when it is invoked anyway.
+ * @returns {{reason: string, message: string}|null}
+ */
+export function getCameraUnavailableReason() {
+  if (isCameraAvailable()) return null;
+  // isSecureContext is the discriminator: false means the browser withheld the
+  // API because of the origin, which no amount of permission granting fixes.
+  if (typeof window !== "undefined" && window.isSecureContext === false) {
+    return { reason: "insecure-context", message: t("canvas.camera.insecureContext") };
+  }
+  return { reason: "unsupported", message: t("canvas.camera.unsupported") };
+}
+
+/**
+ * Capture image from camera using getUserMedia with a live preview.
+ *
  * @param {string} facing - Camera facing mode: 'user' (front) or 'environment' (back)
- * @returns {Promise<File|null>} - Captured image file or null if cancelled
+ * @returns {Promise<File|null>} - Captured image file, or null if the user cancelled
+ * @throws {Error} With a `.reason` of 'insecure-context' | 'unsupported' |
+ *   'permission-denied' | 'no-camera' | 'failed' when capture cannot proceed.
+ *   Cancellation is NOT an error — it resolves null. Callers must distinguish
+ *   the two: previously every failure was swallowed into null, so an origin
+ *   without camera access looked exactly like a cancelled dialog and the button
+ *   appeared to do nothing at all.
  */
 export async function captureFromCamera(facing = "environment") {
-  // Use getUserMedia with camera preview (works everywhere)
+  const unavailable = getCameraUnavailableReason();
+  if (unavailable) {
+    const error = new Error(unavailable.message);
+    error.reason = unavailable.reason;
+    throw error;
+  }
+
   try {
     return await captureWithGetUserMedia(facing);
   } catch (error) {
     console.error("getUserMedia failed:", error);
-    return null; // Failed
+    // Map the DOMException names getUserMedia rejects with onto messages that
+    // tell the user what to actually do about it.
+    const name = error?.name;
+    let reason = "failed";
+    let message = t("canvas.camera.failed");
+    if (name === "NotAllowedError" || name === "SecurityError") {
+      reason = "permission-denied";
+      message = t("canvas.camera.permissionDenied");
+    } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+      reason = "no-camera";
+      message = t("canvas.camera.noCamera");
+    } else if (name === "NotReadableError") {
+      reason = "in-use";
+      message = t("canvas.camera.inUse");
+    }
+    const wrapped = new Error(message);
+    wrapped.reason = reason;
+    wrapped.cause = error;
+    throw wrapped;
   }
 }
 
@@ -104,7 +165,8 @@ async function captureWithGetUserMedia(facing = "environment") {
   let currentCameraIndex = 0;
 
   try {
-    // Check if getUserMedia is supported
+    // Availability is checked by captureFromCamera before this runs, so the API
+    // is present here. Kept as a guard for any direct caller.
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("getUserMedia not supported");
     }
@@ -132,7 +194,7 @@ async function captureWithGetUserMedia(facing = "environment") {
             track.stop();
           });
         }
-        document.body.removeChild(modal);
+        removeCameraModal(modal);
       };
     }
 
@@ -274,23 +336,22 @@ async function captureWithGetUserMedia(facing = "environment") {
         await setupAutoFocus(stream);
       };
 
-      const onCapture = async (capturedFile) => {
-        // Stop camera
+      // Capture and cancel can race (Cancel tapped while a capture is still
+      // encoding). Settle once: the second path must not stop already-stopped
+      // tracks or remove an already-removed modal.
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
         stream.getTracks().forEach((track) => {
           track.stop();
         });
-        document.body.removeChild(modal);
-        resolve(capturedFile);
+        removeCameraModal(modal);
+        resolve(result);
       };
 
-      const onCancel = () => {
-        // Cancel
-        stream.getTracks().forEach((track) => {
-          track.stop();
-        });
-        document.body.removeChild(modal);
-        resolve(null);
-      };
+      const onCapture = (capturedFile) => finish(capturedFile);
+      const onCancel = () => finish(null);
 
       // Update modal with stream and handlers
       updateCameraModal(
@@ -309,44 +370,92 @@ async function captureWithGetUserMedia(facing = "environment") {
   } catch (error) {
     console.error("getUserMedia error:", error);
 
-    // Show error to user in the modal if it exists
-    if (modal?.parentNode) {
-      const labelElement = modal.querySelector(".camera-label");
-      if (labelElement) {
-        labelElement.textContent = `Camera Error: ${error.message}`;
-        labelElement.style.color = "#ef4444"; // Red color
-      }
-
-      // Hide loading indicator
-      const loadingIndicator = modal.querySelector(".camera-loading");
-      if (loadingIndicator) {
-        loadingIndicator.style.display = "none";
-      }
-
-      // Make cancel button work to close the modal
-      const cancelBtn = modal.querySelector(".cancel-btn");
-      if (cancelBtn) {
-        cancelBtn.style.opacity = "1";
-        cancelBtn.style.pointerEvents = "auto";
-        cancelBtn.onclick = () => {
-          document.body.removeChild(modal);
-        };
-      }
-
-      // Don't throw - let user see the error and close manually
-      return null;
-    }
-
-    // Clean up on error if modal hasn't been added yet
+    // Tear the modal down and rethrow. It previously stayed open showing a raw
+    // English "Camera Error: ..." label and returned null, which the caller
+    // could not distinguish from a cancellation — so the user was left with a
+    // dead dialog and no localized explanation. captureFromCamera now maps the
+    // error to a translated message and the caller shows it.
     if (stream) {
       stream.getTracks().forEach((track) => {
         track.stop();
       });
     }
-
-    // Return null instead of throwing to prevent uncaught errors
-    return null;
+    removeCameraModal(modal);
+    throw error;
   }
+}
+
+/**
+ * Wire up the capture button of a camera modal.
+ *
+ * Shared by createCameraModal (initial wiring) and updateCameraModal (re-wiring
+ * once the stream arrives) so the re-entry guard exists on exactly one code path.
+ *
+ * Encoding a 1920x1080 frame (drawImage + toBlob) takes well over a second on a
+ * slow device, during which the modal is still on screen. Without a guard the
+ * user taps again — producing a second capture whose onCapture() would call
+ * removeChild() on an already-removed modal and throw NotFoundError from inside
+ * a toBlob callback, where nothing can catch it.
+ *
+ * Exported for testing: the guard is the fix for a double-capture bug, so it is
+ * verified directly rather than through the whole getUserMedia flow.
+ *
+ * @param {HTMLElement} modal - Camera modal element
+ * @param {HTMLVideoElement} video - Video element showing the stream
+ * @param {HTMLButtonElement} captureBtn - The capture button
+ * @param {Function} onCapture - Callback receiving the captured File
+ */
+export function attachCaptureHandler(modal, video, captureBtn, onCapture) {
+  let capturing = false;
+
+  captureBtn.onclick = () => {
+    if (capturing) return;
+
+    // No frame decoded yet: canvas would be 0x0 and toBlob would yield null,
+    // making `new File([null], ...)` throw. Ignore the tap and let the user
+    // retry once the preview is live.
+    if (!video.videoWidth || !video.videoHeight) return;
+
+    capturing = true;
+    // Dims the preview, disables the controls and shows the existing spinner.
+    showLoadingState(modal, true);
+    captureBtn.disabled = true;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0);
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          // Encoding failed — restore the modal so the user can retry rather
+          // than leaving a dead spinner on screen.
+          capturing = false;
+          captureBtn.disabled = false;
+          showLoadingState(modal, false);
+          return;
+        }
+        const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+        onCapture(file);
+      },
+      "image/jpeg",
+      0.92,
+    );
+  };
+}
+
+/**
+ * Remove the camera modal if it is still in the DOM.
+ *
+ * Idempotent: capture and cancel can both be in flight (a tap on Cancel while a
+ * capture is encoding), and a plain removeChild on an already-removed node
+ * throws NotFoundError.
+ * @param {HTMLElement} modal
+ */
+function removeCameraModal(modal) {
+  modal?.parentNode?.removeChild(modal);
 }
 
 /**
@@ -488,25 +597,8 @@ function updateCameraModal(
   const captureBtn = modal.querySelector(".capture-btn");
   const cancelBtn = modal.querySelector(".cancel-btn");
 
-  if (captureBtn) {
-    captureBtn.onclick = async () => {
-      // Capture frame from video
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0);
-
-      // Convert to blob then to file
-      canvas.toBlob(
-        (blob) => {
-          const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
-          onCapture(file);
-        },
-        "image/jpeg",
-        0.92,
-      );
-    };
+  if (captureBtn && video) {
+    attachCaptureHandler(modal, video, captureBtn, onCapture);
   }
 
   if (cancelBtn) {
@@ -697,24 +789,7 @@ function createCameraModal(
   `;
 
   if (onCapture) {
-    captureBtn.addEventListener("click", async () => {
-      // Capture frame from video
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0);
-
-      // Convert to blob then to file
-      canvas.toBlob(
-        (blob) => {
-          const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
-          onCapture(file);
-        },
-        "image/jpeg",
-        0.92,
-      );
-    });
+    attachCaptureHandler(modal, video, captureBtn, onCapture);
   }
 
   if (onCancel) {

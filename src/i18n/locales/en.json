@@ -526,6 +526,15 @@
       "sendToBack": "Send to Back",
       "delete": "Delete"
     },
+    "camera": {
+      "errorTitle": "Camera Unavailable",
+      "insecureContext": "The camera can only be used over a secure (HTTPS) connection. This app is being served over plain HTTP, so the browser blocks camera access entirely. Please open the app via HTTPS, or use \"Insert Image\" to add an existing photo.",
+      "unsupported": "This browser does not support camera capture. Please use \"Insert Image\" to add an existing photo instead.",
+      "permissionDenied": "Camera access was denied. Please allow camera access for this site in your browser settings and try again.",
+      "noCamera": "No camera was found on this device. Please use \"Insert Image\" to add an existing photo instead.",
+      "inUse": "The camera is currently in use by another application. Please close it and try again.",
+      "failed": "The camera could not be started. Please try again, or use \"Insert Image\" to add an existing photo."
+    },
     "pdf": {
       "delete": "Delete PDF",
       "deleteConfirmTitle": "Delete PDF",

@@ -279,6 +279,13 @@ describe("NoteCanvas Class", () => {
           const item = mediaManagerItems.find((i) => i.id === id);
           if (item) Object.assign(item, props);
         }),
+        resolvePendingItem: vi.fn((id, fileId, geometry = {}) => {
+          const item = mediaManagerItems.find((i) => i.id === id);
+          if (!item) return false;
+          Object.assign(item, geometry, { fileId });
+          delete item.pending;
+          return true;
+        }),
         moveItemToFront: vi.fn((id) => {
           const item = mediaManagerItems.find((i) => i.id === id);
           const index = mediaManagerItems.findIndex((i) => i.id === id);
@@ -343,6 +350,8 @@ describe("NoteCanvas Class", () => {
         drawLassoTrail: vi.fn(),
         clearOverlay: vi.fn(),
         forceRedraw: vi.fn(),
+        startPendingMediaAnimation: vi.fn(),
+        stopPendingMediaAnimation: vi.fn(),
         setZoom: vi.fn(),
         setSelectedStrokes: vi.fn(),
         setSelectedMedia: vi.fn(),
@@ -745,6 +754,118 @@ describe("NoteCanvas Class", () => {
         expect.any((await import("./commands/index.js")).InsertMediaCommand),
       );
     });
+
+    // On a slow device, encoding and storing a camera photo takes seconds. The
+    // canvas must show a placeholder for that whole window instead of staying
+    // unchanged, which reads as "nothing happened".
+    describe("pending placeholder", () => {
+      /** Hold processImageFile open so the in-flight state can be inspected. */
+      function deferProcessing(processImageFile) {
+        let release;
+        const gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        processImageFile.mockImplementation(async () => {
+          await gate;
+          return { dataUrl: "data:image/png;base64,test", width: 100, height: 100 };
+        });
+        return () => release();
+      }
+
+      async function setupInsert() {
+        await noteCanvas.load("note-1");
+        const { pickImages, processImageFile } = await import("../../utils/imageUtils.js");
+        pickImages.mockResolvedValue([new File([""], "test.png")]);
+        global.fetch = vi.fn(() =>
+          Promise.resolve({
+            blob: () => Promise.resolve(new Blob(["test"], { type: "image/png" })),
+          }),
+        );
+        return { processImageFile };
+      }
+
+      it("shows a placeholder before processing finishes, then resolves it", async () => {
+        const { processImageFile } = await setupInsert();
+        const release = deferProcessing(processImageFile);
+
+        const insertion = noteCanvas.insertImage("picker");
+        // Let the placeholder be added before processing is allowed to finish.
+        await vi.waitFor(() => {
+          expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(true);
+        });
+
+        // The user must see the placeholder and its spinner right away.
+        expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalled();
+        expect(noteCanvas.renderer.startPendingMediaAnimation).toHaveBeenCalled();
+
+        release();
+        await insertion;
+
+        // Once the real image lands, no placeholder (or spinner) is left behind.
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(false);
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.fileId)).toBe(true);
+        expect(noteCanvas.renderer.stopPendingMediaAnimation).toHaveBeenCalled();
+      });
+
+      it("removes the placeholder when processing fails", async () => {
+        const { processImageFile } = await setupInsert();
+        processImageFile.mockRejectedValue(new Error("decode failed"));
+
+        await noteCanvas.insertImage("picker");
+
+        // A failed insert must not leave a spinner running over an image that
+        // is never coming.
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(false);
+        expect(noteCanvas.renderer.stopPendingMediaAnimation).toHaveBeenCalled();
+        expect(noteCanvas.historyManager.push).not.toHaveBeenCalled();
+      });
+
+      it("leaves a concurrent insert's placeholder and spinner alone when one fails", async () => {
+        const { processImageFile } = await setupInsert();
+
+        // Insert A stalls; insert B fails outright.
+        const releaseA = deferProcessing(processImageFile);
+        const insertionA = noteCanvas.insertImage("picker");
+        await vi.waitFor(() => {
+          expect(noteCanvas.mediaManager.getItems().filter((i) => i.pending)).toHaveLength(1);
+        });
+
+        processImageFile.mockRejectedValue(new Error("decode failed"));
+        await noteCanvas.insertImage("picker");
+
+        // B's failure must not take A's placeholder or the shared spinner down.
+        expect(noteCanvas.mediaManager.getItems().filter((i) => i.pending)).toHaveLength(1);
+        expect(noteCanvas.renderer.stopPendingMediaAnimation).not.toHaveBeenCalled();
+
+        releaseA();
+        await insertionA;
+        expect(noteCanvas.renderer.stopPendingMediaAnimation).toHaveBeenCalled();
+      });
+
+      it("does not persist a placeholder that has no file yet", async () => {
+        const { processImageFile } = await setupInsert();
+        const release = deferProcessing(processImageFile);
+
+        const insertion = noteCanvas.insertImage("picker");
+        await vi.waitFor(() => {
+          expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(true);
+        });
+
+        // A save triggered mid-insert (autosave, note close) must not write a
+        // media entry pointing at a file that does not exist.
+        await noteCanvas._saveMediaChanges();
+        expect(noteCanvas.noteData.media.some((i) => i.pending)).toBe(false);
+        expect(noteCanvas.noteData.media.every((i) => i.fileId)).toBe(true);
+
+        // ...and the placeholder must survive that save, or the spinner would
+        // vanish and there would be nothing left to resolve.
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(true);
+
+        release();
+        await insertion;
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.fileId)).toBe(true);
+      });
+    });
   });
 
   describe("Hit-detection geometry", () => {
@@ -1000,15 +1121,46 @@ describe("NoteCanvas Class", () => {
       expect(ctx.runCalls[0]).toBe(onProgress);
     });
 
-    it("stops the trailing run once the note is closed (noteId nulled)", async () => {
+    // Regression: closing the note mid-save must NOT abandon the trailing pass.
+    // The trailing pass is what carries edits made while the first run was in
+    // flight — including an image placeholder that resolved during the awaits.
+    // Skipping it (the old behaviour, which keyed the loop guard off this.noteId)
+    // meant the last state written was the snapshot taken *before* the image
+    // resolved, so a photo added just before closing was silently lost.
+    it("still runs the trailing pass after the note is closed (noteId nulled)", async () => {
       const ctx = makeCtx();
       const p1 = ctx.save();
       ctx.save(); // flag dirty
       ctx.noteId = null; // simulate destroy() during the in-flight run
-      await ctx.releaseRun(); // run #1 ends; loop guard sees noteId null → no trailing
+      await ctx.releaseRun(); // run #1 ends; dirty → trailing run #2 starts anyway
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(2);
+
+      await ctx.releaseRun(); // run #2 finishes, not dirty → done
       await p1;
-      expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
       expect(ctx._mediaSaveRunning).toBeNull();
+    });
+
+    // The captured identity is what makes the above safe: the pass must keep
+    // using the note it started on, never re-read a this.noteId that destroy()
+    // has since nulled (which would write media to an undefined path).
+    it("passes the captured note identity to every run", async () => {
+      const ctx = makeCtx();
+      const noteData = ctx.noteData;
+      const mediaManager = ctx.mediaManager;
+      const p1 = ctx.save();
+      ctx.save(); // flag dirty → forces a trailing pass
+      ctx.noteId = null;
+      ctx.noteData = null;
+      ctx.mediaManager = null;
+
+      await ctx.releaseRun();
+      await ctx.releaseRun();
+      await p1;
+
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(2);
+      for (const call of ctx._runMediaSave.mock.calls) {
+        expect(call[1]).toEqual({ noteId: "n1", noteData, mediaManager });
+      }
     });
   });
 

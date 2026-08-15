@@ -93,12 +93,6 @@
   z-index: 2;
 }
 
-.sliding-buffer-canvas--centered {
-  position: relative;
-  left: auto;
-  transform-origin: top center;
-}
-
 .note-canvas__overlay {
   position: absolute;
   top: 0;

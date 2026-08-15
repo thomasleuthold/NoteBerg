@@ -526,6 +526,15 @@
       "sendToBack": "In den Hintergrund",
       "delete": "Löschen"
     },
+    "camera": {
+      "errorTitle": "Kamera nicht verfügbar",
+      "insecureContext": "Die Kamera kann nur über eine sichere (HTTPS-)Verbindung verwendet werden. Diese App wird über einfaches HTTP bereitgestellt, daher blockiert der Browser den Kamerazugriff vollständig. Bitte öffnen Sie die App über HTTPS oder verwenden Sie „Bild einfügen\", um ein vorhandenes Foto hinzuzufügen.",
+      "unsupported": "Dieser Browser unterstützt keine Kameraaufnahme. Bitte verwenden Sie „Bild einfügen\", um ein vorhandenes Foto hinzuzufügen.",
+      "permissionDenied": "Der Kamerazugriff wurde verweigert. Bitte erlauben Sie den Kamerazugriff für diese Website in Ihren Browsereinstellungen und versuchen Sie es erneut.",
+      "noCamera": "Auf diesem Gerät wurde keine Kamera gefunden. Bitte verwenden Sie „Bild einfügen\", um ein vorhandenes Foto hinzuzufügen.",
+      "inUse": "Die Kamera wird derzeit von einer anderen Anwendung verwendet. Bitte schließen Sie diese und versuchen Sie es erneut.",
+      "failed": "Die Kamera konnte nicht gestartet werden. Bitte versuchen Sie es erneut oder verwenden Sie „Bild einfügen\", um ein vorhandenes Foto hinzuzufügen."
+    },
     "pdf": {
       "delete": "PDF löschen",
       "deleteConfirmTitle": "PDF löschen",

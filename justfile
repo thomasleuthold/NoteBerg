@@ -122,6 +122,12 @@ build-nc:
     Copy-Item -Recurse "js"        "build-nc-tmp\noteberg\"
     Copy-Item -Recurse "css"       "build-nc-tmp\noteberg\"
     Copy-Item -Recurse "assets"    "build-nc-tmp\noteberg\" -ErrorAction SilentlyContinue
+    # pdfjs-wasm holds the JBig2/JPX decoders pdf.js fetches at runtime from
+    # apps/noteberg/pdfjs-wasm/. Omitting it 404s those fetches, and a PDF whose
+    # pages ARE JBig2 scans (the common case for scanned books) then renders as
+    # blank white pages — pdf.js logs "ignoring XObject" and returns an empty
+    # operator list, so nothing surfaces as an error to catch.
+    Copy-Item -Recurse "pdfjs-wasm" "build-nc-tmp\noteberg\"
 
     # 2b. Stage the changelog as appinfo/CHANGELOG.md — that is where the NC App
     # Store reads release notes from. The top section's heading is rewritten to
@@ -149,21 +155,86 @@ build-nc:
 # Nextcloud dev & test environments (Podman)
 # ===========================================================================
 
+# Expose a container port to Windows as http://localhost:<listen>.
+#
+# Why a relay and not `netsh portproxy`:
+# WSL2 automatically forwards localhost to any port listening in the distro's
+# ROOT network namespace — no configuration, no admin. Podman containers do not
+# benefit from that: they listen inside podman's own network namespace, which
+# WSL's forwarder cannot see, so http://localhost:<port> gets nothing.
+#
+# portproxy was the old workaround (route Windows -> the VM's eth0 IP), but it
+# needs an ELEVATED shell, and on this setup Windows cannot reach the VM subnet
+# at all — the entry accepts the connection and then resets it, which surfaces in
+# a browser as NS_ERROR_NET_EMPTY_RESPONSE. It also breaks whenever the VM's IP
+# changes on restart.
+#
+# This relay instead runs a tiny socket forwarder INSIDE the VM's root namespace,
+# bridging <listen> to the container's published port. WSL then forwards
+# localhost:<listen> natively. No elevation, and no dependency on the VM's IP.
+[private]
+_relay listen target:
+    #!powershell.exe
+    $ErrorActionPreference = 'Continue'
+    # Copy the relay into the VM (the repo's /mnt/c path is slow and may not be
+    # mounted in every distro), then start it detached. pkill first so repeated
+    # `just nc-up` calls don't stack relays on the same port.
+    wsl -d podman-machine-default -- sh -c "pkill -f 'wsl-relay.py {{listen}} ' 2>/dev/null; exit 0" 2>&1 | Out-Null
+    $script = (Resolve-Path "scripts/wsl-relay.py").Path
+    $wslPath = wsl -d podman-machine-default -- wslpath -a "$($script -replace '\\','/')"
+    wsl -d podman-machine-default -- sh -c "cp '$wslPath' /tmp/wsl-relay.py; nohup setsid python3 /tmp/wsl-relay.py {{listen}} {{target}} >/dev/null 2>&1 < /dev/null & sleep 1; exit 0" 2>&1 | Out-Null
+    Write-Host "Ready at http://localhost:{{listen}}" -ForegroundColor Green
+
+# Stop the relay for <listen>.
+[private]
+_relay-down listen:
+    #!powershell.exe
+    $ErrorActionPreference = 'Continue'
+    wsl -d podman-machine-default -- sh -c "pkill -f 'wsl-relay.py {{listen}} ' 2>/dev/null; exit 0" 2>&1 | Out-Null
+    exit 0
+
 # Start the NC dev container (port 8080, repo volume-mounted at /apps-extra/noteberg)
 nc-up:
     podman run --rm --name noteberg-nc -d -p 8080:80 -v "${PWD}:/var/www/html/apps-extra/noteberg" ghcr.io/juliusknorr/nextcloud-dev-php84:latest
-    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1; netsh interface portproxy add v4tov4 listenport=8080 listenaddress=127.0.0.1 connectport=8080 connectaddress=$wslIp 2>&1 | Out-Null; Write-Host "NoteBerg Nextcloud running at http://localhost:8080 (WSL IP: $wslIp)"
+    just _relay 8180 8080
+    just _trust-lan-ip noteberg-nc 8180
     Write-Host "Run 'npm run dev:nextcloud' in a separate terminal for watch mode"
+
+# Add this machine's LAN IP to the container's trusted_domains, so the instance
+# can be opened from a phone on the same network (http://<lan-ip>:8180) instead
+# of only from localhost. Without it Nextcloud refuses the host outright with
+# "Access through untrusted domain".
+#
+# The IP is detected at run time rather than hardcoded: it comes from DHCP, so it
+# changes between networks and machines. The adapter is chosen by preferring one
+# with a default gateway and skipping WSL's virtual adapter, link-local
+# addresses, and loopback — on this setup the raw list also contains a WSL
+# adapter (172.20.x) and a WireGuard interface, neither of which a phone can
+# reach.
+#
+# Containers run with --rm, so this is lost on nc-down and has to run on every
+# start. Non-fatal: a failure here only costs LAN access, not the container.
+[private]
+_trust-lan-ip container listen:
+    #!powershell.exe
+    $ErrorActionPreference = 'Continue'
+    $ip = (Get-NetIPConfiguration | Where-Object { $_.NetAdapter.Status -eq 'Up' -and $_.IPv4Address -and $_.InterfaceAlias -notlike '*WSL*' -and $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPv4Address.IPAddress -notlike '169.254.*' } | Sort-Object { $_.IPv4DefaultGateway -eq $null } | Select-Object -First 1).IPv4Address.IPAddress
+    if (-not $ip) { Write-Host "No LAN IP found - skipping trusted_domains (localhost still works)" -ForegroundColor Yellow; exit 0 }
+    # //bin/sh rather than bash: the stock nextcloud:*-apache image (nc-test33)
+    # has no bash. The doubled slash stops Git Bash / MSYS rewriting the path.
+    podman exec {{container}} //bin/sh -c "php /var/www/html/occ config:system:set trusted_domains 4 --value=$ip" 2>&1 | Out-Null
+    Write-Host "Reachable on this network at http://${ip}:{{listen}}" -ForegroundColor Green
+    exit 0
 
 # Stop the NC dev container (port 8080) and clean up the port proxy
 nc-down:
     podman stop noteberg-nc
-    netsh interface portproxy delete v4tov4 listenport=8080 listenaddress=127.0.0.1 2>&1 | Out-Null
+    just _relay-down 8180
 
 # Rebuild JS/CSS into the dev container (8080) — hard reload after. Requires: just nc-up
 nc-dev-push:
     npm run build:nextcloud
-    Write-Host "Built for nc-up (8080) — hard reload http://localhost:8080"
+    Write-Host "Built for nc-up — hard reload http://localhost:8180"
 
 # Tests the published package as a real user would — no volume mount, no cache tricks
 # php=84 (default, NC 34+) or php=81 (NC 33)
@@ -171,20 +242,20 @@ nc-dev-push:
 nc-test php="84":
     podman stop noteberg-nc-test 2>&1 | Out-Null; $true
     podman run --rm --name noteberg-nc-test -d -p 8081:80 ghcr.io/juliusknorr/nextcloud-dev-php{{php}}:latest
-    netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
-    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1; netsh interface portproxy add v4tov4 listenport=8081 listenaddress=127.0.0.1 connectport=8081 connectaddress=$wslIp 2>&1 | Out-Null
+    just _relay 8181 8081
     Write-Host "Waiting for Nextcloud to initialize..."
     Start-Sleep -Seconds 15
     podman exec noteberg-nc-test bash -c "php /var/www/html/occ config:system:set updater.release.channel --value=beta"
     podman exec noteberg-nc-test bash -c "php /var/www/html/occ config:app:delete core lastupdatedat"
     podman exec noteberg-nc-test bash -c "php /var/www/html/occ app:install --allow-unstable noteberg"
-    Write-Host "NoteBerg installed from App Store. Open http://localhost:8081 (admin/admin) to test."
+    just _trust-lan-ip noteberg-nc-test 8181
+    Write-Host "NoteBerg installed from App Store. Open http://localhost:8181 (admin/admin) to test."
     Write-Host "Run 'just nc-test-down' when done."
 
 # Stop the App Store test container (port 8081) and clean up the port proxy
 nc-test-down:
     podman stop noteberg-nc-test
-    netsh interface portproxy delete v4tov4 listenport=8081 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
+    just _relay-down 8181
 
 # Requires: just nc-test container running
 # Rebuild and push local assets into the running nc-test container for rapid CSS iteration
@@ -203,28 +274,28 @@ nc-test-push:
     Write-Host "Assets pushed — hard reload the browser (Ctrl+Shift+R)."
 
 # Uses official nextcloud:33-apache image (self-contained, no occ pre-setup needed)
-# First run: complete the NC web installer at http://localhost:8082 (set admin/admin)
+# First run: complete the NC web installer at http://localhost:8182 (set admin/admin)
 # Spin up a stock Nextcloud 33 (Apache) instance (8082) with NoteBerg volume-mounted
 nc-test33:
     podman stop noteberg-nc-test33 2>&1 | Out-Null; $true
     podman run --rm --name noteberg-nc-test33 -d -p 8082:80 -v "${PWD}:/var/www/html/custom_apps/noteberg" nextcloud:33-apache
-    netsh interface portproxy delete v4tov4 listenport=8082 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
-    $wslIp = (wsl -d podman-machine-default -- ip addr show eth0) -match 'inet ' | ForEach-Object { ($_ -split '\s+')[3] -replace '/\d+$', '' } | Select-Object -First 1; netsh interface portproxy add v4tov4 listenport=8082 listenaddress=127.0.0.1 connectport=8082 connectaddress=$wslIp 2>&1 | Out-Null
+    just _relay 8182 8082
     Write-Host "Waiting for Nextcloud to initialize..."
     Start-Sleep -Seconds 20
     podman exec noteberg-nc-test33 //bin/sh -c "php /var/www/html/occ app:enable noteberg 2>&1"
-    Write-Host "Nextcloud 33 running at http://localhost:8082 (admin/admin)"
+    just _trust-lan-ip noteberg-nc-test33 8182
+    Write-Host "Nextcloud 33 running at http://localhost:8182 (admin/admin)"
     Write-Host "Run 'just nc-test33-push' to deploy local build. Run 'just nc-test33-down' when done."
 
 # Stop the Nextcloud 33 test container (port 8082) and clean up the port proxy
 nc-test33-down:
     podman stop noteberg-nc-test33
-    netsh interface portproxy delete v4tov4 listenport=8082 listenaddress=127.0.0.1 2>&1 | Out-Null; $true
+    just _relay-down 8182
 
 # Rebuild JS/CSS into the NC33 test container (8082) — hard reload after. Requires: just nc-test33
 nc-test33-push:
     npm run build:nextcloud
-    Write-Host "Built for nc-test33 (8082) — hard reload http://localhost:8082"
+    Write-Host "Built for nc-test33 — hard reload http://localhost:8182"
 
 # Restart the Podman machine when it gets into a broken state
 podman-restart:

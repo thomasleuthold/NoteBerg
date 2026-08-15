@@ -92,22 +92,56 @@ function dropKey(key) {
     .catch(() => {});
 }
 
+// Cache keys the renderer has declared as currently on screen. Eviction skips
+// these, because dropping a bitmap that is about to be drawn does not free
+// anything for long — the next frame simply re-renders it, evicting whatever
+// took its place, and the two pages trade the same slot forever.
+//
+// That loop is not hypothetical: a page bitmap grows with the SQUARE of the
+// resolution scale (a 1200x1697 page is ~7.8MB at scale 1 but ~48MB at scale
+// 2.5), so past a certain zoom two visible pages no longer fit in
+// MAX_CACHE_BYTES at once and every render evicts its neighbour. The symptom is
+// PDF pages endlessly re-rendering within a specific zoom range.
+const pinnedKeys = new Set();
+
+/**
+ * Declare the exact set of cache keys that are currently on screen.
+ *
+ * Replaces the previous set wholesale — the renderer knows the full visible set
+ * each frame, and a stale pin would waste budget forever. Pins are advisory:
+ * they bound eviction, never grow the cache.
+ * @param {Iterable<string>} keys
+ */
+export function setPinnedRenderKeys(keys) {
+  pinnedKeys.clear();
+  for (const key of keys) pinnedKeys.add(key);
+}
+
 /**
  * Evict least-recently-used entries until the cache is within both bounds.
+ *
  * `protectedKey` is never evicted — it is the render the current caller is about
- * to return, and disposing it would hand back a zero-sized bitmap.
+ * to return, and disposing it would hand back a zero-sized bitmap. Pinned
+ * (on-screen) keys are likewise skipped, so eviction can only reclaim bitmaps
+ * that are genuinely off screen.
+ *
+ * When the on-screen set alone exceeds the budget the cache deliberately runs
+ * over rather than thrashing: those bitmaps are all about to be drawn, so
+ * dropping them buys nothing. Fixing that overshoot is the render scale's job
+ * (see MAX_PAGE_BITMAP_BYTES), not eviction's.
  */
 function evictIfNeeded(protectedKey) {
   while (renderCache.size > MAX_CACHE_ENTRIES || totalCacheBytes() > MAX_CACHE_BYTES) {
     // Oldest first (Map preserves insertion order; a hit re-inserts).
     let victim;
     for (const key of renderCache.keys()) {
-      if (key !== protectedKey) {
+      if (key !== protectedKey && !pinnedKeys.has(key)) {
         victim = key;
         break;
       }
     }
-    // Only the protected entry remains — nothing further can be freed.
+    // Only protected/pinned entries remain — nothing further can be freed
+    // without guaranteeing an immediate re-render.
     if (victim === undefined) return;
     dropKey(victim);
   }
@@ -127,6 +161,47 @@ export function clearRenderCache(itemId) {
 }
 
 /**
+ * Build the cache key for a given item/scale/options triple.
+ *
+ * Exported so callers that need to pin on-screen entries (setPinnedRenderKeys)
+ * derive the identical key rather than reimplementing the format — a renderer
+ * that pinned a subtly different string would silently pin nothing and let the
+ * thrash loop back in.
+ * @param {Object} item
+ * @param {number} scale
+ * @param {Object} [options]
+ * @param {boolean} [options.invertForDarkTheme]
+ * @returns {string}
+ */
+export function getRenderCacheKey(item, scale = 1.0, options = {}) {
+  return resolveRenderKey(item, scale, options).cacheKey;
+}
+
+/**
+ * Cache key plus the derived values the render itself needs.
+ * @returns {{cacheKey: string, effectiveScale: number, invert: boolean}}
+ */
+function resolveRenderKey(item, scale, options = {}) {
+  const { invertForDarkTheme = false } = options;
+  const invert =
+    invertForDarkTheme &&
+    item.type === "pdf-page" &&
+    getTheme() === "dark" &&
+    getPdfInvertDarkMode();
+
+  // Round scale to avoid cache fragmentation (e.g., 1.0, 1.5, 2.0)
+  const effectiveScale = Math.max(1.0, Math.ceil(scale * 2) / 2);
+  // Inversion state must be part of the cache key — otherwise a call with
+  // invertForDarkTheme:false (e.g. a thumbnail) could serve a bitmap that was
+  // inverted for a different caller (e.g. the editor canvas), or vice versa.
+  return {
+    cacheKey: `${item.id}-${effectiveScale}${invert ? "-inverted" : ""}`,
+    effectiveScale,
+    invert,
+  };
+}
+
+/**
  * Gets a renderable image (Canvas or ImageBitmap) for a media item.
  * Handles caching automatically.
  * @param {Object} item - The media item from note data
@@ -141,19 +216,7 @@ export function clearRenderCache(itemId) {
  * @returns {Promise<HTMLCanvasElement|ImageBitmap|null>}
  */
 export async function getRenderedMedia(item, scale = 1.0, options = {}) {
-  const { invertForDarkTheme = false } = options;
-  const invert =
-    invertForDarkTheme &&
-    item.type === "pdf-page" &&
-    getTheme() === "dark" &&
-    getPdfInvertDarkMode();
-
-  // Round scale to avoid cache fragmentation (e.g., 1.0, 1.5, 2.0)
-  const effectiveScale = Math.max(1.0, Math.ceil(scale * 2) / 2);
-  // Inversion state must be part of the cache key — otherwise a call with
-  // invertForDarkTheme:false (e.g. a thumbnail) could serve a bitmap that was
-  // inverted for a different caller (e.g. the editor canvas), or vice versa.
-  const cacheKey = `${item.id}-${effectiveScale}${invert ? "-inverted" : ""}`;
+  const { cacheKey, effectiveScale, invert } = resolveRenderKey(item, scale, options);
 
   if (renderCache.has(cacheKey)) {
     const cached = renderCache.get(cacheKey);
@@ -184,7 +247,6 @@ export async function getRenderedMedia(item, scale = 1.0, options = {}) {
   try {
     result = await renderPromise;
   } catch (error) {
-    console.error(`Failed to render media item ${item.id}:`, error);
     // Drop the failed entry so callers can retry (e.g. once a PDF finishes
     // syncing). Guarded by identity: a clearRenderCache() during the await may
     // already have replaced this key, and we must not evict a newer render.
@@ -192,7 +254,12 @@ export async function getRenderedMedia(item, scale = 1.0, options = {}) {
       renderCache.delete(cacheKey);
       cacheSizes.delete(cacheKey);
     }
-    return null;
+    // Rethrow rather than returning null. Swallowing the error here made every
+    // failure indistinguishable from "rendered nothing", so callers could not
+    // tell a transient fault (PDF binary still syncing) from a permanent one and
+    // latched the page into an error state that nothing ever cleared — pages
+    // stayed blank for the rest of the session. The caller logs and decides.
+    throw error;
   }
 
   // Identity guard: clearRenderCache() may have dropped this key while we were
@@ -213,6 +280,42 @@ export async function getRenderedMedia(item, scale = 1.0, options = {}) {
   return result;
 }
 
+// Ceiling on a single page bitmap, as a fraction of the whole cache budget.
+//
+// A page bitmap costs width*height*4 bytes, so it grows with the SQUARE of the
+// render scale: a 1200x1697 page is ~7.8MB at scale 1 but ~48MB at 2.5 and
+// ~124MB at 4. Without a cap, one deeply-zoomed page can exceed the entire
+// cache on its own, so no two visible pages can coexist and the renderer
+// re-renders them in an endless loop. A third of the budget lets at least three
+// visible pages be held at once, which is what the keep zone needs.
+const MAX_PAGE_BITMAP_BYTES = MAX_CACHE_BYTES / 3;
+
+/**
+ * Clamp a PDF render scale so the resulting bitmap stays within the per-page
+ * budget. Zooming past the cap renders at the cap and lets the canvas scale the
+ * bitmap up: slightly softer than a native-resolution render, but bounded — and
+ * far better than the alternative, which is a page that never finishes
+ * rendering at all.
+ *
+ * @param {{width: number, height: number}} unscaledViewport - The page's scale-1
+ *   viewport. Passed in rather than re-derived so this costs no extra
+ *   getViewport call on the render path.
+ * @param {number} requestedScale
+ * @param {boolean} invert - Inversion allocates a second full-size canvas, so
+ *   the effective per-page cost doubles and the cap must tighten to match.
+ * @returns {number} the scale to render at, never above requestedScale
+ */
+function clampPdfScaleToBudget(unscaledViewport, requestedScale, invert) {
+  const areaPerScaleSq = (unscaledViewport.width || 0) * (unscaledViewport.height || 0) * 4;
+  if (!Number.isFinite(areaPerScaleSq) || areaPerScaleSq <= 0) return requestedScale;
+
+  const budget = invert ? MAX_PAGE_BITMAP_BYTES / 2 : MAX_PAGE_BITMAP_BYTES;
+  // bytes(s) = areaPerScaleSq * s^2  ->  s_max = sqrt(budget / areaPerScaleSq)
+  const maxScale = Math.sqrt(budget / areaPerScaleSq);
+  if (!Number.isFinite(maxScale) || maxScale <= 0) return requestedScale;
+  return Math.min(requestedScale, maxScale);
+}
+
 async function renderPdfPage(item, scale, invert) {
   const page = await loadPdfPage(item.fileId, item.pageIndex);
 
@@ -225,7 +328,8 @@ async function renderPdfPage(item, scale, invert) {
 
   // If item.width is defined, we use it to determine the scale.
   // Otherwise we default to 1.0 * scale.
-  const pdfScale = item.width ? (item.width * scale) / baseWidth : scale;
+  const requestedPdfScale = item.width ? (item.width * scale) / baseWidth : scale;
+  const pdfScale = clampPdfScaleToBudget(unscaledViewport, requestedPdfScale, invert);
 
   const viewport = page.getViewport({ scale: pdfScale });
 

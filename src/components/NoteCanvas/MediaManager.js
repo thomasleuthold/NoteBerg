@@ -137,6 +137,41 @@ export class MediaManager {
   }
 
   /**
+   * Attach the stored file to a pending placeholder, making it a real image.
+   *
+   * Looked up by id rather than mutating a caller-held reference because
+   * _runMediaSave replaces the whole array with fresh copies (setItems), so a
+   * reference captured before an await can be orphaned.
+   *
+   * @param {string} id - The placeholder item's ID
+   * @param {string} fileId - The stored file ID
+   * @param {Object} [geometry] - Final geometry ({ width, height }) if the
+   *   processed image differs from the placeholder's estimate
+   * @returns {boolean} true if the placeholder was found and resolved
+   */
+  resolvePendingItem(id, fileId, geometry = {}) {
+    const item = this.mediaItems.find((i) => i.id === id);
+    if (!item) return false;
+
+    // Keep the placeholder's centre when the final size differs from the
+    // estimate. x/y are the top-left corner, so applying a new width/height
+    // alone would anchor the image at that corner and visibly shift it as it
+    // resolves — the same jump the size-refinement path avoids.
+    if (geometry.width != null && geometry.height != null) {
+      item.x += (item.width - geometry.width) / 2;
+      item.y += (item.height - geometry.height) / 2;
+    }
+    Object.assign(item, geometry, { fileId });
+    // Deleted rather than set to undefined: the item is spread into the
+    // persisted note JSON, where `pending: undefined` would serialize as null
+    // and read back as a truthy-keyed field on the next load.
+    delete item.pending;
+    this.version++;
+    this._loadImage(fileId);
+    return true;
+  }
+
+  /**
    * Get the HTMLImageElement for a file ID if loaded
    * @param {string} fileId
    * @returns {HTMLImageElement|null}
@@ -159,6 +194,11 @@ export class MediaManager {
     // Iterate in reverse to find top-most item (rendered last)
     for (let i = this.mediaItems.length - 1; i >= 0; i--) {
       const item = this.mediaItems[i];
+
+      // Placeholders for an in-flight insert are not selectable: they have no
+      // fileId yet, so selecting one would offer transform/crop/delete actions
+      // against an item that is about to be replaced by the real image.
+      if (item.pending) continue;
 
       // Calculate center of the item
       const cx = item.x + item.width / 2;
