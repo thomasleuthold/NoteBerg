@@ -487,6 +487,8 @@
       "gridLarge": "Grade - Grande"
     },
     "exportPdf": "Exportar PDF",
+    "fullscreen": "Ecrã inteiro",
+    "exitFullscreen": "Sair do ecrã inteiro",
     "deleteNote": "Excluir",
     "penDialog": {
       "lineWidth": "Espessura da linha: ",

@@ -487,6 +487,8 @@
       "gridLarge": "网格 - 大"
     },
     "exportPdf": "导出 PDF",
+    "fullscreen": "全屏",
+    "exitFullscreen": "退出全屏",
     "deleteNote": "删除笔记",
     "penDialog": {
       "lineWidth": "线宽：",

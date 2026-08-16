@@ -487,6 +487,8 @@
       "gridLarge": "Grid - Large"
     },
     "exportPdf": "Export PDF",
+    "fullscreen": "Fullscreen",
+    "exitFullscreen": "Exit Fullscreen",
     "deleteNote": "Delete Note",
     "penDialog": {
       "lineWidth": "Line Width: ",

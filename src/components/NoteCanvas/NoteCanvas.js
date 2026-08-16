@@ -9,6 +9,12 @@
 import { t } from "../../i18n/index.js";
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
+import {
+  exitFullscreen,
+  isFullscreenAvailable,
+  onFullscreenChange,
+  toggleFullscreen,
+} from "../../modules/ncFullscreen.js";
 import { downloadPdfBytes, exportNoteToPdf } from "../../modules/pdfExport.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
@@ -518,6 +524,11 @@ export class NoteCanvas {
     scrollerContainer.style.position = "relative"; // Ensure positioning context for PDF controls
     this.containerElement.appendChild(scrollerContainer);
 
+    // Fullscreen exit affordance (Nextcloud only). In fullscreen the options
+    // menu is still reachable, but with the NC header gone this is the only
+    // control that advertises a way back, so it must always be visible there.
+    this._setupFullscreenExitButton(scrollerContainer);
+
     // Initialize scroller
     this.scroller = new VirtualScroller(scrollerContainer, {
       onScroll: this._onScroll,
@@ -697,6 +708,8 @@ export class NoteCanvas {
             await updateNote(this.noteId, { background: action.value, modified: Date.now() });
           } else if (action.type === "export-pdf") {
             await this._exportPdf();
+          } else if (action.type === "toggle-fullscreen") {
+            await toggleFullscreen();
           } else if (action.type === "delete") {
             const confirmed = await showConfirmDialog(
               "Delete Note",
@@ -2152,6 +2165,37 @@ export class NoteCanvas {
     if (neededHeight > this.contentHeight) {
       this._expandCanvas(neededHeight - this.contentHeight);
     }
+  }
+
+  /**
+   * Create the floating "exit fullscreen" button and keep it in sync with the
+   * actual fullscreen state. Shown only while fullscreen is active — the
+   * options menu is the way in, this is the always-visible way out.
+   *
+   * No-op outside the Nextcloud build, where no button is created at all.
+   * @private
+   */
+  _setupFullscreenExitButton(scrollerContainer) {
+    if (!isFullscreenAvailable()) return;
+
+    const btn = document.createElement("button");
+    btn.className = "note-canvas__fullscreen-exit";
+    btn.type = "button";
+    btn.title = t("toolbar.exitFullscreen");
+    btn.setAttribute("aria-label", t("toolbar.exitFullscreen"));
+    btn.innerHTML = getIcon("minimize", 20);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFullscreen(false);
+    });
+    scrollerContainer.appendChild(btn);
+    this._fullscreenExitBtn = btn;
+
+    // Drives visibility from the module's state rather than from the click, so
+    // an Esc-initiated exit hides the button too.
+    this._unsubscribeFullscreen = onFullscreenChange((active) => {
+      btn.classList.toggle("note-canvas__fullscreen-exit--visible", active);
+    });
   }
 
   /**
@@ -5232,6 +5276,15 @@ export class NoteCanvas {
       this._scrollRafId = null;
     }
     this._pendingScroll = null;
+
+    // Leave fullscreen when the editor closes — it is an editor-only mode, and
+    // overview has no control to get back out of it.
+    if (this._unsubscribeFullscreen) {
+      this._unsubscribeFullscreen();
+      this._unsubscribeFullscreen = null;
+    }
+    this._fullscreenExitBtn = null;
+    exitFullscreen();
 
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);

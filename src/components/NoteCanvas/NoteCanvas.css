@@ -35,6 +35,45 @@
   min-height: 0; /* Crucial for nested flex scrolling */
 }
 
+/* ==========================================================================
+   Fullscreen exit button (Nextcloud build only)
+   Hidden unless fullscreen is active; the options menu is the way in.
+   Created in NoteCanvas._setupFullscreenExitButton.
+   ========================================================================== */
+
+.note-canvas__fullscreen-exit {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 40px;
+  height: 40px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary, white);
+  border: 1px solid var(--border-primary);
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  color: var(--text-secondary);
+  cursor: pointer;
+  /* Above the canvas overlays but below dialogs/modals (z-index 200+) */
+  z-index: 30;
+  opacity: 0.65;
+  transition:
+    opacity 0.15s,
+    transform 0.1s;
+}
+
+.note-canvas__fullscreen-exit--visible {
+  display: flex;
+}
+
+.note-canvas__fullscreen-exit:hover {
+  opacity: 1;
+  transform: scale(1.05);
+  color: var(--color-primary);
+}
+
 .note-canvas__error {
   padding: 20px;
   text-align: center;

@@ -487,6 +487,8 @@
       "gridLarge": "Karo – Groß"
     },
     "exportPdf": "PDF exportieren",
+    "fullscreen": "Vollbild",
+    "exitFullscreen": "Vollbild beenden",
     "deleteNote": "Notiz löschen",
     "penDialog": {
       "lineWidth": "Linienstärke: ",

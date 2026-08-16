@@ -487,6 +487,8 @@
       "gridLarge": "Cuadrícula - Grande"
     },
     "exportPdf": "Exportar PDF",
+    "fullscreen": "Pantalla completa",
+    "exitFullscreen": "Salir de pantalla completa",
     "deleteNote": "Eliminar",
     "penDialog": {
       "lineWidth": "Grosor de línea: ",

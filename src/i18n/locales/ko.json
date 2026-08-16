@@ -487,6 +487,8 @@
       "gridLarge": "격자 - 크게"
     },
     "exportPdf": "PDF 내보내기",
+    "fullscreen": "전체 화면",
+    "exitFullscreen": "전체 화면 종료",
     "deleteNote": "노트 삭제",
     "penDialog": {
       "lineWidth": "선 굵기: ",

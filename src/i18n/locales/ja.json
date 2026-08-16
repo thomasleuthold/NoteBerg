@@ -487,6 +487,8 @@
       "gridLarge": "方眼 - 大"
     },
     "exportPdf": "PDF を書き出し",
+    "fullscreen": "全画面表示",
+    "exitFullscreen": "全画面表示を終了",
     "deleteNote": "ノートを削除",
     "penDialog": {
       "lineWidth": "線の太さ: ",
