@@ -10,17 +10,17 @@ Android-relevant items only. Windows and Nextcloud entries from
 CHANGELOG.txt are deliberately left out.
 
 
-0.5.41 (unreleased) -- 482 characters
+0.5.41 (unreleased) -- 466 characters
 -------------------------------------
 <en-US>
 - Lower drawing latency: ink follows the pen more closely.
+- Faster scrolling and zooming in long notes and large PDFs.
 - Wider pen pressure range, so light and firm strokes differ more clearly.
 - Handwriting on imported PDFs is now exported as real PDF annotations
   instead of a flat image, so it stays sharp.
-- Fixed handwriting being rotated wrongly on rotated PDF pages.
+- Fixed the app closing by itself when syncing or zooming into large PDFs.
+- Fixed zooming getting stuck.
 - Fixed PDFs with JPEG 2000 images not opening.
-- Fixed buttons triggering twice when tapped quickly.
-- Fixed the note navigator not updating after drawing or erasing.
 </en-US>
 
 

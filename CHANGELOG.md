@@ -5,17 +5,27 @@
 ### Added
 - **All platforms**: handwriting drawn on an imported PDF is now exported as real PDF ink annotations instead of being flattened into the page image. The strokes stay vector-sharp at any zoom, and other PDF readers list them as annotations you can select or remove
 - **All platforms**: note cards in the overview now show a loading indicator while their preview is being drawn
+- **Nextcloud**: a fullscreen button in the note editor hides the Nextcloud header and navigation so the page fills the screen, and Esc leaves again. Where the browser does not allow true fullscreen (notably iOS Safari), the Nextcloud chrome is still hidden
+- **All platforms**: inserted images now appear immediately as a placeholder that fills in once the photo has been processed, instead of the canvas sitting unchanged for seconds on a large photo
 
 ### Changed
 - **All platforms**: lower drawing latency — ink is presented without waiting for the normal frame queue, noticeably shrinking the gap between the pen tip and the ink
-- **All platforms**: pen pressure now uses a wider, curved response, so light and firm strokes differ far more clearly. The live stroke and the finished stroke use the same curve and match exactly
+- **All platforms**: pen pressure now uses a wider, curved response, so light and firm strokes differ more clearly.
+- **All platforms**: faster scrolling and repainting in long notes and large imported PDFs
+- **All platforms**: memory use while viewing large PDFs is now bounded. Rendered pages are cached with a size limit and released when they scroll out of view, and pages currently on screen are kept, which stops the constant re-rendering that could occur at certain zoom levels
 
 ### Fixed
 - **All platforms**: buttons that start a longer action — creating a note, restoring or permanently deleting from the recycle bin, and confirming a dialog — could run twice if pressed again before they finished, creating duplicates. They are now blocked while the action runs
-- **All platforms**: ink annotations on rotated PDF pages were placed with the wrong orientation in the exported PDF
 - **All platforms**: PDFs containing JPEG 2000 images failed to open, because a required decoder file was missing from the build
+- **All platforms**: pages of scanned PDFs could render as blank white instead of showing an error, when an image decoder could not be loaded
 - **All platforms**: the note navigator did not update after strokes were added or erased
 - **All platforms**: if one note preview failed to draw, the remaining cards kept showing their loading indicator forever
+- **All platforms**: zooming could get stuck, leaving the page re-rendering continuously without ever settling
+- **All platforms**: the page could look briefly squashed in one direction while pinch-zooming
+- **Android**: the app could close by itself while syncing a note containing a very large PDF, and then do so again on every following sync. Large files are now uploaded in chunks and downloads are limited by total size, so memory no longer runs out
+- **Android**: the app could close by itself when zooming far into a large scanned PDF
+- **All platforms**: closing a note while an image was still being inserted could lose that image
+- **Nextcloud**: the camera button silently did nothing when the server is reached over plain HTTP, where browsers block camera access outright. The reason is now explained, along with denied permission, a missing camera, and a camera already in use
 
 ## [0.5.39] - 2026-08-07
 
