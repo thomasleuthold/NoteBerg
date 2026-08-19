@@ -44,49 +44,98 @@ function showModal(title, content, onConfirm, confirmLabel) {
   const cancelBtn = overlay.querySelector(".modal-cancel");
   const closeBtn = overlay.querySelector(".modal-close");
 
+  // Busy state: disable the button and swap its label, so a slow create reads as
+  // "in progress" rather than as a keypress that did not register — the latter is
+  // exactly what prompts a user to press ENTER again.
+  const confirmIdleLabel = confirmBtn.textContent;
+  const setConfirmBusy = (busy) => {
+    confirmBtn.disabled = busy;
+    confirmBtn.textContent = busy ? t("common.working") : confirmIdleLabel;
+    confirmBtn.classList.toggle("btn-busy", busy);
+    // Dismissing mid-write would hide a create that still lands, so the exits are
+    // closed for the duration too.
+    cancelBtn.disabled = busy;
+    closeBtn.disabled = busy;
+    overlay.classList.toggle("modal-busy", busy);
+  };
+
+  // True from the moment a confirm starts until the modal is gone. Every dismissal
+  // path checks it, so an in-flight create cannot be abandoned half-done.
+  let confirming = false;
+
   // Close modal function
   const closeModal = () => {
+    document.removeEventListener("keydown", handleEsc);
     overlay.classList.add("modal-closing");
     setTimeout(() => overlay.remove(), 200);
   };
 
-  // Confirm handler
-  confirmBtn.addEventListener("click", async () => {
+  // Dismissals requested by the user (cancel button, X, backdrop, ESC) — ignored
+  // while a confirm is in flight.
+  const dismiss = () => {
+    if (confirming) return;
+    closeModal();
+  };
+
+  // Confirm handler.
+  //
+  // onConfirm is async and may take a long time (the Nextcloud build writes over
+  // WebDAV rather than to IndexedDB). Without a guard the button stays live for
+  // the whole write plus the 200ms close animation, so a second ENTER starts a
+  // second, independent onConfirm — creating a duplicate note and firing a
+  // second navigateTo. Mark in-flight *before* the first await.
+  const runConfirm = async () => {
+    if (confirming) return;
+    confirming = true;
+    setConfirmBusy(true);
     try {
       await onConfirm();
+      // Deliberately not resetting `confirming` here: the modal is on its way
+      // out, and re-enabling during the close animation would reopen the very
+      // window this guard exists to close.
       closeModal();
     } catch (error) {
       showError(overlay, error.message);
+      confirming = false;
+      setConfirmBusy(false);
     }
-  });
+  };
+
+  confirmBtn.addEventListener("click", runConfirm);
 
   // Cancel handlers
-  cancelBtn.addEventListener("click", closeModal);
-  closeBtn.addEventListener("click", closeModal);
+  cancelBtn.addEventListener("click", dismiss);
+  closeBtn.addEventListener("click", dismiss);
   let mousedownOnOverlay = false;
   overlay.addEventListener("mousedown", (e) => {
     mousedownOnOverlay = e.target === overlay;
   });
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay && mousedownOnOverlay) closeModal();
+    if (e.target === overlay && mousedownOnOverlay) dismiss();
   });
 
-  // ESC key handler
+  // ESC key handler. Removed in closeModal rather than only here, so the listener
+  // does not outlive a modal dismissed by any other route.
   const handleEsc = (e) => {
     if (e.key === "Escape") {
-      closeModal();
-      document.removeEventListener("keydown", handleEsc);
+      dismiss();
     }
   };
   document.addEventListener("keydown", handleEsc);
 
   // ENTER confirms (harmless create/edit action). Bound to text inputs only so
   // ENTER inside a <textarea> still inserts a newline.
+  //
+  // e.repeat filters held keys, and the disabled check stops a second press
+  // landing while a confirm is still in flight. Both are belt-and-braces on top
+  // of the `confirming` guard, but they also keep the key from re-triggering the
+  // busy button at all.
   overlay.querySelectorAll('input[type="text"]').forEach((input) => {
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        confirmBtn.click();
+        if (e.repeat || confirmBtn.disabled) return;
+        runConfirm();
       }
     });
   });

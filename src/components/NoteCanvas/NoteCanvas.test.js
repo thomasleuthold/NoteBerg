@@ -138,6 +138,107 @@ window.scrollTo = vi.fn();
 window.requestAnimationFrame = vi.fn((cb) => setTimeout(cb, 0));
 window.cancelAnimationFrame = vi.fn((id) => clearTimeout(id));
 
+describe("per-frame caches", () => {
+  // _getStrokeTasks and _getFirstPdfPage run on every scroll frame. They are
+  // pure functions of noteData.tasks / the media list, so they are exercised
+  // directly on a minimal object rather than through the full canvas harness.
+  let host;
+
+  beforeEach(async () => {
+    const { NoteCanvas } = await import("./NoteCanvas.js");
+    host = Object.create(NoteCanvas.prototype);
+  });
+
+  describe("_getStrokeTasks", () => {
+    it("filters to stroke-type tasks", () => {
+      host.noteData = {
+        tasks: [
+          { id: "a", type: "stroke" },
+          { id: "b", type: "text" },
+          { id: "c", type: "stroke" },
+        ],
+      };
+      expect(host._getStrokeTasks().map((t) => t.id)).toEqual(["a", "c"]);
+    });
+
+    it("returns the same array while tasks are unchanged", () => {
+      host.noteData = { tasks: [{ id: "a", type: "stroke" }] };
+      expect(host._getStrokeTasks()).toBe(host._getStrokeTasks());
+    });
+
+    it("recomputes when the tasks array is replaced", () => {
+      host.noteData = { tasks: [{ id: "a", type: "stroke" }] };
+      host._getStrokeTasks();
+
+      host.noteData.tasks = [
+        { id: "a", type: "stroke" },
+        { id: "b", type: "stroke" },
+      ];
+      expect(host._getStrokeTasks()).toHaveLength(2);
+    });
+
+    it("recomputes when a task is pushed in place", () => {
+      // Several call sites push onto the existing array rather than replacing
+      // it, so identity alone would serve a stale list forever.
+      host.noteData = { tasks: [{ id: "a", type: "stroke" }] };
+      expect(host._getStrokeTasks()).toHaveLength(1);
+
+      host.noteData.tasks.push({ id: "b", type: "stroke" });
+      expect(host._getStrokeTasks()).toHaveLength(2);
+    });
+
+    it("recomputes when a task is spliced out in place", () => {
+      host.noteData = {
+        tasks: [
+          { id: "a", type: "stroke" },
+          { id: "b", type: "stroke" },
+        ],
+      };
+      expect(host._getStrokeTasks()).toHaveLength(2);
+
+      host.noteData.tasks.splice(0, 1);
+      expect(host._getStrokeTasks()).toHaveLength(1);
+    });
+
+    it("returns an empty list when there are no tasks", () => {
+      host.noteData = {};
+      expect(host._getStrokeTasks()).toEqual([]);
+      host.noteData = { tasks: [] };
+      expect(host._getStrokeTasks()).toEqual([]);
+    });
+  });
+
+  describe("_getFirstPdfPage", () => {
+    it("returns the page with the smallest y, regardless of array order", () => {
+      const items = [
+        { id: "p2", type: "pdf-page", y: 800 },
+        { id: "p1", type: "pdf-page", y: 0 },
+        { id: "img", type: "image", y: -500 }, // must be ignored
+      ];
+      host.mediaManager = { version: 0, getItems: () => items };
+      expect(host._getFirstPdfPage().id).toBe("p1");
+    });
+
+    it("reuses the cached page until the media version changes", () => {
+      const items = [{ id: "p1", type: "pdf-page", y: 100 }];
+      const manager = { version: 0, getItems: () => items };
+      host.mediaManager = manager;
+      expect(host._getFirstPdfPage().id).toBe("p1");
+
+      items.unshift({ id: "p0", type: "pdf-page", y: 0 });
+      expect(host._getFirstPdfPage().id).toBe("p1"); // still cached
+
+      manager.version++;
+      expect(host._getFirstPdfPage().id).toBe("p0");
+    });
+
+    it("returns null when there are no PDF pages", () => {
+      host.mediaManager = { version: 0, getItems: () => [{ id: "i", type: "image", y: 0 }] };
+      expect(host._getFirstPdfPage()).toBeNull();
+    });
+  });
+});
+
 describe("NoteCanvas Class", () => {
   let container;
   let noteCanvas;
@@ -177,6 +278,13 @@ describe("NoteCanvas Class", () => {
         updateItem: vi.fn((id, props) => {
           const item = mediaManagerItems.find((i) => i.id === id);
           if (item) Object.assign(item, props);
+        }),
+        resolvePendingItem: vi.fn((id, fileId, geometry = {}) => {
+          const item = mediaManagerItems.find((i) => i.id === id);
+          if (!item) return false;
+          Object.assign(item, geometry, { fileId });
+          delete item.pending;
+          return true;
         }),
         moveItemToFront: vi.fn((id) => {
           const item = mediaManagerItems.find((i) => i.id === id);
@@ -242,6 +350,8 @@ describe("NoteCanvas Class", () => {
         drawLassoTrail: vi.fn(),
         clearOverlay: vi.fn(),
         forceRedraw: vi.fn(),
+        startPendingMediaAnimation: vi.fn(),
+        stopPendingMediaAnimation: vi.fn(),
         setZoom: vi.fn(),
         setSelectedStrokes: vi.fn(),
         setSelectedMedia: vi.fn(),
@@ -370,6 +480,67 @@ describe("NoteCanvas Class", () => {
       expect(historyPushSpy).toHaveBeenCalledWith(
         expect.any((await import("./commands/index.js")).InsertMediaCommand),
       );
+    });
+
+    it("anchors imported PDF pages at the top of the canvas", async () => {
+      // The pages *are* the document, so they must line up with the stroke and
+      // text layers, which both start at content Y=0. Inserting at the scroll
+      // position left a gap above page 1 (and shifted every page below it).
+      importPdf.mockResolvedValue({
+        pages: [
+          { id: "page1", type: "pdf-page", width: 500, height: 700 },
+          { id: "page2", type: "pdf-page", width: 500, height: 700 },
+        ],
+        fileId: "pdf-file-id",
+      });
+      await noteCanvas.load("note-1");
+
+      // Import while scrolled away from the top — the old code anchored to
+      // viewport.top, so this is what made the offset arbitrary.
+      noteCanvas.scroller.getViewportBounds = vi.fn(() => ({
+        top: 900,
+        bottom: 1900,
+        left: 0,
+        right: 1200,
+        height: 1000,
+        width: 1200,
+      }));
+
+      await noteCanvas.insertPdf();
+
+      const pdfPages = noteCanvas.noteData.media.filter((m) => m.type === "pdf-page");
+      expect(pdfPages).toHaveLength(2);
+      expect(pdfPages[0].y).toBe(0);
+      // Pages chain directly onto each other, with no gap between them.
+      expect(pdfPages[1].y).toBe(pdfPages[0].height);
+    });
+
+    it("expands the canvas to fit the scaled page stack", async () => {
+      // importPdf returns raw PDF-point dimensions; pages are scaled up to the
+      // canvas width on insert. Measuring the raw pages under-reported the
+      // bottom by the scale factor, leaving the canvas too short to reach the
+      // end of the document.
+      importPdf.mockResolvedValue({
+        pages: [
+          { id: "page1", type: "pdf-page", width: 595, height: 842, y: 0 },
+          { id: "page2", type: "pdf-page", width: 595, height: 842, y: 842 },
+        ],
+        fileId: "pdf-file-id",
+      });
+      await noteCanvas.load("note-1");
+      const expandSpy = vi.spyOn(noteCanvas, "_expandCanvas");
+
+      await noteCanvas.insertPdf();
+
+      const pdfPages = noteCanvas.noteData.media.filter((m) => m.type === "pdf-page");
+      const actualBottom = pdfPages[1].y + pdfPages[1].height;
+      // Scaled to 1200 wide, two A4 pages are ~3400px tall — well beyond the
+      // ~1684px the raw dimensions would have suggested.
+      expect(actualBottom).toBeGreaterThan(3000);
+
+      if (actualBottom > noteCanvas.contentHeight) {
+        expect(expandSpy).toHaveBeenCalledWith(actualBottom - noteCanvas.contentHeight + 500);
+      }
     });
 
     it("should delete a PDF and create an undo command", async () => {
@@ -582,6 +753,118 @@ describe("NoteCanvas Class", () => {
       expect(noteCanvas.historyManager.push).toHaveBeenCalledWith(
         expect.any((await import("./commands/index.js")).InsertMediaCommand),
       );
+    });
+
+    // On a slow device, encoding and storing a camera photo takes seconds. The
+    // canvas must show a placeholder for that whole window instead of staying
+    // unchanged, which reads as "nothing happened".
+    describe("pending placeholder", () => {
+      /** Hold processImageFile open so the in-flight state can be inspected. */
+      function deferProcessing(processImageFile) {
+        let release;
+        const gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        processImageFile.mockImplementation(async () => {
+          await gate;
+          return { dataUrl: "data:image/png;base64,test", width: 100, height: 100 };
+        });
+        return () => release();
+      }
+
+      async function setupInsert() {
+        await noteCanvas.load("note-1");
+        const { pickImages, processImageFile } = await import("../../utils/imageUtils.js");
+        pickImages.mockResolvedValue([new File([""], "test.png")]);
+        global.fetch = vi.fn(() =>
+          Promise.resolve({
+            blob: () => Promise.resolve(new Blob(["test"], { type: "image/png" })),
+          }),
+        );
+        return { processImageFile };
+      }
+
+      it("shows a placeholder before processing finishes, then resolves it", async () => {
+        const { processImageFile } = await setupInsert();
+        const release = deferProcessing(processImageFile);
+
+        const insertion = noteCanvas.insertImage("picker");
+        // Let the placeholder be added before processing is allowed to finish.
+        await vi.waitFor(() => {
+          expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(true);
+        });
+
+        // The user must see the placeholder and its spinner right away.
+        expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalled();
+        expect(noteCanvas.renderer.startPendingMediaAnimation).toHaveBeenCalled();
+
+        release();
+        await insertion;
+
+        // Once the real image lands, no placeholder (or spinner) is left behind.
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(false);
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.fileId)).toBe(true);
+        expect(noteCanvas.renderer.stopPendingMediaAnimation).toHaveBeenCalled();
+      });
+
+      it("removes the placeholder when processing fails", async () => {
+        const { processImageFile } = await setupInsert();
+        processImageFile.mockRejectedValue(new Error("decode failed"));
+
+        await noteCanvas.insertImage("picker");
+
+        // A failed insert must not leave a spinner running over an image that
+        // is never coming.
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(false);
+        expect(noteCanvas.renderer.stopPendingMediaAnimation).toHaveBeenCalled();
+        expect(noteCanvas.historyManager.push).not.toHaveBeenCalled();
+      });
+
+      it("leaves a concurrent insert's placeholder and spinner alone when one fails", async () => {
+        const { processImageFile } = await setupInsert();
+
+        // Insert A stalls; insert B fails outright.
+        const releaseA = deferProcessing(processImageFile);
+        const insertionA = noteCanvas.insertImage("picker");
+        await vi.waitFor(() => {
+          expect(noteCanvas.mediaManager.getItems().filter((i) => i.pending)).toHaveLength(1);
+        });
+
+        processImageFile.mockRejectedValue(new Error("decode failed"));
+        await noteCanvas.insertImage("picker");
+
+        // B's failure must not take A's placeholder or the shared spinner down.
+        expect(noteCanvas.mediaManager.getItems().filter((i) => i.pending)).toHaveLength(1);
+        expect(noteCanvas.renderer.stopPendingMediaAnimation).not.toHaveBeenCalled();
+
+        releaseA();
+        await insertionA;
+        expect(noteCanvas.renderer.stopPendingMediaAnimation).toHaveBeenCalled();
+      });
+
+      it("does not persist a placeholder that has no file yet", async () => {
+        const { processImageFile } = await setupInsert();
+        const release = deferProcessing(processImageFile);
+
+        const insertion = noteCanvas.insertImage("picker");
+        await vi.waitFor(() => {
+          expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(true);
+        });
+
+        // A save triggered mid-insert (autosave, note close) must not write a
+        // media entry pointing at a file that does not exist.
+        await noteCanvas._saveMediaChanges();
+        expect(noteCanvas.noteData.media.some((i) => i.pending)).toBe(false);
+        expect(noteCanvas.noteData.media.every((i) => i.fileId)).toBe(true);
+
+        // ...and the placeholder must survive that save, or the spinner would
+        // vanish and there would be nothing left to resolve.
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.pending)).toBe(true);
+
+        release();
+        await insertion;
+        expect(noteCanvas.mediaManager.getItems().some((i) => i.fileId)).toBe(true);
+      });
     });
   });
 
@@ -838,15 +1121,46 @@ describe("NoteCanvas Class", () => {
       expect(ctx.runCalls[0]).toBe(onProgress);
     });
 
-    it("stops the trailing run once the note is closed (noteId nulled)", async () => {
+    // Regression: closing the note mid-save must NOT abandon the trailing pass.
+    // The trailing pass is what carries edits made while the first run was in
+    // flight — including an image placeholder that resolved during the awaits.
+    // Skipping it (the old behaviour, which keyed the loop guard off this.noteId)
+    // meant the last state written was the snapshot taken *before* the image
+    // resolved, so a photo added just before closing was silently lost.
+    it("still runs the trailing pass after the note is closed (noteId nulled)", async () => {
       const ctx = makeCtx();
       const p1 = ctx.save();
       ctx.save(); // flag dirty
       ctx.noteId = null; // simulate destroy() during the in-flight run
-      await ctx.releaseRun(); // run #1 ends; loop guard sees noteId null → no trailing
+      await ctx.releaseRun(); // run #1 ends; dirty → trailing run #2 starts anyway
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(2);
+
+      await ctx.releaseRun(); // run #2 finishes, not dirty → done
       await p1;
-      expect(ctx._runMediaSave).toHaveBeenCalledTimes(1);
       expect(ctx._mediaSaveRunning).toBeNull();
+    });
+
+    // The captured identity is what makes the above safe: the pass must keep
+    // using the note it started on, never re-read a this.noteId that destroy()
+    // has since nulled (which would write media to an undefined path).
+    it("passes the captured note identity to every run", async () => {
+      const ctx = makeCtx();
+      const noteData = ctx.noteData;
+      const mediaManager = ctx.mediaManager;
+      const p1 = ctx.save();
+      ctx.save(); // flag dirty → forces a trailing pass
+      ctx.noteId = null;
+      ctx.noteData = null;
+      ctx.mediaManager = null;
+
+      await ctx.releaseRun();
+      await ctx.releaseRun();
+      await p1;
+
+      expect(ctx._runMediaSave).toHaveBeenCalledTimes(2);
+      for (const call of ctx._runMediaSave.mock.calls) {
+        expect(call[1]).toEqual({ noteId: "n1", noteData, mediaManager });
+      }
     });
   });
 

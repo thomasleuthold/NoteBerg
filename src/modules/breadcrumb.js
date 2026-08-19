@@ -9,6 +9,18 @@ import { navigateTo } from "./router.js";
 import { getNote, getNotebook } from "./storage.js";
 
 /**
+ * Monotonic token identifying the most recently started render.
+ *
+ * updateBreadcrumb awaits storage between clearing the trail and filling it, so
+ * two overlapping calls (two rapid navigations) used to interleave: the second
+ * call's clear ran before the first had appended its items, and the first's
+ * appends then landed on top of the second's — rendering the trail twice
+ * (home → notebook → note → notebook → note). Each call captures the token at
+ * entry and abandons itself if a newer render has begun.
+ */
+let renderToken = 0;
+
+/**
  * Update breadcrumb based on current navigation state
  * @param {string} mode - Current mode
  * @param {string|null} notebookId - Current notebook ID
@@ -18,10 +30,13 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
   const breadcrumb = document.getElementById("breadcrumb");
   if (!breadcrumb) return;
 
+  const myToken = ++renderToken;
+
   const homeIcon = getIcon("home", 24);
 
-  // Clear existing content
-  breadcrumb.innerHTML = "";
+  // Built detached and swapped in as the final statement, so the live trail is
+  // never in a half-rendered state and a superseded render cannot mutate it.
+  const fragment = document.createDocumentFragment();
 
   // Create Home Button
   const homeBtn = document.createElement("button");
@@ -31,7 +46,7 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
   homeBtn.title = t("breadcrumb.home");
   homeBtn.innerHTML = homeIcon;
   homeBtn.onclick = () => navigateTo("overview");
-  breadcrumb.appendChild(homeBtn);
+  fragment.appendChild(homeBtn);
 
   // If we have a noteId, get the notebookId from the note
   let actualNotebookId = notebookId;
@@ -41,6 +56,7 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
   if (noteId) {
     try {
       note = await getNote(noteId);
+      if (renderToken !== myToken) return;
       if (note?.notebookId) {
         actualNotebookId = note.notebookId;
       }
@@ -53,8 +69,9 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
   if (actualNotebookId) {
     try {
       notebook = await getNotebook(actualNotebookId);
+      if (renderToken !== myToken) return;
       if (notebook) {
-        addSeparator(breadcrumb);
+        addSeparator(fragment);
 
         const isLast = !note; // If no note, notebook is the active item
         const notebookItem = document.createElement(isLast ? "div" : "button");
@@ -68,7 +85,7 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
           notebookItem.onclick = () => navigateTo("overview", { notebookId: actualNotebookId });
         }
 
-        breadcrumb.appendChild(notebookItem);
+        fragment.appendChild(notebookItem);
       }
     } catch (error) {
       console.error("Error loading notebook for breadcrumb:", error);
@@ -77,14 +94,18 @@ export async function updateBreadcrumb(_mode, notebookId = null, noteId = null) 
 
   // Add note if we have one open
   if (note) {
-    addSeparator(breadcrumb);
+    addSeparator(fragment);
 
     const noteItem = document.createElement("div");
     noteItem.className = "breadcrumb-item breadcrumb-current";
     noteItem.textContent = note.title || t("common.untitled");
 
-    breadcrumb.appendChild(noteItem);
+    fragment.appendChild(noteItem);
   }
+
+  if (renderToken !== myToken) return;
+  breadcrumb.innerHTML = "";
+  breadcrumb.appendChild(fragment);
 }
 
 function addSeparator(container) {

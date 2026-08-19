@@ -9,6 +9,12 @@
 import { t } from "../../i18n/index.js";
 import { forceRecognition } from "../../modules/autoRecognition.js";
 import { getEncryptionKey, isAppUnlocked } from "../../modules/masterPassword.js";
+import {
+  exitFullscreen,
+  isFullscreenAvailable,
+  onFullscreenChange,
+  toggleFullscreen,
+} from "../../modules/ncFullscreen.js";
 import { downloadPdfBytes, exportNoteToPdf } from "../../modules/pdfExport.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
@@ -89,6 +95,22 @@ const SCRATCH_DENSITY_THRESHOLD = 5.0; // Ink-to-diagonal ratio (strokes < thres
 const SCRATCH_DIRECTION_THRESHOLD = 8; // Minimum movement to register direction change
 const SCRATCH_MIN_DIRECTION_CHANGES = 4; // Minimum back-and-forth changes (4 turns = 5 segments)
 const SCRATCH_ERASE_PADDING = 15; // Padding around gesture bounds for erasing
+
+// Cap on reading an inserted image's natural dimensions, which only refines the
+// insert placeholder's aspect ratio. Generous enough for a large photo on a slow
+// device, short enough that a file the decoder cannot handle never leaves a
+// dimension read hanging.
+const IMAGE_SIZE_READ_TIMEOUT = 3000; // ms
+
+// Provisional size for an insert placeholder, used for the frames between the
+// insert starting and the image's real dimensions being known. 4:3 matches the
+// common camera aspect ratio, so the box rarely shifts much when refined.
+const PLACEHOLDER_WIDTH = 800;
+const PLACEHOLDER_HEIGHT = 600;
+
+// Shared empty result for the stroke-task lookup, so the common "no tasks" case
+// allocates nothing on the per-frame path. Never mutated.
+const EMPTY_TASKS = Object.freeze([]);
 
 /**
  * Compute selection handle positions for a given bounds
@@ -234,6 +256,11 @@ export class NoteCanvas {
     this._mediaSaveRunning = null; // Promise of the active runner, or null
     this._mediaSaveDirty = false; // A save was requested while the runner was busy
     this._mediaSaveProgress = null; // onProgress cb for the next executed run
+    // Promises of in-flight insertImage() calls. destroy() awaits these, because
+    // an insert that has not yet reached its _saveMediaChanges() has nothing in
+    // _mediaSaveRunning to wait on — closing the note mid-insert would otherwise
+    // drop the image (the file is stored, but the note JSON never references it).
+    this._pendingImageInserts = new Set();
     this.textChanged = false; // Track if text content has been modified
     this.activeSearchQuery = null; // Track active search query for highlighting
     this.mediaDragState = null; // { item, startX, startY, initialX, initialY }
@@ -497,6 +524,11 @@ export class NoteCanvas {
     scrollerContainer.style.position = "relative"; // Ensure positioning context for PDF controls
     this.containerElement.appendChild(scrollerContainer);
 
+    // Fullscreen exit affordance (Nextcloud only). In fullscreen the options
+    // menu is still reachable, but with the NC header gone this is the only
+    // control that advertises a way back, so it must always be visible there.
+    this._setupFullscreenExitButton(scrollerContainer);
+
     // Initialize scroller
     this.scroller = new VirtualScroller(scrollerContainer, {
       onScroll: this._onScroll,
@@ -676,6 +708,8 @@ export class NoteCanvas {
             await updateNote(this.noteId, { background: action.value, modified: Date.now() });
           } else if (action.type === "export-pdf") {
             await this._exportPdf();
+          } else if (action.type === "toggle-fullscreen") {
+            await toggleFullscreen();
           } else if (action.type === "delete") {
             const confirmed = await showConfirmDialog(
               "Delete Note",
@@ -734,6 +768,27 @@ export class NoteCanvas {
    * @param {string} source - 'picker' or 'camera'
    */
   async insertImage(source = "picker") {
+    // Registered so destroy() can await it. Tracked as a set because several
+    // inserts can legitimately overlap (the user picks again while the first is
+    // still encoding), and each must be awaited independently.
+    const run = this._insertImage(source);
+    this._pendingImageInserts.add(run);
+    try {
+      return await run;
+    } finally {
+      this._pendingImageInserts.delete(run);
+    }
+  }
+
+  /**
+   * Body of insertImage — see insertImage() for the tracking wrapper.
+   * @param {string} source - 'picker' or 'camera'
+   * @private
+   */
+  async _insertImage(source = "picker") {
+    // Declared outside the try so the catch can clean up exactly the
+    // placeholders this call created, and nothing a concurrent insert owns.
+    const placeholderIds = [];
     try {
       // Capture viewport position BEFORE opening the file dialog.
       // The browser can reset scroll position while the OS dialog is open,
@@ -750,7 +805,17 @@ export class NoteCanvas {
 
       let files = [];
       if (source === "camera") {
-        const file = await captureFromCamera();
+        let file = null;
+        try {
+          file = await captureFromCamera();
+        } catch (cameraError) {
+          // Tell the user why nothing happened. Silently returning here is what
+          // made an insecure-origin client look broken: no prompt, no preview,
+          // no error — the button simply did nothing.
+          console.error("[NoteCanvas] Camera capture unavailable:", cameraError);
+          await showAlertDialog(t("canvas.camera.errorTitle"), cameraError.message);
+          return;
+        }
         if (file) files = [file];
       } else {
         files = await pickImages(true);
@@ -760,10 +825,74 @@ export class NoteCanvas {
         return;
       }
 
+      // Show a placeholder for every file up front, before any encoding or
+      // storage work. processImageFile alone is three canvas decode/re-encode
+      // round-trips on a multi-megapixel photo, and on a slow device the canvas
+      // would otherwise sit unchanged for seconds after the camera dialog
+      // closes, with no sign the insert is happening.
+      //
+      // Added synchronously, with a provisional size: nothing may be awaited
+      // between the dialog closing and the placeholder appearing, or the blank
+      // gap this fixes just gets shorter instead of going away.
+      const placeholders = files.map((_file, i) => {
+        const item = {
+          id: generateId(),
+          type: "image",
+          pending: true,
+          x: centerX - PLACEHOLDER_WIDTH / 4 + i * 20, // Offset slightly
+          y: centerY - PLACEHOLDER_HEIGHT / 4 + i * 20,
+          width: PLACEHOLDER_WIDTH / 2, // Insert at 50% scale initially
+          height: PLACEHOLDER_HEIGHT / 2,
+          rotation: 0,
+        };
+        this.mediaManager.addItem(item);
+        placeholderIds.push(item.id);
+        return item;
+      });
+
+      if (placeholders.length > 0) {
+        this.renderer?.forceRedraw();
+        this.renderer?.startPendingMediaAnimation();
+      }
+
+      // Refine each placeholder to the photo's real aspect ratio as soon as the
+      // dimensions can be read — much cheaper than the full resize/compress
+      // pipeline, so the box stops being a guess long before the image lands.
+      // Fire-and-forget: a slow or failed read must not hold up the insert, and
+      // the final geometry is applied by resolvePendingItem regardless.
+      for (let i = 0; i < files.length; i++) {
+        const placeholderId = placeholders[i].id;
+        this._readImageSize(files[i])
+          .then(({ width, height }) => {
+            const item = this.mediaManager?.getItems().find((it) => it.id === placeholderId);
+            // Already resolved (or removed) — its real geometry is set.
+            if (!item?.pending) return;
+            // Re-centre on the placeholder's CURRENT box rather than on the
+            // centerX/centerY captured before the dialog opened: those are stale
+            // if the user scrolled or zoomed while the camera was open, and
+            // reusing them would make the placeholder jump across the canvas.
+            // Keeping the centre fixed means only the aspect ratio visibly
+            // changes, which is all this refinement is for.
+            const newWidth = width / 2;
+            const newHeight = height / 2;
+            this.mediaManager.updateItem(placeholderId, {
+              x: item.x + (item.width - newWidth) / 2,
+              y: item.y + (item.height - newHeight) / 2,
+              width: newWidth,
+              height: newHeight,
+            });
+            this.renderer?.forceRedraw();
+          })
+          .catch(() => {
+            // Keep the provisional box; resolvePendingItem sets the real size.
+          });
+      }
+
       const insertedItems = [];
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        const placeholder = placeholders[i];
 
         try {
           const processed = await processImageFile(file);
@@ -795,23 +924,41 @@ export class NoteCanvas {
 
           const fileId = await saveFile(blob);
 
-          const item = {
-            id: generateId(),
-            type: "image",
-            fileId: fileId,
-            x: centerX - processed.width / 4 + i * 20, // Offset slightly
-            y: centerY - processed.height / 4 + i * 20,
-            width: processed.width / 2, // Insert at 50% scale initially
+          // Resolve by id, not by the captured reference: a _saveMediaChanges
+          // triggered elsewhere during the awaits above replaces the item array
+          // with fresh copies, orphaning `placeholder`.
+          const resolved = this.mediaManager.resolvePendingItem(placeholder.id, fileId, {
+            width: processed.width / 2,
             height: processed.height / 2,
-            rotation: 0,
-          };
+          });
 
-          this.mediaManager.addItem(item);
-          insertedItems.push(item);
+          // The placeholder is gone (note closed, or the insert was undone) —
+          // the file is already stored, and orphan cleanup will collect it.
+          if (!resolved) continue;
+
+          insertedItems.push(this.mediaManager.getItems().find((it) => it.id === placeholder.id));
+          this.renderer?.forceRedraw();
+
+          // Persist this image as soon as it lands, rather than only after the
+          // whole batch. With several files each one is otherwise at risk for
+          // the entire duration of the remaining encodes — a close (or a crash)
+          // partway through would lose every image already decoded.
+          // Coalescing makes the extra calls cheap: they collapse into the
+          // in-flight runner's single trailing pass.
+          await this._saveMediaChanges();
         } catch (err) {
           console.error(`[NoteCanvas] Error processing file ${file.name}:`, err);
+          // Drop the placeholder so a failed insert does not leave a spinner
+          // running forever over an image that will never arrive.
+          this.mediaManager.removeItem(placeholder.id);
+          this.renderer?.forceRedraw();
         }
       }
+
+      // Stop the spinner promptly rather than waiting for the loop to notice on
+      // its next frame — but only if no other insert is still in flight, since
+      // the loop is shared by every pending placeholder on the canvas.
+      this._stopPendingAnimationIfIdle();
 
       // Save changes
       await this._saveMediaChanges();
@@ -834,6 +981,103 @@ export class NoteCanvas {
       }
     } catch (error) {
       console.error("[NoteCanvas] Failed to insert image:", error);
+      // Never leave a placeholder (and its animation loop) behind on an
+      // unexpected failure — it would spin indefinitely over an image that is
+      // never coming. Scoped to this call's own placeholders so a concurrent
+      // insert that is still working is not torn down with it.
+      //
+      // _clearPendingMedia removes only items still flagged `pending`: by the
+      // time a failure reaches here (e.g. the trailing _saveMediaChanges threw)
+      // some placeholders may already have resolved into real images, and
+      // deleting those would discard successfully inserted photos.
+      this._clearPendingMedia(placeholderIds);
+    }
+  }
+
+  /**
+   * Remove still-pending media placeholders and stop the spinner if none remain.
+   *
+   * Only items that are still `pending` are removed. An id whose placeholder has
+   * already been resolved into a real image is left alone — its file is stored
+   * and referenced, so removing it here would silently discard a successful
+   * insert (this runs from insertImage's catch, which can be reached after some
+   * of the batch has already succeeded).
+   * @param {string[]} ids - Placeholder item IDs to remove
+   * @private
+   */
+  _clearPendingMedia(ids) {
+    if (!this.mediaManager || !ids?.length) return;
+    let removed = 0;
+    for (const id of ids) {
+      if (this.mediaManager.getItems().some((i) => i.id === id && i.pending)) {
+        this.mediaManager.removeItem(id);
+        removed++;
+      }
+    }
+    this._stopPendingAnimationIfIdle();
+    if (removed > 0) this.renderer?.forceRedraw();
+  }
+
+  /**
+   * Stop the placeholder spinner loop, unless another insert still has one.
+   * @private
+   */
+  _stopPendingAnimationIfIdle() {
+    if (this.mediaManager?.getItems().some((i) => i.pending)) return;
+    this.renderer?.stopPendingMediaAnimation();
+  }
+
+  /**
+   * Read an image file's natural dimensions without re-encoding it.
+   *
+   * Used to size the insert placeholder before the (much slower) resize/compress
+   * pipeline runs. createImageBitmap decodes off the main thread where
+   * available; the Image fallback covers WebViews that lack it.
+   *
+   * Bounded by a timeout: this runs before the placeholder appears, so it must
+   * never be what blocks the insert. A decoder that neither loads nor errors on
+   * a malformed file would otherwise stall the whole operation indefinitely —
+   * callers fall back to a default size and the real geometry is applied when
+   * processing completes.
+   * @param {File|Blob} file
+   * @returns {Promise<{width:number,height:number}>}
+   * @private
+   */
+  async _readImageSize(file) {
+    // The timer is cleared once the race settles. Left running, a fast decode
+    // still holds a 3s timer that keeps this closure (and the File) alive and
+    // then rejects into an already-settled race — harmless, but it accumulates
+    // across a multi-file insert.
+    const withTimeout = (promise) => {
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Image size read timed out")),
+          IMAGE_SIZE_READ_TIMEOUT,
+        );
+      });
+      return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+    };
+
+    if (typeof createImageBitmap === "function") {
+      const bitmap = await withTimeout(createImageBitmap(file));
+      const size = { width: bitmap.width, height: bitmap.height };
+      bitmap.close?.();
+      return size;
+    }
+
+    const url = URL.createObjectURL(file);
+    try {
+      return await withTimeout(
+        new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => reject(new Error("Failed to read image dimensions"));
+          img.src = url;
+        }),
+      );
+    } finally {
+      URL.revokeObjectURL(url);
     }
   }
 
@@ -869,10 +1113,14 @@ export class NoteCanvas {
         });
 
         if (pages.length > 0) {
-          const viewport = this.scroller.getViewportBounds();
-          const startY = viewport.top + 50;
+          // Anchor the stack at the very top of the canvas. Only one PDF may be
+          // imported per note (guarded above), so its pages *are* the document
+          // and must line up with the stroke and text layers, which both start
+          // at content Y=0. Inserting at the scroll position instead would push
+          // page 1 down by an arbitrary amount — every later page chains off its
+          // bottom, so that offset shifts the whole document, not just the gap.
           const targetWidth = this.maxContentWidth || 1200;
-          let currentY = startY;
+          let currentY = 0;
 
           const insertedPages = [];
           for (const page of pages) {
@@ -911,9 +1159,14 @@ export class NoteCanvas {
             this.renderer.forceRedraw();
           }
           this._renderPdfControls();
+          await this._updateNavigatorSubjects();
           this.historyManager?.push(new InsertMediaCommand(insertedPages, fileId));
 
-          const lastPage = pages[pages.length - 1];
+          // Measure the pages we actually inserted, not the raw ones from
+          // importPdf: those carry unscaled PDF-point dimensions and their own
+          // y values, so an A4 import under-reported the bottom by roughly half
+          // and left the canvas too short to scroll to the end.
+          const lastPage = insertedPages[insertedPages.length - 1];
           const bottom = lastPage.y + lastPage.height;
           if (bottom > this.contentHeight) {
             this._expandCanvas(bottom - this.contentHeight + 500);
@@ -935,9 +1188,13 @@ export class NoteCanvas {
    * @private
    */
   _renderPdfControls() {
-    // Remove existing if any
-    const existing = this.containerElement.querySelector(".note-canvas__pdf-controls");
+    // Remove existing if any. This method is the single writer of
+    // _pdfControlsEl, so the cached reference below can be trusted by the
+    // per-frame position update without re-querying the DOM.
+    const existing =
+      this._pdfControlsEl || this.containerElement.querySelector(".note-canvas__pdf-controls");
     if (existing) existing.remove();
+    this._pdfControlsEl = null;
 
     // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
     const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
@@ -977,6 +1234,7 @@ export class NoteCanvas {
 
     controls.appendChild(btn);
     scrollerContainer.appendChild(controls);
+    this._pdfControlsEl = controls;
     this._updatePdfControlsPosition();
   }
 
@@ -984,25 +1242,67 @@ export class NoteCanvas {
    * Update position of PDF controls to stick to the first page
    * @private
    */
-  _updatePdfControlsPosition() {
-    const controls = this.containerElement.querySelector(".note-canvas__pdf-controls");
-    if (!controls) return;
-
-    const pdfPages = this.mediaManager.getItems().filter((i) => i.type === "pdf-page");
-    if (pdfPages.length === 0) return;
-
-    // Find first page (min Y)
-    let firstPage = pdfPages[0];
-    for (let i = 1; i < pdfPages.length; i++) {
-      if (pdfPages[i].y < firstPage.y) firstPage = pdfPages[i];
-    }
-
+  /**
+   * Scroll/zoom values shared by every per-frame overlay update.
+   *
+   * The six _update* methods called from the scroll RAF each used to re-read
+   * scroll offsets and viewport size from the scroller and recompute the same
+   * centering offset. Reading them once per frame and threading the result
+   * through removes that repetition (and the repeated layout reads behind it).
+   * @private
+   * @returns {{scrollLeft:number, scrollTop:number, viewportWidth:number,
+   *   viewportHeight:number, offsetX:number, zoom:number}}
+   */
+  _getFrameContext() {
     const scrollLeft = this.scroller.getScrollLeft();
     const scrollTop = this.scroller.getScrollTop();
-    const viewportWidth = this.scroller.getViewportSize().width;
+    const { width: viewportWidth, height: viewportHeight } = this.scroller.getViewportSize();
     const scaledContentWidth = this.maxContentWidth * this.zoomScale;
     const offsetX =
       scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+    return {
+      scrollLeft,
+      scrollTop,
+      viewportWidth,
+      viewportHeight,
+      offsetX,
+      zoom: this.zoomScale,
+    };
+  }
+
+  /**
+   * The topmost PDF page, cached against MediaManager.version.
+   *
+   * Previously recomputed on every scroll frame via a filter over all media
+   * items — a full array allocation per frame on a long PDF, for a value that
+   * only changes when media does.
+   * @private
+   * @returns {Object|null}
+   */
+  _getFirstPdfPage() {
+    const version = this.mediaManager?.version ?? -1;
+    if (this._firstPdfPageVersion === version) return this._firstPdfPageCache;
+
+    let firstPage = null;
+    for (const item of this.mediaManager?.getItems() || []) {
+      if (item.type !== "pdf-page") continue;
+      if (!firstPage || item.y < firstPage.y) firstPage = item;
+    }
+    this._firstPdfPageCache = firstPage;
+    this._firstPdfPageVersion = version;
+    return firstPage;
+  }
+
+  _updatePdfControlsPosition(frame = null) {
+    // Cached rather than queried: this runs on every frame of the scroll RAF,
+    // for a node created once by _renderPdfControls.
+    const controls = this._pdfControlsEl;
+    if (!controls) return;
+
+    const firstPage = this._getFirstPdfPage();
+    if (!firstPage) return;
+
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
 
     const pageRightX = firstPage.x + firstPage.width;
     const pageTopY = firstPage.y;
@@ -1717,10 +2017,19 @@ export class NoteCanvas {
    * @private
    */
   _onScroll(scrollTop, scrollLeft, viewportHeight) {
-    if (this._isZooming) return;
-
-    // Store pending scroll data (overwrites previous if not yet processed)
+    // Always record the latest position, even mid-pinch. The scroll events a
+    // pinch generates (VirtualScroller.setZoom writes scrollTop/scrollLeft to
+    // keep the fixed point anchored) used to be discarded outright, so the
+    // renderer's idea of the scroll position went stale for the whole gesture
+    // and the end-of-gesture render snapped the view back to the last position
+    // it knew about.
     this._pendingScroll = { scrollTop, scrollLeft, viewportHeight };
+
+    // During a pinch, only the bookkeeping above runs: setZoom already drives
+    // the visual transform each move, so scheduling a second render here would
+    // duplicate that work at gesture rate on exactly the devices least able to
+    // afford it.
+    if (this._isZooming) return;
 
     // Schedule render on next animation frame (coalesces multiple scroll events)
     if (!this._scrollRafId) {
@@ -1756,12 +2065,15 @@ export class NoteCanvas {
           scrollLeft,
           this.strokeManager?.currentStroke,
         );
-        this._updateMediaOverlay();
-        this._updateSelectionOverlay();
-        this._updateTaskCheckboxes();
-        this._updatePdfTextLayers();
-        this._updateTextEditorLayer();
-        this._updatePdfControlsPosition();
+        // Read scroll/zoom geometry once and share it across every overlay
+        // update, rather than each re-querying the scroller for the same values.
+        const frame = this._getFrameContext();
+        this._updateMediaOverlay(frame);
+        this._updateSelectionOverlay(frame);
+        this._updateTaskCheckboxes(frame);
+        this._updatePdfTextLayers(frame);
+        this._updateTextEditorLayer(frame);
+        this._updatePdfControlsPosition(frame);
       });
     }
   }
@@ -1770,25 +2082,18 @@ export class NoteCanvas {
    * Update PDF text layer positions
    * @private
    */
-  _updatePdfTextLayers() {
+  _updatePdfTextLayers(frame = null) {
     if (!this.pdfTextLayerManager) return;
 
+    const { scrollLeft, scrollTop, viewportHeight, offsetX } = frame || this._getFrameContext();
     const viewportBounds = this.scroller.getViewportBounds();
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
-    const { height: viewportHeight, width: viewportWidth } = this.scroller.getViewportSize();
-
-    // Calculate centering offset
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const centeringOffset =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
     this.pdfTextLayerManager.update(
       viewportBounds,
       this.zoomScale,
       scrollLeft,
       scrollTop,
-      centeringOffset,
+      offsetX,
       viewportHeight,
     );
   }
@@ -1797,18 +2102,11 @@ export class NoteCanvas {
    * Update text editor layer position based on current scroll and zoom
    * @private
    */
-  _updateTextEditorLayer() {
+  _updateTextEditorLayer(frame = null) {
     if (!this.textEditorLayer) return;
 
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
-    const { width: viewportWidth } = this.scroller.getViewportSize();
-
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const centeringOffset =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
-
-    this.textEditorLayer.update(this.zoomScale, scrollLeft, scrollTop, centeringOffset);
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
+    this.textEditorLayer.update(this.zoomScale, scrollLeft, scrollTop, offsetX);
   }
 
   /**
@@ -1870,6 +2168,37 @@ export class NoteCanvas {
   }
 
   /**
+   * Create the floating "exit fullscreen" button and keep it in sync with the
+   * actual fullscreen state. Shown only while fullscreen is active — the
+   * options menu is the way in, this is the always-visible way out.
+   *
+   * No-op outside the Nextcloud build, where no button is created at all.
+   * @private
+   */
+  _setupFullscreenExitButton(scrollerContainer) {
+    if (!isFullscreenAvailable()) return;
+
+    const btn = document.createElement("button");
+    btn.className = "note-canvas__fullscreen-exit";
+    btn.type = "button";
+    btn.title = t("toolbar.exitFullscreen");
+    btn.setAttribute("aria-label", t("toolbar.exitFullscreen"));
+    btn.innerHTML = getIcon("minimize", 20);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFullscreen(false);
+    });
+    scrollerContainer.appendChild(btn);
+    this._fullscreenExitBtn = btn;
+
+    // Drives visibility from the module's state rather than from the click, so
+    // an Esc-initiated exit hides the button too.
+    this._unsubscribeFullscreen = onFullscreenChange((active) => {
+      btn.classList.toggle("note-canvas__fullscreen-exit--visible", active);
+    });
+  }
+
+  /**
    * Handle viewport resize events
    * @private
    */
@@ -1884,8 +2213,10 @@ export class NoteCanvas {
       this.spatialIndex.setBucketHeight(height, this.noteData?.strokes || []);
     }
 
-    // Resize renderer
-    this.renderer.resize(width, height / this.zoomScale);
+    // Resize renderer. The buffer is sized in screen pixels, so pass the screen
+    // viewport straight through — dividing by zoom here would make the buffer
+    // grow without bound on zoom-out.
+    this.renderer.resize(width, height);
 
     // If we have a pending media update, force redraw now
     if (this._pendingMediaUpdate) {
@@ -2246,6 +2577,10 @@ export class NoteCanvas {
 
       // Record undo command for drawing
       this.historyManager?.push(new DrawStrokeCommand(stroke, newIndex));
+
+      if (stroke.type === "marker") {
+        this._updateNavigatorSubjects();
+      }
     }
 
     // After stroke is finished, check if a deferred update is pending.
@@ -2562,6 +2897,11 @@ export class NoteCanvas {
     const state = this.mediaDragState;
     const item = state.item;
 
+    // This mutates item geometry in place rather than going through
+    // MediaManager.updateItem(), so bump the version explicitly — the
+    // renderer's cached PDF page bounds are keyed on it.
+    this.mediaManager.version++;
+
     if (state.mode === "move") {
       const dx = x - state.startX;
       const dy = y - state.startY;
@@ -2638,7 +2978,7 @@ export class NoteCanvas {
    * Update media overlay position
    * @private
    */
-  _updateMediaOverlay() {
+  _updateMediaOverlay(frame = null) {
     if (!this.mediaOverlay) return;
 
     // The overlay tracks either the selected image or (mouse only) the hovered one.
@@ -2652,15 +2992,10 @@ export class NoteCanvas {
       return;
     }
 
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
+    // Read the rect only once past the early-returns above: getBoundingClientRect
+    // forces layout, and on most scroll frames no overlay is shown at all.
     const viewport = this.scroller.getViewportElement().getBoundingClientRect();
-
-    // Calculate offset (centering)
-    const viewportWidth = this.scroller.getViewportSize().width;
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const offsetX =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
     if (this.selectedMediaId) {
       // show() is idempotent and (re)asserts the selected state + visibility.
@@ -2683,7 +3018,7 @@ export class NoteCanvas {
    * Update selection overlay position
    * @private
    */
-  _updateSelectionOverlay() {
+  _updateSelectionOverlay(frame = null) {
     const bounds = this.renderer?.selectionBounds;
 
     if (!this.selectionOverlay?.isVisible && !bounds) return;
@@ -2692,14 +3027,9 @@ export class NoteCanvas {
       return;
     }
 
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
+    // Layout read deferred past the early-returns, as in _updateMediaOverlay.
     const viewport = this.scroller.getViewportElement().getBoundingClientRect();
-
-    const viewportWidth = this.scroller.getViewportSize().width;
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const offsetX =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
 
     if (this.selectionOverlay.isVisible) {
       this.selectionOverlay.updatePosition(
@@ -2719,15 +3049,10 @@ export class NoteCanvas {
    * Update task checkbox positions (placeholder for Phase 3)
    * @private
    */
-  _updateTaskCheckboxes() {
+  _updateTaskCheckboxes(frame = null) {
     if (!this.taskCheckboxLayer) return;
-    const strokeTasks = (this.noteData?.tasks || []).filter((t) => t.type === "stroke");
-    const scrollLeft = this.scroller.getScrollLeft();
-    const scrollTop = this.scroller.getScrollTop();
-    const viewportWidth = this.scroller.getViewportSize().width;
-    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-    const offsetX =
-      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+    const strokeTasks = this._getStrokeTasks();
+    const { scrollLeft, scrollTop, offsetX } = frame || this._getFrameContext();
 
     this.taskCheckboxLayer.update(
       strokeTasks,
@@ -2737,6 +3062,35 @@ export class NoteCanvas {
       scrollTop,
       offsetX,
     );
+  }
+
+  /**
+   * Stroke-type tasks, cached against the tasks array.
+   *
+   * This runs on every scroll frame; re-filtering the note's task list each time
+   * is pure per-frame garbage. Some call sites replace the array (filter) and
+   * others mutate it in place (push/splice), so the key is identity *and*
+   * length — a cheap check that self-heals rather than depending on every
+   * present and future mutation site remembering to invalidate. Editing a task's
+   * `type` in place without changing the length is not a case that occurs: type
+   * is assigned at creation.
+   * @private
+   */
+  _getStrokeTasks() {
+    const tasks = this.noteData?.tasks;
+    if (!tasks || tasks.length === 0) return EMPTY_TASKS;
+    if (
+      this._strokeTasksSource === tasks &&
+      this._strokeTasksSourceLength === tasks.length &&
+      this._strokeTasksCache
+    ) {
+      return this._strokeTasksCache;
+    }
+    const strokeTasks = tasks.filter((t) => t.type === "stroke");
+    this._strokeTasksSource = tasks;
+    this._strokeTasksSourceLength = tasks.length;
+    this._strokeTasksCache = strokeTasks;
+    return strokeTasks;
   }
 
   /**
@@ -3333,6 +3687,18 @@ export class NoteCanvas {
       return this._mediaSaveRunning;
     }
 
+    // Capture the identity of what is being saved ONCE, when the runner starts.
+    // destroy() nulls this.noteId/noteData/mediaManager while a save is in
+    // flight; re-reading them per iteration made the drain loop exit early and
+    // silently drop the trailing pass — which is exactly the pass that carries a
+    // just-resolved image placeholder. The captured objects stay valid because
+    // destroy() only drops the canvas's references, it does not mutate them.
+    const ctx = {
+      noteId: this.noteId,
+      noteData: this.noteData,
+      mediaManager: this.mediaManager,
+    };
+
     // Start a runner that drains dirty passes, then clears itself.
     this._mediaSaveRunning = (async () => {
       try {
@@ -3340,8 +3706,8 @@ export class NoteCanvas {
           this._mediaSaveDirty = false;
           const progress = this._mediaSaveProgress;
           this._mediaSaveProgress = null;
-          await this._runMediaSave(progress);
-        } while (this._mediaSaveDirty && this.noteId && this.mediaManager && this.noteData);
+          await this._runMediaSave(progress, ctx);
+        } while (this._mediaSaveDirty);
       } catch (e) {
         // Log rather than reject: destroy() awaits this promise in a Promise.all,
         // and a rejection there would abort the close sequence before it
@@ -3354,17 +3720,29 @@ export class NoteCanvas {
     return this._mediaSaveRunning;
   }
 
-  /** Perform a single media-save pass (snapshot → upload → JSON → cleanup). */
-  async _runMediaSave(onProgress) {
-    if (!this.noteId || !this.mediaManager || !this.noteData) return;
-    // Capture IDs immediately — destroy() nulls this.noteId mid-async and would corrupt paths
-    const noteId = this.noteId;
-    const noteData = this.noteData;
+  /**
+   * Perform a single media-save pass (snapshot → upload → JSON → cleanup).
+   * @param {(current:number,total:number)=>void} [onProgress]
+   * @param {{noteId:string,noteData:Object,mediaManager:Object}} [ctx] - Identity
+   *   captured when the runner started. Passed in rather than read from `this`
+   *   so a destroy() mid-save cannot corrupt paths or abort the pass.
+   */
+  async _runMediaSave(onProgress, ctx) {
+    const noteId = ctx?.noteId ?? this.noteId;
+    const noteData = ctx?.noteData ?? this.noteData;
+    const mediaManager = ctx?.mediaManager ?? this.mediaManager;
+    if (!noteId || !mediaManager || !noteData) return;
     this.mediaChanged = true;
-    const items = this.mediaManager.getItems();
+    const items = mediaManager.getItems();
+    // Placeholders for an in-flight insert have no fileId yet — persisting one
+    // would write a media entry pointing at nothing, which survives a crash or a
+    // note close mid-insert and renders as a permanently blank image. They are
+    // added back by resolvePendingItem() once their file exists, which triggers
+    // its own save.
+    const persistableItems = items.filter((i) => !i.pending);
     // Strip non-serializable properties (renderable, loading, error) before sending to worker
     // These are runtime-only properties used for rendering, not persisted data
-    const serializableMedia = items.map(
+    const serializableMedia = persistableItems.map(
       ({
         renderable: _renderable,
         renderableScale: _renderableScale,
@@ -3374,7 +3752,14 @@ export class NoteCanvas {
       }) => rest,
     );
     noteData.media = serializableMedia;
-    this.mediaManager.setItems(serializableMedia);
+    // setItems replaces the live list with these copies, so any pending
+    // placeholder must be carried over — dropping it would erase the spinner
+    // mid-insert and leave resolvePendingItem() with nothing to resolve. Kept
+    // out of noteData.media, which is the persisted view.
+    const pendingItems = items.filter((i) => i.pending);
+    mediaManager.setItems(
+      pendingItems.length > 0 ? [...serializableMedia, ...pendingItems] : serializableMedia,
+    );
 
     if (_IS_NEXTCLOUD) {
       const notebookId = noteData.notebookId ?? null;
@@ -3422,8 +3807,16 @@ export class NoteCanvas {
       // Delete server binaries no longer referenced. Include recording fileIds
       // (saved via a separate path) so we don't delete live recordings.
       onProgress?.(++step, totalSteps);
+      // Read the media list LIVE rather than reusing the snapshot: an insert that
+      // resolved during the awaits above has already uploaded its binary, and the
+      // snapshot predates it. Cleaning up against the stale list would delete that
+      // binary off the server as an "orphan" — the note then reopens with a
+      // permanently blank image, which is unrecoverable rather than merely stale.
+      // Pending placeholders are included too: their upload may be in flight.
+      const liveFileIds = mediaManager.getItems().map((i) => i.fileId);
       const validFileIds = [
         ...serializableMedia.map((i) => i.fileId),
+        ...liveFileIds,
         noteData.pdfSource,
         ...(noteData.recordings ?? []).filter((r) => !r.deleted).map((r) => r.fileId),
       ].filter(Boolean);
@@ -4597,6 +4990,17 @@ export class NoteCanvas {
         if (this._isZooming) {
           this._isZooming = false;
           if (this.renderer) {
+            // Drop any scroll frame queued from before/during the pinch: it
+            // carries a position captured under the old zoom and would render
+            // the view at a stale offset after the settle below.
+            if (this._scrollRafId) {
+              cancelAnimationFrame(this._scrollRafId);
+              this._scrollRafId = null;
+            }
+            this._pendingScroll = null;
+            // Settle at the scroller's authoritative position rather than a
+            // re-derived one, so the final frame matches where the fingers left
+            // the content.
             this.setZoom(this.zoomScale, { immediate: true });
           }
         }
@@ -4697,7 +5101,13 @@ export class NoteCanvas {
 
       const scrollTop = this.scroller?.getScrollTop() || 0;
       const scrollLeft = this.scroller?.getScrollLeft() || 0;
+      // Supply the live viewport height so an immediate (settle) zoom can
+      // resize the buffer: zooming out grows the content area covered by the
+      // viewport, and without this the buffer stays sized for the old zoom and
+      // leaves unpainted bands until the next leapfrog.
+      const viewportHeight = this.scroller?.getViewportSize().height;
       this.renderer.setZoom(scale, {
+        viewportHeight,
         ...options,
         scrollTop,
         scrollLeft,
@@ -4779,6 +5189,8 @@ export class NoteCanvas {
       this.renderer.forceRedraw();
     }
     this._renderPdfControls();
+    this._pdfOutline = null;
+    await this._updateNavigatorSubjects();
   }
 
   /**
@@ -4864,6 +5276,15 @@ export class NoteCanvas {
       this._scrollRafId = null;
     }
     this._pendingScroll = null;
+
+    // Leave fullscreen when the editor closes — it is an editor-only mode, and
+    // overview has no control to get back out of it.
+    if (this._unsubscribeFullscreen) {
+      this._unsubscribeFullscreen();
+      this._unsubscribeFullscreen = null;
+    }
+    this._fullscreenExitBtn = null;
+    exitFullscreen();
 
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);
@@ -4995,6 +5416,15 @@ export class NoteCanvas {
     if (pendingTextSave) pending.push(pendingTextSave);
     if (this._pendingPdfImport) pending.push(this._pendingPdfImport);
     if (pendingMediaSave) pending.push(pendingMediaSave);
+    // In-flight image inserts, plus the save each one performs on completion.
+    // An insert still encoding when the note closes has no entry in
+    // _mediaSaveRunning yet, so waiting on that alone would let the image be
+    // lost. Each insert finishes its own _saveMediaChanges() before resolving,
+    // and that save now uses captured ids (see _runMediaSave), so it completes
+    // correctly even though destroy() has already nulled this.noteId.
+    for (const insert of this._pendingImageInserts) {
+      pending.push(insert.catch(() => {}));
+    }
     return Promise.all(pending).then(() => ({ mediaChanged: hadMediaChanges }));
   }
 }

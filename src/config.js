@@ -5,10 +5,10 @@
 
 export const APP_NAME = "NoteBerg";
 export const APP_VERSION = import.meta.env.VITE_APP_VERSION || "0.0.0";
-// Pre-release stage ("RC", "Beta", …) derived from the package.json version
-// suffix at build time (see vite.config.js). Empty string for final releases.
-export const APP_STAGE = import.meta.env.VITE_APP_STAGE || "";
-export const APP_FULL_VERSION = APP_STAGE ? `${APP_VERSION} (${APP_STAGE})` : APP_VERSION;
+// Plain semver, no pre-release label: package.json carries the base version only.
+// A pre-release stage ("-rc.2") is a Nextcloud-store publishing concern and lives
+// exclusively in appinfo/info.xml — it never reaches the built frontend.
+export const APP_FULL_VERSION = APP_VERSION;
 
 /**
  * Monotonic build counter from package.json.build, incremented on every build
@@ -17,7 +17,7 @@ export const APP_FULL_VERSION = APP_STAGE ? `${APP_VERSION} (${APP_STAGE})` : AP
 export const APP_BUILD = import.meta.env.VITE_APP_BUILD || "";
 
 /**
- * Version string including the build number, e.g. "0.5.38 (RC) #2".
+ * Version string including the build number, e.g. "0.5.38 #2".
  *
  * Used only where the exact build matters — the About section, which is where
  * users read a version off to report a bug. Deliberately separate from

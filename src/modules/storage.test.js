@@ -65,6 +65,23 @@ const stores = {
 };
 const fileStore = new Map();
 
+// Records are cloned on write, as IndexedDB does. Blob values are carried over
+// by reference instead: jsdom's structuredClone degrades a Blob to a plain
+// object (losing .type and .text()), whereas real IndexedDB stores Blobs
+// faithfully — cloning them here would model the wrong external behaviour.
+function cloneRecord(record) {
+  const blobs = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (Object.prototype.toString.call(value) === "[object Blob]") blobs.push([key, value]);
+  }
+  if (blobs.length === 0) return structuredClone(record);
+  const withoutBlobs = { ...record };
+  for (const [key] of blobs) delete withoutBlobs[key];
+  const cloned = structuredClone(withoutBlobs);
+  for (const [key, value] of blobs) cloned[key] = value;
+  return cloned;
+}
+
 vi.mock("idb", () => ({
   openDB: vi.fn(() => {
     // Per-transaction objectStore: writes go directly into stores
@@ -72,7 +89,7 @@ vi.mock("idb", () => ({
       return {
         get: vi.fn((id) => Promise.resolve(stores[name]?.get(id) ?? null)),
         put: vi.fn((record) => {
-          if (stores[name]) stores[name].set(record.id ?? record.key, structuredClone(record));
+          if (stores[name]) stores[name].set(record.id ?? record.key, cloneRecord(record));
           return Promise.resolve();
         }),
       };
@@ -80,8 +97,7 @@ vi.mock("idb", () => ({
     return Promise.resolve({
       get: vi.fn((storeName, id) => Promise.resolve(stores[storeName]?.get(id) ?? null)),
       put: vi.fn((storeName, record) => {
-        if (stores[storeName])
-          stores[storeName].set(record.id ?? record.key, structuredClone(record));
+        if (stores[storeName]) stores[storeName].set(record.id ?? record.key, cloneRecord(record));
         return Promise.resolve();
       }),
       delete: vi.fn((storeName, id) => {
@@ -1122,6 +1138,46 @@ describe("saveFile / getFile", () => {
 
   it("getFile returns null for a missing id", async () => {
     expect(await getFile("missing")).toBeNull();
+  });
+
+  // The mock at the top of this file replaces saveFile/getFile for every
+  // importer, so these two reach past it via the real module to exercise the
+  // db-backed implementation and assert against `stores.files`.
+  it("persists the Blob itself rather than unwrapping it to an ArrayBuffer", async () => {
+    const real = await vi.importActual("./storage.js");
+    await real.initStorage();
+    const blob = new Blob(["payload"], { type: "application/pdf" });
+
+    const id = await real.saveFile(blob);
+
+    // IndexedDB stores Blobs natively, so the old blob.arrayBuffer() hop bought
+    // nothing and cost a full extra copy of the payload in JS heap — on a
+    // 1000-page PDF that is tens of MB per file, which OOM-killed the WebView
+    // renderer mid-sync on low-end Android. A stored ArrayBuffer here means the
+    // implementation unwrapped (and therefore duplicated) the payload again.
+    // Branded by toString tag, not instanceof: vi.importActual gives the module
+    // a different realm, so its Blob/ArrayBuffer constructors are not the ones
+    // in scope here and instanceof would be false for a perfectly good Blob.
+    const stored = stores.files.get(id);
+    expect(Object.prototype.toString.call(stored.data)).toBe("[object Blob]");
+    expect(stored.type).toBe("application/pdf");
+    expect(await stored.data.text()).toBe("payload");
+  });
+
+  it("still reads back ArrayBuffer records written by older versions", async () => {
+    // Backward compatibility: files saved before the Blob change are stored as
+    // ArrayBuffers and must keep loading.
+    const real = await vi.importActual("./storage.js");
+    await real.initStorage();
+    // Seed after initStorage: the shared `stores` maps are reset per test.
+    const bytes = new TextEncoder().encode("legacy").buffer;
+    stores.files.set("legacy-1", { id: "legacy-1", data: bytes, type: "application/pdf" });
+
+    const retrieved = await real.getFile("legacy-1");
+
+    expect(retrieved).toBeInstanceOf(Blob);
+    expect(retrieved.type).toBe("application/pdf");
+    expect(await retrieved.text()).toBe("legacy");
   });
 });
 

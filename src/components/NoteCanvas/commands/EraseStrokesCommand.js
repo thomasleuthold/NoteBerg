@@ -55,6 +55,7 @@ export class EraseStrokesCommand {
     noteCanvas.strokeManager.markDirty();
     noteCanvas.strokeManager.forceSave();
     noteCanvas.renderer.forceRedraw();
+    noteCanvas._updateNavigatorSubjects();
   }
 
   /**

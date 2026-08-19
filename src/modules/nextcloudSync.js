@@ -78,6 +78,50 @@ function basicAuth(loginName, appPassword) {
   }
 }
 
+// Ceiling on the total bytes of media downloads held in memory at once.
+//
+// runInBatches gives every download stage a concurrency of 5, which is right for
+// the common case (many small note JSONs) but unbounded in BYTES: five notes
+// that each embed a 1000-page PDF would materialize five full files at the same
+// time and OOM-kill the WebView renderer on a low-end Android tablet — the app
+// simply vanishes mid-sync, with no JS error to catch.
+//
+// The budget bounds concurrent bytes rather than concurrent requests, so small
+// files stay fully parallel and only genuinely large ones serialize.
+const MAX_INFLIGHT_MEDIA_BYTES = 64 * 1024 * 1024;
+
+let _inflightMediaBytes = 0;
+const _mediaBudgetWaiters = [];
+
+/**
+ * Reserve `bytes` of the in-flight media budget, waiting until it fits.
+ *
+ * A request larger than the whole budget is admitted alone (once the pipe is
+ * otherwise empty) rather than deadlocking forever waiting for space that can
+ * never exist.
+ * @returns {Promise<() => void>} release function — must be called in a finally.
+ */
+async function acquireMediaBudget(bytes) {
+  const cost = Math.max(0, bytes || 0);
+  const fits = () =>
+    _inflightMediaBytes === 0 || _inflightMediaBytes + cost <= MAX_INFLIGHT_MEDIA_BYTES;
+
+  while (!fits()) {
+    await new Promise((resolve) => _mediaBudgetWaiters.push(resolve));
+  }
+
+  _inflightMediaBytes += cost;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    _inflightMediaBytes -= cost;
+    // Wake every waiter and let each re-test: the freed space may admit several
+    // small requests but not one large one, and only the waiters know their size.
+    while (_mediaBudgetWaiters.length > 0) _mediaBudgetWaiters.shift()();
+  };
+}
+
 // Helper for batching promises
 async function runInBatches(items, batchSize, fn) {
   const results = [];
@@ -523,6 +567,141 @@ async function createFolder(path) {
   return true;
 }
 
+// Above this size, a Blob body is uploaded via Nextcloud's chunked-upload
+// endpoint instead of a single PUT.
+//
+// This is NOT a network optimisation — it is a hard memory constraint imposed by
+// the Tauri HTTP plugin. `@tauri-apps/plugin-http`'s fetch cannot stream a body:
+// it does `Array.from(new Uint8Array(await req.arrayBuffer()))` and passes the
+// result through the JSON IPC bridge to Rust. Every byte becomes a boxed JS
+// number (~8 bytes) and then ~4 more bytes of JSON text, so a single PUT costs
+// roughly 12x the file size in transient allocation — a 120MB PDF (a scanned
+// 1500-page book) peaks over 1.3GB and the Android WebView renderer is
+// OOM-killed by the kernel. There is no JS exception to catch: the app vanishes
+// mid-sync, and because the upload never completes the note stays synced=false
+// and crashes again on the next sync, including at app start.
+//
+// The native WebView fetch would stream this correctly but is unusable here:
+// WebDAV requests to the Nextcloud host are cross-origin and blocked by CORS.
+// So the only lever from JS is to keep each individual body small; chunking is
+// the fix, and a byte budget (as used for downloads) is not — that bounds
+// concurrent files, while this blowup is per-file and happens with just one.
+const CHUNKED_UPLOAD_THRESHOLD = 8 * 1024 * 1024;
+const CHUNK_SIZE = 8 * 1024 * 1024;
+
+/**
+ * Upload a large Blob via Nextcloud's chunked-upload endpoint.
+ *
+ * Three plain WebDAV verbs against /remote.php/dav/uploads/{user}/{uploadId}/:
+ *   MKCOL  the session directory
+ *   PUT    each chunk, named by its 1-based index
+ *   MOVE   .file to the destination, which assembles the chunks server-side
+ *
+ * Chunks are sent SEQUENTIALLY on purpose. Uploading them in parallel would put
+ * several chunks through the IPC marshalling above at once and reintroduce the
+ * very memory spike this exists to avoid.
+ *
+ * Not resumable: on failure the session directory is deleted and the error
+ * propagates, leaving the note synced=false so the ordinary retry starts over.
+ * Cross-restart resume is real complexity for a rare case, so it is out of scope.
+ */
+async function uploadFileChunked(path, blob, mtime = null) {
+  const creds = await getStoredCredentials();
+  if (!creds) throw new Error("Not authenticated");
+
+  const authHeader = basicAuth(creds.loginName, creds.appPassword);
+  // Session-directory name only — never persisted, so a timestamp plus random
+  // suffix is enough to keep concurrent uploads from colliding.
+  const uploadId = `noteberg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const uploadRoot = `${creds.serverUrl}/remote.php/dav/uploads/${creds.loginName}/${uploadId}`;
+  const destinationUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
+
+  const mkcolResponse = await _fetch(uploadRoot, {
+    method: "MKCOL",
+    headers: { Authorization: authHeader, "OCS-APIRequest": "true" },
+  });
+  if (!mkcolResponse.ok && mkcolResponse.status !== 201) {
+    throw new Error(
+      `Failed to create chunked upload session: ${mkcolResponse.status} ${mkcolResponse.statusText}`,
+    );
+  }
+
+  try {
+    const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
+    for (let index = 0; index < totalChunks; index++) {
+      const start = index * CHUNK_SIZE;
+      // blob.slice() is a view over the same underlying data — it does not copy
+      // the payload, so only the sliced chunk is ever marshalled.
+      const chunk = blob.slice(start, Math.min(start + CHUNK_SIZE, blob.size));
+
+      const chunkResponse = await _fetch(`${uploadRoot}/${index + 1}`, {
+        method: "PUT",
+        headers: {
+          Authorization: authHeader,
+          "Content-Type": "application/octet-stream",
+          "Cache-Control": "no-cache",
+        },
+        body: chunk,
+      });
+
+      if (!chunkResponse.ok && chunkResponse.status !== 201 && chunkResponse.status !== 204) {
+        throw new Error(
+          `Failed to upload chunk ${index + 1}/${totalChunks}: ${chunkResponse.status} ${chunkResponse.statusText}`,
+        );
+      }
+    }
+
+    const moveHeaders = {
+      Authorization: authHeader,
+      Destination: destinationUrl,
+      "OCS-APIRequest": "true",
+    };
+    // Carried on the MOVE rather than the chunk PUTs — the destination file only
+    // comes into existence when the chunks are assembled.
+    if (mtime) {
+      moveHeaders["X-OC-Mtime"] = Math.floor(new Date(mtime).getTime() / 1000).toString();
+    }
+
+    const moveResponse = await _fetch(`${uploadRoot}/.file`, {
+      method: "MOVE",
+      headers: moveHeaders,
+    });
+
+    if (!moveResponse.ok && moveResponse.status !== 201 && moveResponse.status !== 204) {
+      throw new Error(
+        `Failed to assemble chunked upload: ${moveResponse.status} ${moveResponse.statusText}`,
+      );
+    }
+
+    let newEtag = moveResponse.headers?.get("etag")?.replace(/"/g, "");
+    if (!newEtag) {
+      try {
+        const headResponse = await _fetch(destinationUrl, {
+          method: "HEAD",
+          headers: { Authorization: authHeader },
+        });
+        if (headResponse.ok) {
+          newEtag = headResponse.headers?.get("etag")?.replace(/"/g, "");
+        }
+      } catch (_e) {
+        // Etag is optional for media uploads — callers of the Blob path ignore it.
+      }
+    }
+    return newEtag;
+  } catch (error) {
+    // Best-effort cleanup so a failed session does not accumulate on the server.
+    try {
+      await _fetch(uploadRoot, {
+        method: "DELETE",
+        headers: { Authorization: authHeader },
+      });
+    } catch (_e) {
+      // Cleanup failure must not mask the original upload error.
+    }
+    throw error;
+  }
+}
+
 /**
  * Upload a file to Nextcloud using WebDAV
  * Uses X-OC-Mtime to set the modification time to match local file
@@ -541,11 +720,31 @@ async function uploadFile(
   const creds = await getStoredCredentials();
   if (!creds) throw new Error("Not authenticated");
 
+  // Large binaries go through the chunked endpoint (see CHUNKED_UPLOAD_THRESHOLD).
+  // Only media uploads pass a Blob, and that call site passes no etag/mtime/
+  // requireAbsent — the If-Match conflict handling below is JSON-only and stays
+  // unreachable from here. Asserted rather than assumed: silently dropping an
+  // If-Match would turn a conflict-detected upload into a blind overwrite.
+  if (typeof Blob !== "undefined" && content instanceof Blob) {
+    if (etag || requireAbsent) {
+      throw new Error("uploadFile: If-Match/If-None-Match are not supported for Blob bodies");
+    }
+    if (content.size > CHUNKED_UPLOAD_THRESHOLD) {
+      return uploadFileChunked(path, content, mtime);
+    }
+  }
+
   const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
 
   const headers = {
     Authorization: basicAuth(creds.loginName, creds.appPassword),
-    "Content-Type": "application/json",
+    // Every other caller uploads JSON; only media passes a Blob. Sending
+    // application/json for binary media was harmless (WebDAV stores the bytes
+    // either way) but wrong, and it misleads anything reading the file back.
+    "Content-Type":
+      typeof Blob !== "undefined" && content instanceof Blob
+        ? content.type || "application/octet-stream"
+        : "application/json",
     "Cache-Control": "no-cache",
     Pragma: "no-cache",
   };
@@ -634,9 +833,26 @@ async function downloadFile(path, asBinary = false) {
   }
 
   if (asBinary) {
-    const content = await response.arrayBuffer();
-    const etag = response.headers.get("etag")?.replace(/"/g, "");
-    return { content, etag };
+    // The in-flight byte budget is reserved from the advertised Content-Length
+    // *before* the body is read, and held by the caller until the blob has been
+    // persisted and dropped — reserving after the read would defeat the point.
+    // A missing/!ok Content-Length reserves nothing rather than guessing, so an
+    // unknown-length response still downloads instead of blocking the sync.
+    const declared = Number.parseInt(response.headers.get("content-length") || "", 10);
+    const reserveBytes = Number.isFinite(declared) && declared > 0 ? declared : 0;
+    const release = await acquireMediaBudget(reserveBytes);
+    try {
+      // response.blob() rather than arrayBuffer(): the caller hands this straight
+      // to saveFile, which stores a Blob as-is. Reading an ArrayBuffer here forced
+      // a `new Blob([content])` copy at the call site and cost a second full-size
+      // allocation of every media file — fatal on large PDFs on low-end Android.
+      const content = await response.blob();
+      const etag = response.headers.get("etag")?.replace(/"/g, "");
+      return { content, etag, releaseBudget: release };
+    } catch (e) {
+      release();
+      throw e;
+    }
   }
 
   const content = await response.text();
@@ -869,13 +1085,26 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
     const remoteFile = remoteFiles.find((f) => f.name.startsWith(fileId));
     if (remoteFile) {
       console.log(`[Sync] Downloading media file: ${remoteFile.name}`);
-      const { content } = await downloadFile(`${mediaFolder}/${remoteFile.name}`, true); // Download as binary
+      // Download as binary. releaseBudget is held until the blob is persisted,
+      // so the in-flight cap covers the whole lifetime of the payload in memory.
+      const { content, releaseBudget } = await downloadFile(
+        `${mediaFolder}/${remoteFile.name}`,
+        true,
+      );
 
-      if (content) {
-        // Infer mime type from extension
-        const ext = remoteFile.name.substring(remoteFile.name.lastIndexOf("."));
-        const blob = new Blob([content], { type: mimeFromExt(ext) });
-        await saveFile(blob, fileId);
+      try {
+        if (content) {
+          // Infer mime type from extension — the server's Content-Type is often
+          // application/octet-stream for WebDAV GETs. blob.slice() retypes without
+          // copying the payload (it shares the same underlying blob data), unlike
+          // `new Blob([arrayBuffer])`, which duplicated the whole file in memory.
+          const ext = remoteFile.name.substring(remoteFile.name.lastIndexOf("."));
+          const mime = mimeFromExt(ext);
+          const blob = content.type === mime ? content : content.slice(0, content.size, mime);
+          await saveFile(blob, fileId);
+        }
+      } finally {
+        releaseBudget?.();
       }
     } else {
       console.warn(

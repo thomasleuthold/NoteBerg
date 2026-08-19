@@ -125,6 +125,35 @@ describe("SpatialIndex", () => {
     expect(result).toEqual([0, 1, 2, 3]);
   });
 
+  it("returns identical results on repeated queries", () => {
+    // query() reuses a shared seen-buffer across calls. If the reset misses an
+    // index, that stroke is treated as already-seen next time and silently
+    // vanishes from the results.
+    for (let i = 0; i < 30; i++) {
+      spatialIndex.insert({ width: 2, x: [10], y: [i * 40] }, i);
+    }
+
+    const first = spatialIndex.query(0, 600);
+    const second = spatialIndex.query(0, 600);
+    const third = spatialIndex.query(0, 600);
+
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+    expect(first.length).toBeGreaterThan(0);
+  });
+
+  it("does not let a rejected candidate leak into the next query", () => {
+    // A stroke inside the buckets but outside the Y bounds is visited and
+    // flagged, then filtered out. Its flag must still be cleared.
+    spatialIndex.insert({ width: 2, x: [10], y: [10] }, 0);
+    spatialIndex.insert({ width: 2, x: [10], y: [90] }, 1);
+
+    // First query rejects index 1 on bounds (it is in the same bucket).
+    expect(spatialIndex.query(0, 20)).toEqual([0]);
+    // A later query that should include it must still find it.
+    expect(spatialIndex.query(0, 100)).toEqual([0, 1]);
+  });
+
   it("keeps query() allocation bounded as indices climb", () => {
     // totalStrokes drives the _seenBuffer allocation in query(). If it only ever
     // grows, a long erasing session keeps reallocating a larger Uint8Array.

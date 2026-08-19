@@ -6,12 +6,35 @@
  * - Notes with an imported PDF: copies the original pages and overlays strokes.
  *   Strokes that extend beyond the last PDF page are placed on additional pages
  *   that match the size of the last PDF page.
+ *
+ * Strokes are emitted one of two ways, depending on what they mean:
+ * - On imported PDF pages, ink annotates a source document, so it is written as
+ *   real `/Ink` annotations (see pdfInkAnnotations.js) that viewers list in
+ *   their comment sidebar. Note that this also makes it editable and deletable
+ *   in viewers such as Acrobat — that is inherent to annotations.
+ * - On plain notes, and on overflow pages appended past the end of an imported
+ *   PDF, the ink *is* the document rather than a comment on it, so it is
+ *   painted into the page content stream and stays flattened.
  */
 
 import html2canvas from "html2canvas";
-import { LineCapStyle, PDFDocument, rgb } from "pdf-lib";
-import { getMarkerPalette, getThemePalette, MARKER_ALPHA } from "../utils/noteRenderer.js";
+import {
+  concatTransformationMatrix,
+  LineCapStyle,
+  PDFDocument,
+  popGraphicsState,
+  pushGraphicsState,
+  rgb,
+} from "pdf-lib";
 import { sanitizeNoteHtml } from "../utils/sanitizeHtml.js";
+import {
+  addStrokeAnnotationsOnPage,
+  buildPageContentMatrix,
+  getDisplayedPageGeometry,
+  hexToRgb,
+  resolveStrokeStyle,
+  strokeOverlapsPage,
+} from "./pdfInkAnnotations.js";
 import { getFile } from "./storage.js";
 
 // A4 dimensions in PDF points (72 pt/inch)
@@ -177,20 +200,6 @@ async function drawTextSliceOnPage(
     width: pdfPageW,
     height: drawnH,
   });
-}
-
-/**
- * Parse a hex color string ("#rrggbb") to an rgb() value usable by pdf-lib.
- * @param {string} hex
- * @returns {{ r: number, g: number, b: number }}
- */
-function hexToRgb(hex) {
-  const h = hex.replace("#", "");
-  return {
-    r: parseInt(h.slice(0, 2), 16) / 255,
-    g: parseInt(h.slice(2, 4), 16) / 255,
-    b: parseInt(h.slice(4, 6), 16) / 255,
-  };
 }
 
 /**
@@ -362,33 +371,18 @@ function drawStrokesOnPage(
   const scaleX = pdfPageW / contentPageW;
   const scaleY = pdfPageH / contentPageH;
 
-  // PDF pages are always white, regardless of the app's live theme — always use
-  // the light-mode stroke/marker palette so exported ink stays legible, even
-  // when exporting while dark theme is active.
-  const penPalette = getThemePalette("light");
-  const markerPalette = getMarkerPalette("light");
-
   const pageBottom = contentPageY + contentPageH;
 
   for (const stroke of strokes) {
     if (!stroke.x || stroke.x.length < 2) continue;
+    if (!strokeOverlapsPage(stroke, contentPageY, pageBottom)) continue;
 
-    // Only draw strokes that overlap this page's Y range
-    let strokeMinY = stroke.y[0];
-    let strokeMaxY = stroke.y[0];
-    for (let k = 1; k < stroke.y.length; k++) {
-      if (stroke.y[k] < strokeMinY) strokeMinY = stroke.y[k];
-      if (stroke.y[k] > strokeMaxY) strokeMaxY = stroke.y[k];
-    }
-    if (strokeMaxY < contentPageY || strokeMinY > pageBottom) continue;
-
-    const isMarker = stroke.type === "marker";
-    const palette = isMarker ? markerPalette : penPalette;
-    const colorIndex = stroke.colorIndex ?? 0;
-    const hexColor = palette[Math.min(colorIndex, palette.length - 1)] ?? "#000000";
-    const { r, g, b } = hexToRgb(hexColor);
-    const opacity = isMarker ? MARKER_ALPHA : 1.0;
-    const lineWidth = (stroke.width || 2) * Math.min(scaleX, scaleY);
+    // Shared with the annotation emitter so both render a stroke identically.
+    const {
+      color: { r, g, b },
+      opacity,
+      lineWidth,
+    } = resolveStrokeStyle(stroke, scaleX, scaleY);
 
     const svgPath = buildSvgPath(stroke, contentPageX, contentPageY, scaleX, scaleY);
     if (!svgPath) continue;
@@ -562,10 +556,25 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
       onProgress?.(i + 1, totalPages);
       const mediaPg = pdfPages[i]; // media item (content coords)
       const pdfPg = pdfDoc.getPage(i); // the exported page
-      const { width: pdfW, height: pdfH } = pdfPg.getSize();
+
+      // Content coordinates come from pdf.js getViewport(), which applies both
+      // /Rotate and the CropBox — so all content-stream drawing happens in
+      // *displayed* page space, and a single cm maps that onto the page box.
+      // Without this, cropped or rotated source PDFs get their background,
+      // text and images offset relative to the ink.
+      const geom = getDisplayedPageGeometry(pdfPg);
+      const { dispW: pdfW, dispH: pdfH } = geom;
       const scaleX = pdfW / mediaPg.width;
       const scaleY = pdfH / mediaPg.height;
       const pageBottom = mediaPg.y + mediaPg.height;
+
+      // Every draw* call below brackets itself in q/Q, so this outer pair only
+      // has to scope the cm. Annotations are added after popGraphicsState():
+      // their geometry is absolute and is mapped per point instead.
+      pdfPg.pushOperators(
+        pushGraphicsState(),
+        concatTransformationMatrix(...buildPageContentMatrix(geom)),
+      );
 
       // Draw background pattern underneath everything else
       drawBackgroundPatternOnPage(
@@ -598,15 +607,21 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
         }
       }
 
-      drawStrokesOnPage(
+      // Close the displayed-space transform — everything after this is in
+      // absolute page-box coordinates.
+      pdfPg.pushOperators(popGraphicsState());
+
+      // Ink on an imported PDF page is genuinely an annotation on that page,
+      // so emit it as /Ink annotation objects rather than page content.
+      addStrokeAnnotationsOnPage(
+        pdfDoc,
         pdfPg,
         activeStrokes,
         mediaPg.x,
         mediaPg.y,
         mediaPg.width,
         mediaPg.height,
-        pdfW,
-        pdfH,
+        note.modified ? new Date(note.modified) : undefined,
       );
     }
 
@@ -615,7 +630,12 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
       const lastMediaPg = pdfPages[pdfPages.length - 1];
       const lastPageBottom = lastMediaPg.y + lastMediaPg.height;
       const lastPdfPg = pdfDoc.getPage(pdfPages.length - 1);
-      const { width: extraW, height: extraH } = lastPdfPg.getSize();
+      // Displayed size, not getSize(): overflow pages must match the last page
+      // as the reader sees it. A /Rotate 90 landscape source would otherwise
+      // yield portrait overflow pages with no rotation, squashing their ink.
+      // These pages are created fresh — no /Rotate, box at the origin — so
+      // displayed and page space coincide and they need no cm transform.
+      const { dispW: extraW, dispH: extraH } = getDisplayedPageGeometry(lastPdfPg);
       const extraContentH = lastMediaPg.height;
       const scaleX = extraW / lastMediaPg.width;
       const scaleY = extraH / lastMediaPg.height;
@@ -665,6 +685,9 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
           }
         }
 
+        // Overflow pages are blank NoteBerg pages appended past the end of the
+        // imported PDF — there is no source content here to annotate, so this
+        // ink is document content and stays in the content stream.
         drawStrokesOnPage(
           extraPage,
           activeStrokes,

@@ -708,29 +708,29 @@ export async function restoreNote(id) {
 export async function saveFile(blob, id = null) {
   const fileId = id || generateId();
   const mimeType = blob.type;
-  let dataToStore = blob;
 
-  if (blob instanceof Blob) {
-    try {
-      dataToStore = await blob.arrayBuffer();
-    } catch (_e) {
-      dataToStore = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(blob);
-      });
-    }
-  }
-
-  await db.put("files", { id: fileId, data: dataToStore, type: mimeType, created: Date.now() });
+  // Blobs are stored as-is rather than unwrapped to an ArrayBuffer first.
+  // IndexedDB stores Blobs natively (usually by reference to the browser's own
+  // blob store), so the previous blob.arrayBuffer() hop bought nothing and cost
+  // a full extra copy of the payload in JS heap — on a 1000-page PDF that is
+  // ~80MB of transient allocation per file, which is what OOM-killed the WebView
+  // renderer mid-sync on low-end Android. getFile already reads back either
+  // shape, so records written by older versions still load unchanged.
+  await db.put("files", { id: fileId, data: blob, type: mimeType, created: Date.now() });
   return fileId;
 }
 
 export async function getFile(id) {
   const record = await db.get("files", id);
   if (!record) return null;
-  if (record.data instanceof ArrayBuffer) {
+  // Records written before saveFile stored Blobs directly hold an ArrayBuffer;
+  // wrap those so every caller gets a Blob regardless of when the file was
+  // saved. Branded via the toString tag rather than `instanceof`, which is
+  // false for a buffer that crossed a realm boundary (a WebView/worker/iframe
+  // hand-off) and would silently return the raw buffer to callers expecting a
+  // Blob. ArrayBuffer.isView does not cover a bare ArrayBuffer, hence the tag.
+  const tag = Object.prototype.toString.call(record.data);
+  if (tag === "[object ArrayBuffer]" || ArrayBuffer.isView(record.data)) {
     return new Blob([record.data], { type: record.type || "application/octet-stream" });
   }
   return record.data;
