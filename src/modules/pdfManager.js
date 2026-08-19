@@ -6,15 +6,39 @@ import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?raw";
 import { generateId, getFile, saveFile } from "./storage.js";
 
-// JBig2/CCITT Fax scanned PDFs need the WASM decoder. wasmUrl must be a
-// directory prefix (trailing slash) — PDF.js appends "jbig2.wasm" and
-// "jbig2_nowasm_fallback.js" to it. Both files live in public/pdfjs-wasm/
-// so they're copied verbatim (no hash) and reachable at a stable URL.
+// Scanned PDFs need WASM decoders: JBig2/CCITT Fax and JPEG2000 (JPX).
+// wasmUrl must be a directory prefix (trailing slash) — PDF.js appends the
+// filename itself ("jbig2.wasm", "openjpeg.wasm", ...). The files live in
+// public/pdfjs-wasm/ so they're copied verbatim (no hash) and reachable at a
+// stable URL, and must be kept in step with the pdfjs-dist version on upgrade
+// (source: node_modules/pdfjs-dist/wasm/).
+//
+// Both the .wasm decoders AND their *_nowasm_fallback.js counterparts are
+// vendored. Missing a fallback is NOT safe: pdf.js reacts to an undecodable
+// image by logging "getOperatorList - ignoring XObject" and returning an empty
+// operator list, so the page renders as valid blank white with no exception for
+// callers to catch. On a scanned book — where the JBig2/JPX image IS the page —
+// that means silently blank pages. WasmImage#instantiateWasm falls back to
+// #getJsModule() when the .wasm cannot be fetched, so the .js is the last line
+// of defence whenever the wasm URL is unreachable (packaging slip, SSO proxy,
+// CDN rule). The JBig2 fallback is additionally inlined into the worker at build
+// time (see inlinePdfjsJbig2FallbackPlugin in vite.config.js) because its
+// dynamic import() is blocked by the NC/Android CSP; the openjpeg one is not
+// inlined, so it still relies on that import succeeding.
+//
+// Deliberately NOT vendored:
+// - quickjs-eval.{js,wasm}: PDF form JavaScript, never referenced by the worker
+//   build we ship.
+// - qcms_bg.wasm: ICC colour correction. Fetched from wasmUrl (the same option
+//   set below), so vendoring it alone would enable ICC — it is omitted because
+//   it changes rendering of ICC-profiled PDFs, not because it is unreachable.
+//   CMYK is a separate switch again: it needs the distinct iccUrl option, which
+//   points at a different file (CGATS001Compat-v2-micro.icc).
 // Resolved against this module's own URL rather than import.meta.env.BASE_URL:
 // the NC build uses a relative base, and BASE_URL ('./') would resolve against
 // the document URL, which differs per route. import.meta.url is always correct.
 // public/ assets land next to the js/ output dir, hence the '../' hop.
-const jbig2WasmDirUrl = new URL("../pdfjs-wasm/", import.meta.url).href;
+const pdfWasmDirUrl = new URL("../pdfjs-wasm/", import.meta.url).href;
 
 const _workerBlob = new Blob([pdfjsWorkerSrc], { type: "text/javascript" });
 pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(_workerBlob);
@@ -44,7 +68,7 @@ export async function importPdf(file, onProgress) {
 
   // 2. Load the PDF to get dimensions
   const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: jbig2WasmDirUrl });
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: pdfWasmDirUrl });
   const pdfDocument = await loadingTask.promise;
 
   const pages = [];
@@ -96,7 +120,7 @@ async function getPdfDocument(fileId) {
       throw new Error(`PDF file not found: ${fileId}`);
     }
     const arrayBuffer = await blob.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: jbig2WasmDirUrl });
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, wasmUrl: pdfWasmDirUrl });
     return loadingTask.promise;
   })();
 

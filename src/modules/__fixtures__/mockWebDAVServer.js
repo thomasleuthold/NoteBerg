@@ -6,12 +6,17 @@
  * after `vi.mock("@tauri-apps/plugin-http", () => ({ fetch: vi.fn() }))`.
  */
 
+// Virtual path prefix under which chunked-upload sessions are stored. Not a
+// real WebDAV path — see _normalizePath.
+const UPLOADS_PREFIX = "/__uploads__";
+
 export class MockWebDAVServer {
   constructor() {
     this.files = new Map(); // path -> { content, etag, mtime, isCollection, locked }
     this.baseUrl = "https://cloud.example.com";
     this.user = "testuser";
     this.rootPath = `/remote.php/dav/files/${this.user}`;
+    this.uploadsPath = `/remote.php/dav/uploads/${this.user}`;
 
     this._etagCounter = 0;
     this.requests = [];
@@ -21,6 +26,9 @@ export class MockWebDAVServer {
 
     this.files.set("/", { isCollection: true, mtime: new Date() });
     this.files.set("/NoteBerg", { isCollection: true, mtime: new Date() });
+    // Nextcloud provisions the per-user chunked-upload root automatically, so
+    // clients MKCOL only the session directory beneath it.
+    this.files.set(UPLOADS_PREFIX, { isCollection: true, mtime: new Date() });
   }
 
   reset() {
@@ -32,6 +40,9 @@ export class MockWebDAVServer {
     this._rejectDepthInfinity = false;
     this.files.set("/", { isCollection: true, mtime: new Date() });
     this.files.set("/NoteBerg", { isCollection: true, mtime: new Date() });
+    // Nextcloud provisions the per-user chunked-upload root automatically, so
+    // clients MKCOL only the session directory beneath it.
+    this.files.set(UPLOADS_PREFIX, { isCollection: true, mtime: new Date() });
   }
 
   // --- Seed DSL ---
@@ -162,6 +173,14 @@ export class MockWebDAVServer {
   // --- Internals ---
 
   _normalizePath(url) {
+    // Chunked uploads live under a sibling DAV root (/uploads/{user}) rather
+    // than /files/{user}. Map it to a reserved virtual prefix so the session
+    // directory and its chunks are stored in the same Map without ever
+    // colliding with a real note path.
+    if (url.startsWith(this.baseUrl + this.uploadsPath)) {
+      const rest = url.replace(this.baseUrl + this.uploadsPath, "");
+      return decodeURIComponent(`${UPLOADS_PREFIX}${rest}`);
+    }
     let path = url.replace(this.baseUrl + this.rootPath, "");
     if (path === "") path = "/";
     return decodeURIComponent(path);
@@ -231,7 +250,13 @@ export class MockWebDAVServer {
         return { ok: false, status: 507, statusText: "Insufficient Storage", text: async () => "" };
       }
 
-      const content = options.body;
+      // Bodies arrive as strings (JSON) or Blobs (media, incl. upload chunks).
+      // Blobs are read to text so stored content is comparable and chunked
+      // uploads can be reassembled by plain concatenation on MOVE.
+      const content =
+        typeof Blob !== "undefined" && options.body instanceof Blob
+          ? await options.body.text()
+          : options.body;
       const etag = this._generateEtag();
       this.files.set(path, {
         isCollection: false,
@@ -256,12 +281,24 @@ export class MockWebDAVServer {
       // one for files seeded without it so If-Match round-trips work.
       if (!file.etag) file.etag = this._generateEtag();
 
+      // A real Response exposes the whole body-reading surface, and a real
+      // WebDAV GET always carries Content-Length — the sync's in-flight memory
+      // budget reads that header to size large media downloads.
+      const bodyBytes = new TextEncoder().encode(file.content);
       return {
         ok: true,
         status: 200,
-        headers: { get: (name) => (name.toLowerCase() === "etag" ? `"${file.etag}"` : null) },
+        headers: {
+          get: (name) => {
+            const key = name.toLowerCase();
+            if (key === "etag") return `"${file.etag}"`;
+            if (key === "content-length") return String(bodyBytes.byteLength);
+            return null;
+          },
+        },
         text: async () => file.content,
-        arrayBuffer: async () => new TextEncoder().encode(file.content).buffer,
+        arrayBuffer: async () => bodyBytes.buffer,
+        blob: async () => new Blob([bodyBytes]),
         json: async () => JSON.parse(file.content),
       };
     }
@@ -329,6 +366,61 @@ export class MockWebDAVServer {
 
       xml += "</d:multistatus>";
       return { ok: true, status: 207, text: async () => xml };
+    }
+
+    // Assembles a chunked upload: MOVE {session}/.file -> Destination.
+    // Chunks are concatenated in numeric order, matching how Nextcloud stitches
+    // them, so a test can assert the reassembled body equals the original.
+    if (method === "MOVE") {
+      const destination = headers.Destination;
+      if (!destination) return { ok: false, status: 400, statusText: "Bad Request" };
+      const destPath = this._normalizePath(destination);
+
+      if (!path.startsWith(`${UPLOADS_PREFIX}/`) || !path.endsWith("/.file")) {
+        return { ok: false, status: 501, statusText: "Not Implemented" };
+      }
+
+      const sessionPath = path.substring(0, path.length - "/.file".length);
+      if (!this.files.has(sessionPath)) {
+        return { ok: false, status: 404, statusText: "Not Found", text: async () => "" };
+      }
+
+      const destParent = destPath.substring(0, destPath.lastIndexOf("/")) || "/";
+      if (!this.files.has(destParent)) {
+        return { ok: false, status: 409, statusText: "Conflict", text: async () => "" };
+      }
+
+      const chunkPrefix = `${sessionPath}/`;
+      const chunks = [];
+      for (const [chunkPath, chunkFile] of this.files.entries()) {
+        if (chunkPath.startsWith(chunkPrefix) && !chunkFile.isCollection) {
+          const name = chunkPath.substring(chunkPrefix.length);
+          if (/^\d+$/.test(name)) chunks.push({ index: Number(name), content: chunkFile.content });
+        }
+      }
+      chunks.sort((a, b) => a.index - b.index);
+
+      const existing = this.files.get(destPath);
+      const etag = this._generateEtag();
+      this.files.set(destPath, {
+        isCollection: false,
+        content: chunks.map((c) => c.content).join(""),
+        mtime: new Date(),
+        etag,
+      });
+
+      // The session directory is consumed by the assembly.
+      for (const key of [...this.files.keys()]) {
+        if (key === sessionPath || key.startsWith(chunkPrefix)) this.files.delete(key);
+      }
+
+      return {
+        ok: true,
+        status: existing ? 204 : 201,
+        statusText: existing ? "No Content" : "Created",
+        headers: { get: (name) => (name.toLowerCase() === "etag" ? `"${etag}"` : null) },
+        text: async () => "",
+      };
     }
 
     if (method === "HEAD") {

@@ -6,23 +6,30 @@ import { fileURLToPath } from 'url';
  * sync-version.js
  *
  * Single source of truth for versioning:
- *   package.json.version  -> semver base + pre-release label, e.g. "0.5.33-rc.4"
- *                            (npm-managed via `npm version` / `just release-*`)
+ *   package.json.version  -> plain semver base, e.g. "0.5.33" (NO pre-release label;
+ *                            npm-managed via `npm version` / `just bump*`)
  *   package.json.build    -> monotonic build counter, incremented on EVERY build
  *                            (managed here; may run on a dirty tree, is NOT committed)
  *
  * From those two, this script derives and writes:
  *   - src-tauri/tauri.conf.json
- *       version                        = "0.5.33"        (clean 3-part semver, suffix stripped)
+ *       version                        = "0.5.33"
  *       bundle.windows.wix.version     = "0.5.33.<build>" (MSI ProductVersion, 4th part = build)
  *       bundle.android.versionCode     = <versionCode>    (monotonic, encodes semver + build)
  *   - src-tauri/Cargo.toml
  *       version                        = "0.5.33"
  *   - appinfo/info.xml
- *       <version>                      = "0.5.33-rc.4"   (keeps pre-release label to hide in NC store)
+ *       <version>                      = "0.5.33" + whatever pre-release suffix
+ *                                        info.xml already carried (see below)
  *
- * The frontend (footer / settings "About") reads the labeled version + stage from
- * package.json via vite.config.js (VITE_APP_VERSION / VITE_APP_STAGE), so no source
+ * Pre-release / RC stages are a Nextcloud-store concern ONLY (a labeled version is
+ * hidden from the store's default listing). They are therefore NOT globally managed:
+ * edit `<version>0.5.33-rc.2</version>` in appinfo/info.xml by hand, and this script
+ * preserves that suffix while keeping the base version in lockstep with package.json.
+ * There are no set-rc/bump-rc/unset-rc commands, and no stage reaches the frontend.
+ *
+ * The frontend (footer / settings "About") reads the version + build from
+ * package.json via vite.config.js (VITE_APP_VERSION / VITE_APP_BUILD), so no source
  * file is mutated for display.
  *
  * versionCode scheme (monotonic, human-decodable):
@@ -58,27 +65,30 @@ const infoOnly = process.argv.includes('--info');
 const isNpmVersionHook = process.env.npm_lifecycle_event === 'version';
 
 /**
- * Parse a semver string like "0.5.33-rc.4" into its parts.
- * Returns { major, minor, patch, stage, prNum, base, full }.
- *   base  = "0.5.33"
- *   stage = "rc" | "beta" | "" (empty for final releases)
- *   prNum = pre-release counter (e.g. 4), or 0 if final
+ * Parse package.json's version into its parts. Returns { major, minor, patch, base }.
+ *
+ * package.json is expected to hold plain semver ("0.5.33"). A pre-release suffix
+ * left over from an older checkout is tolerated and stripped with a warning — RC
+ * stages belong in appinfo/info.xml, not here.
  */
 function parseVersion(version) {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z]+)(?:\.(\d+))?)?$/);
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
   if (!match) {
-    throw new Error(`Cannot parse version "${version}" (expected e.g. 0.5.33 or 0.5.33-rc.4)`);
+    throw new Error(`Cannot parse version "${version}" (expected e.g. 0.5.33)`);
   }
-  const [, major, minor, patch, stage = '', prNum = '0'] = match;
-  const base = `${major}.${minor}.${patch}`;
+  const [, major, minor, patch, suffix] = match;
+  if (suffix) {
+    console.warn(
+      `WARNING: package.json version "${version}" carries a pre-release label. ` +
+        `Pre-release stages now live only in appinfo/info.xml — using ${major}.${minor}.${patch} ` +
+        `and ignoring "${suffix}". Run \`npm version ${major}.${minor}.${patch} --no-git-tag-version\` to clean it up.`,
+    );
+  }
   return {
     major: Number(major),
     minor: Number(minor),
     patch: Number(patch),
-    stage: stage.toLowerCase(),
-    prNum: Number(prNum),
-    base,
-    full: version,
+    base: `${major}.${minor}.${patch}`,
   };
 }
 
@@ -123,12 +133,14 @@ try {
   const wixVersion = `${parsed.base}.${build}`;
 
   console.log(
-    `Version: ${parsed.full}  |  base: ${parsed.base}  |  stage: ${parsed.stage || '(final)'}  ` +
-      `|  build: ${build}  |  versionCode: ${versionCode}  |  wix: ${wixVersion}`,
+    `Version: ${parsed.base}  |  build: ${build}  |  versionCode: ${versionCode}  |  wix: ${wixVersion}`,
   );
 
-  // --info: read-only summary; do not touch any files.
+  // --info: read-only summary; do not touch any files. Includes the Nextcloud
+  // version verbatim, since that is the only place a pre-release stage lives.
   if (infoOnly) {
+    const ncVersion = readFileSync(infoXmlPath, 'utf-8').match(/<version>([^<]+)<\/version>/)?.[1];
+    console.log(`Nextcloud (info.xml): ${ncVersion?.trim() ?? '(not found)'}`);
     process.exit(0);
   }
 
@@ -162,18 +174,49 @@ try {
     console.log('Cargo.toml version already up to date');
   }
 
-  // --- 4. appinfo/info.xml (Nextcloud app; keeps pre-release label) --------
+  // --- 4. appinfo/info.xml (Nextcloud app) ---------------------------------
+  // Only the base version is synced here. Any pre-release suffix ("-rc.2") is
+  // owned by info.xml itself and preserved verbatim, so a stage set by hand
+  // survives every build:
+  //   info.xml 0.5.39-rc.2 + package.json 0.5.40  ->  0.5.40-rc.2
+  //   info.xml 0.5.39      + package.json 0.5.40  ->  0.5.40
   const infoXml = readFileSync(infoXmlPath, 'utf-8');
   const infoVersionMatch = infoXml.match(/<version>([^<]+)<\/version>/);
-  if (infoVersionMatch && infoVersionMatch[1] !== parsed.full) {
-    const updatedInfoXml = infoXml.replace(
-      /<version>[^<]+<\/version>/,
-      `<version>${parsed.full}</version>`,
-    );
-    writeFileSync(infoXmlPath, updatedInfoXml);
-    console.log(`info.xml -> version ${parsed.full}`);
+  if (infoVersionMatch) {
+    const current = infoVersionMatch[1].trim();
+    // Everything after the base version is the NC-local pre-release suffix.
+    const suffixMatch = current.match(/^\d+\.\d+\.\d+(-.*)?$/);
+    if (!suffixMatch) {
+      console.warn(
+        `WARNING: info.xml <version> "${current}" is not parseable as semver — ` +
+          `replacing it with ${parsed.base} and dropping any pre-release label.`,
+      );
+    }
+    const suffix = suffixMatch?.[1] ?? '';
+    const target = `${parsed.base}${suffix}`;
+
+    if (current !== target) {
+      const updatedInfoXml = infoXml.replace(
+        /<version>[^<]+<\/version>/,
+        `<version>${target}</version>`,
+      );
+      writeFileSync(infoXmlPath, updatedInfoXml);
+      console.log(`info.xml -> version ${target}${suffix ? `  (pre-release ${suffix.slice(1)})` : ''}`);
+    } else {
+      console.log(
+        `info.xml version already up to date: ${target}${suffix ? `  (pre-release ${suffix.slice(1)})` : ''}`,
+      );
+    }
+
+    // Warn-only sanity check: NC rejects malformed labels like "-rc2".
+    if (suffix && !/^-[a-z]+\.\d+$/.test(suffix)) {
+      console.warn(
+        `WARNING: info.xml pre-release label "${suffix}" is unusual — ` +
+          `Nextcloud expects e.g. "-rc.2" or "-beta.1".`,
+      );
+    }
   } else {
-    console.log('info.xml version already up to date');
+    console.warn('WARNING: no <version> element found in appinfo/info.xml — nothing synced');
   }
 } catch (error) {
   console.error('Failed to sync version:', error.message);

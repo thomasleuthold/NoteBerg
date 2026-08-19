@@ -1,0 +1,67 @@
+Google Play release notes
+=========================
+
+Google Play allows max 500 characters per language, per release. Copy the
+block for the release you are shipping into the Play Console (the <en-US>
+tags are only needed when uploading notes as a file; when pasting into the
+Console, paste the text between them).
+
+Android-relevant items only. Windows and Nextcloud entries from
+CHANGELOG.txt are deliberately left out.
+
+
+0.5.41 -- 466 characters
+------------------------
+<en-US>
+- Lower drawing latency: ink follows the pen more closely.
+- Faster scrolling and zooming in long notes and large PDFs.
+- Wider pen pressure range, so light and firm strokes differ more clearly.
+- Handwriting on imported PDFs is now exported as real PDF annotations
+  instead of a flat image, so it stays sharp.
+- Fixed the app closing by itself when syncing or zooming into large PDFs.
+- Fixed zooming getting stuck.
+- Fixed PDFs with JPEG 2000 images not opening.
+</en-US>
+
+
+0.5.39 -- 285 characters
+------------------------
+<en-US>
+- Settings now open in a dialog instead of a full screen, and no longer
+  overflow in portrait mode.
+- Fixed the app being drawn underneath the system status bar.
+- Fixed the whole app accidentally zooming while drawing.
+- The build number is now shown next to the version in settings.
+</en-US>
+
+
+0.5.38 -- 249 characters
+------------------------
+<en-US>
+- Handwriting and PDF pages now keep proper contrast in dark mode.
+- Imported PDF pages can be inverted in dark mode so your annotations stay
+  legible (Settings > Appearance).
+- Fixed the note list becoming inconsistent when switching tabs quickly.
+</en-US>
+
+
+0.5.37 -- 202 characters
+------------------------
+<en-US>
+- "Mark as Task" now works on every line, including the first line of a
+  note and lines converted back from a list.
+- Marking now applies only to the lines you selected.
+- Clearer first-run help texts.
+</en-US>
+
+
+0.5.36 -- 303 characters
+------------------------
+<en-US>
+- New: guided tours introduce the note editor on first use. You can replay
+  them from Settings.
+- Fixed a data-loss bug where "Mark as Task" on a selection spanning a
+  list could blank the note.
+- Fixed audio recording failing on a fresh install: the microphone
+  permission is now requested properly.
+</en-US>

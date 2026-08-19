@@ -1,110 +1,165 @@
 # Changelog
 
+## [0.5.41] - 2026-08-19
+
+### Added
+- **All platforms**: handwriting drawn on an imported PDF is now exported as real PDF ink annotations instead of being flattened into the page image. The strokes stay vector-sharp at any zoom, and other PDF readers list them as annotations you can select or remove
+- **All platforms**: note cards in the overview now show a loading indicator while their preview is being drawn
+- **Nextcloud**: a fullscreen button in the note editor hides the Nextcloud header and navigation so the page fills the screen, and Esc leaves again. Where the browser does not allow true fullscreen (notably iOS Safari), the Nextcloud chrome is still hidden
+- **All platforms**: inserted images now appear immediately as a placeholder that fills in once the photo has been processed, instead of the canvas sitting unchanged for seconds on a large photo
+
+### Changed
+- **All platforms**: lower drawing latency — ink is presented without waiting for the normal frame queue, noticeably shrinking the gap between the pen tip and the ink
+- **All platforms**: pen pressure now uses a wider, curved response, so light and firm strokes differ more clearly
+- **All platforms**: faster scrolling and repainting in long notes and large imported PDFs
+- **All platforms**: memory use while viewing large PDFs is now bounded. Rendered pages are cached with a size limit and released when they scroll out of view, and pages currently on screen are kept, which stops the constant re-rendering that could occur at certain zoom levels
+
+### Fixed
+- **All platforms**: buttons that start a longer action — creating a note, restoring or permanently deleting from the recycle bin, and confirming a dialog — could run twice if pressed again before they finished, creating duplicates. They are now blocked while the action runs
+- **All platforms**: PDFs containing JPEG 2000 images failed to open, because a required decoder file was missing from the build
+- **All platforms**: pages of scanned PDFs could render as blank white instead of showing an error, when an image decoder could not be loaded
+- **All platforms**: the note navigator did not update after strokes were added or erased
+- **All platforms**: if one note preview failed to draw, the remaining cards kept showing their loading indicator forever
+- **All platforms**: zooming could get stuck, leaving the page re-rendering continuously without ever settling
+- **All platforms**: the page could look briefly squashed in one direction while pinch-zooming
+- **Android**: the app could close by itself while syncing a note containing a very large PDF, and then do so again on every following sync. Large files are now uploaded in chunks and downloads are limited by total size, so memory no longer runs out
+- **Android**: the app could close by itself when zooming far into a large scanned PDF
+- **All platforms**: closing a note while an image was still being inserted could lose that image
+- **Nextcloud**: the camera button silently did nothing when the server is reached over plain HTTP, where browsers block camera access outright. The reason is now explained, along with denied permission, a missing camera, and a camera already in use
+- **Nextcloud**: on phones the settings dialog overhung the page, pushing its close button up behind the Nextcloud header where it could not be reached or scrolled back into view
+
+## [0.5.39] - 2026-08-07
+
+### Added
+- **All platforms**: settings now open in a dialog instead of taking over the whole screen, and appearance, language and help settings are available in the Nextcloud app too
+- **Windows, Android**: the build number is shown next to the version in settings, along with a link to the project page
+
+### Changed
+- **Nextcloud**: writing is much smoother — a burst of strokes is now coalesced into far fewer WebDAV uploads instead of one request per stroke
+- **All platforms**: the help overlay is easier to read, and moving between notebooks was improved
+
+### Fixed
+- **Android**: the app was drawn underneath the system status bar
+- **Android**: the whole app could accidentally zoom while drawing
+- **Android**: settings were cramped and could overflow the screen in portrait mode
+- **Nextcloud**: several smaller display and packaging issues in the app build
+
+## [0.5.38] - 2026-07-27
+
+### Added
+- **Windows only**: **MCP server (AI integration)** — NoteBerg can expose your notebooks to AI assistants such as Claude Desktop over the Model Context Protocol, so you can ask questions about your own notes
+  - **Off by default.** You have to enable it and generate an access token before anything is shared
+  - **Read-only.** Notebooks and notes can be listed, searched and read — as typed text, recognized handwriting, raw strokes, attached images, audio or PDFs, a rendered image of your handwriting, or a full PDF export. Notebooks and notes are also browsable as MCP resources. No write actions are implemented
+  - Listens on `127.0.0.1` only, so it is never reachable from the network or the internet, and only runs while NoteBerg is open
+  - Multiple named tokens, one per client, each individually revocable without affecting the others
+  - An access log records which token performed which call
+  - An **MCP** badge in the footer shows when the server is running and flashes on real traffic; Settings shows the server status with a **Retry** action if it failed to start
+  - Setup and the security rationale are documented under `documentation/`
+- **All platforms**: imported PDF pages can be inverted in dark mode so annotations stay legible — on by default, and switchable under Settings → Appearance
+
+### Changed
+- **All platforms**: reworked stroke and PDF rendering in dark mode so ink and page content keep proper contrast on a dark background. In the Nextcloud app the theme follows your Nextcloud light/dark setting rather than the in-app toggle
+
+### Fixed
+- **All platforms**: switching tabs while the note list was still rendering could interleave two renders and leave the list in an inconsistent state
+
+### Security
+- **Windows**: tightened the MCP integration's system permissions and hardened its access-token handling
+
+## [0.5.37] - 2026-07-22
+
+### Changed
+- **All platforms**: "Mark as Task" now works on every line — it silently did nothing on the first line of a note and on lines just converted back from a bullet or numbered list, because those lines have no surrounding paragraph for the editor to act on. Marking now also applies only to the lines your selection actually touches
+- **All platforms**: clearer wording in the first-run help
+
+### Security
+- **Nextcloud**: sign-in credentials could be written to browser storage unencrypted if the browser's Web Crypto API was unavailable or encryption failed. Saving now fails rather than silently storing the secret in cleartext. The Windows and Android apps keep credentials in the OS keychain and were never affected
+- **All platforms**: the log viewer now inserts log text as plain text rather than as markup, since log entries can contain arbitrary content
+
 ## [0.5.36] - 2026-07-18
 
 ### Added
-- **Help overlay**: first-use guided tours for the note editor — one short, arrow-pointed callout at a time introduces each canvas mode (Pan/Draw/Text/Eraser/Lasso), the Options and Add buttons, image selection, and Mark as Task. Tours are one-time and device-local, with a "Reset help guidance" row in Settings to replay them; works identically on Windows, Android, and Nextcloud
+- **All platforms**: first-use guided tours for the note editor — one short, arrow-pointed callout at a time introduces each canvas mode (Pan/Draw/Text/Eraser/Lasso), the Options and Add buttons, image selection, and Mark as Task. Tours are shown once per device, with a "Reset help guidance" row in Settings to replay them
 
 ### Fixed
-- **Mark as Task could erase note content (data loss)**: converting a text selection that spanned a bullet/numbered list wrapped the whole list into a task, producing invalid markup the browser discarded on reload — blanking the note, and surviving Undo and relaunch. Each list item now becomes its own task and list markup stays valid
-- **Audio recording on Android failed on a fresh install**: the microphone permission was never requested at runtime, so recording rejected immediately with no system prompt on devices that had not previously granted it. The permission is now requested on first use, and a denied permission shows an actionable message pointing to system settings
+- **All platforms**: "Mark as Task" could erase note content (data loss) — converting a text selection that spanned a bullet or numbered list blanked the note, and the loss survived Undo and restarting the app. Each list item now becomes its own task and the list stays intact
+- **Android**: audio recording failed on a fresh install — the microphone permission was never requested, so recording failed immediately with no system prompt. It is now requested on first use, and a denied permission shows a message pointing to the system settings
 
 ## [0.5.35] - 2026-07-16
 
 ### Added
-- **Localization**: added Spanish, French, Italian, Japanese, Korean, Portuguese, and Chinese translations, bringing the UI to 9 supported languages (English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Chinese)
-- **Nextcloud UI**: locale now falls back to English for languages without a translation instead of reporting an unrecognized language as active
+- **All platforms**: added Spanish, French, Italian, Japanese, Korean, Portuguese and Chinese translations, bringing the interface to 9 languages
+- **Nextcloud**: the interface falls back to English for languages that have no translation yet, instead of showing an unavailable language as active
 
 ### Changed
-- Closed remaining localization gaps — recycle bin, sound recorder dialog, note navigator, and camera capture/cancel buttons were still hard-coded in English and are now fully translatable
-- **Nextcloud**: refined CSS overrides so NC's global button/tab padding reset no longer clashes with the app's own styling
-- **Nextcloud**: right-click context menu suppression is now scoped to the app's own area, so the rest of the Nextcloud page keeps its native browser context menu
+- **All platforms**: closed remaining translation gaps — the recycle bin, sound recorder, note navigator and camera buttons were still English-only
+- **Nextcloud**: fixed button and tab spacing that clashed with Nextcloud's own styling
+- **Nextcloud**: the browser's normal right-click menu now works again outside the app's own area
 
 ## [0.5.34] - 2026-07-14
 
 ### Added
-- **Image hover affordance (desktop)**: hovering the mouse over an unselected image now shows its option button, so the media menu is reachable without selecting first (touch behaviour unchanged)
-- **Version tooling**: `just version-info` prints the current version state (semver, stage, build, versionCode, wix); `just set-rc <rc|beta>`, `just bump-rc`, and `just bump-build` manage pre-release stage and the build counter
+- **Windows**: hovering the mouse over an image now shows its options button, so the media menu is reachable without selecting the image first (touch behaviour unchanged)
 
 ### Changed
-- **Handwriting recognition**: removed the configurable fallback service URL entirely — recognition is now Windows-sidecar-only on every platform, and the legacy `recognition_url`/`recognition_fallback_url` settings and their migration code are gone
-- **Versioning**: a single monotonic build counter now drives Android `versionCode` and the Windows MSI build field, so successive pre-release builds (rc.1 → rc.2 …) are always distinct installs; the pre-release stage lives in `package.json` and is propagated to `appinfo/info.xml`, the app footer, and native configs by `sync-version.js`
-- **App footer**: the version stage (e.g. "RC", "Beta") is now derived from the version string instead of being hard-coded
-- **Note toolbar**: the background picker highlights the note's current background as active
-- **UI**: footer sync-status indicator gains a hover state; assorted layout/style refinements
+- **Windows, Android**: handwriting recognition no longer offers a configurable service address — recognition is built into the Windows app, and self-hosting is no longer a supported setup
+- **All platforms**: the background picker now highlights the note's current background
+- **All platforms**: small visual refinements, including a hover state for the sync indicator in the footer
 
 ### Fixed
-- Nextcloud app version (`info.xml`) is kept in lockstep with `package.json`, ending the drift between the store version and the app version
-
-### Internal
-- Split the monolithic `nextcloudSync.test.js` into focused suites (auth, conflict, media, migration, propfind, sync, tombstone, change-detection, integration) and added extensive new coverage across storage, sync, media, recognition, and utilities
-- Added a mock WebDAV server fixture for higher-fidelity sync tests
-- Reorganized the `justfile` into semantic sections with source-ordered `just --list`; removed obsolete `build-backend`, `fix-build`, and `build-nextcloud-stub.js`
-- Documentation cleanup: refreshed DESIGN/sync docs, removed completed plan documents
+- **Nextcloud**: the version shown in the Nextcloud App Store no longer drifts apart from the version in the app
 
 ## [0.5.33] - 2026-07-06
 
 ### Security
-- **Recognition backend**: sidecar now binds to `localhost` only by default; remote access requires explicit opt-in (`ServerSettings:AllowRemote` or `--allow-remote`)
-- **Native audio**: recording path validated to prevent path traversal / arbitrary file reads, restricted to temp/cache dirs
-- **Tauri capabilities**: removed unused `shell:allow-open` permission
-- **Master password**: clearing it now also disables local encryption flag, preventing saves from silently failing closed
-- **Encryption**: PBKDF2 iteration count raised from 100,000 to 600,000 for new key derivations; existing configs keep their stored iteration count for backward compatibility
+- **Windows**: the handwriting recognition service now binds to localhost only; remote access requires an explicit opt-in
+- **Windows, Android**: audio recording paths are validated to prevent path traversal, and restricted to the temp and cache directories
+- **All platforms**: clearing the master password now also switches off local encryption, instead of leaving saving in a state where it could silently fail
+- **All platforms**: master-password key derivation strengthened from 100,000 to 600,000 PBKDF2 iterations for newly created keys. Existing setups keep their stored iteration count and continue to work
 
 ### Changed
-- **Thumbnails**: always re-rendered on demand instead of stored and synced — removes stale/missing-thumbnail and etag-churn bugs
-- **Sync/storage**: reworked conflict and etag handling in `nextcloudSync.js`/`storage.webdav.js` following internal code review; simplified `tombstones.js`; added `sanitizeHtml.js` and `mime.js` utilities
-- **ImageCropper**: JPEG quality raised to 0.95, added bilinear resampling and contrast LUT for sharper scanned/cropped images
-- **NoteCanvas**: media saves now coalesced (one in-flight + one trailing save) with progress labeling; note close waits for pending media saves
-- **UI**: improved keyboard handling (ESC/ENTER) and focus management in modals/dialogs; search field auto-focuses on tab activation
-- Nextcloud supported version range bumped to 30–35
-- Settings: "reset master password" only shown when a master password is set; removed unnecessary `resetSyncWorker` calls on sign-in/disconnect
-- **Handwriting recognition (Windows)**: settings UI now shows a simple sidecar status indicator instead of a configurable service URL — self-hosting the recognition service is no longer a supported scenario
-- **Handwriting recognition (other platforms)**: settings now show a hint that the feature is Windows-only, replacing the fallback-URL field
-- Removed the legacy standalone Windows-service installer (`install-service.ps1`, `just package-backend`) — the recognition backend is only shipped as the bundled Tauri sidecar now
+- **All platforms**: note previews are always redrawn on demand instead of being stored and synced, which removes stale or missing preview images and the sync churn they caused
+- **Windows, Android**: reworked conflict and change detection in Nextcloud sync
+- **All platforms**: cropped and scanned images are noticeably sharper (higher JPEG quality, smoother resampling and a contrast pass)
+- **All platforms**: saving photos, audio and PDFs in a note is faster and shows progress, and closing a note now waits for those saves to finish
+- **All platforms**: better keyboard handling (Esc and Enter) in dialogs, and the search field is focused automatically
+- **Nextcloud**: supported Nextcloud versions extended to 30–35
+- **All platforms**: "Reset master password" is only shown when a master password is actually set
+- **Windows**: handwriting recognition settings now show a simple status indicator instead of a service address
+- **Android, Nextcloud**: settings now explain that handwriting recognition is a Windows-only feature
 
 ## [0.5.29-alpha.4] - 2026-04-20
 
 ### Fixed
-- **Nextcloud**: App crash on load — `window.jQuery` is also a getter-only property in some NC versions; assignment now wrapped in try/catch like `window.$`
-- **Nextcloud**: Text editor toolbar missing on subdirectory NC installs — Trumbowyg registered on NC's jQuery instead of ours because `window.jQuery` assignment was silently failing; now uses `Object.defineProperty` to redefine as writable first
-- **Nextcloud**: WebDAV requests failing on subdirectory installs (e.g. `/nextcloud/`) — base URL now includes `OC.webroot` prefix
+- **Nextcloud**: the app crashed on load on some Nextcloud versions, due to a jQuery conflict with Nextcloud's own copy
+- **Nextcloud**: the text editor toolbar was missing on installations hosted in a subfolder
+- **Nextcloud**: WebDAV requests failed on installations hosted in a subfolder (e.g. `/nextcloud/`), so notes could not be saved or loaded
 
 ## [0.5.29-alpha.1] - 2026-04-19
 
 ### Fixed
-- **All platforms**: Perspective transform broken — UMD library's `}(this, ...)` pattern fails in ES module strict mode; replaced with an explicit-scope wrapper shim that works in both Tauri (runtime) and Nextcloud (build-time, no `unsafe-eval`)
-- **Nextcloud**: Text toolbar icons missing — Trumbowyg SVG sprite was inserted as `body.firstChild`, breaking Nextcloud's flex header layout; sprite is now relocated after `#header` post-init
-- **Nextcloud**: Note options button displaced to bottom-right corner — button moved out of `.note-card-actions` container so it anchors to the card's top-right corner
-- **Nextcloud**: App footer (version number) hidden — not needed in Nextcloud context
+- **All platforms**: perspective correction for scanned pages did not work
+- **Nextcloud**: the text toolbar icons were missing and the Nextcloud page header was pushed out of shape
+- **Nextcloud**: the note options button appeared in the wrong corner of a note card
+- **Nextcloud**: hid the version footer, which is not needed inside Nextcloud
 
 ## [0.5.28-alpha.4] - 2026-04-19
 
 ### Fixed
-- **Nextcloud**: App crash on load due to jQuery `$` conflicting with Nextcloud's getter-only `window.$` — fixed with try/catch assignment (descriptor check was silently dropped by esbuild tree-shaking)
-- **Nextcloud**: Inter font rejected by browser font sanitizer — bundled font now excluded from NC build
-- **Nextcloud**: Undo/redo history cleared after every local save — local WebDAV writes no longer trigger a live update reload; only external sync changes do
-- **Nextcloud**: WebDAV folder structure not recreated after uninstall/reinstall — app now verifies root folder exists on startup instead of trusting a cached flag
-- **Nextcloud**: File lock (HTTP 423) causing infinite save loop — PUT requests now retry with backoff on 423 responses
-- **Nextcloud**: Perspective transform not working — UMD library's `)(this)` root detection fails in ES module strict mode; patched at build time to use `)(globalThis)` instead
-- **Nextcloud**: Archive signature corrupted by Windows line endings — signing now runs inside the Linux container with `openssl base64 -A`
-
-### Added
-- `just nc-test` / `just nc-test-down` recipes for testing the published App Store package in a clean throwaway NC container (port 8081, no volume mount)
+- **Nextcloud**: the app crashed on load due to a jQuery conflict with Nextcloud's own copy
+- **Nextcloud**: the bundled Inter font was rejected by the browser's font sanitizer and is no longer shipped in the Nextcloud build
+- **Nextcloud**: undo and redo history was cleared after every save — only external changes from sync reload the note now
+- **Nextcloud**: the app's WebDAV folders were not recreated after uninstalling and reinstalling
+- **Nextcloud**: a locked file (HTTP 423) caused an endless saving loop; uploads now retry with backoff
+- **Nextcloud**: the perspective correction for scanned pages did not work
+- **Nextcloud**: the App Store package signature could be corrupted, so the package was rejected as damaged
 
 ## [0.5.27] - 2026-04-18
 
 First public alpha release as a Nextcloud app.
 
 ### Added
-- Nextcloud App Store release (`noteberg` app ID)
-- Native Windows audio DSP chain (compressor + limiter) matching the browser Web Audio processing
-- `just build-nc` recipe for building and signing Nextcloud app releases
-- `just fct` recipe for format, check, and test in one step
-- OS keychain credential storage on all platforms (Windows Credential Manager, Android Keystore)
-- End-to-end encryption for Nextcloud sync
-
-### Changed
-- Updated README with accurate security description, Quick Start, and OSS attributions
-- Updated DESIGN.md with full architecture documentation
-- Replaced ESLint/Prettier with Biome for linting and formatting
+- **Nextcloud**: released in the Nextcloud App Store
+- **Windows**: improved audio recording quality, matching the processing used in the browser
+- **All platforms**: credentials are stored in the operating system's own keychain
+- **All platforms**: end-to-end encryption for Nextcloud sync

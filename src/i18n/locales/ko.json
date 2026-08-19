@@ -9,6 +9,7 @@
     "ok": "확인",
     "next": "Next",
     "loading": "불러오는 중...",
+    "working": "처리 중...",
     "error": "오류",
     "untitled": "제목 없음",
     "home": "홈",
@@ -45,6 +46,9 @@
       "noQuickNotes": "아직 빠른 노트가 없습니다. 노트북 밖에서 노트를 만들 수 있습니다.",
       "noNotesInNotebook": "이 노트북에는 아직 노트가 없습니다.",
       "noTasks": "할 일을 찾을 수 없습니다."
+    },
+    "preview": {
+      "loading": "미리보기 로드 중…"
     },
     "search": {
       "placeholder": "노트 검색...",
@@ -483,6 +487,8 @@
       "gridLarge": "격자 - 크게"
     },
     "exportPdf": "PDF 내보내기",
+    "fullscreen": "전체 화면",
+    "exitFullscreen": "전체 화면 종료",
     "deleteNote": "노트 삭제",
     "penDialog": {
       "lineWidth": "선 굵기: ",
@@ -521,6 +527,15 @@
       "sendToFront": "맨 앞으로",
       "sendToBack": "맨 뒤로",
       "delete": "삭제"
+    },
+    "camera": {
+      "errorTitle": "카메라를 사용할 수 없음",
+      "insecureContext": "카메라는 보안 연결(HTTPS)에서만 사용할 수 있습니다. 이 앱은 일반 HTTP로 제공되고 있어 브라우저가 카메라 접근을 완전히 차단합니다. HTTPS로 앱을 열거나 '이미지 삽입'으로 기존 사진을 추가하세요.",
+      "unsupported": "이 브라우저는 카메라 촬영을 지원하지 않습니다. '이미지 삽입'으로 기존 사진을 추가하세요.",
+      "permissionDenied": "카메라 접근이 거부되었습니다. 브라우저 설정에서 이 사이트의 카메라 접근을 허용한 후 다시 시도하세요.",
+      "noCamera": "이 기기에서 카메라를 찾을 수 없습니다. '이미지 삽입'으로 기존 사진을 추가하세요.",
+      "inUse": "카메라를 다른 애플리케이션이 사용 중입니다. 해당 앱을 닫고 다시 시도하세요.",
+      "failed": "카메라를 시작할 수 없습니다. 다시 시도하거나 '이미지 삽입'으로 기존 사진을 추가하세요."
     },
     "pdf": {
       "delete": "PDF 삭제",

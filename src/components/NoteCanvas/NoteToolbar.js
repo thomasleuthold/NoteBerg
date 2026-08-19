@@ -4,8 +4,10 @@
  */
 
 import { t } from "../../i18n/index.js";
+import { isFullscreen, isFullscreenAvailable } from "../../modules/ncFullscreen.js";
 import { getTheme } from "../../modules/theme.js";
 import { getIcon } from "../../utils/icons.js";
+import { isCameraAvailable } from "../../utils/imageUtils.js";
 import { getMarkerPalette, getThemePalette } from "../../utils/noteRenderer.js";
 
 /**
@@ -746,9 +748,16 @@ export class NoteToolbar {
         <button class="note-canvas-toolbar__option-btn" data-action="insert-image">
           ${getIcon("image", 16)} ${t("toolbar.insert.image")}
         </button>
-        <button class="note-canvas-toolbar__option-btn" data-action="insert-camera">
+        ${
+          // Omitted entirely when the browser exposes no camera API — e.g. a
+          // Nextcloud instance served over plain HTTP, where navigator.mediaDevices
+          // is undefined and the button could never do anything but show an error.
+          isCameraAvailable()
+            ? `<button class="note-canvas-toolbar__option-btn" data-action="insert-camera">
           ${getIcon("camera", 16)} ${t("toolbar.insert.camera")}
-        </button>
+        </button>`
+            : ""
+        }
         <button class="note-canvas-toolbar__option-btn" data-action="insert-pdf">
           ${getIcon("pdf", 16)} ${t("toolbar.insert.pdf")}
         </button>
@@ -811,6 +820,14 @@ export class NoteToolbar {
         <button id="nc-export-pdf-btn" class="note-canvas-toolbar__option-btn">
             ${getIcon("download", 16)} ${t("toolbar.exportPdf")}
         </button>
+        ${
+          // Nextcloud build only — elsewhere the app already owns the whole window.
+          isFullscreenAvailable()
+            ? `<button id="nc-fullscreen-btn" class="note-canvas-toolbar__option-btn">
+            ${getIcon("maximize", 16)} ${t("toolbar.fullscreen")}
+        </button>`
+            : ""
+        }
       </div>
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
@@ -934,6 +951,15 @@ export class NoteToolbar {
       exportPdfBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         this.onOptionsChange({ type: "export-pdf" });
+        this._closeOptionsDialog();
+      });
+    }
+
+    const fullscreenBtn = this.optionsDialog.querySelector("#nc-fullscreen-btn");
+    if (fullscreenBtn) {
+      fullscreenBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.onOptionsChange({ type: "toggle-fullscreen" });
         this._closeOptionsDialog();
       });
     }
@@ -1128,8 +1154,24 @@ export class NoteToolbar {
    */
   _openOptionsDialog() {
     this._syncBackgroundActiveState();
+    this._syncFullscreenLabel();
     this.optionsDialog.classList.add("note-canvas-toolbar__options-dialog--open");
     document.addEventListener("pointerdown", this._handleDocumentPointerDown);
+  }
+
+  /**
+   * Point the fullscreen entry at whichever direction is currently available.
+   * The dialog markup is built once, so this runs on every open — the state can
+   * have changed underneath us via Esc or the in-canvas exit button.
+   * @private
+   */
+  _syncFullscreenLabel() {
+    const btn = this.optionsDialog.querySelector("#nc-fullscreen-btn");
+    if (!btn) return;
+    const active = isFullscreen();
+    btn.innerHTML = `${getIcon(active ? "minimize" : "maximize", 16)} ${
+      active ? t("toolbar.exitFullscreen") : t("toolbar.fullscreen")
+    }`;
   }
 
   /**

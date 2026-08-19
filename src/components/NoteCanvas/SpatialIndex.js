@@ -120,14 +120,23 @@ export class SpatialIndex {
     }
     const seen = this._seenBuffer;
 
-    // Collect candidates from all overlapping buckets
+    // Collect candidates from all overlapping buckets.
+    // `touched` records every index whose seen-flag was set, so the reset below
+    // is a single pass over exactly those entries. Previously the reset walked
+    // the result and then re-walked every bucket again, making the cleanup cost
+    // as much as the query itself on stroke-heavy notes.
     const result = [];
+    if (!this._touchedBuffer) this._touchedBuffer = [];
+    const touched = this._touchedBuffer;
+    touched.length = 0;
+
     for (let bucket = startBucket; bucket <= endBucket; bucket++) {
       const bucketStrokes = this.buckets.get(bucket);
       if (bucketStrokes) {
         for (const strokeIndex of bucketStrokes) {
           if (!seen[strokeIndex]) {
             seen[strokeIndex] = 1;
+            touched.push(strokeIndex);
             const bounds = this.strokeBounds.get(strokeIndex);
             if (bounds && bounds.maxY >= viewportTop && bounds.minY <= viewportBottom) {
               result.push(strokeIndex);
@@ -137,19 +146,11 @@ export class SpatialIndex {
       }
     }
 
-    // Clear seen flags for next query (only clear used indices)
-    for (const idx of result) {
-      seen[idx] = 0;
+    // Reset seen flags for the next query — exactly the indices we set.
+    for (let i = 0; i < touched.length; i++) {
+      seen[touched[i]] = 0;
     }
-    // Also clear any candidates that didn't pass bounds check
-    for (let bucket = startBucket; bucket <= endBucket; bucket++) {
-      const bucketStrokes = this.buckets.get(bucket);
-      if (bucketStrokes) {
-        for (const strokeIndex of bucketStrokes) {
-          seen[strokeIndex] = 0;
-        }
-      }
-    }
+    touched.length = 0;
 
     // Draw order IS array order, so the result must always be sorted ascending.
     // A single bucket used to be safe to skip because indices were only ever

@@ -1,6 +1,6 @@
 [package]
 name = "noteberg"
-version = "0.5.39"
+version = "0.5.41"
 description = "A note-taking app supporting handwritten notes, text, and drawings"
 authors = ["you"]
 edition = "2021"

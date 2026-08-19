@@ -667,14 +667,20 @@
   z-index: 0;
 }
 
+/*
+ * Rendering a preview is on-the-fly work that can take seconds on slow devices
+ * (notably the Nextcloud app), so the card shows a spinner until it completes.
+ * This is a sibling of .preview-scaler, not a child: the scaler is transformed
+ * with scale(), which would otherwise shrink the spinner and skew its centring.
+ */
 .note-preview-spinner {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 20px;
-  height: 20px;
-  margin: -10px 0 0 -10px;
-  border: 2px solid var(--border-color);
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border: 3px solid var(--border-primary);
   border-top-color: var(--text-secondary);
   border-radius: 50%;
   animation: note-preview-spin 0.7s linear infinite;
@@ -684,6 +690,22 @@
 @keyframes note-preview-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/*
+ * Respect reduced-motion: keep the indicator present (it still communicates
+ * "work in progress") but pulse opacity rather than spin.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .note-preview-spinner {
+    animation: note-preview-pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes note-preview-pulse {
+    50% {
+      opacity: 0.3;
+    }
   }
 }
 
@@ -937,6 +959,15 @@
 .settings-overlay {
   z-index: 900;
   padding: var(--spacing-md);
+  /* .modal-overlay is position:fixed, so its 100% height resolves against the
+     viewport regardless of where it sits in the DOM. That is right for
+     Tauri/Android, where the app owns the whole viewport, but wrong in the NC
+     app, where NC reserves the top var(--header-height) for its own header.
+     Both variables are NC's and are undefined elsewhere, so the fallbacks make
+     this a no-op in the native builds. Fullscreen mode (ncFullscreen.js) zeroes
+     --header-height and sets --body-height to 100vh, which this follows. */
+  height: var(--body-height, 100%);
+  top: var(--header-height, 0px);
 }
 
 .settings-dialog {
@@ -1004,10 +1035,18 @@
   }
 
   /* Full-bleed on phones: 95% of a small screen wastes space on chrome and
-     leaves the panel cramped. */
+     leaves the panel cramped.
+
+     Sized against the overlay (100%), not the viewport (100vw/100vh). The two
+     are identical in the Tauri/Android builds, but not in the NC app: NC owns
+     the page and gives us a #content box of var(--body-height) offset by
+     var(--header-height). A viewport-sized dialog centred in that shorter box
+     overhangs it top and bottom, pushing the header's close button up under
+     NC's own header and out of reach (.settings-dialog is overflow:hidden and
+     the overlay does not scroll, so it cannot be scrolled back into view). */
   .settings-dialog {
-    width: 100vw;
-    height: 100vh;
+    width: 100%;
+    height: 100%;
     border-radius: 0;
   }
 
@@ -1347,6 +1386,49 @@
 .modal-footer button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Busy state while an async confirm (create/save) is in flight. The write can be
+   slow on the Nextcloud build, where it goes over WebDAV rather than to
+   IndexedDB; without visible progress a slow create reads as an unregistered
+   keypress, which is what prompts a user to confirm a second time. */
+.modal-overlay.modal-busy {
+  cursor: progress;
+}
+
+.modal-footer .btn-busy {
+  /* Hold the idle width so swapping in the busy label does not resize the
+     footer and shift the Cancel button under the pointer. */
+  min-width: 8ch;
+}
+
+.modal-footer .btn-busy::before {
+  content: "";
+  display: inline-block;
+  width: 0.75em;
+  height: 0.75em;
+  margin-inline-end: 0.5em;
+  vertical-align: -0.05em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: modal-busy-spin 0.6s linear infinite;
+}
+
+@keyframes modal-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect users who have asked for reduced motion: keep the indicator, drop the
+   spin. */
+@media (prefers-reduced-motion: reduce) {
+  .modal-footer .btn-busy::before {
+    animation: none;
+    border-top-color: currentColor;
+    opacity: 0.5;
+  }
 }
 
 /* Narrow screens (Android): a side-by-side label + control column leaves too

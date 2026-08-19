@@ -9,6 +9,7 @@
     "ok": "OK",
     "next": "Next",
     "loading": "Caricamento...",
+    "working": "In corso...",
     "error": "Errore",
     "untitled": "Senza titolo",
     "home": "Home",
@@ -45,6 +46,9 @@
       "noQuickNotes": "Nessuna nota rapida ancora. Crea una nota fuori da qualsiasi quaderno.",
       "noNotesInNotebook": "Nessuna nota ancora in questo quaderno.",
       "noTasks": "Nessuna attività trovata."
+    },
+    "preview": {
+      "loading": "Caricamento anteprima…"
     },
     "search": {
       "placeholder": "Cerca note...",
@@ -483,6 +487,8 @@
       "gridLarge": "Griglia - Grande"
     },
     "exportPdf": "Esporta PDF",
+    "fullscreen": "Schermo intero",
+    "exitFullscreen": "Esci da schermo intero",
     "deleteNote": "Elimina",
     "penDialog": {
       "lineWidth": "Spessore linea: ",
@@ -521,6 +527,15 @@
       "sendToFront": "Primo piano",
       "sendToBack": "Sfondo",
       "delete": "Elimina"
+    },
+    "camera": {
+      "errorTitle": "Fotocamera non disponibile",
+      "insecureContext": "La fotocamera può essere utilizzata solo tramite una connessione sicura (HTTPS). Questa app viene servita tramite HTTP semplice, quindi il browser blocca completamente l'accesso alla fotocamera. Apri l'app tramite HTTPS oppure usa «Inserisci immagine» per aggiungere una foto esistente.",
+      "unsupported": "Questo browser non supporta l'acquisizione da fotocamera. Usa «Inserisci immagine» per aggiungere una foto esistente.",
+      "permissionDenied": "L'accesso alla fotocamera è stato negato. Consenti l'accesso alla fotocamera per questo sito nelle impostazioni del browser e riprova.",
+      "noCamera": "Nessuna fotocamera trovata su questo dispositivo. Usa «Inserisci immagine» per aggiungere una foto esistente.",
+      "inUse": "La fotocamera è attualmente in uso da un'altra applicazione. Chiudila e riprova.",
+      "failed": "Impossibile avviare la fotocamera. Riprova oppure usa «Inserisci immagine» per aggiungere una foto esistente."
     },
     "pdf": {
       "delete": "Elimina PDF",

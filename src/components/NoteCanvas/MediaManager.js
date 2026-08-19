@@ -14,6 +14,15 @@ export class MediaManager {
     this.noteId = noteId;
     this.mediaItems = initialMedia; // [{ id, type: 'image', x, y, width, height, fileId, rotation }]
 
+    // Bumped on every structural change to mediaItems (add/remove/reorder/
+    // geometry update). Consumers derive per-draw data from this list — the
+    // renderer caches PDF page bounds, which are hit once per stroke on a hot
+    // path — and compare this counter to know when their cache is stale.
+    // A counter rather than callbacks: mutations happen from many places
+    // (undo/redo commands, sync, direct edits), and each new call site would
+    // otherwise have to remember to notify.
+    this.version = 0;
+
     // Cache for loaded image elements and blob URLs
     this.images = new Map(); // fileId -> HTMLImageElement
     this.blobUrls = new Map(); // fileId -> string (blob URL)
@@ -44,6 +53,7 @@ export class MediaManager {
    */
   setItems(items) {
     this.mediaItems = items || [];
+    this.version++;
     // Trigger load for image items only — pdf-page items are rendered via pdfManager, not as <img>
     for (const item of this.mediaItems) {
       if (item.fileId && item.type === "image") {
@@ -57,6 +67,7 @@ export class MediaManager {
    */
   addItem(item) {
     this.mediaItems.push(item);
+    this.version++;
     // Trigger load immediately for image items only
     if (item.fileId && item.type === "image") {
       this._loadImage(item.fileId);
@@ -83,6 +94,7 @@ export class MediaManager {
     }
 
     this.mediaItems = this.mediaItems.filter((i) => i.id !== id);
+    this.version++;
   }
 
   /**
@@ -94,6 +106,7 @@ export class MediaManager {
     if (index !== -1 && index < this.mediaItems.length - 1) {
       const item = this.mediaItems.splice(index, 1)[0];
       this.mediaItems.push(item);
+      this.version++;
     }
   }
 
@@ -106,6 +119,7 @@ export class MediaManager {
     if (index !== -1 && index > 0) {
       const item = this.mediaItems.splice(index, 1)[0];
       this.mediaItems.unshift(item);
+      this.version++;
     }
   }
 
@@ -118,7 +132,43 @@ export class MediaManager {
     const item = this.mediaItems.find((i) => i.id === id);
     if (item) {
       Object.assign(item, updates);
+      this.version++;
     }
+  }
+
+  /**
+   * Attach the stored file to a pending placeholder, making it a real image.
+   *
+   * Looked up by id rather than mutating a caller-held reference because
+   * _runMediaSave replaces the whole array with fresh copies (setItems), so a
+   * reference captured before an await can be orphaned.
+   *
+   * @param {string} id - The placeholder item's ID
+   * @param {string} fileId - The stored file ID
+   * @param {Object} [geometry] - Final geometry ({ width, height }) if the
+   *   processed image differs from the placeholder's estimate
+   * @returns {boolean} true if the placeholder was found and resolved
+   */
+  resolvePendingItem(id, fileId, geometry = {}) {
+    const item = this.mediaItems.find((i) => i.id === id);
+    if (!item) return false;
+
+    // Keep the placeholder's centre when the final size differs from the
+    // estimate. x/y are the top-left corner, so applying a new width/height
+    // alone would anchor the image at that corner and visibly shift it as it
+    // resolves — the same jump the size-refinement path avoids.
+    if (geometry.width != null && geometry.height != null) {
+      item.x += (item.width - geometry.width) / 2;
+      item.y += (item.height - geometry.height) / 2;
+    }
+    Object.assign(item, geometry, { fileId });
+    // Deleted rather than set to undefined: the item is spread into the
+    // persisted note JSON, where `pending: undefined` would serialize as null
+    // and read back as a truthy-keyed field on the next load.
+    delete item.pending;
+    this.version++;
+    this._loadImage(fileId);
+    return true;
   }
 
   /**
@@ -144,6 +194,11 @@ export class MediaManager {
     // Iterate in reverse to find top-most item (rendered last)
     for (let i = this.mediaItems.length - 1; i >= 0; i--) {
       const item = this.mediaItems[i];
+
+      // Placeholders for an in-flight insert are not selectable: they have no
+      // fileId yet, so selecting one would offer transform/crop/delete actions
+      // against an item that is about to be replaced by the real image.
+      if (item.pending) continue;
 
       // Calculate center of the item
       const cx = item.x + item.width / 2;

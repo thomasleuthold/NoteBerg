@@ -58,6 +58,7 @@ export class EraseStrokePartsCommand {
     noteCanvas.strokeManager.markDirty();
     noteCanvas.strokeManager.forceSave();
     noteCanvas.renderer.forceRedraw();
+    noteCanvas._updateNavigatorSubjects();
   }
 
   /**
@@ -97,6 +98,7 @@ export class EraseStrokePartsCommand {
     noteCanvas.strokeManager.markDirty();
     noteCanvas.strokeManager.forceSave();
     noteCanvas.renderer.forceRedraw();
+    noteCanvas._updateNavigatorSubjects();
   }
 
   cleanup() {

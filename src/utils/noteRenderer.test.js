@@ -16,7 +16,9 @@ vi.mock("../modules/theme.js", () => ({
 }));
 
 import {
+  drawStroke,
   getMarkerPalette,
+  getPressureWidth,
   getStrokeBounds,
   getThemePalette,
   renderNotePreview,
@@ -39,6 +41,121 @@ describe("getThemePalette", () => {
     const palette = getThemePalette();
     expect(palette[0]).toBe("#000000");
     expect(palette).toHaveLength(15);
+  });
+});
+
+describe("getPressureWidth", () => {
+  it("increases monotonically with pressure", () => {
+    const widths = [0, 0.25, 0.5, 0.75, 1].map((p) => getPressureWidth(p, 4));
+    for (let i = 1; i < widths.length; i++) {
+      expect(widths[i]).toBeGreaterThan(widths[i - 1]);
+    }
+  });
+
+  it("gives handwriting a visible thick/thin range across realistic pressures", () => {
+    // Styli seldom report the extremes; the range that matters is the one an
+    // actual hand produces. Too narrow a spread here is what makes strokes look
+    // uniform regardless of how hard the user presses.
+    const light = getPressureWidth(0.25, 4);
+    const heavy = getPressureWidth(0.75, 4);
+    expect(heavy / light).toBeGreaterThan(1.5);
+  });
+
+  it("scales with the pen's base width", () => {
+    expect(getPressureWidth(0.5, 8)).toBeCloseTo(getPressureWidth(0.5, 4) * 2, 5);
+  });
+
+  it("never returns a width that would vanish or invert", () => {
+    expect(getPressureWidth(0, 1)).toBeGreaterThan(0);
+    expect(getPressureWidth(-5, 4)).toBeGreaterThan(0);
+    expect(getPressureWidth(99, 4)).toBe(getPressureWidth(1, 4));
+    expect(getPressureWidth(undefined, 4)).toBeGreaterThan(0);
+  });
+});
+
+describe("pressure stroke rendering", () => {
+  function ctxSpy() {
+    return {
+      save: vi.fn(),
+      restore: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      quadraticCurveTo: vi.fn(),
+      stroke: vi.fn(),
+      set lineWidth(v) {
+        this._widths.push(v);
+      },
+      _widths: [],
+      lineCap: "",
+      lineJoin: "",
+      strokeStyle: "",
+      globalAlpha: 1,
+    };
+  }
+
+  // A short, fast stroke - the dash over an "i". Pressure drifts slowly, then
+  // rises. Batching by a similarity threshold collapsed the slow drift into one
+  // width and released it as a single large jump, so a stroke with few samples
+  // showed one conspicuous step. Width must instead track every sample.
+  function shortStroke() {
+    const pressure = [0.3, 0.315, 0.33, 0.345, 0.36, 0.5, 0.62, 0.63];
+    return {
+      x: pressure.map((_, i) => i * 10),
+      y: pressure.map(() => 0),
+      pressure,
+      width: 4,
+      colorIndex: 0,
+    };
+  }
+
+  it("batches segments rather than emitting one path per sample", () => {
+    getTheme.mockReturnValue("light");
+    const ctx = ctxSpy();
+    const stroke = shortStroke();
+
+    // Draw calls are the budget here: a full-quality repaint covers three
+    // viewports of strokes and runs on every scroll pause, so pressure
+    // rendering must stay O(pressure changes), not O(points).
+    drawStroke(ctx, stroke, null, false, false);
+
+    expect(ctx.stroke.mock.calls.length).toBeLessThan(stroke.pressure.length);
+  });
+
+  it("keeps width monotonic with pressure across the whole stroke", () => {
+    getTheme.mockReturnValue("light");
+    const ctx = ctxSpy();
+    const stroke = shortStroke();
+
+    drawStroke(ctx, stroke, null, false, false);
+
+    // Pressure in this profile never decreases, so no batch may be narrower
+    // than the one before it.
+    const widths = ctx._widths;
+    for (let i = 1; i < widths.length; i++) {
+      expect(widths[i]).toBeGreaterThanOrEqual(widths[i - 1]);
+    }
+  });
+
+  it("actually applies the pressure range to a stroke", () => {
+    getTheme.mockReturnValue("light");
+    const ctx = ctxSpy();
+
+    drawStroke(ctx, shortStroke(), null, false, false);
+
+    const widths = ctx._widths;
+    expect(Math.max(...widths) / Math.min(...widths)).toBeGreaterThan(1.4);
+  });
+
+  it("ignores pressure in fastMode so scrolling stays cheap", () => {
+    getTheme.mockReturnValue("light");
+    const ctx = ctxSpy();
+
+    drawStroke(ctx, shortStroke(), null, false, true);
+
+    // One uniform width, and a single batched path rather than one per sample.
+    expect(new Set(ctx._widths).size).toBe(1);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 });
 

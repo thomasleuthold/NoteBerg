@@ -27,6 +27,7 @@ import {
 } from "../modules/storage.js";
 // getAllNotes / getNotesByNotebook / getQuickNotes now return lightweight index entries
 // (no strokes, no content, no recognition). Use getNote(id) when full content is needed.
+import { bindGuardedClick } from "../utils/asyncAction.js";
 import { getIcon } from "../utils/icons.js";
 import {
   drawStroke,
@@ -515,9 +516,10 @@ async function renderRecycleBinTab(container, myToken) {
     `;
   }
 
-  // Restore buttons
+  // Restore buttons. Guarded: the button stays in the DOM for the whole restore,
+  // so an unguarded handler would run it again on a second click.
   container.querySelectorAll(".btn-restore").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    bindGuardedClick(btn, async () => {
       try {
         if (btn.dataset.type === "notebook") {
           await restoreNotebook(btn.dataset.id);
@@ -531,9 +533,10 @@ async function renderRecycleBinTab(container, myToken) {
     });
   });
 
-  // Purge buttons
+  // Purge buttons. Guarded for the same reason as restore above — and here a
+  // second run would also stack a second confirmation dialog on top of the first.
   container.querySelectorAll(".btn-purge").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    bindGuardedClick(btn, async () => {
       let message =
         "Are you sure you want to permanently delete this item? This will remove it from all synced devices and cannot be undone.";
       if (btn.dataset.type === "notebook") {
@@ -1067,9 +1070,12 @@ function renderPreviewNoteCard(note) {
   let previewContent = "";
 
   if (hasDrawings || hasBackground || hasText || hasMedia) {
+    // The spinner is a sibling of (not inside) .preview-scaler: the scaler carries
+    // a scale() transform sized to the card, which would shrink the spinner and
+    // offset its centring along with the canvas.
     previewContent = `
+      <div class="note-preview-spinner" role="progressbar" aria-label="${t("overview.preview.loading")}"></div>
       <div class="preview-scaler">
-        <div class="note-preview-spinner"></div>
         <canvas class="note-preview-canvas" data-note-id="${note.id}" data-full-size="true"></canvas>
       </div>
     `;
@@ -1309,46 +1315,58 @@ async function renderNotePreviews(container, notes) {
   const canvases = container.querySelectorAll(".note-preview-canvas");
 
   const promises = Array.from(canvases).map(async (canvas) => {
-    const noteId = canvas.dataset.noteId;
-    const note = notes.find((n) => n.id === noteId);
-    if (!note) return;
+    // Resolved up front so the `finally` below always clears the spinner, including
+    // on the early returns and on a rendering error — a stuck spinner would claim
+    // work is still in flight when nothing is coming.
+    const previewContainer = canvas.closest(".note-card-preview");
+    const clearSpinner = () => {
+      previewContainer?.querySelector(".note-preview-spinner")?.remove();
+    };
 
-    // Check if this is a full-size canvas that needs to be rendered at 360x500
-    const isFullSize = canvas.dataset.fullSize === "true";
+    try {
+      const noteId = canvas.dataset.noteId;
+      const note = notes.find((n) => n.id === noteId);
+      if (!note) return;
 
-    // Setup layout scaling (must happen for both thumbnails and live rendering)
-    if (isFullSize) {
-      // Set bitmap size accounting for device pixel ratio for sharp rendering
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = 360 * dpr;
-      canvas.height = 500 * dpr;
+      // Check if this is a full-size canvas that needs to be rendered at 360x500
+      const isFullSize = canvas.dataset.fullSize === "true";
 
-      // Calculate and apply the scale transform to the parent scaler div
-      // The scaler CSS size is 360x500, so we scale down by dpr to compensate
-      // for the larger bitmap, then scale to fit the container.
-      const scaler = canvas.closest(".preview-scaler");
-      const previewContainer = canvas.closest(".note-card-preview");
-      if (scaler && previewContainer) {
-        const containerRect = previewContainer.getBoundingClientRect();
-        // Use a default if rect is zero (e.g. hidden) to avoid divide by zero
-        const containerWidth = containerRect.width || 300;
-        const scale = containerWidth / 360;
-        scaler.style.transform = `scale(${scale})`;
+      // Setup layout scaling (must happen for both thumbnails and live rendering)
+      if (isFullSize) {
+        // Set bitmap size accounting for device pixel ratio for sharp rendering
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = 360 * dpr;
+        canvas.height = 500 * dpr;
+
+        // Calculate and apply the scale transform to the parent scaler div
+        // The scaler CSS size is 360x500, so we scale down by dpr to compensate
+        // for the larger bitmap, then scale to fit the container.
+        const scaler = canvas.closest(".preview-scaler");
+        if (scaler && previewContainer) {
+          const containerRect = previewContainer.getBoundingClientRect();
+          // Use a default if rect is zero (e.g. hidden) to avoid divide by zero
+          const containerWidth = containerRect.width || 300;
+          const scale = containerWidth / 360;
+          scaler.style.transform = `scale(${scale})`;
+        }
       }
+
+      const fullNote = await getNote(noteId).catch(() => null);
+      if (!fullNote) return;
+
+      if (isFullSize) {
+        await renderNoteSnapshot(canvas, fullNote);
+      } else {
+        renderNotePreview(canvas, fullNote, { padding: 10 });
+      }
+    } catch (error) {
+      // One card failing to render must not reject the whole batch and leave the
+      // remaining cards' spinners up. The card is left blank, which is the same
+      // result as before, but the spinner stops.
+      console.error("Error rendering note preview:", error);
+    } finally {
+      clearSpinner();
     }
-
-    const fullNote = await getNote(noteId).catch(() => null);
-    if (!fullNote) return;
-
-    if (isFullSize) {
-      await renderNoteSnapshot(canvas, fullNote);
-    } else {
-      renderNotePreview(canvas, fullNote, { padding: 10 });
-    }
-
-    // Hide spinner once rendering completes
-    const spinner = canvas.closest(".preview-scaler")?.querySelector(".note-preview-spinner");
-    if (spinner) spinner.remove();
   });
 
   await Promise.all(promises);

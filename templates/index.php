@@ -60,6 +60,22 @@ try {
     padding-left: 0 !important;
   }
 
+  /* ── Fullscreen mode (src/modules/ncFullscreen.js) ───────────────────────── */
+
+  /* Hide the NC top bar and reclaim the space it occupied. NC positions
+     #content with margin-top:var(--header-height) and height:var(--body-height)
+     (see above), so zeroing the header variable and letting the body fill the
+     viewport is enough — no need to override #content's own rules. This half
+     works with or without the browser Fullscreen API, which is why it is driven
+     by a body class rather than :fullscreen. */
+  body.noteberg-fullscreen {
+    --header-height: 0px;
+    --body-height: 100vh;
+  }
+  body.noteberg-fullscreen #header {
+    display: none !important;
+  }
+
   /* ── Override Nextcloud CSS conflicts ────────────────────────────────────── */
 
   /* NC defines .breadcrumb as inline-flex with height:50px — reassert ours */

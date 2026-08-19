@@ -97,6 +97,33 @@ export function getMarkerPalette(themeOverride) {
   ];
 }
 
+// Pressure -> width response.
+//
+// Styli rarely report the extremes: normal writing sits roughly in 0.15-0.85,
+// so a linear map over the full 0-1 range wastes most of its span on pressures
+// that never occur and leaves handwriting looking nearly uniform. The curve
+// below widens the usable range and applies a gamma < 1, which expands the
+// mid-range where writing actually varies.
+const PRESSURE_MIN_SCALE = 0.35; // width multiplier at zero pressure
+const PRESSURE_MAX_SCALE = 1.8; // width multiplier at full pressure
+const PRESSURE_GAMMA = 0.75; // < 1 expands the mid-range
+
+/**
+ * Map a pressure sample to a stroke width.
+ *
+ * Shared by the live preview (CanvasRenderer.drawDirectStroke) and the final
+ * render (drawStroke) so in-progress ink matches committed ink exactly.
+ * @param {number} pressure - Pointer pressure, 0..1
+ * @param {number} baseWidth - The pen's nominal width
+ * @returns {number} Width in content units
+ */
+export function getPressureWidth(pressure, baseWidth) {
+  const p = Math.min(1, Math.max(0, pressure ?? 0.5));
+  const shaped = p ** PRESSURE_GAMMA;
+  const scale = PRESSURE_MIN_SCALE + (PRESSURE_MAX_SCALE - PRESSURE_MIN_SCALE) * shaped;
+  return Math.max(0.5, baseWidth * scale);
+}
+
 /**
  * Draw a single stroke on a canvas context
  * @param {CanvasRenderingContext2D} ctx - Canvas context
@@ -192,8 +219,23 @@ function drawSimplePath(ctx, stroke) {
 
 /**
  * Draw a pressure-sensitive path with batched segments.
- * Groups consecutive segments with similar pressure into single paths
- * to reduce canvas API calls from O(N) to O(pressure_changes).
+ *
+ * Groups consecutive segments of similar pressure into single paths, keeping
+ * draw calls at O(pressure changes) rather than O(points). This matters: a
+ * full-quality buffer repaint runs on every scroll pause and covers three
+ * viewports of strokes, so per-sample widths measured ~3.3x the draw calls on a
+ * dense page.
+ *
+ * Batching and perfectly smooth width are in tension: canvas lineWidth is
+ * uniform per path, so any batch boundary is a discrete step. Comparing each
+ * sample against the batch-start width (rather than its predecessor) is
+ * deliberate - it catches gradual pressure drift, which comparing against the
+ * previous sample does not, since small per-sample deltas never trip the
+ * threshold and are then released as one larger jump.
+ *
+ * A visible step therefore remains possible on short, fast strokes. That is an
+ * accepted trade for keeping scroll-pause repaints cheap; see getPressureWidth
+ * for the range/curve tuning, which is where stroke expressiveness comes from.
  */
 function drawPressurePath(ctx, stroke, baseWidth) {
   const x = stroke.x;
@@ -201,30 +243,27 @@ function drawPressurePath(ctx, stroke, baseWidth) {
   const p = stroke.pressure;
   const pointCount = x.length;
 
-  // Map pressure (0.0-1.0) to width multiplier (0.5-1.5)
-  const getWidth = (pressure) => Math.max(0.5, baseWidth * (0.5 + pressure));
-
   if (pointCount === 2) {
     ctx.beginPath();
-    ctx.lineWidth = getWidth((p[0] + p[1]) / 2);
+    ctx.lineWidth = getPressureWidth((p[0] + p[1]) / 2, baseWidth);
     ctx.moveTo(x[0], y[0]);
     ctx.lineTo(x[1], y[1]);
     ctx.stroke();
     return;
   }
 
-  // Threshold for "similar enough" pressure (relative to baseWidth)
-  // This batches segments together, reducing beginPath/stroke calls
+  // Threshold for "similar enough" pressure (relative to baseWidth).
+  // This batches segments together, reducing beginPath/stroke calls.
   const PRESSURE_THRESHOLD = 0.08;
 
-  let currentWidth = getWidth(p[0]);
+  let currentWidth = getPressureWidth(p[0], baseWidth);
 
   ctx.beginPath();
   ctx.lineWidth = currentWidth;
   ctx.moveTo(x[0], y[0]);
 
   for (let i = 1; i < pointCount; i++) {
-    const targetWidth = getWidth(p[i]);
+    const targetWidth = getPressureWidth(p[i], baseWidth);
     const widthDiff = Math.abs(targetWidth - currentWidth) / baseWidth;
 
     // Check if pressure changed significantly (start new batch)

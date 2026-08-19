@@ -1,0 +1,16 @@
+# Normalize all text files to LF in the repo; Git still checks them out
+# using core.autocrlf locally, but this stops false "modified" flags caused
+# by CRLF/LF mismatches on Windows.
+* text=auto eol=lf
+
+# Binary files - never touch line endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.wasm binary
