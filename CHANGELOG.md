@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - 0.5.41
+## [0.5.41] - 2026-08-19
 
 ### Added
 - **All platforms**: handwriting drawn on an imported PDF is now exported as real PDF ink annotations instead of being flattened into the page image. The strokes stay vector-sharp at any zoom, and other PDF readers list them as annotations you can select or remove
@@ -10,7 +10,7 @@
 
 ### Changed
 - **All platforms**: lower drawing latency — ink is presented without waiting for the normal frame queue, noticeably shrinking the gap between the pen tip and the ink
-- **All platforms**: pen pressure now uses a wider, curved response, so light and firm strokes differ more clearly.
+- **All platforms**: pen pressure now uses a wider, curved response, so light and firm strokes differ more clearly
 - **All platforms**: faster scrolling and repainting in long notes and large imported PDFs
 - **All platforms**: memory use while viewing large PDFs is now bounded. Rendered pages are cached with a size limit and released when they scroll out of view, and pages currently on screen are kept, which stops the constant re-rendering that could occur at certain zoom levels
 
@@ -26,6 +26,7 @@
 - **Android**: the app could close by itself when zooming far into a large scanned PDF
 - **All platforms**: closing a note while an image was still being inserted could lose that image
 - **Nextcloud**: the camera button silently did nothing when the server is reached over plain HTTP, where browsers block camera access outright. The reason is now explained, along with denied permission, a missing camera, and a camera already in use
+- **Nextcloud**: on phones the settings dialog overhung the page, pushing its close button up behind the Nextcloud header where it could not be reached or scrolled back into view
 
 ## [0.5.39] - 2026-08-07
 

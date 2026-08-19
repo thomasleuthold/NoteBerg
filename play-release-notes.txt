@@ -10,8 +10,8 @@ Android-relevant items only. Windows and Nextcloud entries from
 CHANGELOG.txt are deliberately left out.
 
 
-0.5.41 (unreleased) -- 466 characters
--------------------------------------
+0.5.41 -- 466 characters
+------------------------
 <en-US>
 - Lower drawing latency: ink follows the pen more closely.
 - Faster scrolling and zooming in long notes and large PDFs.

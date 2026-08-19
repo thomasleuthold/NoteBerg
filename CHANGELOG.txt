@@ -6,7 +6,7 @@ Google Play release notes (max 500 characters) are kept in
 play-release-notes.txt.
 
 
-0.5.41 - unreleased
+0.5.41 - 2026-08-19
 -------------------
 
 Added
@@ -66,6 +66,9 @@ Fixed
   reached over plain HTTP, where browsers block camera access outright. The
   reason is now explained, along with denied permission, a missing camera,
   and a camera already in use.
+* Nextcloud: on phones the settings dialog overhung the page, pushing its
+  close button up behind the Nextcloud header where it could not be reached
+  or scrolled back into view.
 
 
 0.5.39 - 2026-08-07
