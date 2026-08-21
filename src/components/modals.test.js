@@ -267,3 +267,61 @@ describe("create notebook modal", () => {
     expect(createNotebook).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("showProgressDialog", () => {
+  /**
+   * A long operation drives this dialog from two sources: real progress events,
+   * and a once-a-second ticker that refreshes the elapsed time. Both call the
+   * same update(), so the contract for a caller that only wants to change the
+   * label is what keeps the bar from being clobbered between real events.
+   */
+
+  const fill = () => document.querySelector(".modal-progress-fill");
+  const label = () => document.querySelector(".modal-progress-label");
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("fills the bar in proportion to the work done", async () => {
+    const { showProgressDialog } = await import("./modals.js");
+    const dialog = showProgressDialog("Working");
+    dialog.update(1, 4);
+    expect(fill().style.width).toBe("25%");
+    dialog.update(3, 4);
+    expect(fill().style.width).toBe("75%");
+  });
+
+  it("empties the bar when told a total of zero", async () => {
+    // Documents the trap rather than endorsing it: recognition's elapsed-time
+    // ticker used to call update(0, 0, text) once a second purely to refresh
+    // the label, which reset the bar to empty a second after every page and
+    // made a multi-page run look like it was making no progress at all.
+    const { showProgressDialog } = await import("./modals.js");
+    const dialog = showProgressDialog("Working");
+    dialog.update(3, 4);
+    expect(fill().style.width).toBe("75%");
+
+    dialog.update(0, 0, "still going");
+    expect(fill().style.width).toBe("0%");
+  });
+
+  it("keeps the bar in place when a label refresh repeats the current position", async () => {
+    // The fix: a ticker that only wants to update text re-sends the position it
+    // already knows, so the bar holds steady between real progress events.
+    const { showProgressDialog } = await import("./modals.js");
+    const dialog = showProgressDialog("Working");
+    dialog.update(3, 4, "page 3 of 4");
+    dialog.update(3, 4, "page 3 of 4 - 12s");
+
+    expect(fill().style.width).toBe("75%");
+    expect(label().textContent).toBe("page 3 of 4 - 12s");
+  });
+
+  it("shows the supplied text in preference to a bare count", async () => {
+    const { showProgressDialog } = await import("./modals.js");
+    const dialog = showProgressDialog("Working");
+    dialog.update(1, 2, "transcribing");
+    expect(label().textContent).toBe("transcribing");
+  });
+});

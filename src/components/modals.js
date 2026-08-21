@@ -1057,13 +1057,18 @@ function escapeHtml(text) {
 }
 
 /**
- * Show a progress dialog that cannot be dismissed by the user.
+ * Show a progress dialog.
  * Returns a controller object to update or close the dialog.
  *
+ * Not dismissable by default. Pass `onCancel` for operations that can take long
+ * enough that the user needs a way out — a modal with no exit during a
+ * multi-minute wait is indistinguishable from a hang.
+ *
  * @param {string} title - Dialog title
- * @returns {{ update: (current: number, total: number) => void, close: () => void }}
+ * @param {{ onCancel?: () => void, cancelLabel?: string }} [options]
+ * @returns {{ update: (current: number, total: number, text?: string) => void, close: () => void }}
  */
-export function showProgressDialog(title) {
+export function showProgressDialog(title, options = {}) {
   const existingModal = document.getElementById("modal-overlay");
   if (existingModal) existingModal.remove();
 
@@ -1080,6 +1085,13 @@ export function showProgressDialog(title) {
             <div class="modal-progress-fill" style="width: 0%"></div>
           </div>
         </div>
+        ${
+          options.onCancel
+            ? `<div class="modal-footer">
+          <button id="modal-progress-cancel" class="btn-secondary">${options.cancelLabel || "Cancel"}</button>
+        </div>`
+            : ""
+        }
       </div>
     </div>
   `;
@@ -1088,6 +1100,14 @@ export function showProgressDialog(title) {
   const overlay = document.getElementById("modal-overlay");
   const label = overlay.querySelector(".modal-progress-label");
   const fill = overlay.querySelector(".modal-progress-fill");
+
+  if (options.onCancel) {
+    const cancelBtn = overlay.querySelector("#modal-progress-cancel");
+    cancelBtn?.addEventListener("click", () => {
+      cancelBtn.disabled = true;
+      options.onCancel();
+    });
+  }
 
   return {
     update(current, total, text) {

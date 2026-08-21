@@ -208,6 +208,54 @@
         "it-IT": "이탈리아어",
         "ja-JP": "일본어",
         "zh-CN": "중국어(간체)"
+      },
+      "backendLabel": "인식 엔진",
+      "backendDesc": "손글씨 인식이 실행되는 위치",
+      "backendSidecar": "Windows 로컬 인식기 (정확한 단어 위치)",
+      "backendAi": "AI 비전 모델 (대략적인 단어 위치)",
+      "backendSidecarUnavailable": "Windows 로컬 인식기 (실행 중이 아님)",
+      "endpointLabel": "API 엔드포인트",
+      "endpointDesc": "OpenAI 호환 기본 URL(예: LM Studio 또는 Ollama). /v1로 끝나야 합니다.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "모델",
+      "modelDesc": "서버가 보고하는 모델 식별자",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "API 키",
+      "apiKeyDesc": "베어러 토큰으로 전송됩니다. 대부분의 로컬 서버에서는 선택 사항입니다.",
+      "apiKeyPlaceholder": "필요하지 않으면 비워 두세요",
+      "apiKeySet": "API 키가 저장되어 있습니다. 교체하려면 입력하세요.",
+      "imageEdgeLabel": "최대 이미지 크기",
+      "imageEdgeDesc": "전송되는 각 이미지의 긴 변(픽셀). 페이지가 맞춰 확대·축소되므로 값이 클수록 작은 손글씨를 읽을 수 있습니다. 작은 글씨가 누락되면 값을 올리세요. 비용은 대략 제곱에 비례해 증가합니다.",
+      "saveBtn": "저장",
+      "saved": "저장됨",
+      "aiHint": "손글씨는 이미지로 변환되어 이 엔드포인트로 전송됩니다.",
+      "aiHintLocal": "이 엔드포인트는 사용자의 기기에 있으므로 데이터가 외부로 나가지 않습니다.",
+      "aiHintRemote": "원격 서비스입니다. 손글씨가 해당 서비스로 전송됩니다.",
+      "endpointInvalidUrl": "✗ 올바른 URL이 아닙니다",
+      "endpointInsecure": "✗ 일반 http는 localhost에만 허용됩니다. 원격 서버에는 https를 사용하세요.",
+      "endpointUnsupported": "✗ http 및 https 엔드포인트만 지원됩니다",
+      "missingEndpoint": "✗ 먼저 엔드포인트와 모델을 입력하세요",
+      "testingModel": "테스트 이미지를 보내는 중...",
+      "aiSuccess": "✓ 연결 성공 ({{model}} 응답함)",
+      "aiNoVision": "⚠ 연결되었지만 응답을 사용할 수 없습니다. 모델이 비전을 지원하는지 확인하세요.",
+      "maxTokensLabel": "최대 응답 길이",
+      "maxTokensDesc": "모델 응답의 토큰 제한. 손글씨 한 페이지에는 수백 개가 필요합니다. 낮은 제한은 변환 대신 반복하는 모델을 중단시킵니다.",
+      "backendReplicate": "Replicate (클라우드, 대략적인 단어 위치)",
+      "versionLabel": "모델 버전",
+      "versionDesc": "Replicate 모델 페이지의 버전 해시. 커뮤니티 모델에는 필수이며, 공식 모델에서는 비워 두세요.",
+      "versionPlaceholder": "예: 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ 먼저 모델 이름을 입력하세요",
+      "promptLabel": "시스템 프롬프트",
+      "promptDesc": "모델에 보내는 지시입니다. 비워 두면 계속 업데이트되는 기본값을 사용합니다. 격자 및 자르기 지시는 자동으로 추가됩니다.",
+      "promptPlaceholder": "비어 있음 — 기본값 사용 중",
+      "promptReset": "기본값 불러오기",
+      "promptUsingDefault": "기본값 사용 중",
+      "promptWarning": "⚠ 프롬프트를 해석하지 못할 수 있습니다: {{items}} 누락",
+      "promptWarn": {
+        "empty": "내용",
+        "noJson": "JSON 지시",
+        "noWordsKey": "\"words\" 키",
+        "noRegion": "영역/밴드 지시"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "부분 지우개",
       "highlighterOnly": "형광펜만 지우기",
       "size": "크기"
-    }
+    },
+    "recognizeNow": "손글씨 인식"
   },
   "licenses": {
     "title": "오픈소스 라이선스",
@@ -561,6 +610,16 @@
       "apply": "적용",
       "cancel": "취소",
       "normalizeLighting": "조명 보정"
+    },
+    "recognition": {
+      "progressTitle": "손글씨 인식 중",
+      "done": "{{count}}개 단어를 인식했습니다",
+      "empty": "인식된 손글씨가 없습니다",
+      "failed": "인식 실패",
+      "noBackend": "인식 백엔드가 구성되지 않았습니다",
+      "cancel": "취소",
+      "cancelled": "인식이 취소되었습니다",
+      "transcribing": "페이지 {{current}}/{{total}} · {{words}}개 단어 · {{seconds}}초"
     }
   },
   "recycleBin": {

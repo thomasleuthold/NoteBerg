@@ -208,6 +208,54 @@
         "it-IT": "Italien",
         "ja-JP": "Japonais",
         "zh-CN": "Chinois (simplifié)"
+      },
+      "backendLabel": "Moteur de reconnaissance",
+      "backendDesc": "Où s'exécute la reconnaissance d'écriture",
+      "backendSidecar": "Reconnaissance locale Windows (positions exactes des mots)",
+      "backendAi": "Modèle de vision IA (positions approximatives)",
+      "backendSidecarUnavailable": "Reconnaissance locale Windows (inactive)",
+      "endpointLabel": "Point de terminaison API",
+      "endpointDesc": "URL de base compatible OpenAI, par ex. LM Studio ou Ollama. Doit se terminer par /v1.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "Modèle",
+      "modelDesc": "Identifiant du modèle tel que rapporté par le serveur",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "Clé API",
+      "apiKeyDesc": "Envoyée comme jeton bearer. Facultative pour la plupart des serveurs locaux.",
+      "apiKeyPlaceholder": "Laisser vide si non requise",
+      "apiKeySet": "Une clé API est enregistrée. Saisissez pour la remplacer.",
+      "imageEdgeLabel": "Taille d'image maximale",
+      "imageEdgeDesc": "Plus grand côté de chaque image envoyée, en pixels. La page est mise à l'échelle, donc une valeur plus élevée rend la petite écriture lisible — augmentez-la si les petits caractères sont ignorés. Le coût croît environ au carré.",
+      "saveBtn": "Enregistrer",
+      "saved": "Enregistré",
+      "aiHint": "L'écriture est convertie en image et envoyée à ce point de terminaison.",
+      "aiHintLocal": "Ce point de terminaison est sur votre machine, rien ne quitte votre appareil.",
+      "aiHintRemote": "Il s'agit d'un service distant. Votre écriture y sera envoyée.",
+      "endpointInvalidUrl": "✗ URL non valide",
+      "endpointInsecure": "✗ Le http simple n'est autorisé que pour localhost. Utilisez https pour un serveur distant.",
+      "endpointUnsupported": "✗ Seuls les points de terminaison http et https sont pris en charge",
+      "missingEndpoint": "✗ Saisissez d'abord un point de terminaison et un modèle",
+      "testingModel": "Envoi d'une image de test...",
+      "aiSuccess": "✓ Connexion réussie ({{model}} a répondu)",
+      "aiNoVision": "⚠ Connecté, mais la réponse est inutilisable. Vérifiez que le modèle prend en charge la vision.",
+      "maxTokensLabel": "Longueur maximale de réponse",
+      "maxTokensDesc": "Limite de jetons pour la réponse du modèle. Une page d'écriture en nécessite quelques centaines ; une limite basse arrête un modèle qui boucle au lieu de transcrire.",
+      "backendReplicate": "Replicate (cloud, positions approximatives)",
+      "versionLabel": "Version du modèle",
+      "versionDesc": "Hachage de version depuis la page du modèle sur Replicate. Requis pour les modèles communautaires, à laisser vide pour les officiels.",
+      "versionPlaceholder": "ex. 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ Saisissez d'abord un nom de modèle",
+      "promptLabel": "Invite système",
+      "promptDesc": "Instructions envoyées au modèle. Laisser vide pour utiliser la valeur par défaut intégrée, tenue à jour. Les instructions de grille et de rognage sont ajoutées automatiquement.",
+      "promptPlaceholder": "Vide — valeur par défaut utilisée",
+      "promptReset": "Par défaut",
+      "promptUsingDefault": "Valeur par défaut utilisée",
+      "promptWarning": "⚠ L'invite risque de ne pas être analysable : {{items}} manquant",
+      "promptWarn": {
+        "empty": "tout contenu",
+        "noJson": "une instruction JSON",
+        "noWordsKey": "la clé \"words\"",
+        "noRegion": "l'instruction de région/bande"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "Gomme partielle",
       "highlighterOnly": "Effacer uniquement les surligneurs",
       "size": "Taille"
-    }
+    },
+    "recognizeNow": "Reconnaître l'écriture"
   },
   "licenses": {
     "title": "Licences open source",
@@ -561,6 +610,16 @@
       "apply": "Appliquer",
       "cancel": "Annuler",
       "normalizeLighting": "Normaliser l'éclairage"
+    },
+    "recognition": {
+      "progressTitle": "Reconnaissance en cours",
+      "done": "{{count}} mot(s) reconnu(s)",
+      "empty": "Aucune écriture reconnue",
+      "failed": "Échec de la reconnaissance",
+      "noBackend": "Aucun service de reconnaissance configuré",
+      "cancel": "Annuler",
+      "cancelled": "Reconnaissance annulée",
+      "transcribing": "Page {{current}} sur {{total}} · {{words}} mots · {{seconds}}s"
     }
   },
   "recycleBin": {

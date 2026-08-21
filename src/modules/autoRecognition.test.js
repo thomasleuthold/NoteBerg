@@ -274,10 +274,16 @@ describe("performRecognition request/response handling", () => {
 
     await autoRecognition.forceRecognition("n1", [stroke("s1", [[0, 0]])]);
 
+    // Sidecar results are tagged exact and carry the engine id so a note
+    // recognized by two different engines can be told apart across devices.
     expect(updateNote).toHaveBeenCalledWith("n1", {
       recognition: {
         fullText: "hello world",
-        words: [{ text: "hello" }, { text: "world" }],
+        engine: "sidecar-uwp",
+        words: [
+          { text: "hello", precision: "exact", boundingRect: null },
+          { text: "world", precision: "exact", boundingRect: null },
+        ],
       },
     });
   });
@@ -312,5 +318,52 @@ describe("performRecognition request/response handling", () => {
 
     const types = window.dispatchEvent.mock.calls.map((c) => c[0].type);
     expect(types).toEqual(["recognition-start", "recognition-end"]);
+  });
+});
+
+describe("forced re-recognition", () => {
+  it("writes the result even when it matches what is already stored", async () => {
+    // A user who explicitly asks to recognize again expects the stored result
+    // to be replaced — including when a different backend produces the same
+    // text. Without this, re-running with a new model appears to do nothing.
+    const existing = {
+      fullText: "hello world",
+      engine: "sidecar-uwp",
+      words: [
+        { text: "hello", precision: "exact", boundingRect: null },
+        { text: "world", precision: "exact", boundingRect: null },
+      ],
+    };
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [{ text: "hello" }, { text: "world" }],
+    });
+    getNote.mockResolvedValue({ id: "n1", recognition: existing });
+
+    await autoRecognition.forceRecognition("n1", [stroke("s1", [[0, 0]])], { force: true });
+
+    expect(updateNote).toHaveBeenCalled();
+  });
+
+  it("still skips the write for a background pass with unchanged data", async () => {
+    // The churn guard must survive: several devices recognizing the same note
+    // would otherwise ping-pong writes at each other through sync.
+    const existing = {
+      fullText: "hello world",
+      engine: "sidecar-uwp",
+      words: [
+        { text: "hello", precision: "exact", boundingRect: null },
+        { text: "world", precision: "exact", boundingRect: null },
+      ],
+    };
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [{ text: "hello" }, { text: "world" }],
+    });
+    getNote.mockResolvedValue({ id: "n1", recognition: existing });
+
+    await autoRecognition.forceRecognition("n1", [stroke("s1", [[0, 0]])]);
+
+    expect(updateNote).not.toHaveBeenCalled();
   });
 });

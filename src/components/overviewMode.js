@@ -748,14 +748,40 @@ export async function searchAllNotes(rawQuery) {
  * safety can't depend on "no one would type that".
  */
 function globQueryMatches(rawQuery, text) {
-  const query = rawQuery.toLowerCase();
   const haystack = text.toLowerCase();
 
-  // Old regex had no ^/$ anchors, so it matched the pattern anywhere as a
-  // substring. Pad with "*" on whichever side doesn't already have one, so
-  // the anchored scan below becomes an unanchored "find anywhere" match
-  // without changing its (already-linear) algorithm.
-  const withLeadingStar = query.startsWith("*") ? query : `*${query}`;
+  // A query of several words matches when *every* word appears somewhere in the
+  // text, in any order — not only when they happen to be adjacent.
+  //
+  // The single-substring behaviour this replaces was a poor fit for recognized
+  // handwriting in particular: `fullText` is assembled by joining per-word
+  // transcriptions, so word order and spacing reflect what the recognizer
+  // emitted rather than how the user remembers the sentence. Searching "goal
+  // add" for a note reading "The goal is to add..." found nothing, which reads
+  // as recognition having failed when it had actually worked.
+  //
+  // A quoted query keeps the old exact-phrase behaviour for when adjacency is
+  // what the user means.
+  const query = rawQuery.trim().toLowerCase();
+  if (!query) return true;
+
+  const quoted = query.length >= 2 && query.startsWith('"') && query.endsWith('"');
+  const terms = quoted ? [query.slice(1, -1)] : query.split(/\s+/).filter(Boolean);
+
+  return terms.every((term) => matchesAnywhere(term, haystack));
+}
+
+/**
+ * Whether one term (possibly containing "*"/"?") occurs anywhere in `haystack`.
+ *
+ * @param {string} term - already lowercase
+ * @param {string} haystack - already lowercase
+ * @returns {boolean}
+ */
+function matchesAnywhere(term, haystack) {
+  // Pad with "*" on whichever side lacks one, turning the anchored scan below
+  // into an unanchored "find anywhere" match without changing its algorithm.
+  const withLeadingStar = term.startsWith("*") ? term : `*${term}`;
   const pattern = withLeadingStar.endsWith("*") ? withLeadingStar : `${withLeadingStar}*`;
 
   return wildcardMatch(pattern, haystack);

@@ -208,6 +208,54 @@
         "it-IT": "Italiano",
         "ja-JP": "Giapponese",
         "zh-CN": "Cinese (semplificato)"
+      },
+      "backendLabel": "Motore di riconoscimento",
+      "backendDesc": "Dove viene eseguito il riconoscimento della scrittura",
+      "backendSidecar": "Riconoscimento locale Windows (posizioni esatte)",
+      "backendAi": "Modello di visione IA (posizioni approssimative)",
+      "backendSidecarUnavailable": "Riconoscimento locale Windows (non attivo)",
+      "endpointLabel": "Endpoint API",
+      "endpointDesc": "URL di base compatibile con OpenAI, ad es. LM Studio o Ollama. Deve terminare con /v1.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "Modello",
+      "modelDesc": "Identificatore del modello riportato dal server",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "Chiave API",
+      "apiKeyDesc": "Inviata come token bearer. Facoltativa per la maggior parte dei server locali.",
+      "apiKeyPlaceholder": "Lasciare vuoto se non necessaria",
+      "apiKeySet": "È memorizzata una chiave API. Digitare per sostituirla.",
+      "imageEdgeLabel": "Dimensione massima immagine",
+      "imageEdgeDesc": "Lato più lungo di ogni immagine inviata, in pixel. La pagina viene ridimensionata, quindi un valore maggiore rende leggibile la scrittura piccola: aumentalo se il testo minuto viene ignorato. Il costo cresce circa al quadrato.",
+      "saveBtn": "Salva",
+      "saved": "Salvato",
+      "aiHint": "La scrittura viene convertita in immagine e inviata a questo endpoint.",
+      "aiHintLocal": "Questo endpoint è sul tuo computer, nulla lascia il dispositivo.",
+      "aiHintRemote": "Questo è un servizio remoto. La tua scrittura vi sarà inviata.",
+      "endpointInvalidUrl": "✗ URL non valido",
+      "endpointInsecure": "✗ http semplice è consentito solo per localhost. Usa https per un server remoto.",
+      "endpointUnsupported": "✗ Sono supportati solo endpoint http e https",
+      "missingEndpoint": "✗ Inserisci prima endpoint e modello",
+      "testingModel": "Invio di un'immagine di prova...",
+      "aiSuccess": "✓ Connessione riuscita ({{model}} ha risposto)",
+      "aiNoVision": "⚠ Connesso, ma la risposta non è utilizzabile. Verifica che il modello supporti la visione.",
+      "maxTokensLabel": "Lunghezza massima della risposta",
+      "maxTokensDesc": "Limite di token per la risposta del modello. Una pagina di scrittura ne richiede alcune centinaia; un limite basso ferma un modello che si ripete invece di trascrivere.",
+      "backendReplicate": "Replicate (cloud, posizioni approssimative)",
+      "versionLabel": "Versione del modello",
+      "versionDesc": "Hash di versione dalla pagina del modello su Replicate. Necessario per i modelli della community, lasciare vuoto per quelli ufficiali.",
+      "versionPlaceholder": "es. 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ Inserisci prima un nome di modello",
+      "promptLabel": "Prompt di sistema",
+      "promptDesc": "Istruzioni inviate al modello. Lasciare vuoto per usare il valore predefinito integrato, mantenuto aggiornato. Le istruzioni su griglia e ritaglio vengono aggiunte automaticamente.",
+      "promptPlaceholder": "Vuoto — si usa il predefinito",
+      "promptReset": "Predefinito",
+      "promptUsingDefault": "Si usa il predefinito",
+      "promptWarning": "⚠ Il prompt potrebbe non essere analizzabile: manca {{items}}",
+      "promptWarn": {
+        "empty": "qualsiasi contenuto",
+        "noJson": "un'istruzione JSON",
+        "noWordsKey": "la chiave \"words\"",
+        "noRegion": "l'istruzione di regione/banda"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "Gomma parziale",
       "highlighterOnly": "Cancella solo evidenziatori",
       "size": "Dimensione"
-    }
+    },
+    "recognizeNow": "Riconosci scrittura"
   },
   "licenses": {
     "title": "Licenze open source",
@@ -561,6 +610,16 @@
       "apply": "Applica",
       "cancel": "Annulla",
       "normalizeLighting": "Normalizza illuminazione"
+    },
+    "recognition": {
+      "progressTitle": "Riconoscimento in corso",
+      "done": "{{count}} parola/e riconosciuta/e",
+      "empty": "Nessuna scrittura riconosciuta",
+      "failed": "Riconoscimento non riuscito",
+      "noBackend": "Nessun servizio di riconoscimento configurato",
+      "cancel": "Annulla",
+      "cancelled": "Riconoscimento annullato",
+      "transcribing": "Pagina {{current}} di {{total}} · {{words}} parole · {{seconds}}s"
     }
   },
   "recycleBin": {

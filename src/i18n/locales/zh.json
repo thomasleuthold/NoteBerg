@@ -208,6 +208,54 @@
         "it-IT": "意大利语",
         "ja-JP": "日语",
         "zh-CN": "中文（简体）"
+      },
+      "backendLabel": "识别引擎",
+      "backendDesc": "手写识别的运行位置",
+      "backendSidecar": "Windows 本地识别器（精确的字词位置）",
+      "backendAi": "AI 视觉模型（近似的字词位置）",
+      "backendSidecarUnavailable": "Windows 本地识别器（未运行）",
+      "endpointLabel": "API 端点",
+      "endpointDesc": "兼容 OpenAI 的基础 URL，例如 LM Studio 或 Ollama。必须以 /v1 结尾。",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "模型",
+      "modelDesc": "服务器报告的模型标识符",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "API 密钥",
+      "apiKeyDesc": "作为 bearer 令牌发送。大多数本地服务器无需填写。",
+      "apiKeyPlaceholder": "如不需要请留空",
+      "apiKeySet": "已保存 API 密钥。输入以替换。",
+      "imageEdgeLabel": "最大图像尺寸",
+      "imageEdgeDesc": "发送的每张图像的最长边（像素）。页面会按比例缩放，因此数值越大越能识别细小的手写内容——若小字被忽略请调高。开销大致按平方增长。",
+      "saveBtn": "保存",
+      "saved": "已保存",
+      "aiHint": "手写内容将渲染为图像并发送到此端点。",
+      "aiHintLocal": "此端点位于您的设备上，数据不会离开设备。",
+      "aiHintRemote": "这是远程服务。您的手写内容将被发送到该服务。",
+      "endpointInvalidUrl": "✗ 不是有效的 URL",
+      "endpointInsecure": "✗ 普通 http 仅允许用于 localhost。远程服务器请使用 https。",
+      "endpointUnsupported": "✗ 仅支持 http 和 https 端点",
+      "missingEndpoint": "✗ 请先输入端点和模型",
+      "testingModel": "正在发送测试图像...",
+      "aiSuccess": "✓ 连接成功（{{model}} 已响应）",
+      "aiNoVision": "⚠ 已连接，但响应不可用。请检查模型是否支持视觉输入。",
+      "maxTokensLabel": "最大响应长度",
+      "maxTokensDesc": "模型回复的令牌上限。一页手写内容需要几百个；较低的上限可以阻止只会循环而不转写的模型。",
+      "backendReplicate": "Replicate（云端，近似的字词位置）",
+      "versionLabel": "模型版本",
+      "versionDesc": "Replicate 模型页面上的版本哈希。社区模型必填，官方模型可留空。",
+      "versionPlaceholder": "例如 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ 请先输入模型名称",
+      "promptLabel": "系统提示词",
+      "promptDesc": "发送给模型的指令。留空则使用持续维护的内置默认值。网格和裁剪相关指令会自动追加。",
+      "promptPlaceholder": "留空 — 正在使用默认值",
+      "promptReset": "载入默认值",
+      "promptUsingDefault": "正在使用默认值",
+      "promptWarning": "⚠ 提示词可能无法解析：缺少 {{items}}",
+      "promptWarn": {
+        "empty": "任何内容",
+        "noJson": "JSON 指令",
+        "noWordsKey": "\"words\" 键",
+        "noRegion": "区域/色带指令"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "局部橡皮擦",
       "highlighterOnly": "仅擦除荧光笔",
       "size": "大小"
-    }
+    },
+    "recognizeNow": "识别手写内容"
   },
   "licenses": {
     "title": "开源许可证",
@@ -561,6 +610,16 @@
       "apply": "应用",
       "cancel": "取消",
       "normalizeLighting": "均衡光照"
+    },
+    "recognition": {
+      "progressTitle": "正在识别手写内容",
+      "done": "已识别 {{count}} 个词",
+      "empty": "未识别到手写内容",
+      "failed": "识别失败",
+      "noBackend": "未配置识别后端",
+      "cancel": "取消",
+      "cancelled": "已取消识别",
+      "transcribing": "第 {{current}}/{{total}} 页 · {{words}} 个词 · {{seconds}} 秒"
     }
   },
   "recycleBin": {

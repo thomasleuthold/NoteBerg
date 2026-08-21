@@ -208,6 +208,54 @@
         "it-IT": "Italiano",
         "ja-JP": "Japonês",
         "zh-CN": "Chinês (simplificado)"
+      },
+      "backendLabel": "Motor de reconhecimento",
+      "backendDesc": "Onde o reconhecimento de escrita é executado",
+      "backendSidecar": "Reconhecimento local do Windows (posições exatas)",
+      "backendAi": "Modelo de visão IA (posições aproximadas)",
+      "backendSidecarUnavailable": "Reconhecimento local do Windows (não ativo)",
+      "endpointLabel": "Endpoint da API",
+      "endpointDesc": "URL base compatível com OpenAI, p. ex. LM Studio ou Ollama. Deve terminar em /v1.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "Modelo",
+      "modelDesc": "Identificador do modelo conforme relatado pelo servidor",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "Chave de API",
+      "apiKeyDesc": "Enviada como token bearer. Opcional na maioria dos servidores locais.",
+      "apiKeyPlaceholder": "Deixe vazio se não for necessário",
+      "apiKeySet": "Há uma chave de API guardada. Escreva para substituí-la.",
+      "imageEdgeLabel": "Tamanho máximo da imagem",
+      "imageEdgeDesc": "Maior lado de cada imagem enviada, em pixels. A página é escalada para caber, por isso um valor maior torna legível a escrita pequena — aumente-o se a letra miúda for ignorada. O custo cresce aproximadamente ao quadrado.",
+      "saveBtn": "Guardar",
+      "saved": "Guardado",
+      "aiHint": "A escrita é convertida em imagem e enviada para este endpoint.",
+      "aiHintLocal": "Este endpoint está na sua máquina, nada sai do seu dispositivo.",
+      "aiHintRemote": "Este é um serviço remoto. A sua escrita será enviada para lá.",
+      "endpointInvalidUrl": "✗ URL inválido",
+      "endpointInsecure": "✗ http simples só é permitido para localhost. Use https para um servidor remoto.",
+      "endpointUnsupported": "✗ Apenas endpoints http e https são suportados",
+      "missingEndpoint": "✗ Introduza primeiro um endpoint e um modelo",
+      "testingModel": "A enviar uma imagem de teste...",
+      "aiSuccess": "✓ Ligação bem-sucedida ({{model}} respondeu)",
+      "aiNoVision": "⚠ Ligado, mas a resposta não foi utilizável. Verifique se o modelo suporta visão.",
+      "maxTokensLabel": "Comprimento máximo da resposta",
+      "maxTokensDesc": "Limite de tokens para a resposta do modelo. Uma página de escrita precisa de algumas centenas; um limite baixo trava um modelo que entra em ciclo em vez de transcrever.",
+      "backendReplicate": "Replicate (nuvem, posições aproximadas)",
+      "versionLabel": "Versão do modelo",
+      "versionDesc": "Hash de versão da página do modelo no Replicate. Necessário para modelos da comunidade; deixe vazio para os oficiais.",
+      "versionPlaceholder": "p. ex. 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ Introduza primeiro um nome de modelo",
+      "promptLabel": "Prompt do sistema",
+      "promptDesc": "Instruções enviadas ao modelo. Deixe vazio para usar o valor predefinido integrado, mantido atualizado. As instruções de grelha e recorte são acrescentadas automaticamente.",
+      "promptPlaceholder": "Vazio — a usar o predefinido",
+      "promptReset": "Predefinido",
+      "promptUsingDefault": "A usar o predefinido",
+      "promptWarning": "⚠ O prompt pode não ser analisável: falta {{items}}",
+      "promptWarn": {
+        "empty": "qualquer conteúdo",
+        "noJson": "uma instrução JSON",
+        "noWordsKey": "a chave \"words\"",
+        "noRegion": "a instrução de região/banda"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "Borracha parcial",
       "highlighterOnly": "Apagar somente marca-textos",
       "size": "Tamanho"
-    }
+    },
+    "recognizeNow": "Reconhecer escrita"
   },
   "licenses": {
     "title": "Licenças de código aberto",
@@ -561,6 +610,16 @@
       "apply": "Aplicar",
       "cancel": "Cancelar",
       "normalizeLighting": "Normalizar iluminação"
+    },
+    "recognition": {
+      "progressTitle": "Reconhecendo escrita",
+      "done": "{{count}} palavra(s) reconhecida(s)",
+      "empty": "Nenhuma escrita reconhecida",
+      "failed": "Falha no reconhecimento",
+      "noBackend": "Nenhum serviço de reconhecimento configurado",
+      "cancel": "Cancelar",
+      "cancelled": "Reconhecimento cancelado",
+      "transcribing": "Página {{current}} de {{total}} · {{words}} palavras · {{seconds}}s"
     }
   },
   "recycleBin": {

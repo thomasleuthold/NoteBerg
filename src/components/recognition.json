@@ -1,11 +1,15 @@
 {
   "identifier": "recognition",
-  "description": "Allow access to local recognition service",
+  "description": "Allow access to local and user-configured recognition/AI services",
   "windows": ["main"],
   "permissions": [
     {
       "identifier": "http:default",
-      "allow": [{ "url": "http://localhost:5000/*" }],
+      "allow": [
+        { "url": "http://localhost:*/*" },
+        { "url": "http://127.0.0.1:*/*" },
+        { "url": "https://*/*" }
+      ],
       "deny": []
     }
   ]

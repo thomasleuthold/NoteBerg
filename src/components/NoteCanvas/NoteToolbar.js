@@ -817,6 +817,9 @@ export class NoteToolbar {
       </div>
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
+        <button id="nc-recognize-btn" class="note-canvas-toolbar__option-btn">
+            ${getIcon("fileText", 16)} ${t("toolbar.recognizeNow")}
+        </button>
         <button id="nc-export-pdf-btn" class="note-canvas-toolbar__option-btn">
             ${getIcon("download", 16)} ${t("toolbar.exportPdf")}
         </button>
@@ -945,6 +948,15 @@ export class NoteToolbar {
         e.target.classList.add("note-canvas-toolbar__option-btn--active");
       });
     });
+
+    const recognizeBtn = this.optionsDialog.querySelector("#nc-recognize-btn");
+    if (recognizeBtn) {
+      recognizeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.onOptionsChange({ type: "recognize-now" });
+        this._closeOptionsDialog();
+      });
+    }
 
     const exportPdfBtn = this.optionsDialog.querySelector("#nc-export-pdf-btn");
     if (exportPdfBtn) {

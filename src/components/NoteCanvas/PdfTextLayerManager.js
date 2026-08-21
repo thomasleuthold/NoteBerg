@@ -9,6 +9,7 @@
 
 import { TextLayer } from "pdfjs-dist";
 import { loadPdfPage } from "../../modules/pdfManager.js";
+import { searchRegex } from "../../utils/searchPattern.js";
 
 export class PdfTextLayerManager {
   /**
@@ -414,9 +415,7 @@ export class PdfTextLayerManager {
       parent.normalize();
     }
 
-    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = escapeRegex(this._searchQuery).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
-    const regex = new RegExp(`(${pattern})`, "gi");
+    const regex = searchRegex(this._searchQuery, { capture: true });
 
     // Walk text nodes inside the layer's spans
     const walker = document.createTreeWalker(layer.element, NodeFilter.SHOW_TEXT);

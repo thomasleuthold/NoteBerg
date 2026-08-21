@@ -54,6 +54,7 @@ import { MediaOverlay } from "./MediaOverlay.js";
 import { SelectionOverlay } from "./SelectionOverlay.js";
 import { TaskCheckboxLayer } from "./TaskCheckboxLayer.js";
 import "./NoteCanvas.css";
+import { searchRegex } from "../../utils/searchPattern.js";
 import {
   CropImageCommand,
   DeleteMediaCommand,
@@ -708,6 +709,8 @@ export class NoteCanvas {
             await updateNote(this.noteId, { background: action.value, modified: Date.now() });
           } else if (action.type === "export-pdf") {
             await this._exportPdf();
+          } else if (action.type === "recognize-now") {
+            await this._recognizeNow();
           } else if (action.type === "toggle-fullscreen") {
             await toggleFullscreen();
           } else if (action.type === "delete") {
@@ -1394,54 +1397,123 @@ export class NoteCanvas {
   }
 
   /**
+   * The note's recognition result, decoded.
+   *
+   * Older notes stored it as a JSON string rather than an object. Parsing is
+   * cached back onto noteData so a note in that shape is decoded once rather
+   * than on every keystroke of a search — both search paths call this, and one
+   * of them previously re-parsed the string every time.
+   *
+   * @private
+   * @returns {Object|null}
+   */
+  _getRecognition() {
+    const recognition = this.noteData?.recognition;
+    if (typeof recognition !== "string") return recognition ?? null;
+
+    try {
+      const parsed = JSON.parse(recognition);
+      this.noteData.recognition = parsed;
+      return parsed;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  /**
    * Highlight search terms in the note
    * @private
    * @param {string} query
    */
-  _highlightSearchTerms(query) {
-    // Highlight recognized handwriting strokes on the canvas
-    let recognition = this.noteData?.recognition;
-
-    // Handle case where recognition might be a JSON string (legacy data artifact)
-    if (typeof recognition === "string") {
-      try {
-        recognition = JSON.parse(recognition);
-        this.noteData.recognition = recognition;
-      } catch (_e) {
-        recognition = null;
-      }
+  async _highlightSearchTerms(query) {
+    // An empty query matches everything, which in region mode would paint every
+    // band on the note — indistinguishable from the recognition bands leaking
+    // onto the live canvas. Clear instead.
+    if (!query || !String(query).trim()) {
+      this.renderer?.setHighlights([]);
+      this.textEditorLayer?.highlightSearchTerms("");
+      this.pdfTextLayerManager?.highlightSearchTerms("");
+      return;
     }
 
+    // Highlight recognized handwriting strokes on the canvas
+    const recognition = this._getRecognition();
+
     if (recognition?.words && Array.isArray(recognition.words)) {
-      const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
-      const regex = new RegExp(pattern, "gi");
+      const regex = searchRegex(query);
 
       const rects = [];
+
+      // Region hits are collected separately so each band highlights once, no
+      // matter how many matching words it holds.
+      const matchedRegions = new Map();
 
       recognition.words.forEach((word) => {
         if (!word) return;
 
         regex.lastIndex = 0;
-        if (word.text && regex.test(word.text)) {
-          const box = word.boundingRect || word.boundingBox || word.rect || word;
+        if (!word.text || !regex.test(word.text)) return;
 
-          if (box) {
-            const x = box.x !== undefined ? box.x : box.left;
-            const y = box.y !== undefined ? box.y : box.top;
-            const w = box.width !== undefined ? box.width : box.w;
-            const h = box.height !== undefined ? box.height : box.h;
+        // A word localized only to a colour band has no box to draw. Highlighting
+        // the band is the honest rendering of what is actually known.
+        if (word.region != null) {
+          // Keyed by region so a band highlights once however many words match.
+          matchedRegions.set(word.region, {
+            region: word.region,
+            imageBounds: word.imageBounds,
+          });
+          return;
+        }
 
-            if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
-              rects.push({ x, y, w, h });
-            }
+        const box = word.boundingRect || word.boundingBox || word.rect;
+
+        if (box) {
+          const x = box.x !== undefined ? box.x : box.left;
+          const y = box.y !== undefined ? box.y : box.top;
+          const w = box.width !== undefined ? box.width : box.w;
+          const h = box.height !== undefined ? box.height : box.h;
+
+          if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
+            rects.push({ x, y, w, h });
           }
         }
       });
 
+      if (matchedRegions.size > 0) {
+        const { decodeRegion, mergeAdjacentBands, regionBounds } = await import(
+          "../../modules/recognition/regions.js"
+        );
+
+        const bands = [];
+        for (const entry of matchedRegions.values()) {
+          const decoded = decodeRegion(entry.region);
+          if (!decoded || !entry.imageBounds) continue;
+
+          const bounds = regionBounds(decoded.regionIndex, entry.imageBounds);
+          if (!bounds) continue;
+
+          bands.push({
+            y: bounds.top,
+            h: bounds.bottom - bounds.top,
+            region: decoded.regionIndex,
+          });
+        }
+
+        // Two matching words in neighbouring bands are one continuous region of
+        // the page, so they paint as one span. Drawing them separately leaves a
+        // hairline seam that reads as a rendering fault.
+        for (const band of mergeAdjacentBands(bands)) {
+          rects.push({ x: 0, y: band.y, w: this.maxContentWidth, h: band.h, region: band.region });
+        }
+      }
+
       if (this.renderer) {
         this.renderer.setHighlights(rects);
       }
+    } else {
+      // No recognition to match against — drop any highlights from a previous
+      // query rather than leaving them on screen.
+      this.renderer?.setHighlights([]);
     }
 
     // Highlight in text editor layer
@@ -1828,29 +1900,60 @@ export class NoteCanvas {
   async _getSearchMatchPositions(query) {
     const positions = [];
 
-    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
-    const regex = new RegExp(pattern, "gi");
+    const regex = searchRegex(query);
 
     // 1. Handwriting recognition matches
-    let recognition = this.noteData?.recognition;
-    if (typeof recognition === "string") {
-      try {
-        recognition = JSON.parse(recognition);
-      } catch (_e) {
-        recognition = null;
-      }
-    }
+    const recognition = this._getRecognition();
     if (recognition?.words && Array.isArray(recognition.words)) {
+      const { decodeRegion, regionBounds } = await import("../../modules/recognition/regions.js");
+
+      // One entry per occurrence, so the navigator counts what is actually on
+      // the page: several matching words in one band are several hits. Bands are
+      // merged for *drawing* only, and the count must not collapse the same way.
+      //
+      // The exception is a word transcribed on two images at nearly the same
+      // place, which is one occurrence seen twice. Page-aligned images no longer
+      // overlap, so this should not arise; the guard stays because a word
+      // straddling a page break can still be read on both sides of it.
+      //
+      // Keyed by text so the scan stays linear: a list scanned per match is
+      // quadratic, and a page of repeated words is exactly when search is slow.
+      const acceptedByText = new Map();
+      // Derived from band height rather than fixed: bands scale with note
+      // geometry. A straddling duplicate lands within a band of its twin,
+      // whereas two bands of the same image are a full band apart — so
+      // two-thirds of a band separates them reliably.
+      const overlapTolerance = (bandHeight) => bandHeight * 0.67;
+
       for (const word of recognition.words) {
         if (!word?.text) continue;
         regex.lastIndex = 0;
-        if (regex.test(word.text)) {
-          const box = word.boundingRect || word.boundingBox || word.rect || word;
-          const y = box.y !== undefined ? box.y : box.top;
-          if (y !== undefined) {
-            positions.push({ y });
-          }
+        if (!regex.test(word.text)) continue;
+
+        // A region-localized word has no box. Use the middle of its band, so it
+        // is counted and can be scrolled to.
+        if (word.region != null && word.imageBounds) {
+          const decoded = decodeRegion(word.region);
+          const bounds = decoded && regionBounds(decoded.regionIndex, word.imageBounds);
+          if (!bounds) continue;
+
+          const centre = (bounds.top + bounds.bottom) / 2;
+          const tolerance = overlapTolerance(bounds.bottom - bounds.top);
+          const seen = acceptedByText.get(word.text);
+          if (seen?.some((y) => Math.abs(y - centre) <= tolerance)) continue;
+
+          if (seen) seen.push(centre);
+          else acceptedByText.set(word.text, [centre]);
+          positions.push({ y: centre });
+          continue;
+        }
+
+        const box = word.boundingRect || word.boundingBox || word.rect;
+        if (!box) continue;
+
+        const y = box.y !== undefined ? box.y : box.top;
+        if (y !== undefined) {
+          positions.push({ y });
         }
       }
     }
@@ -5194,6 +5297,146 @@ export class NoteCanvas {
   }
 
   /**
+   * Run handwriting recognition on demand and report the outcome.
+   *
+   * Recognition normally runs debounced in the background, which is invisible
+   * while a backend is being evaluated. This gives a deliberate trigger with
+   * visible progress and a result — the loop needed to measure a model against
+   * real notes (PLAN Phase 3).
+   *
+   * @private
+   */
+  async _recognizeNow() {
+    const { isRecognitionAvailable } = await import(
+      "../../modules/recognition/recognitionService.js"
+    );
+    if (!(await isRecognitionAvailable())) {
+      await showAlertDialog(
+        t("canvas.recognition.progressTitle"),
+        t("canvas.recognition.noBackend"),
+      );
+      return;
+    }
+
+    // Flush pending strokes first: recognition reads what is in memory, and an
+    // unsaved stroke would otherwise be missing from the image sent for
+    // transcription.
+    await this.flushPendingSaves();
+
+    const strokes = (this.noteData.strokes || []).filter((s) => !s._deleted && !s.isDeleted);
+    if (strokes.length === 0) {
+      await showAlertDialog(t("canvas.recognition.progressTitle"), t("canvas.recognition.empty"));
+      return;
+    }
+
+    // Local models can take minutes per page. Without a cancel path the modal is
+    // indistinguishable from a hang, and the user cannot get back to their note.
+    const controller = new AbortController();
+    const progress = showProgressDialog(t("canvas.recognition.progressTitle"), {
+      onCancel: () => controller.abort(),
+      cancelLabel: t("canvas.recognition.cancel"),
+    });
+
+    // Show elapsed seconds during the transcribe phase: a page can take minutes
+    // on a local model, so a label that never changes reads as a hang.
+    //
+    // The tick re-sends the current page numbers rather than zeroes. Passing
+    // (0, 0) made the dialog compute 0% and snap the bar back to empty a second
+    // after every page, so the bar spent almost all of its time showing no
+    // progress at all.
+    const startedAt = Date.now();
+    let lastPhase = "";
+    let current = 0;
+    let total = 0;
+    let wordCount = 0;
+
+    const render = () => {
+      const seconds = Math.round((Date.now() - startedAt) / 1000);
+      progress.update(
+        current,
+        total,
+        lastPhase === "transcribe"
+          ? t("canvas.recognition.transcribing", { current, total, seconds, words: wordCount })
+          : `${lastPhase} ${current}/${total}`,
+      );
+    };
+
+    const ticker = setInterval(() => {
+      if (lastPhase === "transcribe") render();
+    }, 1000);
+
+    try {
+      const result = await forceRecognition(this.noteId, strokes, {
+        signal: controller.signal,
+        // A deliberate re-run replaces the stored result even when the text is
+        // unchanged — otherwise re-recognizing with a different model appears
+        // to do nothing.
+        force: true,
+        onProgress: (phase, phaseCurrent, phaseTotal, detail) => {
+          lastPhase = phase;
+          current = phaseCurrent;
+          total = phaseTotal;
+          if (typeof detail?.words === "number") wordCount = detail.words;
+          render();
+        },
+      });
+      clearInterval(ticker);
+      progress.close();
+
+      if (controller.signal.aborted) {
+        // Cancelling leaves hasRecognition false, so the note is simply picked
+        // up again by the next catch-up scan.
+        await showAlertDialog(
+          t("canvas.recognition.progressTitle"),
+          t("canvas.recognition.cancelled"),
+        );
+        return;
+      }
+
+      // Re-read from the note: forceRecognition persists, and the canvas needs
+      // the stored object for search highlighting.
+      const stored = (await getNote(this.noteId))?.recognition;
+      if (stored) {
+        this.noteData.recognition = stored;
+        // Re-apply any active search so new matches highlight immediately
+        // instead of only after the note is reopened.
+        if (this.activeSearchQuery) this._highlightSearchTerms(this.activeSearchQuery);
+      }
+
+      // Report box quality so backends can be compared on numbers rather than
+      // on where a highlight happens to land (PLAN Phase 3).
+      if (stored?.words?.length) {
+        const { scoreBoxes } = await import("../../modules/recognition/boxQuality.js");
+        const q = scoreBoxes(stored.words, strokes);
+        console.log(
+          `[Recognition] Box quality — ${q.boxCount} boxes, ` +
+            `${(q.emptyBoxRatio * 100).toFixed(1)}% on blank paper, ` +
+            `median drift x=${q.medianDriftX.toFixed(0)}px y=${q.medianDriftY.toFixed(0)}px, ` +
+            `grid-likeness ${q.gridLikeness.toFixed(2)} (1.00 = invented layout)`,
+        );
+      }
+
+      const count = stored?.words?.length ?? result?.words?.length ?? 0;
+      await showAlertDialog(
+        t("canvas.recognition.progressTitle"),
+        count > 0 ? t("canvas.recognition.done", { count }) : t("canvas.recognition.empty"),
+      );
+    } catch (err) {
+      clearInterval(ticker);
+      progress.close();
+      if (err?.name === "AbortError" || controller.signal.aborted) {
+        await showAlertDialog(
+          t("canvas.recognition.progressTitle"),
+          t("canvas.recognition.cancelled"),
+        );
+        return;
+      }
+      console.error("[NoteCanvas] Recognition failed:", err);
+      await showAlertDialog(t("canvas.recognition.failed"), err.message);
+    }
+  }
+
+  /**
    * Export the note to a PDF file and trigger a browser download.
    * @private
    */
@@ -5255,6 +5498,11 @@ export class NoteCanvas {
 
     // Step 2: Trigger handwriting recognition if strokes changed.
     // Awaited (via the returned promise) before sync starts.
+    //
+    // Gated on strokesChanged so closing an untouched note costs nothing. A
+    // manual run (_recognizeNow) has already written its result and marked the
+    // note unsynced, so skipping here does not lose it — but it does mean a
+    // manual run must persist on its own rather than relying on close.
     let pendingRecognition = null;
     if (this.strokesChanged && this.noteId && this.noteData?.strokes) {
       const activeStrokes = this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted);

@@ -208,6 +208,54 @@
         "it-IT": "Italienisch",
         "ja-JP": "Japanisch",
         "zh-CN": "Chinesisch (Vereinfacht)"
+      },
+      "backendLabel": "Erkennungs-Engine",
+      "backendDesc": "Wo die Handschrifterkennung ausgeführt wird",
+      "backendSidecar": "Lokale Windows-Erkennung (exakte Wortpositionen)",
+      "backendAi": "KI-Bildmodell (ungefähre Wortpositionen)",
+      "backendSidecarUnavailable": "Lokale Windows-Erkennung (nicht aktiv)",
+      "endpointLabel": "API-Endpunkt",
+      "endpointDesc": "OpenAI-kompatible Basis-URL, z. B. LM Studio oder Ollama. Muss auf /v1 enden.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "Modell",
+      "modelDesc": "Modellbezeichnung wie vom Server gemeldet",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "API-Schlüssel",
+      "apiKeyDesc": "Wird als Bearer-Token gesendet. Für die meisten lokalen Server optional.",
+      "apiKeyPlaceholder": "Leer lassen, falls nicht erforderlich",
+      "apiKeySet": "Ein API-Schlüssel ist gespeichert. Zum Ersetzen neu eingeben.",
+      "imageEdgeLabel": "Maximale Bildgröße",
+      "imageEdgeDesc": "Längste Kante jedes gesendeten Bildes in Pixeln. Die Seite wird passend skaliert, ein größerer Wert macht also kleine Handschrift lesbar — erhöhen, wenn Kleingedrucktes fehlt. Kostet Zeit und Tokens etwa quadratisch.",
+      "saveBtn": "Speichern",
+      "saved": "Gespeichert",
+      "aiHint": "Die Handschrift wird als Bild an diesen Endpunkt gesendet.",
+      "aiHintLocal": "Dieser Endpunkt läuft auf Ihrem Gerät, es werden keine Daten übertragen.",
+      "aiHintRemote": "Dies ist ein entfernter Dienst. Ihre Handschrift wird dorthin gesendet.",
+      "endpointInvalidUrl": "✗ Keine gültige URL",
+      "endpointInsecure": "✗ Einfaches http ist nur für localhost erlaubt. Für entfernte Server https verwenden.",
+      "endpointUnsupported": "✗ Nur http- und https-Endpunkte werden unterstützt",
+      "missingEndpoint": "✗ Zuerst Endpunkt und Modell eingeben",
+      "testingModel": "Testbild wird gesendet...",
+      "aiSuccess": "✓ Verbindung erfolgreich ({{model}} hat geantwortet)",
+      "aiNoVision": "⚠ Verbunden, aber die Antwort war unbrauchbar. Prüfen Sie, ob das Modell Bilderkennung unterstützt.",
+      "maxTokensLabel": "Maximale Antwortlänge",
+      "maxTokensDesc": "Token-Limit für die Antwort des Modells. Eine Seite Handschrift benötigt einige hundert; ein niedriges Limit stoppt ein Modell, das sich wiederholt statt zu transkribieren.",
+      "backendReplicate": "Replicate (Cloud, ungefähre Wortpositionen)",
+      "versionLabel": "Modellversion",
+      "versionDesc": "Versions-Hash von der Modellseite auf Replicate. Für Community-Modelle erforderlich, für offizielle leer lassen.",
+      "versionPlaceholder": "z. B. 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ Zuerst einen Modellnamen eingeben",
+      "promptLabel": "System-Prompt",
+      "promptDesc": "Anweisungen an das Modell. Leer lassen, um die gepflegte Standardvorlage zu verwenden. Raster- und Zuschnitt-Hinweise werden automatisch angehängt.",
+      "promptPlaceholder": "Leer — Standard wird verwendet",
+      "promptReset": "Standard laden",
+      "promptUsingDefault": "Standard wird verwendet",
+      "promptWarning": "⚠ Prompt ist evtl. nicht auswertbar: {{items}} fehlt",
+      "promptWarn": {
+        "empty": "jeglicher Inhalt",
+        "noJson": "eine JSON-Anweisung",
+        "noWordsKey": "der Schlüssel \"words\"",
+        "noRegion": "die Bereichs-/Band-Anweisung"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "Teil-Radierer",
       "highlighterOnly": "Nur Markierungen radieren",
       "size": "Größe"
-    }
+    },
+    "recognizeNow": "Handschrift erkennen"
   },
   "licenses": {
     "title": "Open-Source-Lizenzen",
@@ -561,6 +610,16 @@
       "apply": "Anwenden",
       "cancel": "Abbrechen",
       "normalizeLighting": "Beleuchtung normalisieren"
+    },
+    "recognition": {
+      "progressTitle": "Handschrift wird erkannt",
+      "done": "{{count}} Wort/Wörter erkannt",
+      "empty": "Keine Handschrift erkannt",
+      "failed": "Erkennung fehlgeschlagen",
+      "noBackend": "Kein Erkennungsdienst konfiguriert",
+      "cancel": "Abbrechen",
+      "cancelled": "Erkennung abgebrochen",
+      "transcribing": "Seite {{current}} von {{total}} · {{words}} Wörter · {{seconds}}s"
     }
   },
   "recycleBin": {

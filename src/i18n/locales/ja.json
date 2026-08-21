@@ -208,6 +208,54 @@
         "it-IT": "イタリア語",
         "ja-JP": "日本語",
         "zh-CN": "中国語（簡体字）"
+      },
+      "backendLabel": "認識エンジン",
+      "backendDesc": "手書き認識を実行する場所",
+      "backendSidecar": "Windows ローカル認識（正確な単語位置）",
+      "backendAi": "AI 画像モデル（おおよその単語位置）",
+      "backendSidecarUnavailable": "Windows ローカル認識（実行されていません）",
+      "endpointLabel": "API エンドポイント",
+      "endpointDesc": "OpenAI 互換のベース URL（LM Studio や Ollama など）。/v1 で終わる必要があります。",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "モデル",
+      "modelDesc": "サーバーが報告するモデル識別子",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "API キー",
+      "apiKeyDesc": "ベアラートークンとして送信されます。ほとんどのローカルサーバーでは任意です。",
+      "apiKeyPlaceholder": "不要な場合は空のままにします",
+      "apiKeySet": "API キーが保存されています。置き換えるには入力してください。",
+      "imageEdgeLabel": "最大画像サイズ",
+      "imageEdgeDesc": "送信する各画像の長辺（ピクセル）。ページは拡大縮小されるため、値を大きくすると小さな手書きも読めるようになります。細かい文字が認識されない場合は上げてください。コストはおよそ二乗で増えます。",
+      "saveBtn": "保存",
+      "saved": "保存しました",
+      "aiHint": "手書きは画像に変換され、このエンドポイントに送信されます。",
+      "aiHintLocal": "このエンドポイントはご使用の端末上にあるため、データは外部に送信されません。",
+      "aiHintRemote": "これはリモートサービスです。手書きデータが送信されます。",
+      "endpointInvalidUrl": "✗ 有効な URL ではありません",
+      "endpointInsecure": "✗ 平文の http は localhost のみ許可されます。リモートサーバーには https を使用してください。",
+      "endpointUnsupported": "✗ http と https のエンドポイントのみ対応しています",
+      "missingEndpoint": "✗ 先にエンドポイントとモデルを入力してください",
+      "testingModel": "テスト画像を送信しています...",
+      "aiSuccess": "✓ 接続に成功しました（{{model}} が応答しました）",
+      "aiNoVision": "⚠ 接続しましたが、応答を利用できませんでした。モデルが画像入力に対応しているか確認してください。",
+      "maxTokensLabel": "最大応答長",
+      "maxTokensDesc": "モデルの応答のトークン上限。手書き1ページには数百程度が必要です。上限を低くすると、転写せずにループするモデルを止められます。",
+      "backendReplicate": "Replicate（クラウド、おおよその単語位置）",
+      "versionLabel": "モデルバージョン",
+      "versionDesc": "Replicate のモデルページにあるバージョンハッシュ。コミュニティモデルでは必須、公式モデルでは空のままにします。",
+      "versionPlaceholder": "例: 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ 先にモデル名を入力してください",
+      "promptLabel": "システムプロンプト",
+      "promptDesc": "モデルに送る指示です。空欄にすると、更新が続けられる組み込みの既定値を使用します。グリッドと切り抜きの指示は自動的に追加されます。",
+      "promptPlaceholder": "空欄 — 既定値を使用中",
+      "promptReset": "既定値を読み込む",
+      "promptUsingDefault": "既定値を使用中",
+      "promptWarning": "⚠ プロンプトを解析できない可能性があります: {{items}} がありません",
+      "promptWarn": {
+        "empty": "内容",
+        "noJson": "JSON の指示",
+        "noWordsKey": "\"words\" キー",
+        "noRegion": "領域/帯の指示"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "部分消しゴム",
       "highlighterOnly": "蛍光ペンのみ消去",
       "size": "サイズ"
-    }
+    },
+    "recognizeNow": "手書きを認識"
   },
   "licenses": {
     "title": "オープンソースライセンス",
@@ -561,6 +610,16 @@
       "apply": "適用",
       "cancel": "キャンセル",
       "normalizeLighting": "照明を補正"
+    },
+    "recognition": {
+      "progressTitle": "手書きを認識中",
+      "done": "{{count}} 語を認識しました",
+      "empty": "手書きが認識されませんでした",
+      "failed": "認識に失敗しました",
+      "noBackend": "認識バックエンドが設定されていません",
+      "cancel": "キャンセル",
+      "cancelled": "認識をキャンセルしました",
+      "transcribing": "ページ {{current}}/{{total}} · {{words}} 語 · {{seconds}}秒"
     }
   },
   "recycleBin": {

@@ -208,6 +208,54 @@
         "it-IT": "Italiano",
         "ja-JP": "Japonés",
         "zh-CN": "Chino (simplificado)"
+      },
+      "backendLabel": "Motor de reconocimiento",
+      "backendDesc": "Dónde se ejecuta el reconocimiento de escritura",
+      "backendSidecar": "Reconocimiento local de Windows (posiciones exactas)",
+      "backendAi": "Modelo de visión IA (posiciones aproximadas)",
+      "backendSidecarUnavailable": "Reconocimiento local de Windows (no activo)",
+      "endpointLabel": "Punto de conexión API",
+      "endpointDesc": "URL base compatible con OpenAI, p. ej. LM Studio u Ollama. Debe terminar en /v1.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "Modelo",
+      "modelDesc": "Identificador del modelo según lo informa el servidor",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "Clave API",
+      "apiKeyDesc": "Se envía como token bearer. Opcional para la mayoría de servidores locales.",
+      "apiKeyPlaceholder": "Dejar vacío si no es necesario",
+      "apiKeySet": "Hay una clave API guardada. Escriba para reemplazarla.",
+      "imageEdgeLabel": "Tamaño máximo de imagen",
+      "imageEdgeDesc": "Lado más largo de cada imagen enviada, en píxeles. La página se escala para ajustarse, así que un valor mayor hace legible la escritura pequeña: auméntelo si se omite la letra pequeña. El coste crece aproximadamente al cuadrado.",
+      "saveBtn": "Guardar",
+      "saved": "Guardado",
+      "aiHint": "La escritura se convierte en imagen y se envía a este punto de conexión.",
+      "aiHintLocal": "Este punto de conexión está en su equipo, no sale nada de su dispositivo.",
+      "aiHintRemote": "Este es un servicio remoto. Su escritura se enviará allí.",
+      "endpointInvalidUrl": "✗ URL no válida",
+      "endpointInsecure": "✗ http simple solo se permite para localhost. Use https para un servidor remoto.",
+      "endpointUnsupported": "✗ Solo se admiten puntos de conexión http y https",
+      "missingEndpoint": "✗ Introduzca primero un punto de conexión y un modelo",
+      "testingModel": "Enviando una imagen de prueba...",
+      "aiSuccess": "✓ Conexión correcta ({{model}} respondió)",
+      "aiNoVision": "⚠ Conectado, pero la respuesta no fue utilizable. Compruebe que el modelo admite visión.",
+      "maxTokensLabel": "Longitud máxima de respuesta",
+      "maxTokensDesc": "Límite de tokens para la respuesta del modelo. Una página de escritura necesita unos cientos; un límite bajo detiene un modelo que se repite en lugar de transcribir.",
+      "backendReplicate": "Replicate (nube, posiciones aproximadas)",
+      "versionLabel": "Versión del modelo",
+      "versionDesc": "Hash de versión de la página del modelo en Replicate. Necesario para modelos de la comunidad; déjelo vacío para los oficiales.",
+      "versionPlaceholder": "p. ej. 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ Introduzca primero un nombre de modelo",
+      "promptLabel": "Instrucción del sistema",
+      "promptDesc": "Instrucciones enviadas al modelo. Déjelo vacío para usar el valor predeterminado integrado, que se mantiene actualizado. Las instrucciones de cuadrícula y recorte se añaden automáticamente.",
+      "promptPlaceholder": "Vacío — se usa el valor predeterminado",
+      "promptReset": "Predeterminado",
+      "promptUsingDefault": "Usando el valor predeterminado",
+      "promptWarning": "⚠ La instrucción puede no analizarse: falta {{items}}",
+      "promptWarn": {
+        "empty": "cualquier contenido",
+        "noJson": "una instrucción JSON",
+        "noWordsKey": "la clave \"words\"",
+        "noRegion": "la instrucción de región/banda"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "Borrador parcial",
       "highlighterOnly": "Borrar solo resaltadores",
       "size": "Tamaño"
-    }
+    },
+    "recognizeNow": "Reconocer escritura"
   },
   "licenses": {
     "title": "Licencias de código abierto",
@@ -561,6 +610,16 @@
       "apply": "Aplicar",
       "cancel": "Cancelar",
       "normalizeLighting": "Normalizar iluminación"
+    },
+    "recognition": {
+      "progressTitle": "Reconociendo escritura",
+      "done": "{{count}} palabra(s) reconocida(s)",
+      "empty": "No se reconoció escritura",
+      "failed": "Error de reconocimiento",
+      "noBackend": "Ningún servicio de reconocimiento configurado",
+      "cancel": "Cancelar",
+      "cancelled": "Reconocimiento cancelado",
+      "transcribing": "Página {{current}} de {{total}} · {{words}} palabras · {{seconds}}s"
     }
   },
   "recycleBin": {

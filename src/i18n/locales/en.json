@@ -208,6 +208,54 @@
         "it-IT": "Italian",
         "ja-JP": "Japanese",
         "zh-CN": "Chinese (Simplified)"
+      },
+      "backendLabel": "Recognition engine",
+      "backendDesc": "Where handwriting recognition runs",
+      "backendSidecar": "Windows local recognizer (exact word positions)",
+      "backendAi": "AI vision model (approximate word positions)",
+      "backendSidecarUnavailable": "Windows local recognizer (not running)",
+      "endpointLabel": "API endpoint",
+      "endpointDesc": "OpenAI-compatible base URL, e.g. LM Studio or Ollama. Must end in /v1.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "modelLabel": "Model",
+      "modelDesc": "Model identifier as reported by the server",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "apiKeyLabel": "API key",
+      "apiKeyDesc": "Sent as a bearer token. Optional for most local servers.",
+      "apiKeyPlaceholder": "Leave empty if not required",
+      "apiKeySet": "An API key is stored. Type to replace it.",
+      "imageEdgeLabel": "Max image size",
+      "imageEdgeDesc": "Longest edge of each image sent, in pixels. The page is scaled to fit, so a larger value makes small handwriting readable — raise it if fine print is missed. Costs time and tokens roughly with the square.",
+      "saveBtn": "Save",
+      "saved": "Saved",
+      "aiHint": "Handwriting is rendered to an image and sent to this endpoint.",
+      "aiHintLocal": "This endpoint is on your machine, so nothing leaves your device.",
+      "aiHintRemote": "This is a remote service. Your handwriting will be sent to it.",
+      "endpointInvalidUrl": "✗ Not a valid URL",
+      "endpointInsecure": "✗ Plain http is only allowed for localhost. Use https for a remote server.",
+      "endpointUnsupported": "✗ Only http and https endpoints are supported",
+      "missingEndpoint": "✗ Enter an endpoint and model first",
+      "testingModel": "Sending a test image...",
+      "aiSuccess": "✓ Connection successful ({{model}} responded)",
+      "aiNoVision": "⚠ Connected, but the response was not usable. Check the model has vision enabled.",
+      "maxTokensLabel": "Max response length",
+      "maxTokensDesc": "Token limit for the model's reply. A page of handwriting needs a few hundred; a low cap stops a model that loops instead of transcribing.",
+      "backendReplicate": "Replicate (cloud, approximate word positions)",
+      "versionLabel": "Model version",
+      "versionDesc": "Version hash from the model's page on Replicate. Required for community models; leave empty for official ones.",
+      "versionPlaceholder": "e.g. 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ Enter a model name first",
+      "promptLabel": "System prompt",
+      "promptDesc": "Instructions sent to the model. Leave empty to use the built-in default, which is kept up to date. Grid and crop instructions are appended automatically.",
+      "promptPlaceholder": "Empty — using the built-in default",
+      "promptReset": "Load default",
+      "promptUsingDefault": "Using the built-in default",
+      "promptWarning": "⚠ Prompt may not parse: missing {{items}}",
+      "promptWarn": {
+        "empty": "any content",
+        "noJson": "a JSON instruction",
+        "noWordsKey": "the \"words\" key",
+        "noRegion": "the region/band instruction"
       }
     },
     "mcp": {
@@ -506,7 +554,8 @@
       "partEraser": "Part Eraser",
       "highlighterOnly": "Only Erase Highlighters",
       "size": "Size"
-    }
+    },
+    "recognizeNow": "Recognize handwriting"
   },
   "licenses": {
     "title": "Open Source Licenses",
@@ -561,6 +610,16 @@
       "apply": "Apply",
       "cancel": "Cancel",
       "normalizeLighting": "Normalize lighting"
+    },
+    "recognition": {
+      "progressTitle": "Recognizing handwriting",
+      "done": "Recognized {{count}} word(s)",
+      "empty": "No handwriting recognized",
+      "failed": "Recognition failed",
+      "noBackend": "No recognition backend configured",
+      "cancel": "Cancel",
+      "cancelled": "Recognition cancelled",
+      "transcribing": "Page {{current}} of {{total}} · {{words}} words · {{seconds}}s"
     }
   },
   "recycleBin": {

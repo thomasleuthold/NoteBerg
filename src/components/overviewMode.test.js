@@ -271,3 +271,66 @@ describe("note preview loading spinner", () => {
     expect(container.querySelector(".note-preview-spinner")).toBeNull();
   });
 });
+
+describe("searchAllNotes multi-word queries", () => {
+  const RECOGNIZED = "This is going to be a note with a lot of strokes. The goal is to add as much";
+
+  it("matches when every word appears, even if not adjacent", async () => {
+    // Recognized handwriting joins per-word transcriptions, so word order and
+    // spacing reflect the recognizer rather than the remembered sentence.
+    // Requiring adjacency made recognized notes look unsearchable.
+    const { searchAllNotes } = await import("./overviewMode.js");
+    setQuickNote({ id: "n1", media: [], content: "", recognition: { fullText: RECOGNIZED } });
+
+    const results = await searchAllNotes("goal add");
+    expect(results).toHaveLength(1);
+    expect(results[0].recognitionMatch).toBe(true);
+  });
+
+  it("matches words given in a different order than they appear", async () => {
+    const { searchAllNotes } = await import("./overviewMode.js");
+    setQuickNote({ id: "n1", media: [], content: "", recognition: { fullText: RECOGNIZED } });
+
+    await expect(searchAllNotes("strokes note")).resolves.toHaveLength(1);
+  });
+
+  it("requires ALL words, so an absent term excludes the note", async () => {
+    const { searchAllNotes } = await import("./overviewMode.js");
+    setQuickNote({ id: "n1", media: [], content: "", recognition: { fullText: RECOGNIZED } });
+
+    await expect(searchAllNotes("note banana")).resolves.toHaveLength(0);
+  });
+
+  it("treats a quoted query as an exact phrase", async () => {
+    const { searchAllNotes } = await import("./overviewMode.js");
+    setQuickNote({ id: "n1", media: [], content: "", recognition: { fullText: RECOGNIZED } });
+
+    // Adjacent in the text -> matches.
+    await expect(searchAllNotes('"a lot of strokes"')).resolves.toHaveLength(1);
+    // Both words present but not adjacent -> no match, unlike the unquoted form.
+    await expect(searchAllNotes('"goal add"')).resolves.toHaveLength(0);
+  });
+
+  it("still supports wildcards within each word", async () => {
+    const { searchAllNotes } = await import("./overviewMode.js");
+    setQuickNote({ id: "n1", media: [], content: "", recognition: { fullText: RECOGNIZED } });
+
+    await expect(searchAllNotes("str*es no*")).resolves.toHaveLength(1);
+  });
+
+  it("ignores extra whitespace between words", async () => {
+    const { searchAllNotes } = await import("./overviewMode.js");
+    setQuickNote({ id: "n1", media: [], content: "", recognition: { fullText: RECOGNIZED } });
+
+    await expect(searchAllNotes("  goal    add  ")).resolves.toHaveLength(1);
+  });
+
+  it("matches punctuation attached to a recognized word", async () => {
+    // The recognizer emits "strokes." as one word; a search for "strokes"
+    // must still find it.
+    const { searchAllNotes } = await import("./overviewMode.js");
+    setQuickNote({ id: "n1", media: [], content: "", recognition: { fullText: RECOGNIZED } });
+
+    await expect(searchAllNotes("strokes")).resolves.toHaveLength(1);
+  });
+});

@@ -35,6 +35,243 @@ import { showAlertDialog, showConfirmDialog, showTextPrompt } from "./modals.js"
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 /**
+ * Escape a value for interpolation into a double-quoted HTML attribute.
+ *
+ * Deliberately not the textContent/innerHTML trick used elsewhere in the
+ * codebase: that escapes `<` and `&` but leaves quotes intact, so a stored
+ * value containing `"` would close the attribute and allow markup injection.
+ * These values (endpoint, model) are user-supplied and round-trip through
+ * settings, so they are escaped properly here.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+/**
+ * Escape a value for interpolation into element text content.
+ *
+ * Separate from escapeAttr(): inside a <textarea> the danger is a literal
+ * "</textarea>" closing the element early, so only the markup-significant
+ * characters need escaping — quotes are safe here and escaping them would show
+ * entities to the user.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeHtmlText(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+export function escapeAttr(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Test the Windows sidecar by posting an empty stroke list.
+ *
+ * @param {string} localRecognitionUrl
+ * @param {(text: string, color: string) => void} setStatus
+ */
+async function testSidecarRecognition(localRecognitionUrl, setStatus) {
+  if (!localRecognitionUrl) {
+    setStatus(t("settings.recognition.notConfiguredError"), "var(--color-error)");
+    return;
+  }
+
+  setStatus(t("settings.recognition.connecting"), "var(--color-text)");
+
+  try {
+    const { fetch } = await import("@tauri-apps/plugin-http");
+    const response = await fetch(`${localRecognitionUrl}/recognize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify([]),
+    });
+
+    if (response.ok) {
+      setStatus(
+        t("settings.recognition.success", { source: t("settings.recognition.localSidecar") }),
+        "var(--color-success)",
+      );
+    } else {
+      setStatus(
+        t("settings.recognition.errorStatus", { status: response.status }),
+        "var(--color-error)",
+      );
+    }
+  } catch (error) {
+    console.error("Recognition test failed:", error);
+    setStatus(
+      t("settings.recognition.errorFailed", { message: error.message || String(error) }),
+      "var(--color-error)",
+    );
+  }
+}
+
+/**
+ * Test an AI backend by running a real recognition round-trip.
+ *
+ * Deliberately sends an actual rendered image rather than pinging the endpoint:
+ * a model loaded without its vision projector answers a text request perfectly
+ * while silently ignoring images, so a connectivity-only check would report
+ * success for a configuration that cannot read handwriting at all.
+ *
+ * The word "test" is drawn as strokes, so a working setup transcribes something
+ * and a vision-blind one returns nothing usable.
+ *
+ * @param {{endpoint: string, model: string, typedKey: string, imageEdge: number,
+ *          setStatus: (text: string, color: string) => void}} params
+ */
+async function testAiRecognitionBackend({
+  backend,
+  endpoint,
+  model,
+  replicateVersion,
+  typedKey,
+  imageEdge,
+  maxTokens,
+  setStatus,
+}) {
+  const isReplicate = backend === "replicate";
+
+  let normalized = "";
+
+  if (isReplicate) {
+    // Fixed API host: only the model (and a token) are required.
+    if (!model) {
+      setStatus(t("settings.recognition.missingModel"), "var(--color-error)");
+      return;
+    }
+  } else {
+    if (!endpoint || !model) {
+      setStatus(t("settings.recognition.missingEndpoint"), "var(--color-error)");
+      return;
+    }
+
+    const { normalizeEndpoint, validateEndpoint } = await import(
+      "../modules/recognition/endpointValidation.js"
+    );
+    normalized = normalizeEndpoint(endpoint);
+    const check = validateEndpoint(normalized);
+    if (!check.valid) {
+      const messages = {
+        "not-a-url": t("settings.recognition.endpointInvalidUrl"),
+        "insecure-remote": t("settings.recognition.endpointInsecure"),
+        "unsupported-protocol": t("settings.recognition.endpointUnsupported"),
+      };
+      setStatus(
+        messages[check.reason] || t("settings.recognition.endpointInvalidUrl"),
+        "var(--color-error)",
+      );
+      return;
+    }
+  }
+
+  setStatus(t("settings.recognition.testingModel"), "var(--color-text)");
+
+  try {
+    const { getApiKey } = await import("../modules/recognition/recognitionSettings.js");
+    const { rasterizeNote } = await import("../modules/recognition/pageRasterizer.js");
+    const { transcribeBand } = isReplicate
+      ? await import("../modules/recognition/backends/replicateBackend.js")
+      : await import("../modules/recognition/backends/openAiBackend.js");
+
+    const bands = await rasterizeNote(buildTestStrokes(), { maxImageEdge: imageEdge });
+    if (bands.length === 0) {
+      setStatus(t("settings.recognition.aiNoVision"), "var(--color-warning)");
+      return;
+    }
+
+    const words = await transcribeBand(bands[0], {
+      backend,
+      endpoint: normalized,
+      model,
+      replicateVersion,
+      // Prefer a freshly typed key; fall back to the stored one so testing an
+      // existing configuration does not require retyping the secret.
+      apiKey: typedKey || (await getApiKey()),
+      language: "en-US",
+      maxTokens,
+    });
+
+    if (Array.isArray(words) && words.length > 0) {
+      setStatus(t("settings.recognition.aiSuccess", { model }), "var(--color-success)");
+    } else {
+      setStatus(t("settings.recognition.aiNoVision"), "var(--color-warning)");
+    }
+  } catch (error) {
+    console.error("AI recognition test failed:", error);
+    setStatus(
+      t("settings.recognition.errorFailed", { message: error.message || String(error) }),
+      "var(--color-error)",
+    );
+  }
+}
+
+/**
+ * Strokes spelling a short word, used as the connection test payload.
+ * Coarse letterforms are enough: the test asks whether the model sees an image
+ * and returns words at all, not whether it transcribes accurately.
+ *
+ * @returns {Array}
+ */
+function buildTestStrokes() {
+  const stroke = (id, points) => ({
+    id,
+    x: points.map((p) => p[0]),
+    y: points.map((p) => p[1]),
+    pressure: points.map(() => 0.5),
+    width: 3,
+  });
+
+  return [
+    // t
+    stroke("t1", [
+      [20, 10],
+      [20, 70],
+    ]),
+    stroke("t2", [
+      [8, 30],
+      [34, 30],
+    ]),
+    // e
+    stroke("e1", [
+      [50, 45],
+      [78, 45],
+      [78, 35],
+      [58, 32],
+      [48, 48],
+      [52, 68],
+      [76, 68],
+    ]),
+    // s
+    stroke("s1", [
+      [118, 36],
+      [96, 32],
+      [92, 46],
+      [116, 54],
+      [112, 70],
+      [90, 66],
+    ]),
+    // t
+    stroke("t3", [
+      [140, 10],
+      [140, 70],
+    ]),
+    stroke("t4", [
+      [128, 30],
+      [154, 30],
+    ]),
+  ];
+}
+
+/**
  * nextcloudSync.js is loaded on demand, never statically.
  *
  * It statically imports @tauri-apps/plugin-http and @tauri-apps/plugin-opener,
@@ -77,6 +314,20 @@ export async function renderSettings(container) {
   const { isMasterPasswordSet } = await import("../modules/masterPassword.js");
   const masterPasswordSet = await isMasterPasswordSet();
   const recognitionLanguage = (await getSetting("recognition_language")) || "en-US";
+
+  // Recognition backend configuration. Read here so the section can render the
+  // stored values; the AI path is available on every platform, unlike the
+  // Windows-only sidecar.
+  const {
+    getRecognitionConfig,
+    isAiBackend: isAiBackendId,
+    BACKEND_OPENAI,
+    BACKEND_REPLICATE,
+    BACKEND_SIDECAR,
+  } = await import("../modules/recognition/recognitionSettings.js");
+  const recognitionConfig = await getRecognitionConfig();
+  const isAiBackend = isAiBackendId(recognitionConfig.backend);
+  const isReplicate = recognitionConfig.backend === BACKEND_REPLICATE;
   const currentLanguage = getCurrentLanguage();
 
   // Handwriting recognition is only available on Windows, via a bundled sidecar
@@ -377,16 +628,26 @@ export async function renderSettings(container) {
       <div class="settings-section">
         <h3>${t("settings.sections.recognition")}</h3>
 
-        ${
-          isWindows
-            ? `
-        <div class="setting-item setting-item--full">
-          <div class="setting-label">
-            <span class="setting-name">${t("settings.recognition.statusLabel")}</span>
-            <span class="setting-description" id="recognition-mode-info">
-              ${hasLocalRecognition ? t("settings.recognition.localActive") : t("settings.recognition.notRunning")}
-            </span>
-          </div>
+        <div class="setting-item">
+          <label for="recognition-backend" class="setting-label">
+            <span class="setting-name">${t("settings.recognition.backendLabel")}</span>
+            <span class="setting-description">${t("settings.recognition.backendDesc")}</span>
+          </label>
+          <select id="recognition-backend" class="setting-control">
+            ${
+              isWindows
+                ? `<option value="${BACKEND_SIDECAR}" ${!isAiBackend ? "selected" : ""}>
+                     ${hasLocalRecognition ? t("settings.recognition.backendSidecar") : t("settings.recognition.backendSidecarUnavailable")}
+                   </option>`
+                : ""
+            }
+            <option value="${BACKEND_OPENAI}" ${recognitionConfig.backend === BACKEND_OPENAI ? "selected" : ""}>
+              ${t("settings.recognition.backendAi")}
+            </option>
+            <option value="${BACKEND_REPLICATE}" ${isReplicate ? "selected" : ""}>
+              ${t("settings.recognition.backendReplicate")}
+            </option>
+          </select>
         </div>
 
         <div class="setting-item">
@@ -399,19 +660,129 @@ export async function renderSettings(container) {
           </select>
         </div>
 
+        <div id="recognition-ai-fields" class="${isAiBackend ? "" : "setting-item--hidden"}">
+          <div class="setting-item ${isReplicate ? "setting-item--hidden" : ""}" id="recognition-endpoint-row">
+            <label for="recognition-endpoint" class="setting-label">
+              <span class="setting-name">${t("settings.recognition.endpointLabel")}</span>
+              <span class="setting-description">${t("settings.recognition.endpointDesc")}</span>
+            </label>
+            <input
+              type="url"
+              id="recognition-endpoint"
+              class="setting-control"
+              placeholder="${t("settings.recognition.endpointPlaceholder")}"
+              value="${escapeAttr(recognitionConfig.endpoint)}"
+            />
+          </div>
+
+          <div class="setting-item">
+            <label for="recognition-model" class="setting-label">
+              <span class="setting-name">${t("settings.recognition.modelLabel")}</span>
+              <span class="setting-description">${t("settings.recognition.modelDesc")}</span>
+            </label>
+            <input
+              type="text"
+              id="recognition-model"
+              class="setting-control"
+              placeholder="${t("settings.recognition.modelPlaceholder")}"
+              value="${escapeAttr(recognitionConfig.model)}"
+            />
+          </div>
+
+          <div class="setting-item ${isReplicate ? "" : "setting-item--hidden"}" id="recognition-version-row">
+            <label for="recognition-replicate-version" class="setting-label">
+              <span class="setting-name">${t("settings.recognition.versionLabel")}</span>
+              <span class="setting-description">${t("settings.recognition.versionDesc")}</span>
+            </label>
+            <input
+              type="text"
+              id="recognition-replicate-version"
+              class="setting-control"
+              placeholder="${t("settings.recognition.versionPlaceholder")}"
+              value="${escapeAttr(recognitionConfig.replicateVersion)}"
+            />
+          </div>
+
+          <div class="setting-item">
+            <label for="recognition-api-key" class="setting-label">
+              <span class="setting-name">${t("settings.recognition.apiKeyLabel")}</span>
+              <span class="setting-description">
+                ${recognitionConfig.apiKey ? t("settings.recognition.apiKeySet") : t("settings.recognition.apiKeyDesc")}
+              </span>
+            </label>
+            <input
+              type="password"
+              id="recognition-api-key"
+              class="setting-control"
+              autocomplete="off"
+              placeholder="${t("settings.recognition.apiKeyPlaceholder")}"
+            />
+          </div>
+
+          <div class="setting-item">
+            <label for="recognition-image-edge" class="setting-label">
+              <span class="setting-name">${t("settings.recognition.imageEdgeLabel")}</span>
+              <span class="setting-description">${t("settings.recognition.imageEdgeDesc")}</span>
+            </label>
+            <input
+              type="number"
+              id="recognition-image-edge"
+              class="setting-control"
+              min="512"
+              max="4096"
+              step="100"
+              value="${Number(recognitionConfig.maxImageEdge) || 1600}"
+            />
+          </div>
+
+          <div class="setting-item">
+            <label for="recognition-max-tokens" class="setting-label">
+              <span class="setting-name">${t("settings.recognition.maxTokensLabel")}</span>
+              <span class="setting-description">${t("settings.recognition.maxTokensDesc")}</span>
+            </label>
+            <input
+              type="number"
+              id="recognition-max-tokens"
+              class="setting-control"
+              min="256"
+              max="32000"
+              step="500"
+              value="${Number(recognitionConfig.maxTokens) || 8000}"
+            />
+          </div>
+
+          <div class="setting-item setting-item--full">
+            <label for="recognition-system-prompt" class="setting-label">
+              <span class="setting-name">${t("settings.recognition.promptLabel")}</span>
+              <span class="setting-description">${t("settings.recognition.promptDesc")}</span>
+            </label>
+            <textarea
+              id="recognition-system-prompt"
+              class="setting-control"
+              rows="10"
+              spellcheck="false"
+              placeholder="${t("settings.recognition.promptPlaceholder")}"
+            >${escapeHtmlText(recognitionConfig.systemPrompt)}</textarea>
+            <div class="setting-item__actions">
+              <button id="recognition-prompt-reset" class="btn-secondary">
+                ${t("settings.recognition.promptReset")}
+              </button>
+              <span id="recognition-prompt-status" class="setting-note"></span>
+            </div>
+          </div>
+
+          <div class="setting-item setting-item--full">
+            <div class="setting-label">
+              <span class="setting-description" id="recognition-privacy-hint"></span>
+            </div>
+          </div>
+        </div>
+
         <div class="setting-item setting-item--actions">
+          <button id="recognition-save-btn" class="btn-primary">${t("settings.recognition.saveBtn")}</button>
           <button id="test-recognition-btn" class="btn-secondary">${t("settings.recognition.testBtn")}</button>
           <span id="recognition-status" class="setting-note"></span>
         </div>
-        `
-            : `
-        <div class="setting-item setting-item--full">
-          <div class="setting-label">
-            <span class="setting-description">${t("settings.recognition.windowsOnly")}</span>
-          </div>
-        </div>
-        `
-        }
       </div>
 
       <div class="settings-section">
@@ -724,57 +1095,227 @@ export async function renderSettings(container) {
 
   // Biometric authentication removed for performance - event listeners removed
 
-  // Recognition settings listeners (Windows only)
+  // Recognition settings listeners
+  const recognitionBackendSelect = container.querySelector("#recognition-backend");
   const recognitionLanguageSelect = container.querySelector("#recognition-language");
+  const recognitionAiFields = container.querySelector("#recognition-ai-fields");
+  const recognitionEndpointInput = container.querySelector("#recognition-endpoint");
+  const recognitionEndpointRow = container.querySelector("#recognition-endpoint-row");
+  const recognitionVersionRow = container.querySelector("#recognition-version-row");
+  const recognitionVersionInput = container.querySelector("#recognition-replicate-version");
+  const recognitionModelInput = container.querySelector("#recognition-model");
+  const recognitionApiKeyInput = container.querySelector("#recognition-api-key");
+  const recognitionImageEdgeInput = container.querySelector("#recognition-image-edge");
+  const recognitionMaxTokensInput = container.querySelector("#recognition-max-tokens");
+  const recognitionPromptInput = container.querySelector("#recognition-system-prompt");
+  const recognitionPromptReset = container.querySelector("#recognition-prompt-reset");
+  const recognitionPromptStatus = container.querySelector("#recognition-prompt-status");
+  const recognitionPrivacyHint = container.querySelector("#recognition-privacy-hint");
+  const recognitionSaveBtn = container.querySelector("#recognition-save-btn");
   const testRecognitionBtn = container.querySelector("#test-recognition-btn");
   const recognitionStatus = container.querySelector("#recognition-status");
+
+  const setRecognitionStatus = (text, color) => {
+    if (!recognitionStatus) return;
+    recognitionStatus.textContent = text;
+    recognitionStatus.style.color = color;
+  };
+
+  /**
+   * Say plainly where handwriting will be sent.
+   *
+   * Privacy is a product commitment, so the destination is stated whenever an
+   * AI backend is selected — not only at first setup — and it distinguishes a
+   * loopback endpoint (nothing leaves the device) from a remote one.
+   */
+  const updatePrivacyHint = () => {
+    if (!recognitionPrivacyHint) return;
+    if (recognitionBackendSelect?.value === "replicate") {
+      // Always a remote third-party service; there is no local variant to detect.
+      recognitionPrivacyHint.textContent =
+        `${t("settings.recognition.aiHint")} ${t("settings.recognition.aiHintRemote")}`.trim();
+      return;
+    }
+    const raw = recognitionEndpointInput?.value.trim() || "";
+    let scope = "";
+    try {
+      const host = new URL(raw).hostname;
+      scope =
+        host === "localhost" || host === "127.0.0.1" || host === "[::1]"
+          ? t("settings.recognition.aiHintLocal")
+          : t("settings.recognition.aiHintRemote");
+    } catch (_e) {
+      scope = "";
+    }
+    recognitionPrivacyHint.textContent = `${t("settings.recognition.aiHint")} ${scope}`.trim();
+  };
+
+  const selectedBackend = () => recognitionBackendSelect?.value || "";
+  const isAiSelected = () => selectedBackend() === "openai" || selectedBackend() === "replicate";
+  const isReplicateSelected = () => selectedBackend() === "replicate";
+
+  const syncAiFieldVisibility = () => {
+    recognitionAiFields?.classList.toggle("setting-item--hidden", !isAiSelected());
+    // Replicate has a fixed API host and is addressed by model + version, so an
+    // endpoint URL would be meaningless there.
+    recognitionEndpointRow?.classList.toggle("setting-item--hidden", isReplicateSelected());
+    recognitionVersionRow?.classList.toggle("setting-item--hidden", !isReplicateSelected());
+    updatePrivacyHint();
+  };
+
+  syncAiFieldVisibility();
+
+  recognitionBackendSelect?.addEventListener("change", async () => {
+    const { setRecognitionConfig } = await import("../modules/recognition/recognitionSettings.js");
+    await setRecognitionConfig({ backend: recognitionBackendSelect.value });
+    const { invalidateRecognitionUrl } = await import("../modules/autoRecognition.js");
+    invalidateRecognitionUrl();
+    syncAiFieldVisibility();
+    setRecognitionStatus("", "var(--color-text)");
+  });
+
+  recognitionEndpointInput?.addEventListener("input", updatePrivacyHint);
+
+  /**
+   * Warn when a custom prompt has dropped something the parser depends on.
+   * Advisory only — an unusual phrasing that still works must not be blocked.
+   */
+  const validatePrompt = async () => {
+    if (!recognitionPromptStatus) return;
+    const value = recognitionPromptInput?.value ?? "";
+    if (!value.trim()) {
+      recognitionPromptStatus.textContent = t("settings.recognition.promptUsingDefault");
+      recognitionPromptStatus.style.color = "var(--color-text-secondary)";
+      return;
+    }
+    const { checkPrompt } = await import("../modules/recognition/prompts.js");
+    // Validate against the mode actually selected: a region prompt legitimately
+    // has no "box" instruction, and vice versa.
+    const warnings = checkPrompt(value, {});
+    if (warnings.length === 0) {
+      recognitionPromptStatus.textContent = "";
+      return;
+    }
+    recognitionPromptStatus.textContent = t("settings.recognition.promptWarning", {
+      items: warnings.map((w) => t(`settings.recognition.promptWarn.${w}`)).join(", "),
+    });
+    recognitionPromptStatus.style.color = "var(--color-warning)";
+  };
+
+  recognitionPromptInput?.addEventListener("input", validatePrompt);
+  // Prompt validity depends on the active mode, so re-check when it changes.
+  validatePrompt();
+
+  recognitionPromptReset?.addEventListener("click", async () => {
+    // Load the built-in default into the box so it can be edited rather than
+    // written from scratch — the default encodes several hard-won rules.
+    const { SYSTEM_PROMPT } = await import("../modules/recognition/prompts.js");
+    if (recognitionPromptInput) {
+      recognitionPromptInput.value = SYSTEM_PROMPT;
+      validatePrompt();
+    }
+  });
 
   recognitionLanguageSelect?.addEventListener("change", async () => {
     await setSetting("recognition_language", recognitionLanguageSelect.value);
   });
 
-  testRecognitionBtn?.addEventListener("click", async () => {
-    if (!localRecognitionUrl) {
-      recognitionStatus.textContent = t("settings.recognition.notConfiguredError");
-      recognitionStatus.style.color = "var(--color-error)";
-      return;
-    }
-    const apiUrl = `${localRecognitionUrl}/recognize`;
+  recognitionSaveBtn?.addEventListener("click", async () => {
+    const { setRecognitionConfig } = await import("../modules/recognition/recognitionSettings.js");
+    const { normalizeEndpoint, validateEndpoint } = await import(
+      "../modules/recognition/endpointValidation.js"
+    );
 
+    const patch = { backend: recognitionBackendSelect?.value };
+
+    if (isReplicateSelected()) {
+      // Replicate has a fixed API host, so there is no endpoint to validate; it
+      // is addressed by model name plus an optional version hash.
+      patch.model = recognitionModelInput?.value.trim() || "";
+      patch.replicateVersion = recognitionVersionInput?.value.trim() || "";
+      patch.maxImageEdge = Number(recognitionImageEdgeInput?.value) || 1600;
+      patch.maxTokens = Number(recognitionMaxTokensInput?.value) || 8000;
+      // Empty means "use the built-in default", so a user who never edits it
+      // keeps receiving improvements to the default.
+      patch.systemPrompt = recognitionPromptInput?.value.trim() || "";
+
+      const typedKey = recognitionApiKeyInput?.value || "";
+      if (typedKey) patch.apiKey = typedKey;
+
+      if (!patch.model) {
+        setRecognitionStatus(t("settings.recognition.missingModel"), "var(--color-error)");
+        return;
+      }
+    } else if (isAiSelected()) {
+      // Accept the server root, the /v1 base, or a full route — see
+      // normalizeEndpoint(). Storing the raw value made a missing /v1 fail as
+      // "unparseable content" instead of as a wrong URL.
+      const endpoint = normalizeEndpoint(recognitionEndpointInput?.value.trim() || "");
+      const check = validateEndpoint(endpoint);
+      if (!check.valid) {
+        // Reject at save time rather than at request time: an endpoint that
+        // would send ink in clear text to a remote host must never be stored.
+        const messages = {
+          "not-a-url": t("settings.recognition.endpointInvalidUrl"),
+          "insecure-remote": t("settings.recognition.endpointInsecure"),
+          "unsupported-protocol": t("settings.recognition.endpointUnsupported"),
+        };
+        setRecognitionStatus(
+          messages[check.reason] || t("settings.recognition.endpointInvalidUrl"),
+          "var(--color-error)",
+        );
+        return;
+      }
+
+      patch.endpoint = endpoint;
+      patch.model = recognitionModelInput?.value.trim() || "";
+      patch.maxImageEdge = Number(recognitionImageEdgeInput?.value) || 1600;
+      patch.maxTokens = Number(recognitionMaxTokensInput?.value) || 8000;
+      // Empty means "use the built-in default", so a user who never edits it
+      // keeps receiving improvements to the default.
+      patch.systemPrompt = recognitionPromptInput?.value.trim() || "";
+
+      // An empty field means "keep the stored key", not "clear it" — the input
+      // is never populated with the existing secret, so treating blank as a
+      // deletion would silently drop a working key on any unrelated save.
+      const typedKey = recognitionApiKeyInput?.value || "";
+      if (typedKey) patch.apiKey = typedKey;
+    }
+
+    await setRecognitionConfig(patch);
+    if (patch.endpoint && recognitionEndpointInput) {
+      // Show what was actually stored, so a normalized URL is not a surprise.
+      recognitionEndpointInput.value = patch.endpoint;
+      updatePrivacyHint();
+    }
+    const { invalidateRecognitionUrl } = await import("../modules/autoRecognition.js");
+    invalidateRecognitionUrl();
+    setRecognitionStatus(t("settings.recognition.saved"), "var(--color-success)");
+  });
+
+  testRecognitionBtn?.addEventListener("click", async () => {
     testRecognitionBtn.disabled = true;
+    const originalLabel = testRecognitionBtn.textContent;
     testRecognitionBtn.textContent = t("settings.recognition.testing");
-    recognitionStatus.textContent = t("settings.recognition.connecting");
-    recognitionStatus.style.color = "var(--color-text)";
 
     try {
-      const { fetch } = await import("@tauri-apps/plugin-http");
-      const response = await fetch(apiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify([]),
-      });
-
-      if (response.ok) {
-        recognitionStatus.textContent = t("settings.recognition.success", {
-          source: t("settings.recognition.localSidecar"),
+      if (isAiSelected()) {
+        await testAiRecognitionBackend({
+          backend: selectedBackend(),
+          endpoint: recognitionEndpointInput?.value.trim() || "",
+          model: recognitionModelInput?.value.trim() || "",
+          replicateVersion: recognitionVersionInput?.value.trim() || "",
+          typedKey: recognitionApiKeyInput?.value || "",
+          imageEdge: Number(recognitionImageEdgeInput?.value) || 1600,
+          maxTokens: Number(recognitionMaxTokensInput?.value) || 8000,
+          setStatus: setRecognitionStatus,
         });
-        recognitionStatus.style.color = "var(--color-success)";
       } else {
-        recognitionStatus.textContent = t("settings.recognition.errorStatus", {
-          status: response.status,
-        });
-        recognitionStatus.style.color = "var(--color-error)";
+        await testSidecarRecognition(localRecognitionUrl, setRecognitionStatus);
       }
-    } catch (error) {
-      console.error("Recognition test failed:", error);
-      const errorMessage = error.message || String(error);
-      recognitionStatus.textContent = t("settings.recognition.errorFailed", {
-        message: errorMessage,
-      });
-      recognitionStatus.style.color = "var(--color-error)";
     } finally {
       testRecognitionBtn.disabled = false;
-      testRecognitionBtn.textContent = t("settings.recognition.testBtn");
+      testRecognitionBtn.textContent = originalLabel;
     }
   });
 
