@@ -256,7 +256,11 @@
         "noJson": "a JSON instruction",
         "noWordsKey": "the \"words\" key",
         "noRegion": "the region/band instruction"
-      }
+      },
+      "consentTitle": "Send handwriting to {{host}}?",
+      "consentBody": "Recognition renders your handwriting as an image and sends it to {{host}}, a service outside your device. Only the rendered handwriting is sent — not the note title, notebook, or your account.\n\nYou can change or revoke this at any time in Settings.",
+      "consentConfirm": "Send handwriting",
+      "consentDeclined": "Recognition is off until you agree to send handwriting to {{host}}."
     },
     "mcp": {
       "windowsOnly": "The MCP server is only available in the Windows app.",

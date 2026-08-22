@@ -256,7 +256,11 @@
         "noJson": "eine JSON-Anweisung",
         "noWordsKey": "der Schlüssel \"words\"",
         "noRegion": "die Bereichs-/Band-Anweisung"
-      }
+      },
+      "consentTitle": "Handschrift an {{host}} senden?",
+      "consentBody": "Die Erkennung rendert Ihre Handschrift als Bild und sendet es an {{host}}, einen Dienst außerhalb Ihres Geräts. Es wird nur die gerenderte Handschrift gesendet — nicht der Notiztitel, das Notizbuch oder Ihr Konto.\n\nSie können dies jederzeit in den Einstellungen ändern oder widerrufen.",
+      "consentConfirm": "Handschrift senden",
+      "consentDeclined": "Die Erkennung ist deaktiviert, bis Sie dem Senden der Handschrift an {{host}} zustimmen."
     },
     "mcp": {
       "windowsOnly": "Der MCP-Server ist nur in der Windows-App verfügbar.",

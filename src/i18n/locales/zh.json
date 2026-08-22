@@ -256,7 +256,11 @@
         "noJson": "JSON 指令",
         "noWordsKey": "\"words\" 键",
         "noRegion": "区域/色带指令"
-      }
+      },
+      "consentTitle": "将手写内容发送到 {{host}}？",
+      "consentBody": "识别功能会将您的手写内容渲染为图像并发送到 {{host}}，这是您设备之外的服务。仅发送渲染后的手写内容，不包括笔记标题、笔记本或您的账户信息。\n\n您可以随时在设置中更改或撤销此授权。",
+      "consentConfirm": "发送手写内容",
+      "consentDeclined": "在您同意将手写内容发送到 {{host}} 之前，识别功能处于关闭状态。"
     },
     "mcp": {
       "windowsOnly": "MCP 服务器仅在 Windows 应用中可用。",

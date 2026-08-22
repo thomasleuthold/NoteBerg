@@ -256,7 +256,11 @@
         "noJson": "una instrucción JSON",
         "noWordsKey": "la clave \"words\"",
         "noRegion": "la instrucción de región/banda"
-      }
+      },
+      "consentTitle": "¿Enviar la escritura a mano a {{host}}?",
+      "consentBody": "El reconocimiento convierte su escritura en una imagen y la envía a {{host}}, un servicio externo a su dispositivo. Solo se envía la escritura renderizada, no el título de la nota, el cuaderno ni su cuenta.\n\nPuede cambiar o revocar esto en cualquier momento en Ajustes.",
+      "consentConfirm": "Enviar escritura",
+      "consentDeclined": "El reconocimiento está desactivado hasta que acepte enviar su escritura a {{host}}."
     },
     "mcp": {
       "windowsOnly": "El servidor MCP solo está disponible en la aplicación de Windows.",

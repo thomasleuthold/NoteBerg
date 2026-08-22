@@ -55,7 +55,7 @@ export async function getRecognitionConfig() {
     // Longest edge of a rasterized band, in image pixels. The binding
     // constraint is legibility, not context size: downscaled handwriting is
     // where VL accuracy collapses (DESIGN §3.2). Measured per model in Phase 3.
-    maxImageEdge: (await getSetting("recognition_max_image_edge")) || 1600,
+    maxImageEdge: (await getSetting("recognition_max_image_edge")) ?? 1600,
     // Cap on the model's reply.
     //
     // Each word costs roughly 16 tokens once its box is included, so 1500 —
@@ -63,7 +63,7 @@ export async function getRecognitionConfig() {
     // exceeds. Truncation is unrecoverable: the JSON cannot be parsed and the
     // whole note fails. 8000 covers ~500 words while still stopping a model
     // that loops instead of transcribing.
-    maxTokens: (await getSetting("recognition_max_tokens")) || 8000,
+    maxTokens: (await getSetting("recognition_max_tokens")) ?? 8000,
     // Replicate community models are addressed by version hash; official models
     // can be run by owner/name alone. Empty means "run by name".
     replicateVersion: (await getSetting("recognition_replicate_version")) || "",

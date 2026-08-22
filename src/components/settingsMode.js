@@ -35,18 +35,6 @@ import { showAlertDialog, showConfirmDialog, showTextPrompt } from "./modals.js"
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 /**
- * Escape a value for interpolation into a double-quoted HTML attribute.
- *
- * Deliberately not the textContent/innerHTML trick used elsewhere in the
- * codebase: that escapes `<` and `&` but leaves quotes intact, so a stored
- * value containing `"` would close the attribute and allow markup injection.
- * These values (endpoint, model) are user-supplied and round-trip through
- * settings, so they are escaped properly here.
- *
- * @param {string} value
- * @returns {string}
- */
-/**
  * Escape a value for interpolation into element text content.
  *
  * Separate from escapeAttr(): inside a <textarea> the danger is a literal
@@ -64,6 +52,18 @@ function escapeHtmlText(value) {
     .replace(/>/g, "&gt;");
 }
 
+/**
+ * Escape a value for interpolation into a double-quoted HTML attribute.
+ *
+ * Deliberately not the textContent/innerHTML trick used elsewhere in the
+ * codebase: that escapes `<` and `&` but leaves quotes intact, so a stored
+ * value containing `"` would close the attribute and allow markup injection.
+ * These values (endpoint, model) are user-supplied and round-trip through
+ * settings, so they are escaped properly here.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
 export function escapeAttr(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -171,6 +171,27 @@ async function testAiRecognitionBackend({
       );
       return;
     }
+  }
+
+  // The test sends a real rendered image, so it needs the same consent as a
+  // recognition run — testing must not be a way to bypass the dialog.
+  const { destinationHost, grantConsent, hasConsent } = await import(
+    "../modules/recognition/consent.js"
+  );
+  const pending = { backend, endpoint: normalized };
+  const host = destinationHost(pending);
+  if (host && !(await hasConsent(pending))) {
+    const agreed = await showConfirmDialog(
+      t("settings.recognition.consentTitle", { host }),
+      t("settings.recognition.consentBody", { host }),
+      t("settings.recognition.consentConfirm"),
+      "btn-primary",
+    );
+    if (!agreed) {
+      setStatus(t("settings.recognition.consentDeclined", { host }), "var(--color-warning)");
+      return;
+    }
+    await grantConsent(pending);
   }
 
   setStatus(t("settings.recognition.testingModel"), "var(--color-text)");
@@ -1189,9 +1210,7 @@ export async function renderSettings(container) {
       return;
     }
     const { checkPrompt } = await import("../modules/recognition/prompts.js");
-    // Validate against the mode actually selected: a region prompt legitimately
-    // has no "box" instruction, and vice versa.
-    const warnings = checkPrompt(value, {});
+    const warnings = checkPrompt(value);
     if (warnings.length === 0) {
       recognitionPromptStatus.textContent = "";
       return;
@@ -1280,6 +1299,34 @@ export async function renderSettings(container) {
       // deletion would silently drop a working key on any unrelated save.
       const typedKey = recognitionApiKeyInput?.value || "";
       if (typedKey) patch.apiKey = typedKey;
+    }
+
+    // Ask before this configuration can send anything. Consent is recorded per
+    // destination host, so switching endpoints asks again; a local endpoint
+    // needs no dialog because nothing leaves the device (DESIGN §6).
+    const { destinationHost, grantConsent, hasConsent } = await import(
+      "../modules/recognition/consent.js"
+    );
+    const pending = { ...recognitionConfig, ...patch };
+    const host = destinationHost(pending);
+    if (host && !(await hasConsent(pending))) {
+      const agreed = await showConfirmDialog(
+        t("settings.recognition.consentTitle", { host }),
+        t("settings.recognition.consentBody", { host }),
+        t("settings.recognition.consentConfirm"),
+        "btn-primary",
+      );
+      if (!agreed) {
+        // Store the configuration but not the consent: the fields the user
+        // typed are kept, and recognition stays off until they agree.
+        await setRecognitionConfig(patch);
+        setRecognitionStatus(
+          t("settings.recognition.consentDeclined", { host }),
+          "var(--color-warning)",
+        );
+        return;
+      }
+      await grantConsent(pending);
     }
 
     await setRecognitionConfig(patch);

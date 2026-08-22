@@ -40,87 +40,27 @@ async function resolveProvider(config) {
 }
 
 /**
- * Whether two words are near enough, and similar enough, to be the same word
- * seen in two overlapping bands.
+ * Concatenate per-page word lists into one, in reading order.
  *
- * Position tolerance scales with the words' own height so it adapts to
- * handwriting size instead of assuming a pixel scale.
- */
-function isSameWord(a, b) {
-  if (a.text !== b.text) return false;
-
-  // Region mode has no coordinates to compare, so overlap duplicates are matched
-  // on text plus band. Regions encode the image they came from, so the same
-  // colour on two different images does not collide — which is exactly the case
-  // band overlap produces.
-  if (a.region != null && b.region != null) return a.region === b.region;
-
-  if (!a.boundingRect || !b.boundingRect) return false;
-
-  const tolerance = Math.max(a.boundingRect.height, b.boundingRect.height, 8) * 1.5;
-  const dx = Math.abs(a.boundingRect.x - b.boundingRect.x);
-  const dy = Math.abs(a.boundingRect.y - b.boundingRect.y);
-  return dx <= tolerance && dy <= tolerance;
-}
-
-/**
- * Distance from a word to the nearest horizontal edge of its band.
+ * There is nothing to de-duplicate. Images are aligned to the note's virtual
+ * page breaks and do not overlap, so each word is transcribed exactly once and
+ * every entry a page reports is a distinct occurrence.
  *
- * Used to pick which copy of a duplicated word to keep: a word close to a cut
- * may be clipped in that band, so the copy further from an edge is the one more
- * likely to have been read correctly.
- */
-function edgeDistance(word, band) {
-  if (!word.boundingRect) return 0;
-  const top = word.boundingRect.y - band.contentY;
-  const bottom = band.contentY + band.contentHeight - word.boundingRect.y;
-  return Math.min(top, bottom);
-}
-
-/**
- * Merge per-band word lists into one, removing duplicates from band overlap.
+ * An earlier version de-duplicated by text plus band, from a previous scheme
+ * where images overlapped. Once overlap was removed that check could only ever
+ * fire on genuine repeats: "the the" written on one line collapsed to a single
+ * "the", losing the word from fullText and therefore from search. Words are
+ * localized to a band rather than a point, so no positional test can separate a
+ * repeat from a duplicate — which is the other reason not to attempt one.
  *
- * Only words at close-to-identical positions are treated as duplicates. A word
- * genuinely written twice ("the the") sits far apart and is kept twice — the
- * de-duplication is positional, never purely textual.
+ * Pages are transcribed top to bottom and each model returns its words in
+ * reading order, so appending in order preserves it.
  *
  * @param {Array<{words: Array, band: Object}>} bandResults
- * @returns {Array} merged words, in reading order
+ * @returns {Array} every transcribed word, in reading order
  */
 export function stitchBands(bandResults) {
-  const merged = [];
-
-  for (const { words, band } of bandResults) {
-    for (const word of words) {
-      const existingIndex = merged.findIndex((m) => isSameWord(m.word, word));
-
-      if (existingIndex === -1) {
-        merged.push({ word, band });
-        continue;
-      }
-
-      // Keep whichever copy sat further from a band edge.
-      const existing = merged[existingIndex];
-      if (edgeDistance(word, band) > edgeDistance(existing.word, existing.band)) {
-        merged[existingIndex] = { word, band };
-      }
-    }
-  }
-
-  // Reading order: top to bottom, then left to right. Words without geometry
-  // keep their relative order at the end rather than being dropped.
-  const withBox = merged.filter((m) => m.word.boundingRect);
-  const withoutBox = merged.filter((m) => !m.word.boundingRect);
-
-  withBox.sort((a, b) => {
-    const ay = a.word.boundingRect.y;
-    const by = b.word.boundingRect.y;
-    const lineTolerance = Math.max(a.word.boundingRect.height, b.word.boundingRect.height) * 0.6;
-    if (Math.abs(ay - by) > lineTolerance) return ay - by;
-    return a.word.boundingRect.x - b.word.boundingRect.x;
-  });
-
-  return [...withBox, ...withoutBox].map((m) => m.word);
+  return bandResults.flatMap(({ words }) => words);
 }
 
 /**
@@ -171,7 +111,12 @@ export async function recognizeWithAi(strokes, config, opts = {}) {
     // Expose the exact image being sent. Ink coverage says *whether* something
     // was drawn; this shows *what*, which is the only way to tell a correct
     // render from a mangled one. Reading it costs nothing until inspected.
+    //
+    // The previous URL is revoked first: each one pins a full-page PNG in memory
+    // until the document unloads, so a multi-page note recognized repeatedly
+    // leaked one image per page per run.
     if (typeof window !== "undefined") {
+      if (window.__lastRecognitionImage) URL.revokeObjectURL(window.__lastRecognitionImage);
       window.__lastRecognitionImage = URL.createObjectURL(band.png);
       console.log(`[Recognition] Inspect the image sent: open window.__lastRecognitionImage`);
     }
@@ -187,9 +132,8 @@ export async function recognizeWithAi(strokes, config, opts = {}) {
       return null;
     }
 
-    // The content-space slice this image covers. Only these two fields are used
-    // downstream — by edge-distance scoring during stitching, and by the search
-    // highlighter to place a band without re-deriving how the note was split.
+    // The content-space slice this image covers. Used downstream by the search
+    // highlighter, to place a band without re-deriving how the note was split.
     // Shared by reference across the page's words: it is identical for all of
     // them and is never mutated.
     const imageBounds = {
@@ -217,10 +161,6 @@ export async function recognizeWithAi(strokes, config, opts = {}) {
 
   const merged = stitchBands(bandResults);
 
-  // Extent correction was removed with cropped rendering: it stretched reported
-  // boxes to fill the ink extent, which was only sound because cropping
-  // guaranteed ink touched all four edges. Page-aligned images have margins by
-  // design, so stretching would manufacture error rather than remove it.
   const located = merged.filter((w) => w.region != null).length;
   console.log(
     `[Recognition] Region mode — ${merged.length} words, ${located} localized to a band ` +
@@ -231,10 +171,13 @@ export async function recognizeWithAi(strokes, config, opts = {}) {
   const stitched = merged.map((w) => ({
     text: w.text,
     precision: PRECISION_APPROXIMATE,
-    boundingRect: w.boundingRect,
-    // Present only in region mode; readers treat its absence as "no region".
-    // imageBounds travels with the region so a highlight can be placed without
-    // re-deriving how the note was split at recognition time.
+    // Vision models do not report usable coordinates, so a word is located to a
+    // band or not at all (regions.js). Kept null so the field's absence of
+    // meaning is explicit rather than implied.
+    boundingRect: null,
+    // Present only when the model named a band; readers treat its absence as
+    // "no region". imageBounds travels with the region so a highlight can be
+    // placed without re-deriving how the note was split at recognition time.
     ...(w.region != null ? { region: w.region, imageBounds: w.imageBounds } : {}),
   }));
 

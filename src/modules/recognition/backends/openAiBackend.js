@@ -85,101 +85,30 @@ export function parseModelResponse(content) {
 
   try {
     const parsed = JSON.parse(text);
-    return Array.isArray(parsed?.words) ? parsed.words.map(repairEntry) : null;
+    return Array.isArray(parsed?.words) ? parsed.words : null;
   } catch (_e) {
-    // Truncated output is worth salvaging rather than discarding. A reply cut
-    // off by the token limit is valid JSON right up to the cut, so every
-    // complete entry before it is usable — losing a whole page because its last
-    // word was clipped is a far worse outcome than a slightly short one.
-    const salvaged = salvageCompleteEntries(text);
-    return salvaged.length > 0 ? salvaged : null;
+    return null;
   }
 }
 
 /**
- * Extract every complete {"text": ..., "box": [...]} object from a partial
- * response.
+ * Map one model word entry onto the shape the pipeline stores.
  *
- * Deliberately narrow: it matches only fully-formed entries, so a half-written
- * final entry is dropped rather than guessed at. Coordinates are parsed as
- * numbers here and normalised later, exactly as for a well-formed reply.
+ * Words carry a colour band, not coordinates. Coordinates were tried and did not
+ * work: models emit a plausible layout rather than a measured one, and the drift
+ * exceeded a line height. See regions.js.
  *
- * @param {string} text
- * @returns {Array} complete entries, possibly empty
- */
-export function salvageCompleteEntries(text) {
-  if (typeof text !== "string") return [];
-
-  const entries = [];
-  // Match a text field followed by a 4-number box, under any of the key names
-  // models use. Anchored on the closing bracket so a truncated box is skipped.
-  const pattern = new RegExp(
-    String.raw`\{\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,` +
-      String.raw`\s*"(?:box|box_2d|bbox)"\s*:\s*\[` +
-      String.raw`\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\]`,
-    "g",
-  );
-
-  for (const m of text.matchAll(pattern)) {
-    entries.push({
-      text: m[1],
-      box: [Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])],
-    });
-  }
-
-  return entries;
-}
-
-/**
- * Repair an entry mangled by the model emitting a duplicate "text" key.
+ * A word whose band cannot be read still contributes its text, so search finds
+ * it even when it cannot be located.
  *
- * Observed output: {"text": "with", "text": "67, 41, 100, 129]}. JSON keeps the
- * last value for a duplicate key, so the word is replaced by a fragment of its
- * own coordinates and is lost entirely. The fragment is recognisable — it parses
- * as a comma-separated number list — so the geometry can be recovered even
- * though the word text cannot.
- *
- * The word is dropped rather than guessed: a made-up word in `fullText` would
- * make search return the wrong note.
- *
- * @param {Object} entry
- * @returns {Object}
- */
-function repairEntry(entry) {
-  if (!entry || typeof entry.text !== "string") return entry;
-
-  // A "text" value that is really a coordinate list, e.g. "67, 41, 100, 129]".
-  const numbers = entry.text
-    .replace(/[\][]/g, "")
-    .split(",")
-    .map((p) => Number(p.trim()));
-  const looksLikeBox = numbers.length === 4 && numbers.every((n) => Number.isFinite(n));
-
-  if (looksLikeBox && entry.box === undefined) {
-    return { text: "", box: numbers, _recovered: true };
-  }
-
-  return entry;
-}
-
-/**
- * Map one model word entry onto content-space geometry.
- *
- * @param {Object} entry - {text, box:[x0,y0,x1,y1]} in normalized image coords
- * @param {{width, height, contentX, contentY, scale}} band
- * @returns {{text: string, boundingRect: Object|null}|null}
+ * @param {Object} entry - {text, region} from the model
+ * @returns {{text: string, region: number|null}|null} null for an unusable entry
  */
 export function mapWordToContent(entry) {
   if (!entry || typeof entry.text !== "string" || !entry.text.trim()) return null;
 
-  // Words carry a colour band, not coordinates. Coordinates were tried and did
-  // not work: models emit a plausible layout rather than a measured one, and
-  // the drift exceeded a line height. See regions.js.
-  //
-  // A word whose band cannot be read still contributes its text, so search finds
-  // it even when it cannot be located.
   const region = parseRegionId(entry.region ?? entry.band ?? entry.color);
-  return { text: entry.text, boundingRect: null, region: region >= 0 ? region : null };
+  return { text: entry.text, region: region >= 0 ? region : null };
 }
 
 /**

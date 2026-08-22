@@ -87,6 +87,32 @@ describe("planBands", () => {
     const bands = planBands({ minY: 0, maxY: PAGE_H * 3 }, CONTENT_WIDTH);
     expect(bands.map((b) => b.index)).toEqual([0, 1, 2]);
   });
+
+  it("covers ink sitting above the origin", () => {
+    // Regression: content reaches a negative Y after undoing an "insert space"
+    // shift, which moves strokes up with no clamp. The band used to be pinned at
+    // y=0 with a negative height, so it rounded to a 1px image containing none
+    // of the ink — recognition then spent a request on a blank page and the
+    // model correctly reported no handwriting.
+    const bands = planBands({ minY: -200, maxY: -150 }, CONTENT_WIDTH);
+    expect(bands).toHaveLength(1);
+    expect(bands[0].contentHeight).toBeGreaterThan(0);
+    expect(bands[0].contentY).toBeLessThanOrEqual(-200);
+    expect(bands[0].contentY + bands[0].contentHeight).toBeGreaterThanOrEqual(-150);
+  });
+
+  it("never plans a band with a non-positive height", () => {
+    // A collapsed band renders a 1px image, which silently drops every stroke.
+    for (const bounds of [
+      { minY: 0, maxY: 0 },
+      { minY: 5, maxY: 5 },
+      { minY: -300, maxY: -300 },
+    ]) {
+      for (const band of planBands(bounds, CONTENT_WIDTH)) {
+        expect(band.contentHeight).toBeGreaterThan(0);
+      }
+    }
+  });
 });
 
 describe("computeScale", () => {

@@ -7,7 +7,7 @@ import {
 } from "../../modules/mediaManager.js";
 import { getPdfInvertDarkMode, getTheme } from "../../modules/theme.js";
 import { drawBackgroundPattern as mockDrawBackgroundPattern } from "../../utils/noteRenderer.js";
-import { CanvasRenderer } from "./CanvasRenderer.js";
+import { approximateMarkerBar, CanvasRenderer } from "./CanvasRenderer.js";
 
 // Mock dependencies
 vi.mock("../../utils/noteRenderer.js", () => ({
@@ -1579,5 +1579,37 @@ describe("CanvasRenderer", () => {
       vi.advanceTimersByTime(renderer._qualityRenderDebounce + 10);
       expect(drawSpy).toHaveBeenCalledWith(false);
     });
+  });
+});
+
+describe("approximateMarkerBar", () => {
+  // The marker for an approximately-located search hit. Geometry is separated
+  // from painting so the rules that matter here can be asserted directly rather
+  // than restated by a test that draws nothing.
+  const band = { y: 100, h: 267 };
+
+  it("spans the full height of the band, so the marked range is legible", () => {
+    const bar = approximateMarkerBar(band, { bufferLeft: 0, zoom: 1 });
+    expect(bar.y).toBe(band.y);
+    expect(bar.h).toBe(band.h);
+  });
+
+  it("sits at the buffer's left edge, not the content origin", () => {
+    // Anchoring to the buffer is what keeps the bar inside the painted region
+    // without a repaint on every horizontal scroll.
+    expect(approximateMarkerBar(band, { bufferLeft: 300, zoom: 1 }).x).toBe(300);
+  });
+
+  it("keeps a constant on-screen thickness when zoomed", () => {
+    // Drawn in content space, so the content-space width must shrink as zoom
+    // grows or the bar balloons across the page.
+    const at1 = approximateMarkerBar(band, { bufferLeft: 0, zoom: 1 });
+    const at2 = approximateMarkerBar(band, { bufferLeft: 0, zoom: 2 });
+    expect(at2.w * 2).toBeCloseTo(at1.w);
+  });
+
+  it("treats a missing or zero zoom as 1 rather than dividing by zero", () => {
+    expect(approximateMarkerBar(band, { bufferLeft: 0, zoom: 0 }).w).toBeGreaterThan(0);
+    expect(Number.isFinite(approximateMarkerBar(band, { bufferLeft: 0 }).w)).toBe(true);
   });
 });

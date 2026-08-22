@@ -91,6 +91,48 @@ describe("buildPredictionUrl", () => {
       "https://api.replicate.com/v1/models/lucataco/qwen3-vl-8b-instruct/predictions",
     );
   });
+
+  it("refuses a model name that would escape the models path", () => {
+    // The model is free text interpolated into a request path, and the Tauri
+    // allowlist now permits any https host — so a traversal here would send the
+    // user's handwriting and API token to a path they never configured.
+    // "../../evil" resolves to https://api.replicate.com/evil/predictions.
+    expect(() =>
+      backend.buildPredictionUrl({ ...config, replicateVersion: "", model: "../../evil" }),
+    ).toThrow(/not a valid Replicate model/);
+  });
+
+  it("refuses a model name that would truncate the path with a query or fragment", () => {
+    for (const model of ["owner/name?x=1", "owner/name#f", "owner/name/extra"]) {
+      expect(() => backend.buildPredictionUrl({ ...config, replicateVersion: "", model })).toThrow(
+        /not a valid Replicate model/,
+      );
+    }
+  });
+
+  it("refuses a model that is not in owner/name form", () => {
+    for (const model of ["", "justname", "/name", "owner/"]) {
+      expect(() => backend.buildPredictionUrl({ ...config, replicateVersion: "", model })).toThrow(
+        /not a valid Replicate model/,
+      );
+    }
+  });
+
+  it("refuses a version id that is not a plain digest", () => {
+    expect(() => backend.buildPredictionUrl({ ...config, replicateVersion: "../../x" })).toThrow(
+      /not a valid Replicate version/,
+    );
+  });
+
+  it("accepts an ordinary community model reference", () => {
+    expect(() =>
+      backend.buildPredictionUrl({
+        ...config,
+        replicateVersion: "",
+        model: "lucataco/qwen3-vl-8b-instruct",
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("outputToText", () => {

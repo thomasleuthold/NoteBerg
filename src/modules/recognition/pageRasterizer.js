@@ -17,7 +17,7 @@
  * and are expected to move accuracy more than prompt wording does (DESIGN §3.3).
  */
 
-import { pagesInRange } from "../pageGeometry.js";
+import { pageHeight, pagesInRange } from "../pageGeometry.js";
 import { REGION_COLORS, REGION_COUNT } from "./regions.js";
 
 /** Default rendering parameters. Swept during PLAN Phase 3 measurement. */
@@ -113,8 +113,13 @@ export function planBands(bounds, contentWidth) {
 
   // A note shorter than one page still renders as a single image covering that
   // page, so page-relative positions stay meaningful.
+  //
+  // The height is floored at one page rather than taken from the ink extent: a
+  // degenerate range (a single dot, or ink entirely above y=0) otherwise gave a
+  // zero or negative height, which rounds to a 1px image that holds no ink at
+  // all. A too-tall image is merely wasteful; a collapsed one loses the note.
   if (pages.length === 0) {
-    return [{ index: 0, contentY: bounds.minY, contentHeight: bounds.maxY - bounds.minY }];
+    return [{ index: 0, contentY: bounds.minY, contentHeight: pageHeight(contentWidth) }];
   }
 
   return pages.map((page, i) => ({
@@ -348,11 +353,16 @@ export async function rasterizeNote(strokes, options = {}, onProgress) {
   // places across two runs, and there was no boundary the user could see or
   // write around. Page-aligned images are the ones the dashed page-break lines
   // already promise.
+  //
+  // minY extends above zero when ink does. Content can end up at a negative Y —
+  // undoing a "insert space" shift moves strokes up with no clamp — and pinning
+  // the box at zero silently excluded that ink from every page, producing a
+  // blank image rather than a wrong one.
   const padded = {
     minX: 0,
-    minY: 0,
+    minY: Math.min(0, bounds.minY),
     maxX: opts.pageWidth,
-    maxY: bounds.maxY,
+    maxY: Math.max(bounds.maxY, bounds.minY),
   };
 
   const contentWidth = padded.maxX - padded.minX;
@@ -419,6 +429,19 @@ export async function rasterizeNote(strokes, options = {}, onProgress) {
       contentY: bandTop,
       scale,
     });
+  }
+
+  // An individual page may legitimately hold no ink — a note can span pages with
+  // a gap between them. The whole render being blank cannot: the caller only got
+  // here because the note has strokes, so every one of them missing from every
+  // image means the geometry is wrong, not the page. Catching it here rather
+  // than per-band keeps the empty-page case legal while still refusing to spend
+  // a slow, paid request on an image with nothing to read.
+  if (strokes.length > 0 && bands.every((b) => b.inkRatio === 0)) {
+    throw new Error(
+      `Rasterizer produced ${bands.length} blank image(s) from ${strokes.length} stroke(s). ` +
+        "Recognition would report no handwriting, so the request was not sent.",
+    );
   }
 
   return bands;

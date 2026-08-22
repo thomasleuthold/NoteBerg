@@ -45,7 +45,12 @@ export function pagesInRange(minY, maxY, contentWidth) {
   const height = pageHeight(contentWidth);
   if (!(height > 0) || !(maxY > minY)) return [];
 
-  const first = Math.max(0, Math.floor(minY / height));
+  // Pages are not clamped at zero. Content can sit above the origin — undoing an
+  // "insert space" shift moves strokes up with no clamp — and clamping here
+  // dropped that ink from every page, so recognition rendered a blank image and
+  // reported no handwriting. A negative index is a page above the origin, which
+  // is exactly what such a note has.
+  const first = Math.floor(minY / height);
   const last = Math.floor(Math.max(minY, maxY - 1e-6) / height);
 
   const pages = [];

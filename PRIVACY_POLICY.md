@@ -7,7 +7,11 @@
 ## 1. Data Storage and Ownership
 *   **Local Storage**: All your notes, drawings, and media are stored locally on your device.
 *   **Nextcloud Sync**: You can optionally synchronize your data with your own Nextcloud server. We do not operate a central sync server and **we do not have access to your data**.
-*   **Handwriting Recognition**: On Windows, handwriting recognition runs entirely on your device via a bundled local service — stroke data never leaves your computer. On other platforms, handwriting recognition is not available.
+*   **Handwriting Recognition**: On Windows, handwriting recognition runs entirely on your device via a bundled local service — stroke data never leaves your computer. This is the default and requires no configuration.
+
+    You may optionally configure an AI recognition backend instead, either a model running on your own machine (for example LM Studio or Ollama) or a third-party cloud service. If you point recognition at a service outside your device, NoteBerg asks for your explicit agreement, naming the destination host, before sending anything. Recognition stays off until you agree, and agreement is recorded per destination — pointing recognition somewhere new asks again. You can revoke it at any time in Settings.
+
+    When an AI backend is in use, what is sent is an image of your handwriting only. The note title, notebook name, other notes, and your account identity are not included. Nothing is sent when the configured backend runs on your own machine.
 *   **Encryption**: The app supports client-side encryption. If enabled, your data is encrypted on your device using your master password before being uploaded to your Nextcloud server.
 
 ## 2. App Permissions
@@ -15,7 +19,7 @@ To provide its features, the app requires the following permissions:
 
 *   **Camera**: Used only when you explicitly choose to take a photo to insert into a note. These photos are stored with your notes. We do not collect, analyze, or share your camera data.
 *   **Microphone**: Used only when you explicitly choose to record audio to attach to a note. Recordings are stored locally with your notes. We do not collect, analyze, or share your audio data.
-*   **Network / Internet**: Used to communicate with the Nextcloud server you have configured in Settings. Handwriting recognition (Windows only) runs locally and does not use the network. No data is sent to any other third-party servers.
+*   **Network / Internet**: Used to communicate with the Nextcloud server you have configured in Settings, and — only if you configure and explicitly agree to one — an AI handwriting recognition endpoint of your choosing. The bundled Windows recognizer runs locally and does not use the network. No data is sent to any other third-party servers.
 
 ## 3. Analytics and Tracking
 **NoteBerg** contains **no tracking code**, advertisements, or third-party analytics (e.g., Google Analytics, Firebase). We do not collect usage data.

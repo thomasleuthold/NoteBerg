@@ -161,6 +161,33 @@ function drawMarkersGrouped(
   }
 }
 
+/**
+ * Geometry of the margin bar marking an approximately-located search hit.
+ *
+ * Anchored to the buffer's own left edge rather than the viewport's. The buffer
+ * is a window of content wider than the viewport, repositioned only when
+ * scrolling leaves its bounds; anchoring to the viewport would need a repaint on
+ * every horizontal scroll, and a plain repaint leaves the buffer's painted
+ * window where it was, exposing unpainted canvas. Anchoring to the buffer keeps
+ * the bar inside the painted region with no extra redraw.
+ *
+ * Pure, and exported, so the rule survives a test without standing up a canvas.
+ *
+ * @param {{y: number, h: number}} rect - band bounds in content space
+ * @param {{bufferLeft: number, zoom: number}} view
+ * @returns {{x: number, y: number, w: number, h: number}} in content space
+ */
+export function approximateMarkerBar(rect, view) {
+  return {
+    x: view.bufferLeft,
+    y: rect.y,
+    // Divided by zoom so the on-screen thickness stays constant: without it the
+    // bar balloons when zoomed in and vanishes when zoomed out.
+    w: APPROX_MARKER_WIDTH / (view.zoom || 1),
+    h: rect.h,
+  };
+}
+
 export class CanvasRenderer {
   /**
    * @param {HTMLElement} viewportElement - Element to mount canvas into
@@ -395,25 +422,14 @@ export class CanvasRenderer {
    * @private
    */
   _drawApproximateMarker(rect) {
-    const zoom = this.zoomScale || 1;
-
-    // Anchored to the buffer's own left edge, in content coordinates.
-    //
-    // The buffer is a window of content wider than the viewport, repositioned
-    // only when scrolling leaves its bounds. Anchoring to the *viewport* edge
-    // instead would need a repaint on every horizontal scroll — and a plain
-    // repaint leaves the buffer's painted window where it was, so part of the
-    // viewport renders unpainted. Anchoring to the buffer keeps the bar inside
-    // the painted region and needs no extra redraw.
-    const barLeft = this.bufferLeft;
-
-    // Keep a constant on-screen thickness regardless of zoom, so the marker does
-    // not balloon when zoomed in or vanish when zoomed out.
-    const barWidth = APPROX_MARKER_WIDTH / zoom;
+    const bar = approximateMarkerBar(rect, {
+      bufferLeft: this.bufferLeft,
+      zoom: this.zoomScale || 1,
+    });
 
     this.ctx.save();
     this.ctx.fillStyle = HIGHLIGHT_STROKE_STYLE;
-    this.ctx.fillRect(barLeft, rect.y, barWidth, rect.h);
+    this.ctx.fillRect(bar.x, bar.y, bar.w, bar.h);
     this.ctx.restore();
   }
 

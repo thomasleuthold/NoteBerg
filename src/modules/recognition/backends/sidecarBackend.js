@@ -75,7 +75,9 @@ export async function recognizeStrokes(strokes, opts = {}) {
   if (!baseUrl) return null;
 
   const language = opts.language || "en-US";
-  const apiUrl = `${baseUrl.replace(/\/$/, "")}/recognize?language=${language}`;
+  // Encoded: the language is a stored setting rather than a constant, and an
+  // unescaped value would let it append query parameters of its own.
+  const apiUrl = `${baseUrl.replace(/\/$/, "")}/recognize?language=${encodeURIComponent(language)}`;
 
   // Expected format: { id: "uuid", points: [{x, y, pressure}] }
   const formattedStrokes = strokes.map((s) => ({

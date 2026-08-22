@@ -54,6 +54,10 @@ import { MediaOverlay } from "./MediaOverlay.js";
 import { SelectionOverlay } from "./SelectionOverlay.js";
 import { TaskCheckboxLayer } from "./TaskCheckboxLayer.js";
 import "./NoteCanvas.css";
+import {
+  collectHighlightBands,
+  collectMatchPositions,
+} from "../../modules/recognition/regionSearch.js";
 import { searchRegex } from "../../utils/searchPattern.js";
 import {
   CropImageCommand,
@@ -1425,7 +1429,7 @@ export class NoteCanvas {
    * @private
    * @param {string} query
    */
-  async _highlightSearchTerms(query) {
+  _highlightSearchTerms(query) {
     // An empty query matches everything, which in region mode would paint every
     // band on the note — indistinguishable from the recognition bands leaking
     // onto the live canvas. Clear instead.
@@ -1444,67 +1448,31 @@ export class NoteCanvas {
 
       const rects = [];
 
-      // Region hits are collected separately so each band highlights once, no
-      // matter how many matching words it holds.
-      const matchedRegions = new Map();
-
-      recognition.words.forEach((word) => {
-        if (!word) return;
+      // Words with exact geometry — the Windows sidecar — draw as boxes. Several
+      // box shapes exist in stored data, so each field is read from whichever
+      // form the word carries.
+      for (const word of recognition.words) {
+        if (!word?.text || word.region != null) continue;
 
         regex.lastIndex = 0;
-        if (!word.text || !regex.test(word.text)) return;
-
-        // A word localized only to a colour band has no box to draw. Highlighting
-        // the band is the honest rendering of what is actually known.
-        if (word.region != null) {
-          // Keyed by region so a band highlights once however many words match.
-          matchedRegions.set(word.region, {
-            region: word.region,
-            imageBounds: word.imageBounds,
-          });
-          return;
-        }
+        if (!regex.test(word.text)) continue;
 
         const box = word.boundingRect || word.boundingBox || word.rect;
+        if (!box) continue;
 
-        if (box) {
-          const x = box.x !== undefined ? box.x : box.left;
-          const y = box.y !== undefined ? box.y : box.top;
-          const w = box.width !== undefined ? box.width : box.w;
-          const h = box.height !== undefined ? box.height : box.h;
+        const x = box.x !== undefined ? box.x : box.left;
+        const y = box.y !== undefined ? box.y : box.top;
+        const w = box.width !== undefined ? box.width : box.w;
+        const h = box.height !== undefined ? box.height : box.h;
 
-          if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
-            rects.push({ x, y, w, h });
-          }
+        if (x !== undefined && y !== undefined && w !== undefined && h !== undefined) {
+          rects.push({ x, y, w, h });
         }
-      });
+      }
 
-      if (matchedRegions.size > 0) {
-        const { decodeRegion, mergeAdjacentBands, regionBounds } = await import(
-          "../../modules/recognition/regions.js"
-        );
-
-        const bands = [];
-        for (const entry of matchedRegions.values()) {
-          const decoded = decodeRegion(entry.region);
-          if (!decoded || !entry.imageBounds) continue;
-
-          const bounds = regionBounds(decoded.regionIndex, entry.imageBounds);
-          if (!bounds) continue;
-
-          bands.push({
-            y: bounds.top,
-            h: bounds.bottom - bounds.top,
-            region: decoded.regionIndex,
-          });
-        }
-
-        // Two matching words in neighbouring bands are one continuous region of
-        // the page, so they paint as one span. Drawing them separately leaves a
-        // hairline seam that reads as a rendering fault.
-        for (const band of mergeAdjacentBands(bands)) {
-          rects.push({ x: 0, y: band.y, w: this.maxContentWidth, h: band.h, region: band.region });
-        }
+      // Region-localized words have no box; they highlight as full-width bands.
+      for (const band of collectHighlightBands(recognition.words, regex)) {
+        rects.push({ x: 0, y: band.y, w: this.maxContentWidth, h: band.h, region: band.region });
       }
 
       if (this.renderer) {
@@ -1905,57 +1873,10 @@ export class NoteCanvas {
     // 1. Handwriting recognition matches
     const recognition = this._getRecognition();
     if (recognition?.words && Array.isArray(recognition.words)) {
-      const { decodeRegion, regionBounds } = await import("../../modules/recognition/regions.js");
-
-      // One entry per occurrence, so the navigator counts what is actually on
-      // the page: several matching words in one band are several hits. Bands are
-      // merged for *drawing* only, and the count must not collapse the same way.
-      //
-      // The exception is a word transcribed on two images at nearly the same
-      // place, which is one occurrence seen twice. Page-aligned images no longer
-      // overlap, so this should not arise; the guard stays because a word
-      // straddling a page break can still be read on both sides of it.
-      //
-      // Keyed by text so the scan stays linear: a list scanned per match is
-      // quadratic, and a page of repeated words is exactly when search is slow.
-      const acceptedByText = new Map();
-      // Derived from band height rather than fixed: bands scale with note
-      // geometry. A straddling duplicate lands within a band of its twin,
-      // whereas two bands of the same image are a full band apart — so
-      // two-thirds of a band separates them reliably.
-      const overlapTolerance = (bandHeight) => bandHeight * 0.67;
-
-      for (const word of recognition.words) {
-        if (!word?.text) continue;
-        regex.lastIndex = 0;
-        if (!regex.test(word.text)) continue;
-
-        // A region-localized word has no box. Use the middle of its band, so it
-        // is counted and can be scrolled to.
-        if (word.region != null && word.imageBounds) {
-          const decoded = decodeRegion(word.region);
-          const bounds = decoded && regionBounds(decoded.regionIndex, word.imageBounds);
-          if (!bounds) continue;
-
-          const centre = (bounds.top + bounds.bottom) / 2;
-          const tolerance = overlapTolerance(bounds.bottom - bounds.top);
-          const seen = acceptedByText.get(word.text);
-          if (seen?.some((y) => Math.abs(y - centre) <= tolerance)) continue;
-
-          if (seen) seen.push(centre);
-          else acceptedByText.set(word.text, [centre]);
-          positions.push({ y: centre });
-          continue;
-        }
-
-        const box = word.boundingRect || word.boundingBox || word.rect;
-        if (!box) continue;
-
-        const y = box.y !== undefined ? box.y : box.top;
-        if (y !== undefined) {
-          positions.push({ y });
-        }
-      }
+      // One entry per occurrence, so the navigator counts what is on the page.
+      // Highlighting collapses neighbouring bands into one span; counting must
+      // not, or several visible matches report as one.
+      positions.push(...collectMatchPositions(recognition.words, regex));
     }
 
     // 2. PDF text matches — find precise Y position of each match within pages
@@ -5401,19 +5322,6 @@ export class NoteCanvas {
         // Re-apply any active search so new matches highlight immediately
         // instead of only after the note is reopened.
         if (this.activeSearchQuery) this._highlightSearchTerms(this.activeSearchQuery);
-      }
-
-      // Report box quality so backends can be compared on numbers rather than
-      // on where a highlight happens to land (PLAN Phase 3).
-      if (stored?.words?.length) {
-        const { scoreBoxes } = await import("../../modules/recognition/boxQuality.js");
-        const q = scoreBoxes(stored.words, strokes);
-        console.log(
-          `[Recognition] Box quality — ${q.boxCount} boxes, ` +
-            `${(q.emptyBoxRatio * 100).toFixed(1)}% on blank paper, ` +
-            `median drift x=${q.medianDriftX.toFixed(0)}px y=${q.medianDriftY.toFixed(0)}px, ` +
-            `grid-likeness ${q.gridLikeness.toFixed(2)} (1.00 = invented layout)`,
-        );
       }
 
       const count = stored?.words?.length ?? result?.words?.length ?? 0;

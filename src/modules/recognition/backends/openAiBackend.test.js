@@ -119,7 +119,7 @@ describe("structured output negotiation", () => {
         status: 400,
         text: async () => "{\"error\":\"'response_format.type' must be 'json_schema' or 'text'\"}",
       })
-      .mockResolvedValueOnce(completion('{"words":[{"text":"hi","box":[0,0,1,1]}]}'));
+      .mockResolvedValueOnce(completion('{"words":[{"text":"hi","region":"green"}]}'));
 
     const words = await transcribeBand(band, config);
 
@@ -157,7 +157,7 @@ describe("response handling", () => {
 
   it("reports hitting the output cap as looping, not as a parse failure", async () => {
     fetchMock.mockResolvedValue(
-      completion('{"words":[{"text":"a","box":[0,0,1,1]},{"text":"a"', {
+      completion('{"words":[{"text":"a","region":"blue"},{"text":"a"', {
         finishReason: "length",
       }),
     );

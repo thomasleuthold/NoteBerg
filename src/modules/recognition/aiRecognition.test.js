@@ -3,8 +3,7 @@
  * VL output into stored words.
  *
  * The mocked model responses model real VL behaviour rather than an idealised
- * API: coordinates outside 0..1, missing boxes, merged words, prose around the
- * JSON, and duplicated words across overlapping bands.
+ * API: missing bands, prose around the JSON, and words repeated on a page.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -13,19 +12,19 @@ import { parseModelResponse } from "./backends/openAiBackend.js";
 
 describe("parseModelResponse", () => {
   it("parses a clean JSON object", () => {
-    const words = parseModelResponse('{"words":[{"text":"hi","box":[0,0,0.1,0.1]}]}');
+    const words = parseModelResponse('{"words":[{"text":"hi","region":"green"}]}');
     expect(words).toHaveLength(1);
     expect(words[0].text).toBe("hi");
   });
 
   it("strips a markdown code fence, which models add despite instructions", () => {
-    const words = parseModelResponse('```json\n{"words":[{"text":"hi","box":[0,0,1,1]}]}\n```');
+    const words = parseModelResponse('```json\n{"words":[{"text":"hi","region":"blue"}]}\n```');
     expect(words).toHaveLength(1);
   });
 
   it("recovers JSON wrapped in explanatory prose", () => {
     const words = parseModelResponse(
-      'Here is the transcription:\n{"words":[{"text":"hi","box":[0,0,1,1]}]}\nHope that helps!',
+      'Here is the transcription:\n{"words":[{"text":"hi","region":"blue"}]}\nHope that helps!',
     );
     expect(words).toHaveLength(1);
   });
@@ -45,69 +44,71 @@ describe("parseModelResponse", () => {
 });
 
 describe("stitchBands", () => {
-  const geom = (contentY) => ({ contentY, contentHeight: 400 });
+  /**
+   * Region mode is the only mode production runs: mapWordToContent never returns
+   * coordinates, so every stitched word carries a band and a null boundingRect.
+   * An earlier version of these tests built words with boundingRects, which no
+   * backend produces — so they exercised a dead branch and passed while the live
+   * one silently dropped repeated words.
+   */
 
-  const word = (text, x, y, height = 20) => ({
+  const IMAGE = { contentY: 0, contentHeight: 600 };
+  const word = (text, region, imageBounds = IMAGE) => ({
     text,
-    boundingRect: { x, y, width: 40, height },
+    region,
+    imageBounds,
+    boundingRect: null,
   });
 
-  it("returns a single band's words unchanged", () => {
-    const result = stitchBands([{ words: [word("hello", 0, 10)], band: geom(0) }]);
-    expect(result.map((w) => w.text)).toEqual(["hello"]);
-  });
-
-  it("de-duplicates a word seen in two overlapping bands", () => {
+  it("keeps a word genuinely written twice on the same band", () => {
+    // The regression this file exists for. A band spans several lines, so "the
+    // the" lands twice on one band; collapsing them loses the word from
+    // fullText and therefore from search.
     const result = stitchBands([
-      { words: [word("overlap", 100, 380)], band: geom(0) },
-      { words: [word("overlap", 100, 380)], band: geom(300) },
-    ]);
-    expect(result.map((w) => w.text)).toEqual(["overlap"]);
-  });
-
-  it("keeps a genuinely repeated word written twice on the page", () => {
-    // Positional de-duplication, never purely textual: "the the" is legitimate.
-    const result = stitchBands([
-      { words: [word("the", 100, 10), word("the", 300, 10)], band: geom(0) },
+      { words: [word("the", "blue-0"), word("the", "blue-0")], band: IMAGE },
     ]);
     expect(result.map((w) => w.text)).toEqual(["the", "the"]);
   });
 
-  it("prefers the copy further from a band edge, which is less likely clipped", () => {
-    // Same word: near the bottom edge of band A, comfortably inside band B.
-    const nearEdge = word("word", 100, 395);
-    const inside = word("word", 102, 395);
+  it("keeps every occurrence of a word repeated across bands", () => {
     const result = stitchBands([
-      { words: [nearEdge], band: geom(0) },
-      { words: [inside], band: geom(300) },
+      { words: [word("total", "blue-0"), word("total", "green-0")], band: IMAGE },
     ]);
-    expect(result).toHaveLength(1);
-    expect(result[0].boundingRect.x).toBe(102);
+    expect(result.map((w) => w.text)).toEqual(["total", "total"]);
   });
 
-  it("orders words top to bottom, then left to right", () => {
+  it("keeps the same word seen on two different pages", () => {
+    // Pages are page-break aligned and do not overlap, so this is two genuine
+    // occurrences rather than one word transcribed twice.
+    const second = { contentY: 600, contentHeight: 600 };
     const result = stitchBands([
-      {
-        words: [word("third", 10, 200), word("second", 300, 10), word("first", 10, 10)],
-        band: geom(0),
-      },
+      { words: [word("summary", "blue-0")], band: IMAGE },
+      { words: [word("summary", "blue-1", second)], band: second },
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result.map((w) => w.region)).toEqual(["blue-0", "blue-1"]);
+  });
+
+  it("preserves reading order across pages", () => {
+    const second = { contentY: 600, contentHeight: 600 };
+    const result = stitchBands([
+      { words: [word("first", "blue-0"), word("second", "green-0")], band: IMAGE },
+      { words: [word("third", "blue-1", second)], band: second },
     ]);
     expect(result.map((w) => w.text)).toEqual(["first", "second", "third"]);
   });
 
-  it("treats words on the same line as one line despite small baseline jitter", () => {
-    const result = stitchBands([{ words: [word("b", 300, 12), word("a", 10, 10)], band: geom(0) }]);
-    expect(result.map((w) => w.text)).toEqual(["a", "b"]);
+  it("keeps words the model could not place on a band", () => {
+    // Text matters more than localization: an unplaced word is still searchable,
+    // whereas a dropped one is gone.
+    const result = stitchBands([
+      { words: [word("placed", "blue-0"), { text: "orphan", boundingRect: null }], band: IMAGE },
+    ]);
+    expect(result.map((w) => w.text)).toEqual(["placed", "orphan"]);
   });
 
-  it("keeps box-less words rather than dropping them from the transcription", () => {
-    const result = stitchBands([
-      {
-        words: [word("placed", 10, 10), { text: "orphan", boundingRect: null }],
-        band: geom(0),
-      },
-    ]);
-    expect(result.map((w) => w.text)).toContain("orphan");
+  it("returns nothing for a page the model read as blank", () => {
+    expect(stitchBands([{ words: [], band: IMAGE }])).toEqual([]);
   });
 });
 

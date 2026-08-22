@@ -20,6 +20,7 @@
  * prediction is still running and must be polled — handled below.
  */
 
+import { assertAllowedDestination } from "../endpointValidation.js";
 import { buildSystemPrompt } from "../prompts.js";
 import { blobToDataUrl, getFetch } from "./backendTransport.js";
 import { parseModelResponse } from "./openAiBackend.js";
@@ -68,6 +69,48 @@ export function outputToText(output) {
   return null;
 }
 
+/** Base URL every Replicate request must sit beneath. */
+export const REPLICATE_BASE = `https://${REPLICATE_HOST}/v1`;
+
+/**
+ * Replicate model reference: "owner/name", each a conservative slug.
+ *
+ * The model is a free-text setting interpolated into a request path, so it is
+ * validated rather than trusted: a value of "../../x" escapes /v1/models/ and
+ * rewrites which endpoint is called, and one containing "?" or "#" truncates the
+ * path entirely. Matching Replicate's own naming keeps this a whitelist.
+ */
+const MODEL_PATTERN = /^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/;
+
+/** Version ids are hex digests; anything else is not a version. */
+const VERSION_PATTERN = /^[A-Za-z0-9]+$/;
+
+/**
+ * Validate a model reference, throwing with a usable message if it is not one.
+ *
+ * @param {string} model
+ * @throws {Error}
+ */
+export function assertValidModel(model) {
+  if (typeof model !== "string" || !MODEL_PATTERN.test(model)) {
+    throw new Error(
+      `"${model}" is not a valid Replicate model. Use the owner/name form, for example "lucataco/qwen3-vl-8b-instruct".`,
+    );
+  }
+}
+
+/**
+ * Validate a version id, throwing if it could alter the request path.
+ *
+ * @param {string} version
+ * @throws {Error}
+ */
+export function assertValidVersion(version) {
+  if (version && !VERSION_PATTERN.test(version)) {
+    throw new Error(`"${version}" is not a valid Replicate version id.`);
+  }
+}
+
 /**
  * Build the prediction request URL.
  *
@@ -75,11 +118,14 @@ export function outputToText(output) {
  * @returns {string}
  */
 export function buildPredictionUrl(config) {
-  const base = `https://${REPLICATE_HOST}/v1`;
   // A version id identifies an exact build and works for any model, including
   // community ones. Without it, only Replicate's own official models resolve.
-  if (config.replicateVersion) return `${base}/predictions`;
-  return `${base}/models/${config.model}/predictions`;
+  if (config.replicateVersion) {
+    assertValidVersion(config.replicateVersion);
+    return `${REPLICATE_BASE}/predictions`;
+  }
+  assertValidModel(config.model);
+  return `${REPLICATE_BASE}/models/${config.model}/predictions`;
 }
 
 /**
@@ -146,9 +192,17 @@ const MAX_TOKEN_FIELD_CANDIDATES = ["max_new_tokens", "max_tokens", "max_length"
  */
 export async function fetchInputSchema(config, opts = {}) {
   const httpFetch = await getFetch();
+  // Both segments land in the request path, so both are validated before use.
+  assertValidModel(config.model);
+  assertValidVersion(config.replicateVersion);
+
   const url = config.replicateVersion
-    ? `https://${REPLICATE_HOST}/v1/models/${config.model}/versions/${config.replicateVersion}`
-    : `https://${REPLICATE_HOST}/v1/models/${config.model}`;
+    ? `${REPLICATE_BASE}/models/${config.model}/versions/${config.replicateVersion}`
+    : `${REPLICATE_BASE}/models/${config.model}`;
+
+  // The widened Tauri allowlist permits any https host, so the destination is
+  // confirmed to be Replicate here rather than assumed from the literal prefix.
+  assertAllowedDestination(url, REPLICATE_BASE);
 
   const res = await httpFetch(url, {
     method: "GET",
@@ -270,6 +324,8 @@ export async function transcribeBand(band, config, opts = {}) {
   }
 
   const url = buildPredictionUrl(config);
+  assertAllowedDestination(url, REPLICATE_BASE);
+
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${config.apiKey}`,
@@ -356,6 +412,10 @@ export async function transcribeBand(band, config, opts = {}) {
     if (!pollUrl) {
       throw new Error("Replicate prediction is still running but returned no polling URL");
     }
+    // The polling URL comes from the response body and is followed with the
+    // user's API token attached, so it is confirmed to point back at Replicate
+    // rather than trusted because the previous response looked genuine.
+    assertAllowedDestination(pollUrl, REPLICATE_BASE);
     prediction = await pollPrediction(httpFetch, pollUrl, headers, opts);
   }
 

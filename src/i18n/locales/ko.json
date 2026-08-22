@@ -256,7 +256,11 @@
         "noJson": "JSON 지시",
         "noWordsKey": "\"words\" 키",
         "noRegion": "영역/밴드 지시"
-      }
+      },
+      "consentTitle": "손글씨를 {{host}}(으)로 보낼까요?",
+      "consentBody": "인식 기능은 손글씨를 이미지로 렌더링하여 기기 외부 서비스인 {{host}}(으)로 전송합니다. 렌더링된 손글씨만 전송되며 노트 제목, 노트북, 계정 정보는 전송되지 않습니다.\n\n설정에서 언제든지 변경하거나 철회할 수 있습니다.",
+      "consentConfirm": "손글씨 보내기",
+      "consentDeclined": "{{host}}(으)로 손글씨를 보내는 데 동의할 때까지 인식 기능이 꺼져 있습니다."
     },
     "mcp": {
       "windowsOnly": "MCP 서버는 Windows 앱에서만 사용할 수 있습니다.",

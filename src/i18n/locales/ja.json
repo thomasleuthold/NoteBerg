@@ -256,7 +256,11 @@
         "noJson": "JSON の指示",
         "noWordsKey": "\"words\" キー",
         "noRegion": "領域/帯の指示"
-      }
+      },
+      "consentTitle": "手書きを {{host}} に送信しますか？",
+      "consentBody": "認識機能は手書きを画像として描画し、デバイス外のサービスである {{host}} に送信します。送信されるのは描画された手書きのみで、ノートのタイトル、ノートブック、アカウント情報は送信されません。\n\nこの設定はいつでも設定画面で変更・取り消しできます。",
+      "consentConfirm": "手書きを送信",
+      "consentDeclined": "{{host}} への手書き送信に同意するまで、認識機能は無効です。"
     },
     "mcp": {
       "windowsOnly": "MCPサーバーはWindowsアプリでのみ利用できます。",

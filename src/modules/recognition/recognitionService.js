@@ -15,6 +15,7 @@
  */
 
 import * as sidecarBackend from "./backends/sidecarBackend.js";
+import { hasConsent } from "./consent.js";
 import {
   BACKEND_OPENAI,
   BACKEND_REPLICATE,
@@ -91,7 +92,14 @@ export async function selectBackend() {
   const config = await getRecognitionConfig();
 
   if (isAiBackend(config.backend)) {
-    return isAiConfigured(config) ? { id: config.backend, config } : null;
+    if (!isAiConfigured(config)) return null;
+    // Consent is checked here rather than at the call sites because this is the
+    // one place every request passes through. A configured backend the user has
+    // not agreed to send handwriting to is treated exactly like an unconfigured
+    // one: recognition no-ops rather than uploading first and asking later
+    // (DESIGN §6).
+    if (!(await hasConsent(config))) return null;
+    return { id: config.backend, config };
   }
 
   if (await sidecarBackend.isAvailable()) {
