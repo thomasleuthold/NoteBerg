@@ -112,6 +112,13 @@ build-nc:
     # the importing module, so the build works on any webroot (/, /nextcloud/, ...).
     npm run build:nextcloud
 
+    # 1b. Copy the hand-written admin-settings script into the built js/.
+    #     It lives outside js/ because step 1 wipes that directory, and it is
+    #     not part of the Vite bundle: the app entry boots the whole note
+    #     editor, which has no business loading on a settings page. Served via
+    #     Util::addScript so Nextcloud applies its CSP nonce.
+    Copy-Item "js-admin\admin.js" "js\noteberg-admin.js"
+
     # 2. Assemble app into a clean temp directory
     if (Test-Path "build-nc-tmp") { Remove-Item -Recurse -Force "build-nc-tmp" }
     New-Item -ItemType Directory -Force -Path "build-nc-tmp\noteberg" | Out-Null
@@ -234,6 +241,8 @@ nc-down:
 # Rebuild JS/CSS into the dev container (8080) — hard reload after. Requires: just nc-up
 nc-dev-push:
     npm run build:nextcloud
+    # The admin-settings script is not part of the bundle; see build-nc step 1b.
+    Copy-Item "js-admin\admin.js" "js\noteberg-admin.js"
     Write-Host "Built for nc-up — hard reload http://localhost:8180"
 
 # Tests the published package as a real user would — no volume mount, no cache tricks
@@ -308,11 +317,21 @@ podman-restart:
 # Code quality
 # ===========================================================================
 
-# Lint, check, and format the frontend (biome)
+# Lint, check, and format the frontend (biome), then audit the locales
 check:
     npm run lint
     npm run check
     npm run format
+    just check-i18n
+
+# Audit the locale files: key parity, placeholder parity, untranslated strings.
+#
+# Deliberately has no "short strings are probably brand names" shortcut — that
+# heuristic hid real gaps ("AI Access", "Provider", "Status") for a long time.
+# Anything genuinely identical across languages is listed explicitly in the
+# script's ALLOWED_IDENTICAL, where the decision can be reviewed.
+check-i18n:
+    node scripts/check-i18n.mjs
 
 # Format the frontend (biome)
 format:
@@ -323,11 +342,25 @@ test:
     npm run test
     npm run test:nextcloud
 
+# Lint and test the Nextcloud PHP, inside the dev container.
+#
+# The app ships no composer dependencies, so there is no local PHP toolchain —
+# the dev container is the PHP. It boots Nextcloud, so OCP interfaces under test
+# are the real ones rather than stubs of our own invention.
+#
+# Requires `just nc-up`.
+test-php:
+    @Write-Host "Linting PHP..."
+    podman exec noteberg-nc bash -c 'for f in /var/www/html/apps-extra/noteberg/lib/*.php /var/www/html/apps-extra/noteberg/lib/Controller/*.php /var/www/html/apps-extra/noteberg/lib/AppInfo/*.php /var/www/html/apps-extra/noteberg/lib/Migration/*.php /var/www/html/apps-extra/noteberg/lib/Settings/*.php /var/www/html/apps-extra/noteberg/appinfo/*.php /var/www/html/apps-extra/noteberg/templates/*.php; do php -l "$f" || exit 1; done'
+    @Write-Host "Running PHP tests..."
+    podman exec noteberg-nc php /var/www/html/apps-extra/noteberg/scripts/test-php.php
+
 # Format, check, and test — the full pre-commit sweep
 fct:
     just format
     just check
     just test
+    just test-php
 
 # ===========================================================================
 # Version / release management
@@ -381,9 +414,53 @@ bump-major:
     npm version major --no-git-tag-version
     node sync-version.js
 
-# Push to the GitHub mirror (default: main branch)
-push-gh branch="main":
-    git push github {{branch}}
+# ===========================================================================
+# GitHub publishing (squashed mirror)
+# ===========================================================================
+# GitHub is a *published-release* mirror, not a working remote. `origin`
+# (shiftcloud) keeps the real per-commit history; GitHub only ever receives one
+# squashed commit per publish, so the day-to-day working rhythm — when a
+# feature was started, how often it was amended, when comments were written —
+# never leaves the private remote.
+#
+# Mirroring is branch-to-branch: `main` publishes to github/main,
+# `AI_recognition` publishes to github/AI_recognition. Branch names and publish
+# cadence are therefore visible on GitHub — only the per-commit history is not.
+# PRs keep working, because the branches exist.
+#
+# The squash is built with plumbing (`git commit-tree` on the source branch's
+# tree), so it never checks anything out: publishing works with edits in flight
+# and leaves the working tree untouched.
+#
+#   just publish-gh "Release 0.6.0"                    # main -> github/main
+#   just publish-gh "AI recognition" AI_recognition    # -> github/AI_recognition
+#
+# The commit's own timestamp is the moment you publish (release cadence only).
+# What GitHub has seen per branch is tracked in refs/github-mirror/<branch>
+# (a private ref namespace — these deliberately do not show up in `git branch`).
+# Never merge a mirror ref back into your work.
+#
+# On the FIRST publish of a branch that already exists on GitHub with real
+# history, the squash is parented onto the existing remote tip so the push
+# fast-forwards; the old per-commit history stays below it. Use
+# `just publish-gh-reset <branch>` to instead cut it loose as a fresh root
+# (force-push, discards that branch's published history).
+
+# List the GitHub mirror state: what each branch last published, and whether it is current
+publish-gh-status:
+    powershell -File scripts/publish-github.ps1 -Status
+
+# Show what `just publish-gh` would send to GitHub: the file diff vs that branch's last publish
+publish-gh-preview branch="main":
+    powershell -File scripts/publish-github.ps1 -Preview -Branch "{{branch}}"
+
+# Publish the current state of a branch to GitHub as ONE squashed commit on the same branch name
+publish-gh message branch="main":
+    powershell -File scripts/publish-github.ps1 -Message "{{message}}" -Branch "{{branch}}"
+
+# Cut a branch loose from its published history: next publish becomes a fresh root (FORCE-PUSH)
+publish-gh-reset branch message="Import":
+    powershell -File scripts/publish-github.ps1 -Reset -Branch "{{branch}}" -Message "{{message}}"
 
 # ===========================================================================
 # Utilities

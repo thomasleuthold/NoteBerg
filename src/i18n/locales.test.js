@@ -60,6 +60,12 @@ const LENGTH_RATIO_EXCEPTIONS = new Set([
   "de:recycleBin.purge",
   "fr:footer.syncing",
   "it:footer.syncing",
+  // "OK" is two characters, so any real Spanish word trips the short-string
+  // ratio. Spanish does not idiomatically borrow "OK" in UI chrome the way
+  // German, French, Italian and Portuguese do — "Aceptar" is the expected
+  // label, and shortening it to satisfy the ratio would be worse Spanish.
+  "es:common.ok",
+  "es:settings.mcp.auditLogOutcomeOk",
 ]);
 
 // Long-form strings (descriptions, warnings, confirmation dialogs) are allowed

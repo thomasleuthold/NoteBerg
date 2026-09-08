@@ -7,9 +7,12 @@
   --color-primary-light: #bee3f8;
   --color-secondary: #4a5568;
   --color-success: #2f855a;
+  --nb-status-success: #2f855a;
   --color-danger: #c53030;
+  --nb-status-error: #c53030;
   --color-danger-light: #fed7d7;
   --color-warning: #d69e2e;
+  --nb-status-warning: #d69e2e;
 
   /* Background colors */
   --bg-primary: #ffffff;

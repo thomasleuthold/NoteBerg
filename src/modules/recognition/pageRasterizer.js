@@ -42,6 +42,22 @@ export const DEFAULT_RENDER_OPTS = {
 };
 
 /**
+ * Drop marker/highlighter strokes before rasterization.
+ *
+ * Recognition renders mono: colour is stripped and every stroke becomes solid
+ * black ink. A highlighter sweep is translucent and much wider than a pen
+ * stroke precisely so it reads as emphasis *over* text, not as text — rendered
+ * opaque and black, it instead paints over the word it was meant to highlight,
+ * turning it into a solid black rectangle the model cannot read.
+ *
+ * @param {Array} strokes
+ * @returns {Array}
+ */
+export function filterRecognizableStrokes(strokes) {
+  return (strokes || []).filter((s) => s?.type !== "marker");
+}
+
+/**
  * Bounding box of a set of strokes in content space.
  *
  * @param {Array} strokes
@@ -177,8 +193,6 @@ function drawStrokes(ctx, strokes, transform, opts) {
   for (const s of strokes) {
     if (!s?.x?.length || s.x.length < 1) continue;
 
-    // Marker strokes are rendered as ordinary ink: the model only needs the
-    // glyph shapes, and translucent overlapping sweeps reduce contrast.
     const width = Math.max(opts.minStrokeWidthPx, (s.width ?? 2) * scale);
     ctx.lineWidth = width;
 
@@ -327,23 +341,23 @@ export function smallestTextHeight(strokes, scale) {
 }
 
 /**
- * Rasterize a note's strokes into one or more band images.
+ * Work out the page plan for a note without rendering anything.
  *
- * Each band records the transform used to produce it, so the caller can map
- * model-reported image coordinates back into content space.
+ * Split out of rasterizeNote so the confirmation dialog can tell the user how
+ * many pages a run will send before it sends any. Counting by re-deriving the
+ * page box in the UI would be the same arithmetic in two places, free to drift;
+ * sharing this makes the number quoted and the number charged the same number by
+ * construction.
  *
- * @param {Array} strokes - active strokes in content space
- * @param {Object} [options] - overrides for DEFAULT_RENDER_OPTS
- * @param {Function} [onProgress] - (phase, current, total)
- * @returns {Promise<Array<{
- *   index: number, png: Blob, width: number, height: number,
- *   contentX: number, contentY: number, scale: number
- * }>>}
+ * @param {Array} strokes
+ * @param {Object} [options] - render options; merged over DEFAULT_RENDER_OPTS
+ * @returns {{padded: Object, contentWidth: number, scale: number,
+ *   bands: Array}|null} null when the note has no ink to plan
  */
-export async function rasterizeNote(strokes, options = {}, onProgress) {
+export function planNote(strokes, options = {}) {
   const opts = { ...DEFAULT_RENDER_OPTS, ...options };
-  const bounds = strokeBounds(strokes);
-  if (!bounds) return [];
+  const bounds = strokeBounds(filterRecognizableStrokes(strokes));
+  if (!bounds) return null;
 
   // Always the note's real page box: the full width the user writes on, and
   // whole virtual pages vertically.
@@ -366,14 +380,55 @@ export async function rasterizeNote(strokes, options = {}, onProgress) {
   };
 
   const contentWidth = padded.maxX - padded.minX;
-  const scale = computeScale(contentWidth, opts);
-  const plan = planBands(padded, contentWidth);
+  return {
+    padded,
+    contentWidth,
+    scale: computeScale(contentWidth, opts),
+    bands: planBands(padded, contentWidth),
+  };
+}
+
+/**
+ * Count the page images a recognition run would send.
+ *
+ * @param {Array} strokes
+ * @param {Object} [options]
+ * @returns {number} 0 when there is no ink
+ */
+export function countBands(strokes, options = {}) {
+  return planNote(strokes, options)?.bands.length ?? 0;
+}
+
+/**
+ * Rasterize a note's strokes into one or more band images.
+ *
+ * Each band records the transform used to produce it, so the caller can map
+ * model-reported image coordinates back into content space.
+ *
+ * @param {Array} strokes - active strokes in content space
+ * @param {Object} [options] - overrides for DEFAULT_RENDER_OPTS
+ * @param {Function} [onProgress] - (phase, current, total)
+ * @returns {Promise<Array<{
+ *   index: number, png: Blob, width: number, height: number,
+ *   contentX: number, contentY: number, scale: number
+ * }>>}
+ */
+export async function rasterizeNote(strokes, options = {}, onProgress) {
+  const opts = { ...DEFAULT_RENDER_OPTS, ...options };
+  const noteplan = planNote(strokes, opts);
+  if (!noteplan) return [];
+  const { padded, contentWidth, scale, bands: plan } = noteplan;
+
+  // Marker strokes are excluded here too, not just in planNote's bounds: sent
+  // as-is, a highlighter sweep rasterizes as opaque black ink and paints over
+  // the very word it was meant to emphasize.
+  const recognizableStrokes = filterRecognizableStrokes(strokes);
 
   // Each stroke's vertical extent, computed once. Page assignment needs it for
   // every page, and recomputing it per page walked every point of every stroke
   // once per page — a long note turned that into tens of thousands of scans of
   // data that cannot change while rendering.
-  const strokeExtents = strokes.map((s) => {
+  const strokeExtents = recognizableStrokes.map((s) => {
     const extent = strokeYExtent(s);
     return extent && { stroke: s, ...extent };
   });
@@ -437,9 +492,9 @@ export async function rasterizeNote(strokes, options = {}, onProgress) {
   // image means the geometry is wrong, not the page. Catching it here rather
   // than per-band keeps the empty-page case legal while still refusing to spend
   // a slow, paid request on an image with nothing to read.
-  if (strokes.length > 0 && bands.every((b) => b.inkRatio === 0)) {
+  if (recognizableStrokes.length > 0 && bands.every((b) => b.inkRatio === 0)) {
     throw new Error(
-      `Rasterizer produced ${bands.length} blank image(s) from ${strokes.length} stroke(s). ` +
+      `Rasterizer produced ${bands.length} blank image(s) from ${recognizableStrokes.length} stroke(s). ` +
         "Recognition would report no handwriting, so the request was not sent.",
     );
   }

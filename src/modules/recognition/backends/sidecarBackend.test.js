@@ -64,6 +64,40 @@ describe("availability", () => {
     await isAvailable();
     expect(invokeMock).toHaveBeenCalledTimes(2);
   });
+
+  it("does not let a racing caller latch the sidecar as unavailable", async () => {
+    // The damaging half of the race. Both callers ran the lookup, and whichever
+    // finished last wrote the cache — so a second caller falling through to the
+    // failure path cached "" and disabled recognition for the rest of the
+    // session, with a working sidecar sitting right there.
+    let calls = 0;
+    invokeMock.mockImplementation(async () => {
+      calls++;
+      // A first call that succeeds and a second that does not. If only one
+      // lookup runs, the second behaviour is never reached and the sidecar
+      // stays available — which is the point.
+      return calls === 1 ? "http://localhost:5000" : null;
+    });
+
+    const { isAvailable, resolveUrl } = await load();
+    const [a, b] = await Promise.all([isAvailable(), isAvailable()]);
+
+    expect(a).toBe(true);
+    expect(b).toBe(true);
+    // And it stays available for callers arriving after the race, too.
+    expect(await resolveUrl()).toBe("http://localhost:5000");
+  });
+
+  it("caches the negative result so an absent sidecar is looked up once", async () => {
+    // The cache has to hold "looked, found nothing" as well, or every
+    // recognition attempt on Android and Nextcloud re-runs the lookup.
+    invokeMock.mockResolvedValue(null);
+    const { isAvailable } = await load();
+
+    expect(await isAvailable()).toBe(false);
+    expect(await isAvailable()).toBe(false);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("recognizeStrokes", () => {

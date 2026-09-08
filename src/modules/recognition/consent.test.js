@@ -43,7 +43,7 @@ describe("destinationHost", () => {
 
   it("treats Replicate as remote regardless of endpoint", () => {
     // Replicate has a fixed API host and no local variant.
-    expect(consent.destinationHost({ backend: "replicate", model: "o/n" })).toBe(
+    expect(consent.destinationHost({ provider: "replicate", model: "o/n" })).toBe(
       "api.replicate.com",
     );
   });

@@ -196,8 +196,216 @@ input:disabled + .toggle-slider {
 .recognition-indicator {
   display: none;
   align-items: center;
+  gap: 4px;
   margin-left: 16px;
   color: var(--color-primary);
+  cursor: pointer;
+}
+
+/* A failed job must not read as ordinary activity — it is the one state the
+   user has to act on, and it persists until dismissed. */
+.recognition-indicator[data-state="failed"] {
+  color: var(--color-danger);
+}
+
+/* Waiting work is real but not in progress; muted so the running state reads
+   as the active one. */
+.recognition-indicator[data-state="queued"] {
+  opacity: 0.7;
+}
+
+.recognition-indicator__count {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Recognition job list ===== */
+/* Anchored above the footer rather than centred: this is a status panel the
+   user watches while working, not a modal that takes over (DESIGN §7). It is
+   not a .modal-dialog, so it has to opt into the app's typography and tokens
+   explicitly rather than inheriting them. */
+.recognition-jobs {
+  position: fixed;
+  bottom: 44px;
+  left: 12px;
+  z-index: 900;
+  width: min(360px, calc(100vw - 24px));
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-family);
+  font-size: 0.875rem;
+  overflow: hidden;
+}
+
+/* Mirrors .modal-header, one step down in scale: this is a panel, not a
+   dialog, and a full 1.25rem title would outweigh the note titles below it. */
+.recognition-jobs__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-primary);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Same affordance as .modal-close. */
+.recognition-jobs__close {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.recognition-jobs__close:hover {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.recognition-jobs__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.recognition-jobs__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.recognition-jobs__item:last-child {
+  border-bottom: none;
+}
+
+.recognition-jobs__item[data-state="failed"] .recognition-jobs__status {
+  color: var(--color-danger);
+}
+
+/* Leading state glyph. Fixed width so the titles line up whether or not a row
+   has an icon — a finished job has none, and without this its title would
+   shift left as the row settles. */
+.recognition-jobs__icon {
+  flex: 0 0 auto;
+  width: 1em;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1;
+  color: var(--text-secondary);
+}
+
+/* Running: a rotating arc, drawn with the same border trick the note-preview
+   spinner uses rather than a rotating glyph — a glyph's baseline and its
+   optical centre do not coincide, so spinning one wobbles. Sized in em so it
+   tracks the row's font size. */
+.recognition-jobs__item[data-state="running"] .recognition-jobs__icon {
+  width: 0.875em;
+  height: 0.875em;
+  box-sizing: border-box;
+  border: 2px solid var(--border-primary);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: recognition-job-spin 900ms linear infinite;
+}
+
+/* Waiting: a pulsing hourglass. Deliberately slower and dimmer than the
+   spinner — the two are adjacent in the list, and matching their tempo would
+   make a queued job look as though it were already working. */
+.recognition-jobs__item[data-state="queued"] .recognition-jobs__icon {
+  animation: recognition-job-pulse 1.8s ease-in-out infinite;
+}
+
+.recognition-jobs__item[data-state="failed"] .recognition-jobs__icon {
+  color: var(--color-danger);
+}
+
+@keyframes recognition-job-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes recognition-job-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Motion is decoration here: the status text beside each icon already says
+   which state the row is in, so removing the animation loses nothing. The
+   failed icon is static anyway and needs no exception. */
+@media (prefers-reduced-motion: reduce) {
+  .recognition-jobs__item[data-state="running"] .recognition-jobs__icon,
+  .recognition-jobs__item[data-state="queued"] .recognition-jobs__icon {
+    animation: none;
+  }
+}
+
+.recognition-jobs__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.recognition-jobs__status {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Matches the app's secondary buttons rather than inventing a third style. */
+.recognition-jobs__cancel,
+.recognition-jobs__clear {
+  background: none;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  padding: var(--spacing-xs) var(--spacing-md);
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.recognition-jobs__cancel:hover,
+.recognition-jobs__clear:hover {
+  background-color: var(--bg-secondary);
+  border-color: var(--border-secondary);
+}
+
+.recognition-jobs__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--border-primary);
 }
 
 /* ===== MCP indicator (footer badge, Windows only) ===== */
@@ -242,7 +450,7 @@ input:disabled + .toggle-slider {
 
 /* ===== Button variants ===== */
 .btn-warning {
-  background-color: var(--color-warning);
+  background-color: var(--nb-status-warning);
   color: white;
 }
 
@@ -263,4 +471,175 @@ input:disabled + .toggle-slider {
 .danger-zone-desc {
   color: var(--text-secondary);
   font-size: 0.875rem;
+}
+
+/* ===== Model picker dialog ===== */
+
+/* Wider and taller than the default dialog: this is a list to scan, and at
+   500px an OpenRouter model name plus its type badge wraps on every row. */
+.model-picker {
+  max-width: 720px;
+  height: 80vh;
+}
+
+.model-picker__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+/* The search box takes the leftover width — it is the filter people reach for
+   first, and the type dropdown is sized by its longest option. */
+.model-picker__filters > .model-picker__search {
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: none;
+}
+
+.model-picker__filters > .model-picker__type {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.model-picker__vision {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Controls that would filter nothing (a single type, or no model declaring its
+   modalities) are removed rather than disabled: a dropdown with one entry reads
+   as broken, and a disabled checkbox invites the user to wonder what it needs. */
+.model-picker__hidden,
+.model-picker__filters--hidden {
+  display: none;
+}
+
+.model-picker__note {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin: 0 0 var(--spacing-md);
+}
+
+.model-picker__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.model-picker__empty {
+  color: var(--text-tertiary);
+  font-style: italic;
+  margin: var(--spacing-lg) 0;
+  text-align: center;
+}
+
+/* Each row is a real <button>, so its browser defaults have to be undone before
+   it can look like a list item — left-aligned, full width, inheriting type. */
+.model-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.model-row:hover {
+  background-color: var(--bg-secondary);
+  border-color: var(--border-secondary);
+}
+
+.model-row:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+/* The model already configured. Marked so a user who opens the picker to change
+   models can see what they are changing from. */
+.model-row--current {
+  border-color: var(--color-primary);
+  background-color: var(--color-primary-light);
+}
+
+.model-row__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.model-row__name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.model-row__type {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* The id is what actually lands in the field, so it is shown verbatim and
+   monospaced — a slug is read character by character, not as a phrase. */
+.model-row__id {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: var(--spacing-xs);
+  overflow-wrap: anywhere;
+}
+
+.model-row__caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
+}
+
+.model-badge {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+/* Vision is the capability handwriting recognition actually requires, so it is
+   the one badge that carries colour rather than sitting in the neutral set. */
+.model-badge--vision {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-hover);
+  font-weight: 600;
+}
+
+/* Descriptions run to a paragraph on OpenRouter. Two lines is enough to tell
+   models apart; more would make the list unscannable. */
+.model-row__desc {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  margin: var(--spacing-sm) 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

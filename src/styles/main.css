@@ -7,12 +7,26 @@
   --color-secondary: #64748b;
   --color-secondary-hover: #475569;
   --color-success: #10b981;
+  /* Status colours, namespaced.
+     
+     Nextcloud defines --color-success / --color-warning / --color-error on
+     <body> with its own (much paler) palette. Ours live on :root, so every
+     element inside <body> — which is all of them — inherits NC's instead, and
+     a "Saved" message rendered in NC's pale green reads as disabled text.
+     
+     A distinct prefix removes the collision rather than fighting it with
+     specificity, and cannot be shadowed by a future NC variable either. Use
+     --nb-status-* for anything the app colours itself; the --color-* names stay
+     for the native builds' own use and for backwards compatibility. */
+  --nb-status-success: #10b981;
   --color-danger: #ef4444;
   /* Tinted background for danger/warning callouts (e.g. the MCP status
      warning), light enough to carry --color-danger text on top. */
   --color-danger-light: #fee2e2;
   --color-error: #ef4444;
+  --nb-status-error: #ef4444;
   --color-warning: #f59e0b;
+  --nb-status-warning: #f59e0b;
 
   /* Background colors */
   --bg-primary: #ffffff;
@@ -297,11 +311,11 @@ body {
 
 /* State colors */
 .sync-status[data-status="connected"] .sync-indicator {
-  color: var(--color-success);
+  color: var(--nb-status-success);
 }
 
 .sync-status[data-status="syncing"] .sync-indicator {
-  color: var(--color-warning);
+  color: var(--nb-status-warning);
   animation: spin 1s linear infinite;
 }
 
@@ -311,7 +325,7 @@ body {
 }
 
 .sync-status[data-status="error"] .sync-indicator {
-  color: var(--color-error);
+  color: var(--nb-status-error);
 }
 
 @keyframes spin {
@@ -331,7 +345,7 @@ body {
   left: 0;
   height: 2px;
   width: 40%;
-  background-color: var(--color-warning);
+  background-color: var(--nb-status-warning);
   border-radius: 1px;
 }
 
@@ -723,6 +737,29 @@ body {
   line-height: 1.5;
   color: var(--text-secondary);
   margin: 0;
+}
+
+.confirm-message + .confirm-message {
+  margin-top: var(--spacing-xs);
+}
+
+.confirm-message-warning {
+  color: var(--nb-status-warning);
+}
+
+/* Per-run option in the recognition confirmation dialog.
+
+   Reuses the settings screen's .setting-item / .toggle-switch pattern so a
+   toggle looks the same wherever it appears. Only the row framing differs: in
+   settings the divider separates a run of rows, but here there is a single row
+   under a sentence, where that line reads as a rule under the text. */
+.recognition-option {
+  margin-top: var(--spacing-md);
+  padding-bottom: 0;
+}
+
+.recognition-option::before {
+  content: none;
 }
 
 /* Scrollbar styling — scoped to #app so NC's own scrollbars are unaffected */

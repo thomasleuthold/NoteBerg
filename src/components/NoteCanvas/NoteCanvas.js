@@ -43,7 +43,13 @@ import {
 } from "../../utils/noteRenderer.js";
 import { startHelpTour } from "../HelpOverlay.js";
 import { getHelpContent, getHelpLabels } from "../helpContent.js";
-import { showAlertDialog, showConfirmDialog, showProgressDialog } from "../modals.js";
+import {
+  showAlertDialog,
+  showConfirmDialog,
+  showProgressDialog,
+  showRecognitionOptionsDialog,
+  showRecognizedTextModal,
+} from "../modals.js";
 import { AppClipboard } from "./AppClipboard.js";
 import { CanvasRenderer } from "./CanvasRenderer.js";
 import { ContextFloatingMenu } from "./ContextFloatingMenu.js";
@@ -301,11 +307,14 @@ export class NoteCanvas {
     this._onPointerUpNav = this._onPointerUpNav.bind(this);
     this._onPointerMoveHover = this._onPointerMoveHover.bind(this);
     this._onPointerLeaveHover = this._onPointerLeaveHover.bind(this);
+    this._onWindowPointerEnd = this._onWindowPointerEnd.bind(this);
+    this._onVisibilityChange = this._onVisibilityChange.bind(this);
     this._onStrokeStart = this._onStrokeStart.bind(this);
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
     this._onKeyDown = this._onKeyDown.bind(this);
     this._onDataChange = this._onDataChange.bind(this);
+    this._onRecognitionJobComplete = this._onRecognitionJobComplete.bind(this);
   }
 
   /**
@@ -705,6 +714,9 @@ export class NoteCanvas {
           this.currentPenType = type;
         },
         getBackground: () => this.noteData.background || "none",
+        // Whitespace-only text counts as nothing to show: it would open a
+        // dialog that looks empty and broken rather than informative.
+        getRecognizedText: () => this._getRecognition()?.fullText?.trim() || null,
         onOptionsChange: async (action) => {
           if (action.type === "background") {
             this.noteData.background = action.value;
@@ -715,6 +727,8 @@ export class NoteCanvas {
             await this._exportPdf();
           } else if (action.type === "recognize-now") {
             await this._recognizeNow();
+          } else if (action.type === "show-recognized-text") {
+            showRecognizedTextModal(this._getRecognition());
           } else if (action.type === "toggle-fullscreen") {
             await toggleFullscreen();
           } else if (action.type === "delete") {
@@ -1452,7 +1466,8 @@ export class NoteCanvas {
       // box shapes exist in stored data, so each field is read from whichever
       // form the word carries.
       for (const word of recognition.words) {
-        if (!word?.text || word.region != null) continue;
+        // A word localized to a band has no box; it is drawn below instead.
+        if (!word?.text || word.yRange) continue;
 
         regex.lastIndex = 0;
         if (!regex.test(word.text)) continue;
@@ -1470,9 +1485,9 @@ export class NoteCanvas {
         }
       }
 
-      // Region-localized words have no box; they highlight as full-width bands.
+      // Band-localized words have no box; they highlight as full-width bands.
       for (const band of collectHighlightBands(recognition.words, regex)) {
-        rects.push({ x: 0, y: band.y, w: this.maxContentWidth, h: band.h, region: band.region });
+        rects.push({ x: 0, y: band.y, w: this.maxContentWidth, h: band.h, band: true });
       }
 
       if (this.renderer) {
@@ -1946,6 +1961,7 @@ export class NoteCanvas {
     // Theme changes
     window.addEventListener("datachange", this._onDataChange);
     window.addEventListener("themechange", this._onThemeChange);
+    window.addEventListener("recognition-job-complete", this._onRecognitionJobComplete);
 
     // Zoom via mouse wheel
     const viewport = this.scroller.getViewportElement();
@@ -1961,6 +1977,15 @@ export class NoteCanvas {
     // Mouse hover affordance for images (shows the option button on hover)
     viewport.addEventListener("pointermove", this._onPointerMoveHover);
     viewport.addEventListener("pointerleave", this._onPointerLeaveHover);
+
+    // Backstop for missed pointerup/pointercancel (observed on iOS Safari:
+    // a dropped end event leaves a stale entry in activePointers, which
+    // permanently miscounts fingers and silently breaks pan/pinch until the
+    // note is reopened). Capture phase on window so it fires even if the
+    // original target was removed or something stopped propagation.
+    window.addEventListener("pointerup", this._onWindowPointerEnd, true);
+    window.addEventListener("pointercancel", this._onWindowPointerEnd, true);
+    document.addEventListener("visibilitychange", this._onVisibilityChange);
 
     // Right-click paste menu (stopPropagation prevents the global window prevention in main.js)
     viewport.addEventListener("contextmenu", (e) => {
@@ -1980,6 +2005,30 @@ export class NoteCanvas {
    */
   async _onDataChange(e) {
     await this.handleExternalDataChange(e);
+  }
+
+  /**
+   * Adopt a recognition result that landed while this note was open.
+   *
+   * A queued job finishes long after the run was requested, and the note may
+   * well have been closed and reopened since. When it *is* open, the ordinary
+   * `datachange` path will not help: recognition writes are source:"local", and
+   * handleExternalDataChange ignores those so our own saves do not wipe the undo
+   * history on every stroke. So the queue tells us directly, and we take only
+   * what changed — no reload, no undo loss.
+   *
+   * @param {CustomEvent} e
+   * @private
+   */
+  _onRecognitionJobComplete(e) {
+    const { noteId, recognition } = e?.detail || {};
+    if (!noteId || noteId !== this.noteId || !recognition) return;
+    if (!this.noteData) return;
+
+    this.noteData.recognition = recognition;
+    // Re-apply any active search so new matches highlight immediately rather
+    // than only after the note is reopened.
+    if (this.activeSearchQuery) this._highlightSearchTerms(this.activeSearchQuery);
   }
 
   /**
@@ -2534,7 +2583,14 @@ export class NoteCanvas {
 
         if (affectedStrokeIds.length > 0 || affectedMediaIds.length > 0) {
           // Create and push command BEFORE changing data
-          const command = new ShiftContentCommand(yShift, affectedStrokeIds, affectedMediaIds);
+          // startY lets the command move recognition bands with the ink they
+          // describe; without it they would point at whatever moved into place.
+          const command = new ShiftContentCommand(
+            yShift,
+            affectedStrokeIds,
+            affectedMediaIds,
+            startY,
+          );
           this.historyManager?.push(command);
 
           // Apply the shift
@@ -5054,6 +5110,45 @@ export class NoteCanvas {
   }
 
   /**
+   * Window-level backstop for pointerup/pointercancel. iOS Safari can drop
+   * these events on the original target (e.g. during a system edge gesture
+   * or a fast multi-finger release), which would otherwise leave a stale
+   * entry in activePointers forever and silently break pan/pinch for the
+   * rest of the session. _onPointerUpNav is idempotent (guarded by
+   * activePointers.has), so calling it again here for the same pointer is
+   * harmless.
+   * @private
+   */
+  _onWindowPointerEnd(e) {
+    if (!this.activePointers.has(e.pointerId)) return;
+    this._onPointerUpNav(e);
+  }
+
+  /**
+   * If the page is backgrounded mid-touch (app switch, incoming call, etc.),
+   * iOS Safari may never deliver pointerup/pointercancel at all. Clear all
+   * gesture state so a stale pointer can't wedge pan/zoom after returning.
+   * @private
+   */
+  _onVisibilityChange() {
+    if (document.visibilityState !== "hidden") return;
+    if (this.activePointers.size === 0) return;
+
+    this.activePointers.clear();
+    this._isZooming = false;
+    this.lastTouchDistance = null;
+    this.initialPinchZoom = null;
+    this.lastTouchX = null;
+    this.lastTouchY = null;
+    this.velocityX = 0;
+    this.velocityY = 0;
+    if (this.momentumReqId) {
+      cancelAnimationFrame(this.momentumReqId);
+      this.momentumReqId = null;
+    }
+  }
+
+  /**
    * Start momentum scrolling animation
    * @private
    */
@@ -5228,6 +5323,43 @@ export class NoteCanvas {
    * @private
    */
   async _recognizeNow() {
+    // Consent first, because the availability check below includes it.
+    //
+    // selectBackend() treats a backend the user has not consented to exactly as
+    // an unconfigured one — deliberately, so nothing is uploaded before the
+    // question is asked. But that makes "not consented yet" and "nothing is set
+    // up" indistinguishable here, and under central administration (Nextcloud)
+    // there is no settings screen on which consent could already have been
+    // given: the whole configuration is the administrator's. Recognition then
+    // reported "no recognition service configured" for an instance that was
+    // fully configured.
+    //
+    // Asked rather than waived: an administrator choosing the destination does
+    // not make it the user's choice to send their handwriting there, and this
+    // is the moment the user is deciding to send it. Off Nextcloud, and in BYO
+    // mode, consent has normally been granted at the provider settings already,
+    // so destinationHost/hasConsent short-circuit and nothing is shown.
+    const { getRecognitionConfig, isRecognitionReady } = await import(
+      "../../modules/recognition/recognitionSettings.js"
+    );
+    const pendingConfig = await getRecognitionConfig();
+    if (isRecognitionReady(pendingConfig)) {
+      const { destinationHost, grantConsent, hasConsent } = await import(
+        "../../modules/recognition/consent.js"
+      );
+      const consentHost = destinationHost(pendingConfig);
+      if (consentHost && !(await hasConsent(pendingConfig))) {
+        const agreed = await showConfirmDialog(
+          t("settings.aiProvider.consentTitle", { host: consentHost }),
+          t("settings.aiProvider.consentBody", { host: consentHost }),
+          t("settings.aiProvider.consentConfirm"),
+          "btn-primary",
+        );
+        if (!agreed) return;
+        await grantConsent(pendingConfig);
+      }
+    }
+
     const { isRecognitionAvailable } = await import(
       "../../modules/recognition/recognitionService.js"
     );
@@ -5250,26 +5382,80 @@ export class NoteCanvas {
       return;
     }
 
-    // Local models can take minutes per page. Without a cancel path the modal is
-    // indistinguishable from a hang, and the user cannot get back to their note.
-    const controller = new AbortController();
-    const progress = showProgressDialog(t("canvas.recognition.progressTitle"), {
-      onCancel: () => controller.abort(),
-      cancelLabel: t("canvas.recognition.cancel"),
+    const { enqueue, cancel } = await import("../../modules/recognition/recognitionQueue.js");
+    // The configuration read for the consent check above. Reused rather than
+    // re-read: it is the same values, and on Nextcloud a second read is a second
+    // round trip whenever the cache was just invalidated.
+    //
+    // Recorded on the job so a resume after a restart can refuse to continue
+    // into a different provider than the one the bands were transcribed with.
+    const cfg = pendingConfig;
+
+    // Confirm before spending anything. This runs after the availability and
+    // empty-note checks so the dialog never offers to start a run that would
+    // immediately fail, and before enqueue so cancelling costs nothing.
+    //
+    // The page count comes from the rasterizer's own planner rather than being
+    // estimated here, so the figure shown is the figure billed.
+    //
+    // Quota is read here rather than earlier: it is only worth a round trip
+    // once the user is actually about to send pages, and getQuota() resolves
+    // to null off Nextcloud or when the server reports nothing, so this stays
+    // a no-op everywhere quota does not apply.
+    const { countBands } = await import("../../modules/recognition/pageRasterizer.js");
+    const { getQuota } = await import("../../modules/recognition/aiProvider.js");
+    const chosen = await showRecognitionOptionsDialog({
+      pageCount: countBands(strokes, { maxImageEdge: cfg.maxImageEdge }),
+      model: cfg.model,
+      quota: await getQuota(),
+    });
+    if (!chosen) return;
+
+    const job = enqueue(this.noteId, strokes, {
+      title: this.noteData.title || "",
+      backend: cfg.provider,
+      model: cfg.model,
+      punctuation: chosen.punctuation,
+      breaks: chosen.breaks,
     });
 
-    // Show elapsed seconds during the transcribe phase: a page can take minutes
-    // on a local model, so a label that never changes reads as a hang.
-    //
-    // The tick re-sends the current page numbers rather than zeroes. Passing
-    // (0, 0) made the dialog compute 0% and snap the bar back to empty a second
-    // after every page, so the bar spent almost all of its time showing no
-    // progress at all.
+    // The queue absorbed this request into a run already under way. Say so and
+    // stop, rather than opening a progress dialog for work this click did not
+    // start: that dialog would report "waiting" for a job that is in fact
+    // transcribing, and its Cancel button would abort the original run — so the
+    // second click could kill the first recognition.
+    if (job.duplicate) {
+      await showAlertDialog(
+        t("canvas.recognition.progressTitle"),
+        t("canvas.recognition.alreadyRunning"),
+      );
+      return;
+    }
+
     const startedAt = Date.now();
     let lastPhase = "";
     let current = 0;
     let total = 0;
     let wordCount = 0;
+    let finished = false;
+    let cleanup = () => {};
+
+    // The dialog is a *view* of a job that runs regardless of it. Closing it
+    // leaves the work running — the footer keeps showing progress — which is the
+    // whole reason recognition moved to a queue: a 2-minute transcription must
+    // not pin the user to a modal.
+    const progress = showProgressDialog(t("canvas.recognition.progressTitle"), {
+      onCancel: () => cancel(job.id),
+      cancelLabel: t("canvas.recognition.cancel"),
+      dismissLabel: t("canvas.recognition.runInBackground"),
+      note: t("canvas.recognition.backgroundNote"),
+      // Detach from the job without touching it. The listeners must go, or a
+      // dismissed dialog would still pop an alert when the job finishes.
+      onDismiss: () => {
+        finished = true;
+        cleanup();
+      },
+    });
 
     const render = () => {
       const seconds = Math.round((Date.now() - startedAt) / 1000);
@@ -5282,66 +5468,77 @@ export class NoteCanvas {
       );
     };
 
+    // Elapsed seconds during transcription: a page can take minutes on a local
+    // model, so a label that never changes reads as a hang.
     const ticker = setInterval(() => {
-      if (lastPhase === "transcribe") render();
+      if (lastPhase === "transcribe" && !finished) render();
     }, 1000);
 
-    try {
-      const result = await forceRecognition(this.noteId, strokes, {
-        signal: controller.signal,
-        // A deliberate re-run replaces the stored result even when the text is
-        // unchanged — otherwise re-recognizing with a different model appears
-        // to do nothing.
-        force: true,
-        onProgress: (phase, phaseCurrent, phaseTotal, detail) => {
-          lastPhase = phase;
-          current = phaseCurrent;
-          total = phaseTotal;
-          if (typeof detail?.words === "number") wordCount = detail.words;
-          render();
-        },
-      });
-      clearInterval(ticker);
+    const onProgress = (e) => {
+      if (e.detail?.jobId !== job.id) return;
+      lastPhase = e.detail.phase;
+      current = e.detail.current;
+      total = e.detail.total;
+      if (typeof e.detail.words === "number") wordCount = e.detail.words;
+      render();
+    };
+
+    const onState = async (e) => {
+      if (e.detail?.jobId !== job.id) return;
+      const { state, queuePosition, error } = e.detail;
+
+      // Waiting behind another note. This job has made no progress of its own,
+      // so a bar at 0% would be indistinguishable from a stall — say why.
+      if (state === "queued") {
+        progress.indeterminate(
+          queuePosition > 0
+            ? t("canvas.recognition.queuedBehind", { count: queuePosition })
+            : t("canvas.recognition.queuedNext"),
+        );
+        return;
+      }
+      if (state === "running") return;
+
+      finished = true;
+      cleanup();
       progress.close();
 
-      if (controller.signal.aborted) {
-        // Cancelling leaves hasRecognition false, so the note is simply picked
-        // up again by the next catch-up scan.
+      if (state === "cancelled") {
         await showAlertDialog(
           t("canvas.recognition.progressTitle"),
           t("canvas.recognition.cancelled"),
         );
         return;
       }
-
-      // Re-read from the note: forceRecognition persists, and the canvas needs
-      // the stored object for search highlighting.
-      const stored = (await getNote(this.noteId))?.recognition;
-      if (stored) {
-        this.noteData.recognition = stored;
-        // Re-apply any active search so new matches highlight immediately
-        // instead of only after the note is reopened.
-        if (this.activeSearchQuery) this._highlightSearchTerms(this.activeSearchQuery);
+      if (state === "failed") {
+        await showAlertDialog(
+          t("canvas.recognition.failed"),
+          error === "stale" ? t("canvas.recognition.staleStrokes") : error || "",
+        );
+        return;
       }
 
-      const count = stored?.words?.length ?? result?.words?.length ?? 0;
+      const stored = (await getNote(this.noteId))?.recognition;
+      // Counted rather than measured by array length: the array also holds the
+      // line breaks that give the text its shape, which are not words.
+      const { countWords } = await import("../../modules/recognition/breaks.js");
+      const count = countWords(stored?.words);
       await showAlertDialog(
         t("canvas.recognition.progressTitle"),
         count > 0 ? t("canvas.recognition.done", { count }) : t("canvas.recognition.empty"),
       );
-    } catch (err) {
+    };
+
+    cleanup = () => {
       clearInterval(ticker);
-      progress.close();
-      if (err?.name === "AbortError" || controller.signal.aborted) {
-        await showAlertDialog(
-          t("canvas.recognition.progressTitle"),
-          t("canvas.recognition.cancelled"),
-        );
-        return;
-      }
-      console.error("[NoteCanvas] Recognition failed:", err);
-      await showAlertDialog(t("canvas.recognition.failed"), err.message);
-    }
+      window.removeEventListener("recognition-job-progress", onProgress);
+      window.removeEventListener("recognition-job-state", onState);
+    };
+
+    window.addEventListener("recognition-job-progress", onProgress);
+    window.addEventListener("recognition-job-state", onState);
+
+    progress.indeterminate(t("canvas.recognition.queuedNext"));
   }
 
   /**
@@ -5411,13 +5608,19 @@ export class NoteCanvas {
     // manual run (_recognizeNow) has already written its result and marked the
     // note unsynced, so skipping here does not lose it — but it does mean a
     // manual run must persist on its own rather than relying on close.
+    //
+    // Marked automatic: closing a note is not a request to spend money or to
+    // wait. An AI backend no-ops here (recognitionService.selectBackend) so
+    // navigation and the sync that follows it are never stalled on a call that
+    // can take minutes; the note keeps hasRecognition false and stays available
+    // for a deliberate run from the toolbar.
     let pendingRecognition = null;
     if (this.strokesChanged && this.noteId && this.noteData?.strokes) {
       const activeStrokes = this.noteData.strokes.filter((s) => !s._deleted && !s.isDeleted);
       if (activeStrokes.length > 0) {
-        pendingRecognition = forceRecognition(this.noteId, activeStrokes).catch((e) =>
-          console.error("[NoteCanvas] Recognition failed:", e),
-        );
+        pendingRecognition = forceRecognition(this.noteId, activeStrokes, {
+          automatic: true,
+        }).catch((e) => console.error("[NoteCanvas] Recognition failed:", e));
       }
     }
 
@@ -5445,7 +5648,11 @@ export class NoteCanvas {
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);
     window.removeEventListener("datachange", this._onDataChange);
+    window.removeEventListener("recognition-job-complete", this._onRecognitionJobComplete);
     window.removeEventListener("keydown", this._onKeyDown);
+    window.removeEventListener("pointerup", this._onWindowPointerEnd, true);
+    window.removeEventListener("pointercancel", this._onWindowPointerEnd, true);
+    document.removeEventListener("visibilitychange", this._onVisibilityChange);
 
     if (this.scroller) {
       const viewport = this.scroller.getViewportElement();

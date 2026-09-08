@@ -16,11 +16,11 @@
  */
 
 import { getSetting, setSetting } from "../storage.js";
+import { PROVIDER_REPLICATE } from "./aiProvider.js";
 import { REPLICATE_HOST } from "./backends/replicateBackend.js";
-import { BACKEND_REPLICATE } from "./recognitionSettings.js";
-
-/** Hosts that never leave the device, so never need consent. */
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+// Hosts that never leave the device, so never need consent. Shared with the
+// https requirement and the credential check, which turn on the same fact.
+import { LOCAL_HOSTS } from "./endpointValidation.js";
 
 /** Setting key holding the host the user last consented to. */
 const CONSENT_KEY = "recognition_consent_host";
@@ -33,7 +33,7 @@ const CONSENT_KEY = "recognition_consent_host";
  */
 export function destinationHost(config) {
   // Replicate has a fixed host and is always remote; there is no local variant.
-  if (config?.backend === BACKEND_REPLICATE) return REPLICATE_HOST;
+  if (config?.provider === PROVIDER_REPLICATE) return REPLICATE_HOST;
 
   try {
     const { hostname } = new URL(config?.endpoint);

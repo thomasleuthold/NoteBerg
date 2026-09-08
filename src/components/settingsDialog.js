@@ -55,13 +55,19 @@ async function handleLanguageChange() {
 
   // Preserve scroll: re-rendering resets it, which would throw the user back to
   // the top of a long panel just for picking a language.
-  const body = overlay.querySelector(".settings-dialog__body");
-  const scrollTop = body?.scrollTop ?? 0;
+  //
+  // The detail pane is the scroller, not the dialog body — the body is fixed so
+  // the nav rail stays put while a section scrolls beside it. It is also rebuilt
+  // by renderSettings, so the offset is read off the old pane and written to
+  // whichever one replaces it, rather than kept on an element reference.
+  const scroller = () => overlay.querySelector(".settings-detail");
+  const scrollTop = scroller()?.scrollTop ?? 0;
 
   const { renderSettings } = await import("./settingsMode.js");
   await renderSettings(container);
 
-  if (body) body.scrollTop = scrollTop;
+  const restored = scroller();
+  if (restored) restored.scrollTop = scrollTop;
 }
 
 function handleKeydown(event) {

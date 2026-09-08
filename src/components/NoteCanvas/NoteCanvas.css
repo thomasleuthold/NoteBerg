@@ -842,8 +842,16 @@
   transition: background-color 0.2s;
 }
 
-.note-canvas-toolbar__option-btn:hover {
+.note-canvas-toolbar__option-btn:hover:not(:disabled) {
   background-color: var(--bg-secondary);
+}
+
+/* An entry that cannot be used must also look that way. Without this it stays
+   fully opaque and still lights up on hover, which reads as a button that is
+   broken rather than one that is unavailable. */
+:is(body, #app) .note-canvas-toolbar__option-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 :is(body, #app) .note-canvas-toolbar__option-btn--active {

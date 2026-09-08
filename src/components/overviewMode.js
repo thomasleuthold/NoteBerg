@@ -36,6 +36,7 @@ import {
   renderNotePreview,
   renderNoteSnapshot,
 } from "../utils/noteRenderer.js";
+import { showLoadingIndicator } from "./loadingIndicator.js";
 import {
   showConfirmDialog,
   showEditNotebookModal,
@@ -371,6 +372,11 @@ function buildTasksHtml(allTasks) {
 }
 
 async function renderMarkersTab(container, myToken) {
+  // Scanning every note for tasks can take a moment, and the toggle re-render
+  // below re-enters here directly rather than via renderActiveTab, so show the
+  // indicator here instead of relying on the caller's.
+  showLoadingIndicator(container, { label: t("overview.loading"), block: true });
+
   // Collect tasks from all notes — need full content (tasks, strokes, recognition)
   const noteIndexes = await getAllNotes();
   if (myToken !== renderToken) return;
@@ -570,7 +576,7 @@ async function renderRecycleBinTab(container, myToken) {
 
 async function renderActiveTab(container, notebookId) {
   const myToken = ++renderToken;
-  container.innerHTML = `<div class="loading-state">${t("overview.loading")}</div>`;
+  showLoadingIndicator(container, { label: t("overview.loading"), block: true });
 
   try {
     if (currentActiveTab === "notes") {
@@ -846,7 +852,10 @@ function attachSearchListeners(container) {
 
       updateClearBtn();
       searchResults.style.display = "block";
-      searchResults.innerHTML = `<div class="search-status">${t("overview.search.searching")}</div>`;
+      showLoadingIndicator(searchResults, {
+        label: t("overview.search.searching"),
+        block: true,
+      });
 
       try {
         const results = await searchAllNotes(rawQuery);

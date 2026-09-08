@@ -18,6 +18,11 @@ class Application extends App implements IBootstrap {
 	}
 
 	public function register(IRegistrationContext $context): void {
+		// The admin settings panel and its section are declared in
+		// appinfo/info.xml (<settings><admin>/<admin-section>), which is where
+		// Nextcloud reads them from. IRegistrationContext has no equivalent
+		// method — only registerDeclarativeSettings(), which is the different
+		// schema-driven form.
 	}
 
 	public function boot(IBootContext $context): void {

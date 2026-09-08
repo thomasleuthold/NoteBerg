@@ -1414,10 +1414,10 @@ export class CanvasRenderer {
         this.ctx.lineWidth = HIGHLIGHT_LINE_WIDTH;
 
         for (const rect of this.highlightRects) {
-          // A region hit says "the word is somewhere in this band" — nothing
+          // A band hit says "the word is somewhere in this band" — nothing
           // more. Drawing it as a bordered rect would claim a precision the
           // recognition does not have, so it renders as a soft tint instead.
-          if (rect.region != null) {
+          if (rect.band) {
             this._drawApproximateMarker(rect);
             continue;
           }

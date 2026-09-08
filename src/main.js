@@ -14,6 +14,7 @@ import "./styles/themes/dark.css";
 import "./styles/layout.css";
 import "./styles/components.css";
 import "./styles/notebookEditor.css";
+import "./styles/nbLoader.css";
 
 import { initModals } from "./components/modals.js";
 import { initNoteCanvasComponent } from "./components/NoteCanvas/index.js";
@@ -164,6 +165,15 @@ async function init() {
   initNoteCanvasComponent();
   initBreadcrumb();
   initFooter();
+
+  // Pick up recognition jobs left unfinished by a previous session, and keep
+  // watching for the app returning to the foreground. Deliberately not awaited:
+  // resuming is background work and must not delay startup. Lazy so the module
+  // (and its backends) load only where recognition is actually used.
+  import("./modules/recognition/recognitionQueue.js")
+    .then(({ initRecognitionQueue }) => initRecognitionQueue())
+    .catch((err) => console.warn("Recognition queue init failed:", err));
+
   console.log(`Components initialized in ${Math.round(performance.now() - componentsStart)}ms`);
 
   // Set up event listeners

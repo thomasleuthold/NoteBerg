@@ -10,11 +10,24 @@
  * be the endpoint the user actually configured. Without it, the widened
  * allowlist would let any code path in the frontend reach any https host.
  *
- * See documentation/roadmap/ai-recognition/DESIGN.md §8.
+ * See documentation/ai_integration_design.md §7.
  */
 
-/** Hosts that are always permitted for local inference. */
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+/**
+ * Hosts that resolve on the user's own machine, so nothing sent to them leaves
+ * the device.
+ *
+ * Exported because three separate gates turn on this same fact and must not
+ * drift apart: whether plain http is permitted (here), whether sending
+ * handwriting needs consent (consent.js), and whether a missing credential is
+ * acceptable (providerCheck.js). Each was carrying its own copy of the list, so
+ * adding a loopback form to one would have left the others disagreeing — an
+ * endpoint exempt from the https requirement while still prompting for consent
+ * to send ink to the user's own machine.
+ *
+ * Changing this set therefore changes all three gates. That is the intent.
+ */
+export const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /**
  * Parse a URL, returning null rather than throwing.

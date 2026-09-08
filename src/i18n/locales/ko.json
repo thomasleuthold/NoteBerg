@@ -7,7 +7,7 @@
     "restore": "복원",
     "save": "저장",
     "ok": "확인",
-    "next": "Next",
+    "next": "다음",
     "loading": "불러오는 중...",
     "working": "처리 중...",
     "error": "오류",
@@ -115,15 +115,14 @@
     "title": "설정",
     "sections": {
       "appearance": "화면",
-      "language": "언어",
       "security": "보안",
       "nextcloud": "Nextcloud 동기화",
       "recognition": "손글씨 인식",
-      "mcp": "MCP Server (AI Integration)",
+      "mcp": "MCP 서버(AI 통합)",
       "logging": "로그",
       "dangerZone": "위험 구역",
       "about": "정보",
-      "help": "도움말 안내"
+      "aiProvider": "AI 액세스"
     },
     "appearance": {
       "theme": "테마",
@@ -192,7 +191,7 @@
       "windowsOnly": "손글씨 인식은 Windows 앱에서만 사용할 수 있습니다.",
       "languageLabel": "언어",
       "languageDesc": "손글씨 인식을 위한 대상 언어",
-      "testBtn": "연결 테스트",
+      "testBtn": "인식 테스트(토큰 사용)",
       "testing": "테스트 중...",
       "connecting": "연결 중...",
       "success": "✓ 연결에 성공했습니다 ({{source}})!",
@@ -207,19 +206,25 @@
         "es-ES": "스페인어",
         "it-IT": "이탈리아어",
         "ja-JP": "일본어",
-        "zh-CN": "중국어(간체)"
+        "zh-CN": "중국어(간체)",
+        "auto": "자동 감지"
       },
-      "backendLabel": "인식 엔진",
-      "backendDesc": "손글씨 인식이 실행되는 위치",
       "backendSidecar": "Windows 로컬 인식기 (정확한 단어 위치)",
       "backendAi": "AI 비전 모델 (대략적인 단어 위치)",
       "backendSidecarUnavailable": "Windows 로컬 인식기 (실행 중이 아님)",
       "endpointLabel": "API 엔드포인트",
       "endpointDesc": "OpenAI 호환 기본 URL(예: LM Studio 또는 Ollama). /v1로 끝나야 합니다.",
       "endpointPlaceholder": "http://localhost:1234/v1",
+      "endpointChoose": "엔드포인트 선택…",
+      "endpointNoneAllowed": "허용된 엔드포인트 없음",
+      "endpointDescNoneAllowed": "Nextcloud 관리자가 AI 엔드포인트를 허용하지 않았으므로 이 인스턴스에서는 인식을 사용할 수 없습니다.",
+      "endpointNoLongerAllowed": "더 이상 허용되지 않음",
+      "endpointNotPermitted": "✗ Nextcloud 관리자가 이 엔드포인트를 허용하지 않습니다.",
       "modelLabel": "모델",
       "modelDesc": "서버가 보고하는 모델 식별자",
       "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "browseModels": "사용 가능한 모델 보기",
+      "modelPicked": "{{model}} 선택됨 — 저장해야 적용됩니다",
       "apiKeyLabel": "API 키",
       "apiKeyDesc": "베어러 토큰으로 전송됩니다. 대부분의 로컬 서버에서는 선택 사항입니다.",
       "apiKeyPlaceholder": "필요하지 않으면 비워 두세요",
@@ -228,9 +233,6 @@
       "imageEdgeDesc": "전송되는 각 이미지의 긴 변(픽셀). 페이지가 맞춰 확대·축소되므로 값이 클수록 작은 손글씨를 읽을 수 있습니다. 작은 글씨가 누락되면 값을 올리세요. 비용은 대략 제곱에 비례해 증가합니다.",
       "saveBtn": "저장",
       "saved": "저장됨",
-      "aiHint": "손글씨는 이미지로 변환되어 이 엔드포인트로 전송됩니다.",
-      "aiHintLocal": "이 엔드포인트는 사용자의 기기에 있으므로 데이터가 외부로 나가지 않습니다.",
-      "aiHintRemote": "원격 서비스입니다. 손글씨가 해당 서비스로 전송됩니다.",
       "endpointInvalidUrl": "✗ 올바른 URL이 아닙니다",
       "endpointInsecure": "✗ 일반 http는 localhost에만 허용됩니다. 원격 서버에는 https를 사용하세요.",
       "endpointUnsupported": "✗ http 및 https 엔드포인트만 지원됩니다",
@@ -240,7 +242,11 @@
       "aiNoVision": "⚠ 연결되었지만 응답을 사용할 수 없습니다. 모델이 비전을 지원하는지 확인하세요.",
       "maxTokensLabel": "최대 응답 길이",
       "maxTokensDesc": "모델 응답의 토큰 제한. 손글씨 한 페이지에는 수백 개가 필요합니다. 낮은 제한은 변환 대신 반복하는 모델을 중단시킵니다.",
-      "backendReplicate": "Replicate (클라우드, 대략적인 단어 위치)",
+      "timeoutLabel": "인식 제한 시간",
+      "timeoutDesc": "모델이 한 페이지를 전사할 때까지 기다리는 시간(초)입니다. 추론 모델이나 CPU에서 실행되는 로컬 모델의 경우 늘리고, 응답 없는 엔드포인트에서 더 빨리 실패시키려면 줄이세요.",
+      "timeoutDescNextcloud": "모델이 한 페이지를 전사할 때까지 기다리는 시간(초)입니다. 추론 모델이나 CPU에서 실행되는 로컬 모델의 경우 늘리고, 응답 없는 엔드포인트에서 더 빨리 실패시키려면 줄이세요. 서버가 600초로 제한하며, 웹 서버 자체의 제한 시간을 초과하는 값을 사용하려면 그 값도 함께 늘려야 합니다.",
+      "syncOnlyTitle": "이 서버에서는 느린 모델이 중단될 수 있습니다",
+      "syncOnlyBody": "이 Nextcloud 서버는 인식을 백그라운드에서 실행할 수 없습니다(php-fpm과 Redis 또는 APCu 같은 메모리 캐시 설정이 필요합니다). 모델이 작업하는 동안 요청이 열린 상태로 유지되므로 웹 서버가 약 1분 후에 연결을 끊을 수 있으며, 이는 네트워크 오류로 나타납니다. 더 빠른 모델이나 더 작은 최대 이미지 크기를 사용하거나 관리자에게 메모리 캐시 활성화를 요청하세요.",
       "versionLabel": "모델 버전",
       "versionDesc": "Replicate 모델 페이지의 버전 해시. 커뮤니티 모델에는 필수이며, 공식 모델에서는 비워 두세요.",
       "versionPlaceholder": "예: 5c7d5dc6dd8bf7...",
@@ -255,12 +261,57 @@
         "empty": "내용",
         "noJson": "JSON 지시",
         "noWordsKey": "\"words\" 키",
-        "noRegion": "영역/밴드 지시"
+        "noRegion": "영역/밴드 지시",
+        "noShape": "{{shape}} 자리 표시자",
+        "noBreak": "줄 바꿈 지침",
+        "noLanguage": "{{language}} 자리 표시자",
+        "noPunctuation": "{{punctuation}} 자리 표시자"
       },
-      "consentTitle": "손글씨를 {{host}}(으)로 보낼까요?",
-      "consentBody": "인식 기능은 손글씨를 이미지로 렌더링하여 기기 외부 서비스인 {{host}}(으)로 전송합니다. 렌더링된 손글씨만 전송되며 노트 제목, 노트북, 계정 정보는 전송되지 않습니다.\n\n설정에서 언제든지 변경하거나 철회할 수 있습니다.",
-      "consentConfirm": "손글씨 보내기",
-      "consentDeclined": "{{host}}(으)로 손글씨를 보내는 데 동의할 때까지 인식 기능이 꺼져 있습니다."
+      "endpointDescNextcloud": "Nextcloud 서버에서 호출되므로 이 기기가 아니라 서버에서 접근할 수 있어야 합니다. 「localhost」는 Nextcloud 서버 자체를 의미합니다.",
+      "methodLabel": "인식 방법",
+      "methodDesc": "손글씨를 텍스트로 변환하는 방식",
+      "providerMissingTitle": "AI 액세스가 설정되지 않았습니다",
+      "providerMissingBody": "AI 제공자를 설정할 때까지 손글씨 인식은 꺼진 상태로 유지됩니다.",
+      "centralTitle": "관리자가 관리합니다",
+      "centralBody": "이 인스턴스의 AI 공급자, 모델 및 프롬프트는 Nextcloud 관리자가 설정하며 여기서 변경할 수 없습니다.",
+      "configureProvider": "AI 액세스 설정",
+      "savedNeedsProvider": "저장됨 — 인식을 시작하려면 AI 액세스를 설정하세요"
+    },
+    "modelPicker": {
+      "title": "사용 가능한 모델",
+      "searchPlaceholder": "모델 필터…",
+      "typeFilter": "모델 유형",
+      "allTypes": "모든 유형",
+      "visionOnly": "비전 모델만",
+      "loading": "모델을 불러오는 중…",
+      "count": "전체 {{total}}개 중 {{shown}}개",
+      "truncated": "이 목록은 공급업체 카탈로그의 일부입니다. 어떤 모델 이름이든 직접 입력할 수 있습니다.",
+      "noMatches": "이 필터와 일치하는 모델이 없습니다.",
+      "cancel": "취소",
+      "unsupported": "이 서버는 모델 목록을 제공하지 않습니다. 모델 이름을 입력하세요.",
+      "unauthorized": "API 키가 거부되어 모델 목록을 읽지 못했습니다.",
+      "notConfigured": "먼저 AI 공급업체를 설정하세요.",
+      "failed": "모델 목록을 불러오지 못했습니다: {{message}}",
+      "types": {
+        "image->text": "이미지 → 텍스트",
+        "text->text": "텍스트 → 텍스트",
+        "text->image": "텍스트 → 이미지",
+        "other": "기타",
+        "unknown": "유형 불분명"
+      },
+      "caps": {
+        "vision": "비전",
+        "audio": "오디오",
+        "video": "비디오",
+        "files": "파일",
+        "tools": "도구",
+        "reasoning": "추론"
+      },
+      "searching": "검색 중…",
+      "searched": "공급자의 전체 카탈로그를 검색했습니다.",
+      "searchTruncated": "상위 일치 항목을 표시합니다. 검색어를 다듬어 범위를 좁히세요.",
+      "searchFailed": "검색을 사용할 수 없어 불러온 샘플만 필터링했습니다.",
+      "searchAllPlaceholder": "모든 모델 검색…"
     },
     "mcp": {
       "windowsOnly": "MCP 서버는 Windows 앱에서만 사용할 수 있습니다.",
@@ -378,6 +429,36 @@
       "resetBtn": "초기화",
       "resetConfirmTitle": "도움말 안내 초기화",
       "resetConfirmMsg": "각 도구를 다음에 사용할 때 첫 사용 도움말이 다시 표시됩니다."
+    },
+    "aiProvider": {
+      "intro": "한 번만 설정하면 모든 AI 기능에서 사용할 수 있습니다.",
+      "providerLabel": "제공자",
+      "providerDesc": "이 기기가 사용할 수 있는 AI 서비스",
+      "providerNone": "설정되지 않음",
+      "providerOpenAi": "OpenAI 호환(LM Studio, Ollama, 클라우드 API)",
+      "providerReplicate": "Replicate",
+      "saveBtn": "AI 액세스 저장",
+      "saved": "AI 액세스를 저장했습니다",
+      "privacyHint": "AI로 처리하도록 선택한 데이터가 이 엔드포인트로 전송됩니다.",
+      "privacyHintLocal": "이 엔드포인트는 사용자의 컴퓨터에 있으므로 기기 밖으로 나가는 데이터가 없습니다.",
+      "privacyHintRemote": "원격 서비스이므로 해당 데이터가 기기를 벗어납니다.",
+      "consentTitle": "{{host}}(으)로 데이터를 보낼까요?",
+      "consentBody": "AI 기능은 처리를 요청한 콘텐츠(이미지로 변환된 손글씨, 노트 텍스트, 향후 기능이 추가하는 항목)를 기기 외부 서비스인 {{host}}(으)로 전송합니다. 각 기능에 필요한 만큼만, 사용자가 실행할 때만 전송됩니다.\n\n설정에서 언제든지 변경하거나 취소할 수 있습니다.",
+      "consentConfirm": "허용",
+      "consentDeclined": "{{host}}(으)로 데이터 전송에 동의할 때까지 AI 기능은 꺼진 상태로 유지됩니다.",
+      "testBtn": "연결 테스트",
+      "testing": "테스트 중…",
+      "testOk": "연결되었습니다.",
+      "testOkModels": "연결되었습니다. {{count}}개의 모델을 사용할 수 있습니다.",
+      "testOkNoListing": "연결되었습니다. 이 엔드포인트는 모델 목록을 제공하지 않지만 문제없습니다.",
+      "testUnauthorized": "자격 증명이 거부되었습니다. API 키를 확인하세요.",
+      "testUnreachable": "엔드포인트에 연결할 수 없습니다. {{message}}",
+      "testFailed": "엔드포인트가 오류를 반환했습니다(HTTP {{status}}).",
+      "testNotConfigured": "먼저 제공자 정보를 입력하세요.",
+      "testKeyRequired": "원격 엔드포인트에는 API 키가 필요합니다."
+    },
+    "nav": {
+      "back": "모든 설정"
     }
   },
   "modals": {
@@ -441,6 +522,13 @@
     },
     "errors": {
       "titleRequired": "제목은 필수입니다"
+    },
+    "recognizedText": {
+      "title": "인식된 텍스트",
+      "engineLabel": "{{engine}}(으)로 인식됨",
+      "copy": "복사",
+      "copied": "복사됨",
+      "copyFailed": "복사 실패"
     }
   },
   "auth": {
@@ -501,7 +589,28 @@
     "syncFailedTooltip": "동기화 실패: {{error}}",
     "unknownError": "알 수 없는 오류",
     "recognitionRunning": "손글씨 인식 실행 중…",
-    "mcpRunning": "MCP server is running — AI assistants can access your notebooks"
+    "mcpRunning": "MCP 서버 실행 중 — AI 어시스턴트가 노트북에 접근할 수 있습니다",
+    "recognitionQueued": "{{count}}개의 노트가 인식을 기다리고 있습니다",
+    "recognitionFailed": "{{count}}개의 인식이 실패했습니다",
+    "recognitionJobsTitle": "손글씨 인식",
+    "recognitionClearFinished": "완료 항목 지우기",
+    "recognitionPage": "{{total}}페이지 중 {{current}}페이지",
+    "recognitionStarting": "시작하는 중…",
+    "recognitionWaiting": "대기 중",
+    "recognitionDone": "완료",
+    "recognitionFailedOne": "실패",
+    "recognitionFailReason": {
+      "stale": "노트가 변경됨",
+      "backendChanged": "백엔드가 변경됨",
+      "allowance": "할당량 소진",
+      "timeout": "시간 초과",
+      "unreachable": "엔드포인트에 연결할 수 없음",
+      "auth": "키가 거부됨",
+      "quota": "할당량 또는 속도 제한",
+      "badResponse": "사용할 수 없는 응답",
+      "unknown": "실패"
+    },
+    "recognitionUntitled": "제목 없는 노트"
   },
   "breadcrumb": {
     "home": "홈",
@@ -559,7 +668,9 @@
       "highlighterOnly": "형광펜만 지우기",
       "size": "크기"
     },
-    "recognizeNow": "손글씨 인식"
+    "recognizeNow": "손글씨 인식",
+    "showRecognizedText": "인식된 텍스트 표시",
+    "noRecognizedText": "인식된 텍스트가 없습니다"
   },
   "licenses": {
     "title": "오픈소스 라이선스",
@@ -623,7 +734,23 @@
       "noBackend": "인식 백엔드가 구성되지 않았습니다",
       "cancel": "취소",
       "cancelled": "인식이 취소되었습니다",
-      "transcribing": "페이지 {{current}}/{{total}} · {{words}}개 단어 · {{seconds}}초"
+      "alreadyRunning": "이 노트의 인식이 이미 실행 중입니다. 이 두 번째 실행은 시작되지 않았습니다. 진행 상황은 상태 표시줄에서 확인하고 거기서 취소할 수 있습니다.",
+      "transcribing": "페이지 {{current}}/{{total}} · {{words}}개 단어 · {{seconds}}초",
+      "runInBackground": "백그라운드에서 실행",
+      "backgroundNote": "이 대화 상자를 닫아도 됩니다 — 인식은 백그라운드에서 계속됩니다.",
+      "queuedNext": "시작을 기다리는 중…",
+      "queuedBehind": "대기 중 — 앞에 {{count}}개 작업",
+      "staleStrokes": "인식이 실행되는 동안 노트가 변경되었습니다. 다시 실행해 주세요.",
+      "confirmTitle": "손글씨 인식",
+      "confirmScope": "{{count}}개 페이지를 {{model}}(으)로 보내 전사합니다.",
+      "confirmScopeModelOnly": "이 노트를 {{model}}(으)로 보내 전사합니다.",
+      "quotaRemaining": "이번 달 남은 페이지: {{limit}}개 중 {{remaining}}개.",
+      "quotaExhausted": "이번 달 남은 할당량이 없습니다. 관리자가 할당량을 늘릴 수 있습니다.",
+      "confirmStart": "시작",
+      "optionPunctuation": "문장 부호 전사",
+      "optionPunctuationDesc": "페이지에 쓰인 마침표, 쉼표, 대시를 포함합니다. 끄면 단어만 남습니다.",
+      "optionBreaks": "줄바꿈 유지",
+      "optionBreaksDesc": "줄과 문단이 끝나는 위치를 유지합니다. 레이아웃 인식은 텍스트 인식보다 정확도가 낮습니다."
     }
   },
   "recycleBin": {
@@ -684,7 +811,7 @@
     },
     "draw": {
       "title": "그리기",
-      "body": "그리기를 누르면 펜이나 형광펜을 고르고 색이나 두께를 바꿀 수 있습니다. 손글씨 인식은 Windows에서만 사용할 수 있습니다."
+      "body": "그리기를 누르면 펜이나 형광펜을 고르고 색이나 두께를 바꿀 수 있습니다. 필기 인식은 Windows에서 자동으로 실행됩니다. 다른 플랫폼에서는 설정에서 AI 인식을 켜실 수 있습니다."
     },
     "eraser": {
       "title": "지우개",

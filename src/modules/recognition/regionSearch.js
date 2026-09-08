@@ -14,7 +14,7 @@
  * reimplemented it and therefore could not catch a regression in it.
  */
 
-import { decodeRegion, mergeAdjacentBands, regionBounds } from "./regions.js";
+import { mergeAdjacentBands } from "./regions.js";
 
 /**
  * Fraction of a band's height within which two hits on the same word are
@@ -28,23 +28,23 @@ import { decodeRegion, mergeAdjacentBands, regionBounds } from "./regions.js";
 const OVERLAP_TOLERANCE_RATIO = 0.67;
 
 /**
- * Resolve a word's stored region to its content-space band bounds.
+ * A word's content-space band bounds, as stored.
  *
- * @param {{region: unknown, imageBounds: Object}} word
- * @returns {{top: number, bottom: number, regionIndex: number}|null} null when
- *   the region cannot be decoded or the word carries no image bounds — such a
- *   word is still searchable, it simply cannot be placed.
+ * Recognition resolves the band a model named into a Y range at write time
+ * (regions.regionToContentRange), so there is nothing to decode here — which is
+ * the point: no stored value depends on the band scheme that is current when it
+ * is read.
+ *
+ * @param {{yRange: {top: number, bottom: number}}} word
+ * @returns {{top: number, bottom: number}|null} null when the word carries no
+ *   range — it is still searchable, it simply cannot be placed.
  */
 export function wordBandBounds(word) {
-  if (!word || word.region == null || !word.imageBounds) return null;
-
-  const decoded = decodeRegion(word.region);
-  if (!decoded) return null;
-
-  const bounds = regionBounds(decoded.regionIndex, word.imageBounds);
-  if (!bounds) return null;
-
-  return { ...bounds, regionIndex: decoded.regionIndex };
+  const range = word?.yRange;
+  if (!range) return null;
+  if (typeof range.top !== "number" || typeof range.bottom !== "number") return null;
+  if (!(range.bottom > range.top)) return null;
+  return { top: range.top, bottom: range.bottom };
 }
 
 /**
@@ -61,26 +61,25 @@ export function wordBandBounds(word) {
 export function collectHighlightBands(words, regex) {
   if (!Array.isArray(words)) return [];
 
-  // Keyed by region so a band contributes one span no matter how many of its
-  // words match.
+  // Keyed by the band's own extent so a band contributes one span no matter how
+  // many of its words match. The range replaces the old region id as the
+  // identity of a band — two words sharing a range were on the same band.
   const matched = new Map();
 
   for (const word of words) {
-    if (!word?.text || word.region == null) continue;
+    if (!word?.text) continue;
+    const bounds = wordBandBounds(word);
+    if (!bounds) continue;
     regex.lastIndex = 0;
     if (!regex.test(word.text)) continue;
-    if (!matched.has(word.region)) matched.set(word.region, word);
+
+    const key = `${bounds.top}:${bounds.bottom}`;
+    if (!matched.has(key)) matched.set(key, bounds);
   }
 
   const bands = [];
-  for (const word of matched.values()) {
-    const bounds = wordBandBounds(word);
-    if (!bounds) continue;
-    bands.push({
-      y: bounds.top,
-      h: bounds.bottom - bounds.top,
-      region: bounds.regionIndex,
-    });
+  for (const bounds of matched.values()) {
+    bands.push({ y: bounds.top, h: bounds.bottom - bounds.top });
   }
 
   return mergeAdjacentBands(bands);
@@ -113,10 +112,8 @@ export function collectMatchPositions(words, regex) {
     regex.lastIndex = 0;
     if (!regex.test(word.text)) continue;
 
-    if (word.region != null) {
-      const bounds = wordBandBounds(word);
-      if (!bounds) continue;
-
+    const bounds = wordBandBounds(word);
+    if (bounds) {
       const centre = (bounds.top + bounds.bottom) / 2;
       const tolerance = (bounds.bottom - bounds.top) * OVERLAP_TOLERANCE_RATIO;
 

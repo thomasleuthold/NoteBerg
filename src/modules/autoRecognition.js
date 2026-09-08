@@ -10,6 +10,7 @@
  * configured AI backend — is decided by recognitionService.js.
  */
 
+import { countWords } from "./recognition/breaks.js";
 import { invalidateBackends, recognize } from "./recognition/recognitionService.js";
 import { getAllNotes, getNote, updateNote } from "./storage.js";
 
@@ -17,6 +18,25 @@ import { getAllNotes, getNote, updateNote } from "./storage.js";
 const RECOGNITION_DEBOUNCE_MS = 2500; // 2.5 seconds inactivity
 
 let recognitionTimer = null;
+
+/**
+ * Runs currently in flight, keyed by note id.
+ *
+ * The debounce timer only stops a *scheduled* second run; it does nothing about
+ * a second call arriving while the first is still awaiting the backend. Three
+ * entry points reach performRecognition independently — the drawing debounce,
+ * note close, and the catch-up scan — so two runs for one note overlapped
+ * routinely, and each one rasterizes and sends the same pages again.
+ *
+ * On Nextcloud that was not merely wasteful. Every band goes through the PHP
+ * proxy, which holds the session lock for the length of the upstream call, so
+ * the second run's request blocked behind the first until the web server cut
+ * the connection — surfacing in the browser as a bare "NetworkError when
+ * attempting to fetch resource" with no status code to explain it.
+ *
+ * @type {Map<string, Promise<Object|null>>}
+ */
+const inFlight = new Map();
 
 /**
  * Force re-resolution of the recognition backend (e.g. after settings change).
@@ -37,14 +57,18 @@ function activeStrokes(note) {
 /**
  * Find all notes with strokes but no recognition and process them sequentially.
  * Called once per app start (after startup sync completes).
- * Is a no-op when no recognition backend is available or configured.
+ * Is a no-op when no recognition backend is available or configured, and when
+ * the configured backend is an AI one: this scan would otherwise bill the user
+ * for every unrecognized note in the library at app start (DESIGN §6).
  *
  * @param {{ signal?: AbortSignal }} [opts]
  * @returns {Promise<number>} Number of notes successfully recognized.
  */
 export async function recognizeUnprocessedNotes(opts = {}) {
   const { isRecognitionAvailable } = await import("./recognition/recognitionService.js");
-  if (!(await isRecognitionAvailable())) return 0;
+  // Checked with automatic:true so an AI-only configuration skips the whole
+  // scan, rather than loading every candidate note to find nothing may run.
+  if (!(await isRecognitionAvailable({ automatic: true }))) return 0;
 
   const allIndexes = await getAllNotes(); // index entries only — no content loaded
   const candidates = allIndexes.filter((n) => n.hasStrokes && !n.hasRecognition && !n.deleted);
@@ -79,7 +103,7 @@ export async function recognizeUnprocessedNotes(opts = {}) {
         }),
       );
 
-      await performRecognition(index.id, strokes, opts);
+      await performRecognition(index.id, strokes, { ...opts, automatic: true });
       processed++;
     } catch (err) {
       console.error(`[Recognition] Failed for note ${index.id}:`, err);
@@ -102,7 +126,8 @@ export function scheduleRecognition(noteId, strokes) {
   }
 
   recognitionTimer = setTimeout(() => {
-    performRecognition(noteId, strokes);
+    // App-triggered while the user is still writing — local backends only.
+    performRecognition(noteId, strokes, { automatic: true });
   }, RECOGNITION_DEBOUNCE_MS);
 }
 
@@ -112,17 +137,24 @@ export function scheduleRecognition(noteId, strokes) {
  *
  * @param {string} noteId
  * @param {Array} strokes
- * @param {{ signal?: AbortSignal, onProgress?: Function, force?: boolean }} [opts]
+ * @param {{ signal?: AbortSignal, onProgress?: Function, force?: boolean,
+ *           automatic?: boolean }} [opts]
  *   force — write the result even if it matches what is already stored. Use for
  *   user-initiated runs; leave unset for background passes so unchanged
  *   recognition does not churn sync.
+ *   automatic — this run was not requested by the user, so an AI backend must
+ *   not be started for it. "Immediate" here means skipping the debounce, not
+ *   that a person asked: note close uses this path too.
+ * @returns {Promise<Object|null>} the stored recognition, or null when no
+ *   backend ran or the attempt failed. The queue needs this to tell a finished
+ *   job from a failed one.
  */
 export async function forceRecognition(noteId, strokes, opts = {}) {
   if (recognitionTimer) {
     clearTimeout(recognitionTimer);
     recognitionTimer = null;
   }
-  await performRecognition(noteId, strokes, opts);
+  return performRecognition(noteId, strokes, opts);
 }
 
 /**
@@ -161,16 +193,67 @@ function recognitionChanged(stored, fresh) {
 }
 
 /**
- * Execute the recognition process.
+ * Execute the recognition process, at most once per note at a time.
+ *
+ * A call arriving while the same note is already being recognized joins the run
+ * in progress instead of starting a second one. Joining rather than refusing
+ * matters for the callers that use the return value: forceRecognition's result
+ * decides whether the queue marks a job done, and a bare null there would report
+ * a note as failed while a perfectly good run was still finishing.
+ *
+ * The de-duplication is per note, not global. Two different notes recognizing at
+ * once is legitimate — the catch-up scan is sequential by construction, and the
+ * queue serializes its own jobs — and this must not serialize them further.
+ *
+ * `force` is deliberately not part of the key. A forced run that joins a
+ * background run in progress still gets a fresh result for the same strokes; the
+ * only difference is whether an unchanged result is rewritten, which is not
+ * worth a duplicate transcription to the user paying per page.
+ *
+ * A joiner inherits the *first* caller's abort signal, which is why this is a
+ * last-resort guard rather than the main defence. Cancelling the run that
+ * started the work also ends it for everyone waiting on it — correct for the
+ * paths that share one logical request, but not a substitute for callers not
+ * issuing duplicates in the first place. The queue dedups on note id before it
+ * ever reaches here (recognitionQueue.enqueue), so in practice only the
+ * debounce/close/catch-up paths, which pass no signal, land in this branch.
  *
  * @param {string} noteId
  * @param {Array} strokes
- * @param {{ signal?: AbortSignal, onProgress?: Function, force?: boolean }} [opts]
+ * @param {{ signal?: AbortSignal, onProgress?: Function, force?: boolean,
+ *           automatic?: boolean }} [opts]
  * @returns {Promise<Object|null>} the stored recognition object, or null
  */
 async function performRecognition(noteId, strokes, opts = {}) {
   if (!strokes || strokes.length === 0) return null;
 
+  const existing = inFlight.get(noteId);
+  if (existing) {
+    console.log(`[Recognition] Note ${noteId} is already being recognized — joining that run.`);
+    return existing;
+  }
+
+  const run = runRecognition(noteId, strokes, opts);
+  inFlight.set(noteId, run);
+  try {
+    return await run;
+  } finally {
+    // Cleared here rather than inside runRecognition so the entry cannot outlive
+    // the promise every joiner is awaiting.
+    inFlight.delete(noteId);
+  }
+}
+
+/**
+ * The recognition process itself, with no concurrency control.
+ *
+ * @param {string} noteId
+ * @param {Array} strokes
+ * @param {{ signal?: AbortSignal, onProgress?: Function, force?: boolean,
+ *           automatic?: boolean }} [opts]
+ * @returns {Promise<Object|null>} the stored recognition object, or null
+ */
+async function runRecognition(noteId, strokes, opts = {}) {
   // Notify start of recognition
   window.dispatchEvent(new CustomEvent("recognition-start"));
 
@@ -213,7 +296,7 @@ async function performRecognition(noteId, strokes, opts = {}) {
         // propagates to other devices.
       });
       console.log(
-        `[Recognition] Stored for note ${noteId}: ${result.words.length} words, ` +
+        `[Recognition] Stored for note ${noteId}: ${countWords(result.words)} words, ` +
           `fullText ${result.fullText.length} chars. Note marked unsynced.`,
       );
     } else {

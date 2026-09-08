@@ -345,14 +345,14 @@ async function davList(path) {
 }
 
 // ─── IndexedDB stubs (referenced by StorageWorker which is disabled in NC build) ─
+// Kept in step with storage.js so the two builds cannot disagree about a schema
+// neither of them opens here — the NC build has no IndexedDB at all.
 export const DB_NAME = "NoteBerg";
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 let _initialized = false;
-// Simple in-memory settings store (replaces IndexedDB settings for NC build)
-const _settings = {};
 // Track folders confirmed to exist so we skip redundant MKCOL requests
 const _knownFolders = new Set();
 
@@ -397,14 +397,96 @@ export function generateId() {
   );
 }
 
-// ─── Settings (in-memory for NC build) ───────────────────────────────────────
+// ─── Settings (localStorage for NC build) ────────────────────────────────────
+//
+// The native build keeps settings in IndexedDB. NC has no IndexedDB at all —
+// everything goes straight to WebDAV — so settings previously lived in a plain
+// in-memory object and were silently lost on every reload. That made the
+// recognition backend impossible to configure here: each page load reset it to
+// the sidecar default, which does not exist on NC.
+//
+// localStorage is the right weight for this: settings are small, per-device,
+// and none of them need to sync. It is also already used in this module for the
+// init flag, and by displayPrefs.js, which moved the card size here for exactly
+// this reason.
+//
+// NOT for secrets. localStorage is readable by any script on the origin; the
+// recognition API key goes through secureStorage.js and must stay there.
+
+/** Namespaced so we cannot collide with Nextcloud's own localStorage keys. */
+const _SETTING_PREFIX = "noteberg_setting_";
 
 export async function getSetting(key) {
-  return _settings[key] ?? null;
+  try {
+    const raw = localStorage.getItem(_SETTING_PREFIX + key);
+    if (raw === null) return null;
+    return JSON.parse(raw);
+  } catch (_e) {
+    // Corrupt value, or storage unavailable (private mode, quota). A missing
+    // setting is always a legal state — callers fall back to their default.
+    return null;
+  }
 }
 
 export async function setSetting(key, value) {
-  _settings[key] = value;
+  try {
+    // Stored as JSON so numbers and booleans survive the round trip. Reading
+    // back a stringified value would turn `false` into the truthy "false" and
+    // maxTokens into a string.
+    localStorage.setItem(_SETTING_PREFIX + key, JSON.stringify(value ?? null));
+  } catch (error) {
+    // Quota or a locked-down browser. Non-fatal: the setting simply does not
+    // persist, which is the behaviour this build had for its whole life.
+    console.warn(`[storage.webdav] Could not persist setting "${key}":`, error);
+  }
+}
+
+// ─── Recognition jobs (localStorage for NC build) ────────────────────────────
+//
+// Same contract as the native build's IndexedDB store, same reason for being
+// local-only: a job holds partial work that must survive a reload without ever
+// being mistaken for a finished recognition. Kept in one key rather than one
+// key per job — the queue is short, and a single read/write keeps it atomic.
+
+const _JOBS_KEY = "noteberg_recognition_jobs";
+
+export async function getRecognitionJobs() {
+  try {
+    const raw = localStorage.getItem(_JOBS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_e) {
+    return [];
+  }
+}
+
+async function _writeJobs(jobs) {
+  try {
+    localStorage.setItem(_JOBS_KEY, JSON.stringify(jobs));
+  } catch (error) {
+    // Losing the queue is survivable — it degrades to the pre-persistence
+    // behaviour — so this must never break the run in progress.
+    console.warn("[storage.webdav] Could not persist recognition jobs:", error);
+  }
+}
+
+export async function saveRecognitionJob(job) {
+  const jobs = await getRecognitionJobs();
+  const i = jobs.findIndex((j) => j.id === job.id);
+  if (i >= 0) jobs[i] = job;
+  else jobs.push(job);
+  await _writeJobs(jobs);
+  return job;
+}
+
+export async function deleteRecognitionJob(id) {
+  const jobs = await getRecognitionJobs();
+  await _writeJobs(jobs.filter((j) => j.id !== id));
+}
+
+export async function clearRecognitionJobs() {
+  await _writeJobs([]);
 }
 
 // ─── Notebook operations ──────────────────────────────────────────────────────

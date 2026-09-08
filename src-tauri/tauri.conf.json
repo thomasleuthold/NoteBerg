@@ -48,11 +48,11 @@
       "wix": {
         "bannerPath": "icons/msi2.bmp",
         "dialogImagePath": "icons/msi1.bmp",
-        "version": "0.5.42.1"
+        "version": "0.5.42.2"
       }
     },
     "android": {
-      "versionCode": 542001
+      "versionCode": 542002
     }
   }
 }

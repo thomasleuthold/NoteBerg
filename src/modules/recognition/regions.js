@@ -22,20 +22,55 @@ export const REGION_COUNT = 6;
 /**
  * Band colours, top to bottom.
  *
- * Chosen to be unmistakable from one another rather than pretty: adjacent hues
- * are far apart on the colour wheel, so a model confusing two bands has to
- * confuse, say, blue with orange rather than two shades of the same colour.
+ * Chosen to be unmistakable from one another rather than pretty, and separated
+ * by measured RGB distance rather than by position on the hue wheel.
  *
- * Very pale (roughly 8% saturation) so handwriting stays the most legible thing
- * in the image — the colour is a label, not decoration.
+ * That distinction is the whole point of this palette's second version. The
+ * first one picked hues far apart on the wheel and then made them very pale
+ * (~8% saturation, ~95% lightness) on the theory that distant hues stay
+ * distinct. They do not: at that lightness every colour is crushed into a small
+ * corner of RGB space, and the six ended up as little as 8 units apart out of a
+ * possible 441 — closer to each other than to white by any useful margin.
+ *
+ * The observed failure was pink read as purple (hues 335° and 260°, a wheel
+ * apart, but 14 units apart in RGB): two lines of a note were placed a whole
+ * band below where they were written. Pink is now red, which sits further from
+ * purple, and every colour is darker and more saturated, which is what actually
+ * buys separation. The closest pair is now ~15 units, and the pair that failed
+ * is ~38.
+ *
+ * Still pale enough that handwriting is by far the darkest thing in the image —
+ * the lightest channel of any band is above 200, against near-zero ink. The
+ * colour is a label, not decoration.
+ *
+ * When changing these, measure the worst pair rather than trusting the names:
+ * "red" and "orange" sound distinct and are the closest pair here.
  */
 export const REGION_COLORS = [
-  { id: "blue", fill: "#e8f0fb", name: "blue" },
-  { id: "green", fill: "#e8f7ec", name: "green" },
-  { id: "yellow", fill: "#fdf6e0", name: "yellow" },
-  { id: "orange", fill: "#fdefe4", name: "orange" },
-  { id: "pink", fill: "#fbeaf1", name: "pink" },
-  { id: "purple", fill: "#f0ebfa", name: "purple" },
+  { id: "blue", fill: "#dbe7fb", name: "blue" },
+  { id: "green", fill: "#dcf3df", name: "green" },
+  { id: "yellow", fill: "#fbf3cf", name: "yellow" },
+  { id: "orange", fill: "#fbe0cc", name: "orange" },
+  { id: "red", fill: "#fbd9d9", name: "red" },
+  { id: "purple", fill: "#e6dcf8", name: "purple" },
+];
+
+/**
+ * Alternative names a model might use for each band, in band order.
+ *
+ * Kept parallel to REGION_COLORS rather than folded into it, so the list the
+ * prompt offers stays exactly the six canonical names — an alias is something to
+ * accept on the way in, not something to suggest.
+ */
+const REGION_ALIASES = [
+  // Nothing for blue or green: every plausible alternative ("light blue",
+  // "mint green") contains the canonical name and is matched by the pass above.
+  [],
+  [],
+  ["cream", "beige"],
+  ["peach"],
+  ["pink", "salmon"],
+  ["violet", "lavender"],
 ];
 
 /**
@@ -66,7 +101,15 @@ export function parseRegionId(reported) {
   }
 
   const index = REGION_COLORS.findIndex((c) => text.includes(c.name));
-  return index;
+  if (index >= 0) return index;
+
+  // A colour a model may reasonably call by another name. `red` is a pale pink
+  // in fact (#fbd9d9), and a model describing what it sees rather than matching
+  // the offered list is answering correctly — dropping that answer would lose a
+  // word's placement over vocabulary.
+  //
+  // Checked after the exact names so an alias can never shadow a real one.
+  return REGION_ALIASES.findIndex((names) => names.some((n) => text.includes(n)));
 }
 
 /**
@@ -93,44 +136,31 @@ export function regionBounds(index, image) {
 }
 
 /**
- * Encode a band and the image it was seen on as one stored value.
+ * Resolve a band a model named into a content-space Y range.
  *
- * A colour alone is ambiguous once a note spans several images — every image
- * repeats the same six colours. Pairing them keeps a stored region resolvable
- * back to a unique place in the note.
+ * Done once, at recognition time, rather than stored as an index and resolved
+ * on every read. Two reasons, and the second is the load-bearing one:
  *
- * @param {number} imageIndex
- * @param {number} regionIndex
- * @returns {string}
+ *   - An index is meaningless without the band scheme that produced it. Reading
+ *     it back through whatever REGION_COUNT happens to be current silently
+ *     reinterprets older results — adding a seventh band would have shifted
+ *     every stored region with no error.
+ *   - An index cannot be corrected when content moves. Inserting space shifts
+ *     everything below a point downward; "the third of six slices" has no
+ *     arithmetic expressing that, while a Y range is corrected by the same
+ *     addition already applied to strokes.
+ *
+ * The result is still a band's worth of vertical extent — roughly two or three
+ * lines — not a measurement. It must keep travelling with
+ * `precision: "approximate"`.
+ *
+ * @param {number} index - band index within the image
+ * @param {{contentY: number, contentHeight: number}} image - the rendered slice
+ * @returns {{top: number, bottom: number}|null} null when unresolvable, in
+ *   which case the word stays searchable but cannot be placed
  */
-export function encodeRegion(imageIndex, regionIndex) {
-  return `${REGION_COLORS[regionIndex].name}-${imageIndex}`;
-}
-
-/**
- * Decode a stored region back into its image and band.
- *
- * Accepts the bare colour of older data, treating it as image 0 — the common
- * case, since a note short enough to render as one image has no ambiguity.
- *
- * @param {unknown} stored
- * @returns {{imageIndex: number, regionIndex: number}|null}
- */
-export function decodeRegion(stored) {
-  if (typeof stored === "number") {
-    return stored >= 0 && stored < REGION_COUNT ? { imageIndex: 0, regionIndex: stored } : null;
-  }
-  if (typeof stored !== "string") return null;
-
-  const [namePart, imagePart] = stored.split("-");
-  const regionIndex = parseRegionId(namePart);
-  if (regionIndex < 0) return null;
-
-  const imageIndex = Number(imagePart);
-  return {
-    imageIndex: Number.isInteger(imageIndex) && imageIndex >= 0 ? imageIndex : 0,
-    regionIndex,
-  };
+export function regionToContentRange(index, image) {
+  return regionBounds(index, image);
 }
 
 /**

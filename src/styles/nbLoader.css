@@ -1,0 +1,133 @@
+/* ============================================================================
+ * NoteBerg loading indicator
+ *
+ * Markup is built by `src/components/loadingIndicator.js`; this file owns only
+ * the presentation. Kept separate from layout.css/components.css so the
+ * animation stays self-contained and can be dropped or restyled in one place.
+ *
+ * The effect: the sun rises from behind the ground line, arcs over the massif
+ * and sets behind it. The occlusion is real, not faded — the sun is painted
+ * first and the artwork over it, so the peaks hide it, while a clipPath at the
+ * ground line cuts it as it rises and sets.
+ * ==========================================================================*/
+
+.nb-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+  color: var(--text-primary);
+}
+
+/* Centred block form, for when the indicator owns a whole empty panel. */
+.nb-loader--block {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-2xl) var(--spacing-lg);
+  text-align: center;
+}
+
+.nb-loader__svg {
+  display: block;
+  width: var(--nb-loader-size, 64px);
+  height: var(--nb-loader-size, 64px);
+  flex: none;
+}
+
+.nb-loader__label {
+  font-size: 1.125rem;
+  color: var(--text-secondary);
+}
+
+/* Colour lives here rather than on the paths, so the mark follows
+   currentColor and inverts in dark mode. The 1u stroke is carried over from
+   the source artwork: adjacent shapes meet with hairline seams that the
+   stroke closes. */
+.nb-loader__ink,
+.nb-loader__paper {
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.nb-loader__ink {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.nb-loader__paper {
+  fill: var(--bg-primary);
+  stroke: var(--bg-primary);
+}
+
+/* The sun follows an elliptical arc via offset-path: the browser moves the
+   element along a real path, so the disc never distorts. (Building the ellipse
+   from a rotation nested inside a scaleY stretches it everywhere but the
+   apex.) The path is set inline per instance by the JS. */
+.nb-loader__sun {
+  offset-rotate: 0deg; /* keep the disc upright rather than banking */
+  animation:
+    nb-loader-arc calc(var(--nb-loader-duration, 1500ms) * var(--nb-loader-duration-scale, 1))
+    linear infinite,
+    nb-loader-glow calc(var(--nb-loader-duration, 1500ms) * var(--nb-loader-duration-scale, 1))
+    linear infinite;
+}
+
+@keyframes nb-loader-arc {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
+/* Colour tracks altitude: deep orange at the horizon, warming to yellow at
+   noon, then cooling back. The ramp holds its value high (0.92 → 0.98) and
+   travels in hue instead, so the sun stays luminous rather than darkening at
+   the horizons. */
+@keyframes nb-loader-glow {
+  0% {
+    fill: #db4807;
+  }
+  7.5% {
+    fill: #ea580c;
+  }
+  18% {
+    fill: #ee740e;
+  }
+  29% {
+    fill: #f29110;
+  }
+  39% {
+    fill: #f6ae13;
+  }
+  50% {
+    fill: #facc15;
+  }
+  61% {
+    fill: #f6ae13;
+  }
+  71% {
+    fill: #f29110;
+  }
+  82% {
+    fill: #ee740e;
+  }
+  92.5% {
+    fill: #ea580c;
+  }
+  100% {
+    fill: #db4807;
+  }
+}
+
+/* Reduced motion: keep the sun travelling — freezing it hides the effect
+   entirely — but take twice as long over the journey. A multiplier on the
+   same custom property leaves any caller-set duration working. */
+@media (prefers-reduced-motion: reduce) {
+  .nb-loader {
+    --nb-loader-duration-scale: 2;
+  }
+}

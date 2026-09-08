@@ -175,3 +175,180 @@ describe("response handling", () => {
     await expect(transcribeBand(band, config)).resolves.toEqual([]);
   });
 });
+
+describe("request timeout", () => {
+  const WORDS = '{"words":[{"text":"test","region":"blue"}]}';
+
+  /** A completion that never arrives until the returned function is called. */
+  function hangingFetch() {
+    let settle;
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((resolve, reject) => {
+          settle = resolve;
+          init.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+          );
+        }),
+    );
+    return () => settle?.({ ok: true, status: 200, text: async () => "{}" });
+  }
+
+  it("gives up on a model that never answers, naming the setting to raise", async () => {
+    // kimi-k2.6 through OpenRouter: a working model that is simply slower than
+    // the budget. The message has to point at the timeout, because "use a faster
+    // model" is not the only remedy and often not the right one.
+    vi.useFakeTimers();
+    hangingFetch();
+
+    const promise = transcribeBand(band, { ...config, timeoutSeconds: 30 });
+    const assertion = expect(promise).rejects.toThrow(/did not respond within 30 seconds/);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await assertion;
+
+    vi.useRealTimers();
+  });
+
+  it("reports a caller's cancellation as a cancellation, not as a timeout", async () => {
+    // The two are the same DOMException. Telling a user who cancelled to raise
+    // their timeout would be nonsense.
+    hangingFetch();
+
+    const controller = new AbortController();
+    const promise = transcribeBand(
+      band,
+      { ...config, timeoutSeconds: 30 },
+      { signal: controller.signal },
+    );
+
+    // Wait until the request is genuinely in flight. transcribeBand encodes the
+    // image and resolves a client before it calls fetch, so aborting straight
+    // away would land before the request existed and prove nothing.
+    for (let i = 0; i < 50 && fetchMock.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    controller.abort();
+
+    const err = await promise.catch((e) => e);
+    expect(err.message).not.toMatch(/did not respond within/);
+  });
+
+  it("sends the budget to the proxy, which does the waiting server-side", async () => {
+    // On Nextcloud the wait happens in PHP. A client-side abort cannot lengthen
+    // a cap enforced there, so the number has to travel with the request.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          choices: [{ message: { content: WORDS }, finish_reason: "stop" }],
+        }),
+    });
+
+    await transcribeBand(band, { ...config, timeoutSeconds: 240 });
+
+    expect(fetchMock.mock.calls[0][1].timeoutSeconds).toBe(240);
+  });
+
+  it("falls back to a workable default when no timeout is configured", async () => {
+    // An existing configuration saved before this setting existed has no value
+    // stored, and must not end up with a zero or absent budget.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          choices: [{ message: { content: WORDS }, finish_reason: "stop" }],
+        }),
+    });
+
+    await transcribeBand(band, config);
+
+    expect(fetchMock.mock.calls[0][1].timeoutSeconds).toBe(120);
+  });
+});
+
+describe("message shapes", () => {
+  /** A completion whose message is built by the caller, not just `content`. */
+  function messageResponse(message, finishReason = "stop") {
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ choices: [{ message, finish_reason: finishReason }] }),
+    };
+  }
+
+  const WORDS = '{"words":[{"text":"test","region":"blue"}]}';
+
+  it("reads the transcription from `reasoning` when content is null", async () => {
+    // OpenRouter routes some model ids to reasoning models, which return their
+    // output in `reasoning` and leave `content` null. Seen in the wild as a test
+    // that failed with 350 completion tokens and finish_reason "stop" — the
+    // model had answered, just not where the spec puts the answer.
+    fetchMock.mockResolvedValue(messageResponse({ content: null, reasoning: WORDS }));
+
+    await expect(transcribeBand(band, config)).resolves.toEqual([{ text: "test", region: "blue" }]);
+  });
+
+  it("reads `reasoning_content` too, for gateways that name it that way", async () => {
+    fetchMock.mockResolvedValue(messageResponse({ content: null, reasoning_content: WORDS }));
+
+    await expect(transcribeBand(band, config)).resolves.toEqual([{ text: "test", region: "blue" }]);
+  });
+
+  it("prefers content over reasoning when a model returns both", async () => {
+    // Reasoning is the model's thinking; content is its answer. Taking the
+    // thinking in preference would transcribe the model's deliberation.
+    fetchMock.mockResolvedValue(
+      messageResponse({ content: WORDS, reasoning: '{"words":[{"text":"thinking"}]}' }),
+    );
+
+    await expect(transcribeBand(band, config)).resolves.toEqual([{ text: "test", region: "blue" }]);
+  });
+
+  it("joins typed content parts rather than keeping only the first", async () => {
+    // Splitting the answer across parts is legal, and taking one part would
+    // truncate the transcription with nothing to show it had happened.
+    fetchMock.mockResolvedValue(
+      messageResponse({
+        content: [
+          { type: "text", text: '{"words":[{"text":"te' },
+          { type: "text", text: 'st","region":"blue"}]}' },
+        ],
+      }),
+    );
+
+    await expect(transcribeBand(band, config)).resolves.toEqual([{ text: "test", region: "blue" }]);
+  });
+
+  it("surfaces a refusal as a refusal rather than as missing content", async () => {
+    fetchMock.mockResolvedValue(
+      messageResponse({ content: null, refusal: "I cannot process images of people." }),
+    );
+
+    await expect(transcribeBand(band, config)).rejects.toThrow(/declined to transcribe/);
+  });
+
+  it("names finish_reason and the message when there is genuinely no content", async () => {
+    // The old message sliced the raw body, which for a pretty-printed response
+    // is 200 characters of indentation — it showed the user blank lines and hid
+    // the field that would have explained the failure.
+    fetchMock.mockResolvedValue(messageResponse({ content: null }, "content_filter"));
+
+    const err = await transcribeBand(band, config).catch((e) => e);
+    // Names why it stopped, and shows the message object that lacked content.
+    expect(err.message).toMatch(/content_filter/);
+    expect(err.message).toMatch(/"content":null/);
+  });
+});
+
+describe("mapWordToContent", () => {
+  it("passes a break through instead of discarding it as an unusable word", async () => {
+    // Breaks share the words array with words and carry no text, so the guard
+    // that drops textless entries has to let them past or the layout is lost
+    // before it reaches the stitcher.
+    const { mapWordToContent } = await import("./openAiBackend.js");
+    expect(mapWordToContent({ break: 1 })).toEqual({ break: 1 });
+    expect(mapWordToContent({ break: 2 })).toEqual({ break: 2 });
+  });
+});

@@ -1,7 +1,7 @@
 {
   "name": "noteberg",
   "version": "0.5.42",
-  "build": 1,
+  "build": 2,
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
   "scripts": {
@@ -15,10 +15,10 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "proxy": "node proxy-server.js",
-    "lint": "biome lint ./src",
-    "format": "biome format --write ./src",
-    "format-check": "biome format ./src",
-    "check": "biome check --write --unsafe ./src",
+    "lint": "biome lint ./src ./js-admin",
+    "format": "biome format --write ./src ./js-admin",
+    "format-check": "biome format ./src ./js-admin",
+    "check": "biome check --write --unsafe ./src ./js-admin",
     "build:nextcloud": "cross-env VITE_PLATFORM=nextcloud vite build",
     "dev:nextcloud": "cross-env VITE_PLATFORM=nextcloud vite build --watch",
     "sync-version": "node sync-version.js",

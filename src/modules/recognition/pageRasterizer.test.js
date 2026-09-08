@@ -6,7 +6,15 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { computeScale, planBands, smallestTextHeight, strokeBounds } from "./pageRasterizer.js";
+import {
+  computeScale,
+  countBands,
+  filterRecognizableStrokes,
+  planBands,
+  planNote,
+  smallestTextHeight,
+  strokeBounds,
+} from "./pageRasterizer.js";
 
 function stroke(points) {
   return {
@@ -38,6 +46,53 @@ describe("strokeBounds", () => {
   it("ignores malformed strokes rather than throwing", () => {
     const bounds = strokeBounds([null, { x: null }, stroke([[1, 2]])]);
     expect(bounds).toEqual({ minX: 1, minY: 2, maxX: 1, maxY: 2 });
+  });
+});
+
+describe("filterRecognizableStrokes", () => {
+  it("drops marker strokes and keeps pen strokes", () => {
+    const pen = stroke([[1, 2]]);
+    const marker = { ...stroke([[3, 4]]), type: "marker" };
+    expect(filterRecognizableStrokes([pen, marker])).toEqual([pen]);
+  });
+
+  it("returns an empty array for a marker-only note", () => {
+    const marker = { ...stroke([[3, 4]]), type: "marker" };
+    expect(filterRecognizableStrokes([marker])).toEqual([]);
+  });
+
+  it("tolerates a missing or empty input", () => {
+    expect(filterRecognizableStrokes(null)).toEqual([]);
+    expect(filterRecognizableStrokes([])).toEqual([]);
+  });
+});
+
+describe("planNote and countBands ignore marker strokes", () => {
+  // A highlighter sweep rasterizes as opaque black ink, painting over the very
+  // word it was meant to emphasize (it is translucent and wide on purpose, to
+  // sit *over* text rather than read as text). Bounds and page counts must be
+  // computed from pen strokes only, so what is billed and shown to the user
+  // matches what is actually sent.
+  const pen = (points) => stroke(points);
+  const marker = (points) => ({ ...stroke(points), type: "marker" });
+
+  it("excludes marker-only ink from the bounding box", () => {
+    const plan = planNote([
+      pen([
+        [10, 20],
+        [30, 40],
+      ]),
+      marker([
+        [1000, 2000],
+        [3000, 4000],
+      ]),
+    ]);
+    expect(plan.padded.maxY).toBeLessThan(2000);
+  });
+
+  it("reports no pages for a note with marker strokes only", () => {
+    expect(countBands([marker([[10, 20]])])).toBe(0);
+    expect(planNote([marker([[10, 20]])])).toBeNull();
   });
 });
 

@@ -361,6 +361,95 @@ describe("NoteCanvas Commands", () => {
   });
 
   describe("ShiftContentCommand", () => {
+    /**
+     * Recognition bands move with the ink they describe.
+     *
+     * A recognized word is localized to a content-space Y range. Shifting the
+     * strokes without shifting the range leaves every highlight below the
+     * insertion point pointing at whatever moved into its place — wrong in a way
+     * only visible the next time the user searches.
+     *
+     * This is why a band is stored as a Y range rather than as a band index: an
+     * index names a slice of the page, and no arithmetic on it can express
+     * "everything below this point moved down".
+     */
+    describe("recognition bands", () => {
+      beforeEach(() => {
+        noteCanvas.noteData.recognition = {
+          fullText: "above below",
+          words: [
+            { text: "above", yRange: { top: 0, bottom: 100 } },
+            { text: "below", yRange: { top: 200, bottom: 300 } },
+          ],
+        };
+      });
+
+      const bands = () => noteCanvas.noteData.recognition.words.map((w) => w.yRange);
+
+      it("moves bands below the insertion point", () => {
+        new ShiftContentCommand(100, ["s1"], [], 150).redo(noteCanvas);
+
+        expect(bands()[1]).toEqual({ top: 300, bottom: 400 });
+      });
+
+      it("leaves bands above the insertion point alone", () => {
+        new ShiftContentCommand(100, ["s1"], [], 150).redo(noteCanvas);
+
+        expect(bands()[0]).toEqual({ top: 0, bottom: 100 });
+      });
+
+      it("puts bands back on undo", () => {
+        const cmd = new ShiftContentCommand(100, ["s1"], [], 150);
+        cmd.redo(noteCanvas);
+        cmd.undo(noteCanvas);
+
+        expect(bands()).toEqual([
+          { top: 0, bottom: 100 },
+          { top: 200, bottom: 300 },
+        ]);
+      });
+
+      it("moves a band that begins below the point even if it extends above", () => {
+        // Matches how strokes are selected — by their own minY — so ink and the
+        // band describing it cannot disagree about whether they moved.
+        noteCanvas.noteData.recognition.words = [
+          { text: "straddles", yRange: { top: 160, bottom: 260 } },
+        ];
+
+        new ShiftContentCommand(100, ["s1"], [], 150).redo(noteCanvas);
+
+        expect(bands()[0]).toEqual({ top: 260, bottom: 360 });
+      });
+
+      it("does not touch bands when no insertion point was recorded", () => {
+        // Other callers of this command shift a selection, not everything below
+        // a line; correcting bands there would move the wrong ones.
+        new ShiftContentCommand(100, ["s1"], []).redo(noteCanvas);
+
+        expect(bands()).toEqual([
+          { top: 0, bottom: 100 },
+          { top: 200, bottom: 300 },
+        ]);
+      });
+
+      it("survives a note with no recognition, or words without a range", () => {
+        noteCanvas.noteData.recognition = { words: [{ text: "unplaced" }] };
+        expect(() => new ShiftContentCommand(100, ["s1"], [], 150).redo(noteCanvas)).not.toThrow();
+
+        noteCanvas.noteData.recognition = null;
+        expect(() => new ShiftContentCommand(100, ["s1"], [], 150).redo(noteCanvas)).not.toThrow();
+      });
+
+      it("marks the note dirty so a moved band is actually saved", () => {
+        // Recognition lives on the note record; without this the correction is
+        // lost on reload and the highlights are wrong again.
+        noteCanvas.strokesChanged = false;
+        new ShiftContentCommand(100, [], [], 150).redo(noteCanvas);
+
+        expect(noteCanvas.strokesChanged).toBe(true);
+      });
+    });
+
     it("should undo and redo content shifting", () => {
       const yShift = 100;
       const strokeIds = ["s1"];

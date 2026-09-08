@@ -17,55 +17,67 @@ import { REGION_COUNT } from "./regions.js";
 const IMAGE = { contentY: 0, contentHeight: 600 };
 const BAND_H = IMAGE.contentHeight / REGION_COUNT;
 
-const word = (text, region, imageBounds = IMAGE) => ({ text, region, imageBounds });
+/**
+ * A word localized to band `index` of an image starting at `contentY`.
+ *
+ * Recognition resolves a band to a content-space Y range at write time, so this
+ * builds what is actually stored — a range — rather than an index plus the
+ * image geometry needed to interpret it.
+ */
+const word = (text, index, contentY = 0) => ({
+  text,
+  yRange: { top: contentY + index * BAND_H, bottom: contentY + (index + 1) * BAND_H },
+});
+
+/** A word the model transcribed but could not place. */
+const unplaced = (text) => ({ text });
 
 describe("wordBandBounds", () => {
-  it("resolves a stored region to the band the rasterizer painted", () => {
-    const bounds = wordBandBounds(word("stroke", "blue-0"));
+  it("reads the stored range directly, with nothing to decode", () => {
+    // The point of storing a range: no stored value depends on the band scheme
+    // that happens to be current when it is read.
+    const bounds = wordBandBounds(word("stroke", 0));
     expect(bounds.top).toBeCloseTo(0);
     expect(bounds.bottom).toBeCloseTo(BAND_H);
-    expect(bounds.regionIndex).toBe(0);
   });
 
-  it("places each colour further down the page than the last", () => {
-    const tops = ["blue-0", "green-0", "yellow-0", "orange-0", "pink-0", "purple-0"].map(
-      (r) => wordBandBounds(word("x", r)).top,
-    );
+  it("places a later band further down the page", () => {
+    const tops = [0, 1, 2, 3, 4, 5].map((i) => wordBandBounds(word("x", i)).top);
     expect(tops).toEqual([...tops].sort((a, b) => a - b));
     expect(new Set(tops).size).toBe(REGION_COUNT);
   });
 
-  it("separates the same colour seen on two different images", () => {
-    // Every image repeats the same six colours, so a colour alone is ambiguous
-    // once a note spans several pages.
-    const first = wordBandBounds(word("stroke", "blue-0", { contentY: 0, contentHeight: 600 }));
-    const second = wordBandBounds(word("stroke", "blue-1", { contentY: 600, contentHeight: 600 }));
+  it("separates the same band seen on two different images", () => {
+    // Bands divide one image, so band 0 of a second page is further down.
+    const first = wordBandBounds(word("stroke", 0, 0));
+    const second = wordBandBounds(word("stroke", 0, 600));
     expect(second.top).toBeGreaterThanOrEqual(first.bottom);
   });
 
   it("returns null for a word that cannot be placed, rather than the origin", () => {
-    // A word with no bounds is still searchable; it just has no location.
+    // A word with no range is still searchable; it just has no location.
     // Defaulting to 0 would silently pin it to the top of the note.
-    expect(wordBandBounds({ text: "stroke", region: "blue-0" })).toBeNull();
-    expect(wordBandBounds(word("stroke", "nonsense-0"))).toBeNull();
-    expect(wordBandBounds({ text: "stroke", region: null })).toBeNull();
+    expect(wordBandBounds(unplaced("stroke"))).toBeNull();
+    expect(wordBandBounds({ text: "x", yRange: null })).toBeNull();
     expect(wordBandBounds(null)).toBeNull();
+  });
+
+  it("rejects a malformed range rather than drawing a degenerate band", () => {
+    expect(wordBandBounds({ text: "x", yRange: { top: 10 } })).toBeNull();
+    expect(wordBandBounds({ text: "x", yRange: { top: 10, bottom: 10 } })).toBeNull();
+    expect(wordBandBounds({ text: "x", yRange: { top: 20, bottom: 10 } })).toBeNull();
   });
 });
 
 describe("collectHighlightBands", () => {
   it("highlights every band that contains a match", () => {
-    const words = [
-      word("strokes.", "blue-0"),
-      word("strokes", "yellow-0"),
-      word("strokes.", "purple-0"),
-    ];
+    const words = [word("strokes.", 0), word("strokes", 2), word("strokes.", 5)];
     // Non-adjacent bands stay separate spans.
     expect(collectHighlightBands(words, searchRegex("stroke"))).toHaveLength(3);
   });
 
   it("highlights a band once however many of its words match", () => {
-    const words = [word("stroke", "blue-0"), word("strokes", "blue-0"), word("stroked", "blue-0")];
+    const words = [word("stroke", 0), word("strokes", 0), word("stroked", 0)];
     expect(collectHighlightBands(words, searchRegex("stroke"))).toHaveLength(1);
   });
 
@@ -73,25 +85,24 @@ describe("collectHighlightBands", () => {
     // Two abutting rectangles leave a hairline seam that reads as a rendering
     // fault, so a contiguous run paints as a single band.
     const bands = collectHighlightBands(
-      [word("stroke", "blue-0"), word("stroke", "green-0")],
+      [word("stroke", 0), word("stroke", 1)],
       searchRegex("stroke"),
     );
     expect(bands).toHaveLength(1);
     expect(bands[0].h).toBeCloseTo(BAND_H * 2);
   });
 
-  it("keeps the same colour on two images as two separate spans", () => {
-    const words = [
-      word("stroke", "blue-0", { contentY: 0, contentHeight: 600 }),
-      word("stroke", "blue-1", { contentY: 600, contentHeight: 600 }),
-    ];
+  it("keeps the same band on two images as two separate spans", () => {
+    // Bands divide one image, so band 0 of a second page is a different place
+    // in the note — the two must not merge into one highlight.
+    const words = [word("stroke", 0, 0), word("stroke", 0, 600)];
     const bands = collectHighlightBands(words, searchRegex("stroke"));
     expect(bands).toHaveLength(2);
     expect(bands[0].y).not.toBe(bands[1].y);
   });
 
   it("ignores words that do not match", () => {
-    const words = [word("banana", "blue-0"), word("stroke", "purple-0")];
+    const words = [word("banana", 0), word("stroke", 5)];
     expect(collectHighlightBands(words, searchRegex("stroke"))).toHaveLength(1);
   });
 
@@ -109,7 +120,7 @@ describe("collectHighlightBands", () => {
   });
 
   it("matches case-insensitively and inside longer words", () => {
-    const words = [word("Strokes.", "blue-0")];
+    const words = [word("Strokes.", 0)];
     expect(collectHighlightBands(words, searchRegex("stroke"))).toHaveLength(1);
   });
 
@@ -124,24 +135,24 @@ describe("collectMatchPositions", () => {
     // Four stroke* hits across four bands are four occurrences, not one. This is
     // the regression that made the navigator disagree with the page.
     const words = [
-      word("strokes.", "blue-0"),
-      word("strokes", "green-0"),
-      word("strokes.", "yellow-0"),
-      word("strokes", "purple-0"),
+      word("strokes.", 0),
+      word("strokes", 1),
+      word("strokes.", 2),
+      word("strokes", 5),
     ];
     expect(collectMatchPositions(words, searchRegex("stroke"))).toHaveLength(4);
   });
 
   it("counts several matching words in one band separately", () => {
     // Highlighting collapses these into one span; counting must not.
-    const words = [word("stroke", "blue-0"), word("strokes", "blue-0")];
+    const words = [word("stroke", 0), word("strokes", 0)];
     expect(collectMatchPositions(words, searchRegex("stroke"))).toHaveLength(2);
   });
 
   it("does not collapse the way highlighting does", () => {
     // Stated directly: the two consumers deliberately disagree, and a future
     // refactor that unified them would reintroduce the undercount.
-    const words = [word("stroke", "blue-0"), word("stroke", "green-0")];
+    const words = [word("stroke", 0), word("stroke", 1)];
     expect(collectHighlightBands(words, searchRegex("stroke"))).toHaveLength(1);
     expect(collectMatchPositions(words, searchRegex("stroke"))).toHaveLength(2);
   });
@@ -149,30 +160,28 @@ describe("collectMatchPositions", () => {
   it("collapses one word read on both sides of a page break", () => {
     // The same occurrence transcribed on two images is one hit, not two: a word
     // on the break is read at the bottom of one image and the top of the next.
-    // Here the last band of image 0 is centred at 550 and the first band of
-    // image 1 at 590, so the copies are 40px apart — inside the tolerance of
-    // 67px (0.67 of a 100px band), and collapsed to a single occurrence.
-    const words = [
-      word("strokes", "purple-0", { contentY: 0, contentHeight: 600 }),
-      word("strokes", "blue-1", { contentY: 540, contentHeight: 600 }),
-    ];
+    // Here the last band of image 0 is centred at 550 and the first band of an
+    // image starting at 540 is centred at 590, so the copies are 40px apart —
+    // inside the tolerance of 67px (0.67 of a 100px band), and collapsed to a
+    // single occurrence.
+    const words = [word("strokes", 5, 0), word("strokes", 0, 540)];
     expect(collectMatchPositions(words, searchRegex("stroke"))).toHaveLength(1);
   });
 
   it("keeps two genuine occurrences a full band apart", () => {
-    const words = [word("strokes", "blue-0"), word("strokes", "green-0")];
+    const words = [word("strokes", 0), word("strokes", 1)];
     expect(collectMatchPositions(words, searchRegex("stroke"))).toHaveLength(2);
   });
 
   it("counts different words in the same band separately", () => {
     // The duplicate guard is keyed on text, so two distinct words that both
     // match must not suppress each other.
-    const words = [word("strokes", "blue-0"), word("stroke", "blue-0")];
+    const words = [word("strokes", 0), word("stroke", 0)];
     expect(collectMatchPositions(words, searchRegex("stroke"))).toHaveLength(2);
   });
 
   it("reports the middle of the band, so navigation lands on it", () => {
-    const [pos] = collectMatchPositions([word("stroke", "blue-0")], searchRegex("stroke"));
+    const [pos] = collectMatchPositions([word("stroke", 0)], searchRegex("stroke"));
     expect(pos.y).toBeCloseTo(BAND_H / 2);
   });
 

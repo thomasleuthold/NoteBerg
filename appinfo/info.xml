@@ -41,15 +41,27 @@
 - Background patterns — ruled lines and grid
 - Internationalization — English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Chinese
 
+### Handwriting Recognition
+- Optional AI recognition with a vision model you configure yourself — off by default, always started manually.
+- Nothing is sent anywhere unless you turn it on and supply your own provider details.
+- When you start a recognition, your handwriting is rendered as an image and sent from your Nextcloud server to the endpoint you configured, and the transcribed text is returned.
+- The request is made by the server rather than the browser, so your API key stays on the server and is never exposed to the web page. It is stored encrypted.
+
+### AI Integration (optional)
+- A shared, off-by-default AI provider connection (endpoint, model, API key) configured once per account in the app's settings. There is no built-in or shared service, and no key ships with the app.
+- AI handwriting recognition (above) is the first feature built on this connection, with more planned.
+
 ### Data & Privacy
-- All note data is stored exclusively on your own Nextcloud server — no third-party services or telemetry
+- All note data is stored exclusively on your own Nextcloud server — no third-party services or telemetry, except for the optional AI recognition described above, which is off unless you configure it
 - Note: uninstalling this app does not delete your note data from the server. Your notes remain in the /NoteBerg/ WebDAV folder and can be re-accessed by reinstalling the app. This is intentional — your data may also have been synced there by the NoteBerg desktop or mobile app.
 
 ### Also available on other platforms
 - Android: native app via Google Play open testing: https://play.google.com/store/apps/details?id=eu.noteberg.app
 - Windows: desktop installer from GitHub Releases: https://github.com/thomasleuthold/NoteBerg/releases (unsigned build; Windows may warn about an unknown publisher)]]></description>
-	<version>0.5.42</version>
-	<release-date>2026-08-19</release-date>
+	<screenshot>https://raw.githubusercontent.com/thomasleuthold/NoteBerg/main/documentation/screenshots/main1.png</screenshot>
+	<screenshot>https://raw.githubusercontent.com/thomasleuthold/NoteBerg/main/documentation/screenshots/main2.png</screenshot>
+	<version>0.5.42-beta.1</version>
+	<release-date>2026-09-07</release-date>
 	<licence>MIT</licence>
 	<author mail="noteberg@posteo.org">Thomas Leuthold</author>
 	<namespace>NoteBerg</namespace>
@@ -57,8 +69,12 @@
 	<category>organization</category>
 	<bugs>https://github.com/thomasleuthold/NoteBerg/issues</bugs>
 	<dependencies>
-		<nextcloud min-version="30" max-version="35"/>
+		<nextcloud min-version="30" max-version="36"/>
 	</dependencies>
+	<settings>
+		<admin>OCA\NoteBerg\Settings\AdminSettings</admin>
+		<admin-section>OCA\NoteBerg\Settings\AdminSection</admin-section>
+	</settings>
 	<navigations>
 		<navigation>
 			<id>noteberg</id>

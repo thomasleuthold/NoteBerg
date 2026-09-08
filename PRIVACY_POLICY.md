@@ -11,7 +11,7 @@
 
     You may optionally configure an AI recognition backend instead, either a model running on your own machine (for example LM Studio or Ollama) or a third-party cloud service. If you point recognition at a service outside your device, NoteBerg asks for your explicit agreement, naming the destination host, before sending anything. Recognition stays off until you agree, and agreement is recorded per destination — pointing recognition somewhere new asks again. You can revoke it at any time in Settings.
 
-    When an AI backend is in use, what is sent is an image of your handwriting only. The note title, notebook name, other notes, and your account identity are not included. Nothing is sent when the configured backend runs on your own machine.
+    When an AI backend is in use, what is sent is an image of your handwriting only — the ink is drawn on a blank background, so typed text, inserted pictures, highlighter strokes, and any imported PDF page behind your writing are not part of the image. The note title, notebook name, other notes, and your account identity are not included. Nothing is sent when the configured backend runs on your own machine.
 *   **Encryption**: The app supports client-side encryption. If enabled, your data is encrypted on your device using your master password before being uploaded to your Nextcloud server.
 
 ## 2. App Permissions

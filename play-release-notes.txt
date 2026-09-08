@@ -10,6 +10,20 @@ Android-relevant items only. Windows and Nextcloud entries from
 CHANGELOG.txt are deliberately left out.
 
 
+0.5.42 -- 478 characters
+------------------------
+<en-US>
+- New: AI handwriting recognition comes to Android. Pick a vision model you
+  configure yourself, local or cloud, and your handwritten notes become
+  searchable. Off by default: nothing is sent anywhere until you turn it on
+  and agree to the destination.
+- Recognition runs as a queue you can leave: start it, close the note and
+  keep working.
+- Settings are now grouped into sections instead of one long page.
+- Fixed panning and zooming breaking after a call or app switch.
+</en-US>
+
+
 0.5.41 -- 466 characters
 ------------------------
 <en-US>
