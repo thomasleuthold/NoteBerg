@@ -254,3 +254,152 @@ describe("NoteToolbar", () => {
     expect(updatedPresets[2]).toEqual({ width: 30, colorIndex: 0, type: "marker" });
   });
 });
+
+describe("NoteToolbar — show recognized text", () => {
+  let container;
+  let onOptionsChange;
+
+  /**
+   * Build a toolbar whose recognized text is whatever the getter returns.
+   *
+   * The getter is a function rather than a value because the real one reads the
+   * note on every call: recognition can finish while the note is open, and the
+   * menu has to reflect that without being rebuilt.
+   */
+  function buildToolbar(getRecognizedText) {
+    return new NoteToolbar(container, vi.fn(), {
+      penPresets: [{ width: 2, colorIndex: 0, type: "pen" }],
+      onOptionsChange,
+      getRecognizedText,
+    });
+  }
+
+  function showTextBtn() {
+    return container.querySelector("#nc-show-text-btn");
+  }
+
+  function openOptions() {
+    fireEvent.click(screen.getByTitle("Note Options"));
+  }
+
+  function closeOptions() {
+    // Same path the user takes: clicking the button again toggles it shut.
+    fireEvent.click(screen.getByTitle("Note Options"));
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    onOptionsChange = vi.fn();
+  });
+
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.clearAllMocks();
+  });
+
+  it("disables the entry when the note has no recognized text", () => {
+    buildToolbar(() => null);
+    openOptions();
+    expect(showTextBtn().disabled).toBe(true);
+  });
+
+  it("enables the entry when there is text to show", () => {
+    buildToolbar(() => "some recognized words");
+    openOptions();
+    expect(showTextBtn().disabled).toBe(false);
+  });
+
+  it("enables the entry after recognition finishes while the note is open", () => {
+    // The regression the per-open sync exists to prevent: the dialog markup is
+    // built once, so an entry disabled at build time would stay disabled for
+    // the rest of the session even after the note has been recognized.
+    let text = null;
+    buildToolbar(() => text);
+
+    openOptions();
+    expect(showTextBtn().disabled).toBe(true);
+    closeOptions();
+
+    text = "recognized after the fact";
+    openOptions();
+    expect(showTextBtn().disabled).toBe(false);
+  });
+
+  it("asks the canvas to show the text when clicked", () => {
+    buildToolbar(() => "words");
+    openOptions();
+    fireEvent.click(showTextBtn());
+    expect(onOptionsChange).toHaveBeenCalledWith({ type: "show-recognized-text" });
+  });
+
+  it("explains why the entry is unavailable", () => {
+    buildToolbar(() => null);
+    openOptions();
+    expect(showTextBtn().title).toBe("toolbar.noRecognizedText");
+  });
+
+  it("drops the explanation once the entry is usable", () => {
+    // A tooltip saying "no recognized text" left on an enabled button would
+    // contradict what the button now does.
+    let text = null;
+    buildToolbar(() => text);
+    openOptions();
+    closeOptions();
+
+    text = "words";
+    openOptions();
+    expect(showTextBtn().hasAttribute("title")).toBe(false);
+  });
+});
+
+describe("NoteToolbar — separating the paid entry", () => {
+  let container;
+  let onOptionsChange;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    onOptionsChange = vi.fn();
+    new NoteToolbar(container, vi.fn(), {
+      penPresets: [{ width: 2, colorIndex: 0, type: "pen" }],
+      onOptionsChange,
+      getRecognizedText: () => "words",
+    });
+    fireEvent.click(screen.getByTitle("Note Options"));
+  });
+
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.clearAllMocks();
+  });
+
+  it("does not put recognize directly above show-text", () => {
+    // The reason this matters: show-text is the entry a user clicks habitually,
+    // and recognize is the one that spends money. Adjacent, a mis-tap on a
+    // familiar target lands on a paid call.
+    const buttons = [...container.querySelectorAll(".note-canvas-toolbar__option-btn")];
+    const recognize = buttons.findIndex((b) => b.id === "nc-recognize-btn");
+    const showText = buttons.findIndex((b) => b.id === "nc-show-text-btn");
+    expect(recognize).toBeGreaterThanOrEqual(0);
+    expect(showText).toBeGreaterThanOrEqual(0);
+    expect(Math.abs(recognize - showText)).toBeGreaterThan(1);
+  });
+
+  it("puts recognize in a section of its own", () => {
+    // A separator is what makes the distance visible rather than incidental —
+    // without it a later menu addition could quietly close the gap again.
+    const section = container
+      .querySelector("#nc-recognize-btn")
+      .closest(".note-canvas-toolbar__options-section");
+    expect(section).not.toBeNull();
+    expect(section.querySelectorAll("button")).toHaveLength(1);
+  });
+
+  it("still asks the canvas to start recognition when clicked", () => {
+    // Moving the entry must not break it. The toolbar only reports the request;
+    // the confirmation dialog lives in the canvas, so this stays a plain call.
+    fireEvent.click(container.querySelector("#nc-recognize-btn"));
+    expect(onOptionsChange).toHaveBeenCalledWith({ type: "recognize-now" });
+  });
+});

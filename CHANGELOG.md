@@ -1,5 +1,36 @@
 # Changelog
 
+## [Unreleased] - 0.5.42
+
+### Added
+- **All platforms**: optional AI handwriting recognition. Handwriting can now be recognized on Android and in the Nextcloud app for the first time, using a vision model you configure yourself — a local one (LM Studio, Ollama) or a cloud API (OpenAI-compatible or Replicate). Recognized text is searchable and syncs to your other devices like any other note content
+- **All platforms**: an "AI access" settings section holds the provider, endpoint and API key once, so any future AI feature can use the same connection
+- **All platforms**: a model browser next to the model field lists what your provider actually offers, instead of requiring the exact identifier to be typed from memory
+- **All platforms**: AI recognition runs as a queue you can leave. Start it from the note toolbar, close the note and keep working; progress is shown per page in the footer, each finished page is saved, and an interrupted run resumes rather than starting over
+- **All platforms**: the recognition prompt, language hint, image size and response length are adjustable, for tuning against a particular model
+- **Nextcloud**: an administrator can now hold the AI account centrally instead of asking every user to obtain their own. In central mode the provider, model and recognition settings are set once for the instance and users configure nothing
+- **Nextcloud**: a monthly page allowance per user, and a usage report in the admin settings showing what each account has spent in a given month. The allowance applies only in central mode — where the organisation is paying — and the recognition dialog shows what is left before a run starts, rather than failing partway through a note
+- **Nextcloud**: administrators choose which AI endpoints may be reached. Nothing is permitted until an endpoint is added, so an instance that never configures this makes no outbound AI calls
+- **All platforms**: settings are reorganized into sections with a navigation rail, so a setting is found by category instead of by scrolling one long page
+- **All platforms**: a new waiting animation based on the app logo replaces the generic spinner
+
+### Changed
+- **All platforms**: matches from AI recognition are marked with a bar in the margin spanning the lines they were found on, rather than a highlight box. A vision model locates a word to a group of lines, not to a position, and the marker says only what is actually known. Windows local recognition is unchanged and still highlights the exact word
+- **Windows**: the bundled local recognizer remains the default and still runs automatically in the background, offline and free. AI recognition is off until you turn it on
+- **Nextcloud**: AI recognition requests are made by the Nextcloud server rather than the browser, so your API key is stored on the server, encrypted, and never reaches the web page
+
+### Fixed
+- **All platforms**: a touch that ended without the browser reporting it — an app switch, an incoming call, or a system edge gesture — could leave panning and pinch-zoom broken for the rest of the session, until the note was closed and reopened
+- **All platforms**: changing the interface language in settings scrolled the panel back to the top
+- **Android**: a Nextcloud server URL with an explicit port (e.g. `https://example.com:8443`) was rejected as "url not allowed on the configured scope"
+
+### Security
+- **All platforms**: AI recognition sends nothing until you pick a backend and explicitly agree to the destination host. Agreement is recorded per host, so pointing recognition somewhere new asks again, and can be revoked in Settings. A model on your own machine needs no agreement, because nothing leaves the device
+- **All platforms**: only the endpoint you configured can be contacted, checked before every request
+- **All platforms**: what gets sent is your handwriting alone, rendered as an image. Typed text, inserted pictures, highlighter strokes and an imported PDF page behind the ink are never drawn into it, and no note titles, notebook names or account details are sent
+- **Nextcloud**: under central management the model and the page allowance are enforced on the server, on the path every request crosses, so neither can be bypassed by a modified page
+- **Nextcloud**: an AI provider configured in an earlier build is moved from browser storage to the server on first run, and the browser copy of the API key is deleted
+
 ## [0.5.41] - 2026-08-19
 
 ### Added

@@ -34,9 +34,9 @@ The build target is controlled by the `VITE_PLATFORM` environment variable:
 
 | Platform | Value | Storage | Audio | Recognition |
 |---|---|---|---|---|
-| Desktop (Tauri) | *(unset)* | IndexedDB | Native (Windows) / browser | Local sidecar (Windows) |
-| Android (Tauri) | *(unset)* | IndexedDB | Native (Kotlin plugin) | not available |
-| Nextcloud web app | `nextcloud` | WebDAV | Import + playback only — no recording | not available |
+| Desktop (Tauri) | *(unset)* | IndexedDB | Native (Windows) / browser | Local sidecar (Windows) + optional AI |
+| Android (Tauri) | *(unset)* | IndexedDB | Native (Kotlin plugin) | Optional AI only |
+| Nextcloud web app | `nextcloud` | WebDAV | Import + playback only — no recording | Optional AI only, via PHP proxy |
 
 ---
 
@@ -166,7 +166,14 @@ Named presets store pen type, color, and width. Saved per-note in `noteContent.p
 
 ## Handwriting Recognition
 
-**Windows only**, via a bundled local sidecar. Not available on any other platform — hosting the recognition service yourself is not a supported scenario, so no URL configuration exists outside Windows.
+Two backends, on every platform. The bundled Windows sidecar is the default where it exists; an AI vision model is an opt-in alternative available everywhere. See [ai_integration_design.md](ai_integration_design.md) for the AI path in full.
+
+| Backend | Platforms | Trigger | Geometry |
+|---|---|---|---|
+| Windows Ink sidecar | Windows | automatic, debounced | exact per-word boxes |
+| AI vision model | Windows, Android, Nextcloud | manual only, queued | approximate — a coloured band, not a box |
+
+The AI backend is off by default and sends nothing until the user configures a provider and consents to the destination host.
 
 ### Sidecar Service
 
@@ -184,7 +191,16 @@ A .NET sidecar (`NoteBerg.Recognition`) is bundled with the app and auto-started
 4. Debounced 2.5s after last stroke modification
 5. Batch recognition on app startup for all unrecognised notes (Windows)
 
-Recognition text is used for full-text search across all notes.
+### AI Recognition Flow
+
+1. User starts it from the note toolbar — never automatic (a page costs money and takes minutes)
+2. A persisted, serial job is enqueued (`recognition/recognitionQueue.js`); the dialog can be closed
+3. Ink is rasterized to one PNG per virtual A4 page, painted with six pale colour bands
+4. One request per page to the configured provider (OpenAI-compatible or Replicate; on Nextcloud via the PHP proxy)
+5. The band the model names per word is resolved to a content-space `yRange` at write time
+6. Words are stored in the same `recognition` shape, tagged `precision: "approximate"` with `boundingRect: null`
+
+Recognition text is used for full-text search across all notes, regardless of which backend produced it, and syncs to every device like any other note field.
 
 ---
 
@@ -294,7 +310,7 @@ Optionally encrypts note JSON before upload to Nextcloud, using the same PBKDF2 
 - **Frontend:** Vite bundle served via `templates/index.php`
 - **CSP:** Allows `worker-src 'self' blob:` for the StorageWorker
 - **No native audio recording** — import only
-- **No handwriting recognition** — Windows-sidecar-only feature; not shown in NC settings
+- **Handwriting recognition** — AI backend only, proxied through `lib/Controller/RecognitionController.php` (the browser cannot reach an AI endpoint directly: CORS, and HTTPS pages cannot call a plain-HTTP local model). Provider config and API key are stored server-side per user.
 - **Storage:** `storage.webdav.js` replaces `storage.js` entirely via Vite alias
 - **Build:** `just build-nc` → Vite build → `occ integrity:sign-app` → tar.gz + archive signature
 
@@ -309,8 +325,8 @@ The Nextcloud app shares the same `src/` frontend as the Tauri desktop/Android a
 | Authentication | App password stored in OS keychain | None — Nextcloud session cookie | User is already logged in to Nextcloud; `@nextcloud/axios` sends session headers automatically |
 | Local encryption / master password | Active | Always off | Nextcloud already controls server-side access; no separate local secret to protect |
 | Sync engine (`nextcloudSync.js`, `autoSync.js`) | Active — etag tracking, conflict resolution, three-way merge | None — `storage.webdav.js` reads/writes WebDAV directly | There is nothing to reconcile: the NC app **is** the server, so every read/write is already the source of truth |
-| Settings panel | Full (theme, language, sync, encryption, recognition, purge) | Hidden entirely | Theme/language come from Nextcloud itself; the dropped subsystems above have no settings to expose |
-| Handwriting recognition | Sidecar-based (Windows only) | Not available — hint text only | Recognition depends on the Windows `InkAnalyzer` sidecar; there is no supported way to self-host the service, so non-Windows platforms show no setting at all |
+| Settings panel | Full (theme, language, sync, encryption, AI access, recognition, purge) | AI access + recognition only | Theme/language come from Nextcloud itself and the dropped subsystems have no settings to expose, but AI recognition needs a provider, model and key configured per user |
+| Handwriting recognition | Sidecar (Windows) or AI vision model | AI vision model only, via a PHP passthrough proxy | The `InkAnalyzer` sidecar is Windows-native and cannot run here. The AI path works, but the browser cannot call an endpoint directly (CORS / mixed content), so requests go through the server — which also keeps the API key out of the browser |
 | Audio recording | Native (Windows/Android) or browser `MediaRecorder` | Import + playback only — no recording UI at all | `SoundDialog.js` gates the "New recording" button behind a native-only (`__TAURI_INTERNALS__`) check; the button isn't rendered in the NC build, so even the browser `getUserMedia` path is never reached there |
 | Tombstones | Written to IndexedDB + WebDAV | Written to WebDAV only | Still required so Tauri fat clients sharing the same `/NoteBerg/` folder see deletions from the NC app |
 
@@ -328,6 +344,9 @@ The Nextcloud app shares the same `src/` frontend as the Tauri desktop/Android a
 | Stroke arrays `x[], y[], pressure[]` | Compact storage; faster serialisation than array-of-objects |
 | WAV for Windows recording | WAV header stores duration; playback time display works correctly (WebM does not) |
 | Native audio on Windows/Android | Browser `getUserMedia` + WebM has no duration metadata and unreliable quality |
-| Local recognition sidecar | Offline, no API costs, uses Windows Ink Analysis (high quality) |
+| Local recognition sidecar as the Windows default | Offline, no API costs, exact word positions, uses Windows Ink Analysis (high quality) |
+| AI recognition manual-only and queued | A page costs money and takes minutes; an automatic trigger would stall note closing and bill the user for the whole startup backlog unprompted |
+| AI words localized to a colour band, not a box | Vision models' reported coordinates drift by more than a line height — asking which band a word sits on is perception, not measurement, and cannot overstate what is known |
+| NC recognition via a PHP passthrough proxy | The browser cannot reach an AI endpoint (CORS / mixed content), and it keeps the API key server-side where an XSS on the NC origin cannot read it |
 | OS keychain for credentials | No plaintext secrets on disk; leverages hardware-backed storage on Android |
 | Nextcloud Login Flow v2 | User never enters main NC password into the app; app password can be revoked independently |

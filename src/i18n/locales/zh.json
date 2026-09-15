@@ -7,7 +7,7 @@
     "restore": "恢复",
     "save": "保存",
     "ok": "确定",
-    "next": "Next",
+    "next": "下一步",
     "loading": "加载中...",
     "working": "处理中...",
     "error": "错误",
@@ -115,15 +115,14 @@
     "title": "设置",
     "sections": {
       "appearance": "外观",
-      "language": "语言",
       "security": "安全",
       "nextcloud": "Nextcloud 同步",
       "recognition": "手写识别",
-      "mcp": "MCP Server (AI Integration)",
+      "mcp": "MCP 服务器（AI 集成）",
       "logging": "日志",
       "dangerZone": "危险操作",
       "about": "关于",
-      "help": "帮助引导"
+      "aiProvider": "AI 访问"
     },
     "appearance": {
       "theme": "主题",
@@ -192,7 +191,7 @@
       "windowsOnly": "手写识别功能仅在 Windows 应用中可用。",
       "languageLabel": "语言",
       "languageDesc": "手写识别的目标语言",
-      "testBtn": "测试连接",
+      "testBtn": "测试识别（消耗 token）",
       "testing": "测试中...",
       "connecting": "连接中...",
       "success": "✓ 连接成功（{{source}}）！",
@@ -207,8 +206,112 @@
         "es-ES": "西班牙语",
         "it-IT": "意大利语",
         "ja-JP": "日语",
-        "zh-CN": "中文（简体）"
-      }
+        "zh-CN": "中文（简体）",
+        "auto": "自动检测"
+      },
+      "backendSidecar": "Windows 本地识别器（精确的字词位置）",
+      "backendAi": "AI 视觉模型（近似的字词位置）",
+      "backendSidecarUnavailable": "Windows 本地识别器（未运行）",
+      "endpointLabel": "API 端点",
+      "endpointDesc": "兼容 OpenAI 的基础 URL，例如 LM Studio 或 Ollama。必须以 /v1 结尾。",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "endpointChoose": "选择一个端点…",
+      "endpointNoneAllowed": "没有允许的端点",
+      "endpointDescNoneAllowed": "您的 Nextcloud 管理员未允许任何 AI 端点，因此此实例上无法使用识别功能。",
+      "endpointNoLongerAllowed": "不再被允许",
+      "endpointNotPermitted": "✗ 您的 Nextcloud 管理员不允许此端点。",
+      "modelLabel": "模型",
+      "modelDesc": "服务器报告的模型标识符",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "browseModels": "浏览可用模型",
+      "modelPicked": "已选择 {{model}}，保存后生效",
+      "apiKeyLabel": "API 密钥",
+      "apiKeyDesc": "作为 bearer 令牌发送。大多数本地服务器无需填写。",
+      "apiKeyPlaceholder": "如不需要请留空",
+      "apiKeySet": "已保存 API 密钥。输入以替换。",
+      "imageEdgeLabel": "最大图像尺寸",
+      "imageEdgeDesc": "发送的每张图像的最长边（像素）。页面会按比例缩放，因此数值越大越能识别细小的手写内容——若小字被忽略请调高。开销大致按平方增长。",
+      "saveBtn": "保存",
+      "saved": "已保存",
+      "endpointInvalidUrl": "✗ 不是有效的 URL",
+      "endpointInsecure": "✗ 普通 http 仅允许用于 localhost。远程服务器请使用 https。",
+      "endpointUnsupported": "✗ 仅支持 http 和 https 端点",
+      "missingEndpoint": "✗ 请先输入端点和模型",
+      "testingModel": "正在发送测试图像...",
+      "aiSuccess": "✓ 连接成功（{{model}} 已响应）",
+      "aiNoVision": "⚠ 已连接，但响应不可用。请检查模型是否支持视觉输入。",
+      "maxTokensLabel": "最大响应长度",
+      "maxTokensDesc": "模型回复的令牌上限。一页手写内容需要几百个；较低的上限可以阻止只会循环而不转写的模型。",
+      "timeoutLabel": "识别超时",
+      "timeoutDesc": "等待模型转录一页的时长（秒）。对推理模型或在 CPU 上运行的本地模型可调高；若要在端点无响应时更快失败则调低。",
+      "timeoutDescNextcloud": "等待模型转录一页的时长（秒）。对推理模型或在 CPU 上运行的本地模型可调高；若要在端点无响应时更快失败则调低。服务器将其限制为 600 秒，超过 Web 服务器自身超时的值需要同时调高该设置。",
+      "syncOnlyTitle": "在此服务器上，较慢的模型可能被中断",
+      "syncOnlyBody": "此 Nextcloud 服务器无法在后台运行识别（需要 php-fpm 以及已配置的内存缓存，如 Redis 或 APCu）。模型工作期间请求会保持打开，因此 Web 服务器可能在约一分钟后将其切断，表现为网络错误。请使用更快的模型或更小的最大图像尺寸，或请管理员启用内存缓存。",
+      "versionLabel": "模型版本",
+      "versionDesc": "Replicate 模型页面上的版本哈希。社区模型必填，官方模型可留空。",
+      "versionPlaceholder": "例如 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ 请先输入模型名称",
+      "promptLabel": "系统提示词",
+      "promptDesc": "发送给模型的指令。留空则使用持续维护的内置默认值。网格和裁剪相关指令会自动追加。",
+      "promptPlaceholder": "留空 — 正在使用默认值",
+      "promptReset": "载入默认值",
+      "promptUsingDefault": "正在使用默认值",
+      "promptWarning": "⚠ 提示词可能无法解析：缺少 {{items}}",
+      "promptWarn": {
+        "empty": "任何内容",
+        "noJson": "JSON 指令",
+        "noWordsKey": "\"words\" 键",
+        "noRegion": "区域/色带指令",
+        "noShape": "{{shape}} 占位符",
+        "noBreak": "换行指令",
+        "noLanguage": "{{language}} 占位符",
+        "noPunctuation": "{{punctuation}} 占位符"
+      },
+      "endpointDescNextcloud": "由您的 Nextcloud 服务器发起调用，因此必须能从服务器访问，而不是从本设备。“localhost”指的是 Nextcloud 服务器本身。",
+      "methodLabel": "识别方法",
+      "methodDesc": "如何将手写内容转换为文本",
+      "providerMissingTitle": "尚未配置 AI 访问",
+      "providerMissingBody": "在配置 AI 提供方之前，手写识别将保持关闭。",
+      "centralTitle": "由管理员管理",
+      "centralBody": "此实例的 AI 提供商、模型和提示词由您的 Nextcloud 管理员设置，无法在此更改。",
+      "configureProvider": "配置 AI 访问",
+      "savedNeedsProvider": "已保存 — 请配置 AI 访问以开始识别"
+    },
+    "modelPicker": {
+      "title": "可用模型",
+      "searchPlaceholder": "筛选模型…",
+      "typeFilter": "模型类型",
+      "allTypes": "全部类型",
+      "visionOnly": "仅视觉模型",
+      "loading": "正在加载模型…",
+      "count": "{{total}} 个模型中的 {{shown}} 个",
+      "truncated": "此列表仅为服务商目录的部分内容，你仍可手动输入任意模型名。",
+      "noMatches": "没有符合此筛选条件的模型。",
+      "cancel": "取消",
+      "unsupported": "此服务器不提供模型列表，请直接输入模型名。",
+      "unauthorized": "API 密钥被拒绝，无法读取模型列表。",
+      "notConfigured": "请先配置 AI 服务商。",
+      "failed": "无法加载模型列表：{{message}}",
+      "types": {
+        "image->text": "图像 → 文本",
+        "text->text": "文本 → 文本",
+        "text->image": "文本 → 图像",
+        "other": "其他",
+        "unknown": "类型未知"
+      },
+      "caps": {
+        "vision": "视觉",
+        "audio": "音频",
+        "video": "视频",
+        "files": "文件",
+        "tools": "工具",
+        "reasoning": "推理"
+      },
+      "searching": "正在搜索…",
+      "searched": "已搜索提供商的完整目录。",
+      "searchTruncated": "显示最相关的匹配项 — 优化查询以缩小范围。",
+      "searchFailed": "搜索不可用，因此仅筛选了已加载的样本。",
+      "searchAllPlaceholder": "搜索所有模型…"
     },
     "mcp": {
       "windowsOnly": "MCP 服务器仅在 Windows 应用中可用。",
@@ -326,6 +429,36 @@
       "resetBtn": "重置",
       "resetConfirmTitle": "重置帮助引导",
       "resetConfirmMsg": "下次使用各工具时将再次显示首次使用提示。"
+    },
+    "aiProvider": {
+      "intro": "配置一次，所有 AI 功能均可使用。",
+      "providerLabel": "提供方",
+      "providerDesc": "本设备可访问的 AI 服务",
+      "providerNone": "未配置",
+      "providerOpenAi": "OpenAI 兼容（LM Studio、Ollama、云端 API）",
+      "providerReplicate": "Replicate",
+      "saveBtn": "保存 AI 访问",
+      "saved": "已保存 AI 访问",
+      "privacyHint": "您选择用 AI 处理的数据会发送到此端点。",
+      "privacyHintLocal": "此端点位于您的设备上，因此没有数据离开本机。",
+      "privacyHintRemote": "这是远程服务，因此这些数据会离开您的设备。",
+      "consentTitle": "向 {{host}} 发送数据？",
+      "consentBody": "AI 功能会将您请求处理的内容——渲染为图片的手写内容、笔记文本，以及未来功能新增的内容——发送到 {{host}}，一个位于您设备之外的服务。仅发送各功能所需的内容，且仅在您启动时发送。\n\n您随时可以在设置中更改或撤销此授权。",
+      "consentConfirm": "允许",
+      "consentDeclined": "在您同意向 {{host}} 发送数据之前，AI 功能将保持关闭。",
+      "testBtn": "测试连接",
+      "testing": "正在测试…",
+      "testOk": "已连接。",
+      "testOkModels": "已连接。有 {{count}} 个模型可用。",
+      "testOkNoListing": "已连接。此端点不提供模型列表，这是正常的。",
+      "testUnauthorized": "凭据被拒绝。请检查 API 密钥。",
+      "testUnreachable": "无法连接到该端点。{{message}}",
+      "testFailed": "端点返回错误（HTTP {{status}}）。",
+      "testNotConfigured": "请先填写提供方信息。",
+      "testKeyRequired": "远程端点需要 API 密钥。"
+    },
+    "nav": {
+      "back": "所有设置"
     }
   },
   "modals": {
@@ -389,6 +522,13 @@
     },
     "errors": {
       "titleRequired": "标题为必填项"
+    },
+    "recognizedText": {
+      "title": "识别的文本",
+      "engineLabel": "由 {{engine}} 识别",
+      "copy": "复制",
+      "copied": "已复制",
+      "copyFailed": "复制失败"
     }
   },
   "auth": {
@@ -449,7 +589,28 @@
     "syncFailedTooltip": "同步失败：{{error}}",
     "unknownError": "未知错误",
     "recognitionRunning": "手写识别运行中…",
-    "mcpRunning": "MCP server is running — AI assistants can access your notebooks"
+    "mcpRunning": "MCP 服务器正在运行 — AI 助手可以访问您的笔记本",
+    "recognitionQueued": "{{count}} 条笔记等待识别",
+    "recognitionFailed": "{{count}} 个识别失败",
+    "recognitionJobsTitle": "手写识别",
+    "recognitionClearFinished": "清除已完成",
+    "recognitionPage": "第 {{current}} 页，共 {{total}} 页",
+    "recognitionStarting": "正在启动…",
+    "recognitionWaiting": "等待中",
+    "recognitionDone": "完成",
+    "recognitionFailedOne": "失败",
+    "recognitionFailReason": {
+      "stale": "笔记已更改",
+      "backendChanged": "后端已更改",
+      "allowance": "配额已用完",
+      "timeout": "已超时",
+      "unreachable": "无法连接端点",
+      "auth": "密钥被拒绝",
+      "quota": "配额或速率限制",
+      "badResponse": "无法使用的回复",
+      "unknown": "失败"
+    },
+    "recognitionUntitled": "无标题笔记"
   },
   "breadcrumb": {
     "home": "主页",
@@ -506,7 +667,10 @@
       "partEraser": "局部橡皮擦",
       "highlighterOnly": "仅擦除荧光笔",
       "size": "大小"
-    }
+    },
+    "recognizeNow": "识别手写内容",
+    "showRecognizedText": "显示识别的文本",
+    "noRecognizedText": "没有识别的文本"
   },
   "licenses": {
     "title": "开源许可证",
@@ -561,6 +725,32 @@
       "apply": "应用",
       "cancel": "取消",
       "normalizeLighting": "均衡光照"
+    },
+    "recognition": {
+      "progressTitle": "正在识别手写内容",
+      "done": "已识别 {{count}} 个词",
+      "empty": "未识别到手写内容",
+      "failed": "识别失败",
+      "noBackend": "未配置识别后端",
+      "cancel": "取消",
+      "cancelled": "已取消识别",
+      "alreadyRunning": "该笔记的识别已在进行中。本次重复运行未启动——可在状态栏查看进度，也可在那里取消。",
+      "transcribing": "第 {{current}}/{{total}} 页 · {{words}} 个词 · {{seconds}} 秒",
+      "runInBackground": "在后台运行",
+      "backgroundNote": "可以关闭此对话框 — 识别将在后台继续。",
+      "queuedNext": "等待开始…",
+      "queuedBehind": "等待中 — 前面还有 {{count}} 个任务",
+      "staleStrokes": "识别过程中笔记发生了更改，请重新运行。",
+      "confirmTitle": "识别手写内容",
+      "confirmScope": "将向 {{model}} 发送 {{count}} 页进行转写。",
+      "confirmScopeModelOnly": "将向 {{model}} 发送此笔记进行转写。",
+      "quotaRemaining": "本月还剩 {{remaining}} / {{limit}} 页额度。",
+      "quotaExhausted": "本月额度已用完，管理员可以提高额度上限。",
+      "confirmStart": "开始",
+      "optionPunctuation": "转写标点符号",
+      "optionPunctuationDesc": "包含页面上书写的句号、逗号和破折号。关闭后只保留文字。",
+      "optionBreaks": "保留换行",
+      "optionBreaksDesc": "保留行和段落的结束位置。版面识别不如文字识别可靠。"
     }
   },
   "recycleBin": {
@@ -621,7 +811,7 @@
     },
     "draw": {
       "title": "绘图",
-      "body": "点按绘图可选择钢笔或荧光笔，并更改颜色或粗细。手写识别仅在 Windows 上可用。"
+      "body": "点按绘图可选择钢笔或荧光笔，并更改颜色或粗细。手写识别在 Windows 上自动运行；在其他平台上，可在设置中开启 AI 识别。"
     },
     "eraser": {
       "title": "橡皮擦",

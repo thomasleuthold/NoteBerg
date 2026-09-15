@@ -39,6 +39,21 @@ ORGANIZATION
 - Task marker overview across all notebooks
 - Recycle bin with soft delete
 
+HANDWRITING RECOGNITION
+- Optional AI recognition with a vision model you configure yourself -
+  a local one (LM Studio, Ollama) or a cloud API (OpenAI-compatible,
+  Replicate)
+- Off by default and always started manually - nothing is sent anywhere
+  until you pick a backend and explicitly agree to the destination
+- Recognized text is searchable across all your notes
+
+AI INTEGRATION
+- A shared, off-by-default AI provider connection (endpoint, model, API
+  key) configured once in Settings - AI handwriting recognition above is
+  its first use, with more planned
+- You bring your own provider and key - there is no built-in or shared
+  service, and no key ships with the app
+
 SYNC & SECURITY
 - Nextcloud sync via WebDAV (optional)
 - Offline-first - works without any internet connection
@@ -53,10 +68,6 @@ code on GitHub: https://github.com/thomasleuthold/NoteBerg
 NoteBerg is currently in beta and has not undergone a formal security
 audit - please avoid storing highly sensitive data. Feedback and bug
 reports are welcome via GitHub Issues.
-
-Note: automatic handwriting recognition currently requires a local
-Windows recognition service and is not available on Android; handwriting,
-drawing, rich text, PDF annotation and sync all work fully on Android.
 
 ---
 

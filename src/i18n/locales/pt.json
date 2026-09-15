@@ -7,7 +7,7 @@
     "restore": "Restaurar",
     "save": "Salvar",
     "ok": "OK",
-    "next": "Next",
+    "next": "Seguinte",
     "loading": "Carregando...",
     "working": "Processando...",
     "error": "Erro",
@@ -115,15 +115,14 @@
     "title": "Configurações",
     "sections": {
       "appearance": "Aparência",
-      "language": "Idioma",
       "security": "Segurança",
       "nextcloud": "Sincronização Nextcloud",
       "recognition": "Reconhecimento de escrita",
-      "mcp": "MCP Server (AI Integration)",
+      "mcp": "Servidor MCP (integração de IA)",
       "logging": "Registros",
       "dangerZone": "Zona de risco",
       "about": "Sobre",
-      "help": "Ajuda"
+      "aiProvider": "Acesso de IA"
     },
     "appearance": {
       "theme": "Tema",
@@ -186,13 +185,13 @@
       "syncFailed": "✗ Falha na sincronização: {{message}}"
     },
     "recognition": {
-      "statusLabel": "Status",
+      "statusLabel": "Estado",
       "localActive": "Reconhecimento local ativo",
       "notRunning": "Serviço de reconhecimento não está em execução",
       "windowsOnly": "O reconhecimento de escrita à mão só está disponível no aplicativo Windows.",
       "languageLabel": "Idioma",
       "languageDesc": "Idioma de destino para o reconhecimento de escrita à mão",
-      "testBtn": "Testar conexão",
+      "testBtn": "Testar reconhecimento (consome tokens)",
       "testing": "Testando...",
       "connecting": "Conectando...",
       "success": "✓ Conexão bem-sucedida ({{source}})!",
@@ -207,14 +206,118 @@
         "es-ES": "Espanhol",
         "it-IT": "Italiano",
         "ja-JP": "Japonês",
-        "zh-CN": "Chinês (simplificado)"
-      }
+        "zh-CN": "Chinês (simplificado)",
+        "auto": "Deteção automática"
+      },
+      "backendSidecar": "Reconhecimento local do Windows (posições exatas)",
+      "backendAi": "Modelo de visão IA (posições aproximadas)",
+      "backendSidecarUnavailable": "Reconhecimento local do Windows (não ativo)",
+      "endpointLabel": "Endpoint da API",
+      "endpointDesc": "URL base compatível com OpenAI, p. ex. LM Studio ou Ollama. Deve terminar em /v1.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "endpointChoose": "Escolha um ponto final…",
+      "endpointNoneAllowed": "Nenhum ponto final permitido",
+      "endpointDescNoneAllowed": "A administração do seu Nextcloud não permitiu nenhum ponto final de IA, por isso o reconhecimento não pode ser usado nesta instância.",
+      "endpointNoLongerAllowed": "já não é permitido",
+      "endpointNotPermitted": "✗ A administração do seu Nextcloud não permite este ponto final.",
+      "modelLabel": "Modelo",
+      "modelDesc": "Identificador do modelo conforme relatado pelo servidor",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "browseModels": "Procurar modelos disponíveis",
+      "modelPicked": "{{model}} selecionado — guarde para aplicar",
+      "apiKeyLabel": "Chave de API",
+      "apiKeyDesc": "Enviada como token bearer. Opcional na maioria dos servidores locais.",
+      "apiKeyPlaceholder": "Deixe vazio se não for necessário",
+      "apiKeySet": "Há uma chave de API guardada. Escreva para substituí-la.",
+      "imageEdgeLabel": "Tamanho máximo da imagem",
+      "imageEdgeDesc": "Maior lado de cada imagem enviada, em pixels. A página é escalada para caber, por isso um valor maior torna legível a escrita pequena — aumente-o se a letra miúda for ignorada. O custo cresce aproximadamente ao quadrado.",
+      "saveBtn": "Guardar",
+      "saved": "Guardado",
+      "endpointInvalidUrl": "✗ URL inválido",
+      "endpointInsecure": "✗ http simples só é permitido para localhost. Use https para um servidor remoto.",
+      "endpointUnsupported": "✗ Apenas endpoints http e https são suportados",
+      "missingEndpoint": "✗ Introduza primeiro um endpoint e um modelo",
+      "testingModel": "A enviar uma imagem de teste...",
+      "aiSuccess": "✓ Ligação bem-sucedida ({{model}} respondeu)",
+      "aiNoVision": "⚠ Ligado, mas a resposta não foi utilizável. Verifique se o modelo suporta visão.",
+      "maxTokensLabel": "Comprimento máximo da resposta",
+      "maxTokensDesc": "Limite de tokens para a resposta do modelo. Uma página de escrita precisa de algumas centenas; um limite baixo trava um modelo que entra em ciclo em vez de transcrever.",
+      "timeoutLabel": "Tempo limite do reconhecimento",
+      "timeoutDesc": "Quanto tempo esperar que o modelo transcreva uma página, em segundos. Aumente para modelos de raciocínio ou um modelo local em CPU; reduza para falhar mais rápido num ponto de extremidade inativo.",
+      "timeoutDescNextcloud": "Quanto tempo esperar que o modelo transcreva uma página, em segundos. Aumente para modelos de raciocínio ou um modelo local em CPU; reduza para falhar mais rápido num ponto de extremidade inativo. O servidor limita isto a 600 s, e valores acima do tempo limite do seu servidor web exigem aumentá-lo também.",
+      "syncOnlyTitle": "Modelos lentos podem ser interrompidos neste servidor",
+      "syncOnlyBody": "Este servidor Nextcloud não consegue executar o reconhecimento em segundo plano (precisa de php-fpm e de uma cache de memória configurada, como Redis ou APCu). Os pedidos ficam abertos enquanto o modelo trabalha, pelo que o servidor web os pode cortar ao fim de cerca de um minuto — o que aparece como um erro de rede. Use um modelo mais rápido ou um tamanho máximo de imagem menor, ou peça ao administrador para ativar uma cache.",
+      "versionLabel": "Versão do modelo",
+      "versionDesc": "Hash de versão da página do modelo no Replicate. Necessário para modelos da comunidade; deixe vazio para os oficiais.",
+      "versionPlaceholder": "p. ex. 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ Introduza primeiro um nome de modelo",
+      "promptLabel": "Prompt do sistema",
+      "promptDesc": "Instruções enviadas ao modelo. Deixe vazio para usar o valor predefinido integrado, mantido atualizado. As instruções de grelha e recorte são acrescentadas automaticamente.",
+      "promptPlaceholder": "Vazio — a usar o predefinido",
+      "promptReset": "Predefinido",
+      "promptUsingDefault": "A usar o predefinido",
+      "promptWarning": "⚠ O prompt pode não ser analisável: falta {{items}}",
+      "promptWarn": {
+        "empty": "qualquer conteúdo",
+        "noJson": "uma instrução JSON",
+        "noWordsKey": "a chave \"words\"",
+        "noRegion": "a instrução de região/banda",
+        "noShape": "o marcador {{shape}}",
+        "noBreak": "a instrução de quebra de linha",
+        "noLanguage": "o marcador {{language}}",
+        "noPunctuation": "o marcador {{punctuation}}"
+      },
+      "endpointDescNextcloud": "É chamado a partir do seu servidor Nextcloud, pelo que tem de estar acessível a partir daí — não deste dispositivo. «localhost» significa o próprio servidor Nextcloud.",
+      "methodLabel": "Método de reconhecimento",
+      "methodDesc": "Como a escrita manual é convertida em texto",
+      "providerMissingTitle": "O acesso de IA não está configurado",
+      "providerMissingBody": "O reconhecimento de escrita permanecerá desativado até configurar um fornecedor de IA.",
+      "centralTitle": "Gerido pelo seu administrador",
+      "centralBody": "O fornecedor de IA, o modelo e o prompt desta instância são definidos pelo seu administrador do Nextcloud e não podem ser alterados aqui.",
+      "configureProvider": "Configurar acesso de IA",
+      "savedNeedsProvider": "Guardado — configure o acesso de IA para iniciar o reconhecimento"
+    },
+    "modelPicker": {
+      "title": "Modelos disponíveis",
+      "searchPlaceholder": "Filtrar modelos…",
+      "typeFilter": "Tipo de modelo",
+      "allTypes": "Todos os tipos",
+      "visionOnly": "Apenas modelos de visão",
+      "loading": "A carregar modelos…",
+      "count": "{{shown}} de {{total}} modelos",
+      "truncated": "A lista é uma amostra do catálogo do fornecedor — pode continuar a escrever qualquer nome de modelo.",
+      "noMatches": "Nenhum modelo corresponde a este filtro.",
+      "cancel": "Cancelar",
+      "unsupported": "Este servidor não oferece uma lista de modelos. Escreva o nome do modelo.",
+      "unauthorized": "A chave de API foi rejeitada, não foi possível ler a lista de modelos.",
+      "notConfigured": "Configure primeiro o fornecedor de IA.",
+      "failed": "Não foi possível carregar a lista de modelos: {{message}}",
+      "types": {
+        "image->text": "Imagem → texto",
+        "text->text": "Texto → texto",
+        "text->image": "Texto → imagem",
+        "other": "Outro",
+        "unknown": "Tipo desconhecido"
+      },
+      "caps": {
+        "vision": "Visão",
+        "audio": "Áudio",
+        "video": "Vídeo",
+        "files": "Ficheiros",
+        "tools": "Ferramentas",
+        "reasoning": "Raciocínio"
+      },
+      "searching": "A pesquisar…",
+      "searched": "Foi pesquisado todo o catálogo do fornecedor.",
+      "searchTruncated": "A mostrar as melhores correspondências — refine a consulta para as restringir.",
+      "searchFailed": "A pesquisa não está disponível, por isso apenas a amostra carregada foi filtrada.",
+      "searchAllPlaceholder": "Pesquisar todos os modelos…"
     },
     "mcp": {
       "windowsOnly": "O servidor MCP só está disponível no aplicativo Windows.",
       "enableLabel": "Ativar servidor MCP",
       "enableDesc": "Permite que assistentes de IA (ex.: Claude Desktop) leiam seus cadernos e notas por meio de uma conexão local protegida por token. Desativado por padrão.",
-      "statusLabel": "Status",
+      "statusLabel": "Estado",
       "serverDisabled": "O servidor MCP está desativado.",
       "tokenConfigured": "Token de acesso configurado.",
       "noToken": "Nenhum token de acesso gerado ainda.",
@@ -326,6 +429,36 @@
       "resetBtn": "Repor",
       "resetConfirmTitle": "Repor as dicas de ajuda",
       "resetConfirmMsg": "As primeiras dicas voltarão a aparecer na próxima vez que usar cada ferramenta."
+    },
+    "aiProvider": {
+      "intro": "Configure uma vez e todas as funções de IA poderão usá-lo.",
+      "providerLabel": "Fornecedor",
+      "providerDesc": "Que serviço de IA este dispositivo pode contactar",
+      "providerNone": "Não configurado",
+      "providerOpenAi": "Compatível com OpenAI (LM Studio, Ollama, APIs na nuvem)",
+      "providerReplicate": "Replicate",
+      "saveBtn": "Guardar acesso de IA",
+      "saved": "Acesso de IA guardado",
+      "privacyHint": "Os dados que escolher processar com IA são enviados para este endpoint.",
+      "privacyHintLocal": "Este endpoint está na sua máquina, por isso nada sai do seu dispositivo.",
+      "privacyHintRemote": "Este é um serviço remoto, pelo que esses dados saem do seu dispositivo.",
+      "consentTitle": "Enviar dados para {{host}}?",
+      "consentBody": "As funções de IA enviam o conteúdo que pedir para processar — escrita manual convertida em imagem, texto de notas e o que futuras funções acrescentarem — para {{host}}, um serviço fora do seu dispositivo. Apenas é enviado o que cada função necessita, e só quando a iniciar.\n\nPode alterar ou revogar isto a qualquer momento nas Definições.",
+      "consentConfirm": "Permitir",
+      "consentDeclined": "As funções de IA permanecem desativadas até aceitar enviar dados para {{host}}.",
+      "testBtn": "Testar ligação",
+      "testing": "A testar…",
+      "testOk": "Ligado.",
+      "testOkModels": "Ligado. {{count}} modelo(s) disponível(eis).",
+      "testOkNoListing": "Ligado. Este endpoint não lista modelos, o que é normal.",
+      "testUnauthorized": "Credencial recusada. Verifique a chave de API.",
+      "testUnreachable": "Não foi possível contactar o endpoint. {{message}}",
+      "testFailed": "O endpoint respondeu com um erro (HTTP {{status}}).",
+      "testNotConfigured": "Preencha primeiro os dados do fornecedor.",
+      "testKeyRequired": "É necessária uma chave de API para um endpoint remoto."
+    },
+    "nav": {
+      "back": "Todas as definições"
     }
   },
   "modals": {
@@ -389,6 +522,13 @@
     },
     "errors": {
       "titleRequired": "O título é obrigatório"
+    },
+    "recognizedText": {
+      "title": "Texto reconhecido",
+      "engineLabel": "Reconhecido por {{engine}}",
+      "copy": "Copiar",
+      "copied": "Copiado",
+      "copyFailed": "Falha ao copiar"
     }
   },
   "auth": {
@@ -449,7 +589,28 @@
     "syncFailedTooltip": "Falha na sincronização: {{error}}",
     "unknownError": "erro desconhecido",
     "recognitionRunning": "Reconhecimento de escrita em execução…",
-    "mcpRunning": "MCP server is running — AI assistants can access your notebooks"
+    "mcpRunning": "O servidor MCP está a funcionar — os assistentes de IA podem aceder aos seus blocos",
+    "recognitionQueued": "{{count}} nota(s) a aguardar reconhecimento",
+    "recognitionFailed": "{{count}} reconhecimento(s) falhado(s)",
+    "recognitionJobsTitle": "Reconhecimento de escrita",
+    "recognitionClearFinished": "Limpar concluídos",
+    "recognitionPage": "Página {{current}} de {{total}}",
+    "recognitionStarting": "A iniciar…",
+    "recognitionWaiting": "A aguardar",
+    "recognitionDone": "Concluído",
+    "recognitionFailedOne": "Falhou",
+    "recognitionFailReason": {
+      "stale": "Nota alterada",
+      "backendChanged": "Backend alterado",
+      "allowance": "Quota esgotada",
+      "timeout": "Tempo esgotado",
+      "unreachable": "Ponto de extremidade inacessível",
+      "auth": "Chave rejeitada",
+      "quota": "Quota ou limite de taxa",
+      "badResponse": "Resposta inutilizável",
+      "unknown": "Falhou"
+    },
+    "recognitionUntitled": "Nota sem título"
   },
   "breadcrumb": {
     "home": "Início",
@@ -506,7 +667,10 @@
       "partEraser": "Borracha parcial",
       "highlighterOnly": "Apagar somente marca-textos",
       "size": "Tamanho"
-    }
+    },
+    "recognizeNow": "Reconhecer escrita",
+    "showRecognizedText": "Mostrar texto reconhecido",
+    "noRecognizedText": "Nenhum texto reconhecido"
   },
   "licenses": {
     "title": "Licenças de código aberto",
@@ -561,6 +725,32 @@
       "apply": "Aplicar",
       "cancel": "Cancelar",
       "normalizeLighting": "Normalizar iluminação"
+    },
+    "recognition": {
+      "progressTitle": "Reconhecendo escrita",
+      "done": "{{count}} palavra(s) reconhecida(s)",
+      "empty": "Nenhuma escrita reconhecida",
+      "failed": "Falha no reconhecimento",
+      "noBackend": "Nenhum serviço de reconhecimento configurado",
+      "cancel": "Cancelar",
+      "cancelled": "Reconhecimento cancelado",
+      "alreadyRunning": "O reconhecimento já está em execução para esta nota. Esta segunda execução não foi iniciada — acompanhe o progresso na barra de estado, onde também pode cancelá-lo.",
+      "transcribing": "Página {{current}} de {{total}} · {{words}} palavras · {{seconds}}s",
+      "runInBackground": "Executar em segundo plano",
+      "backgroundNote": "Pode fechar esta janela — o reconhecimento continua em segundo plano.",
+      "queuedNext": "A aguardar o início…",
+      "queuedBehind": "A aguardar — {{count}} tarefa(s) à frente",
+      "staleStrokes": "A nota mudou durante o reconhecimento. Execute-o novamente.",
+      "confirmTitle": "Reconhecer escrita",
+      "confirmScope": "{{count}} página(s) serão enviadas para {{model}} para transcrição.",
+      "confirmScopeModelOnly": "Esta nota será enviada para {{model}} para transcrição.",
+      "quotaRemaining": "Restam {{remaining}} de {{limit}} página(s) este mês.",
+      "quotaExhausted": "Não resta quota este mês. O seu administrador pode aumentar o limite.",
+      "confirmStart": "Iniciar",
+      "optionPunctuation": "Transcrever a pontuação",
+      "optionPunctuationDesc": "Inclui os pontos, vírgulas e travessões escritos na página. Desative para obter apenas as palavras.",
+      "optionBreaks": "Manter as quebras de linha",
+      "optionBreaksDesc": "Preserva onde terminam as linhas e os parágrafos. O reconhecimento do layout é menos fiável do que o do texto."
     }
   },
   "recycleBin": {
@@ -621,7 +811,7 @@
     },
     "draw": {
       "title": "Desenhar",
-      "body": "Toque em Desenhar para escolher caneta ou marca-texto e mudar a cor ou espessura. O reconhecimento de escrita só está disponível no Windows."
+      "body": "Toque em Desenhar para escolher caneta ou marca-texto e mudar a cor ou espessura. O reconhecimento de escrita funciona automaticamente no Windows; noutras plataformas pode ativar o reconhecimento por IA nas Definições."
     },
     "eraser": {
       "title": "Borracha",

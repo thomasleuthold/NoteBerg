@@ -28,7 +28,7 @@
 import { openDB } from "idb";
 
 export const DB_NAME = "NoteBerg";
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 let db = null;
 
@@ -164,11 +164,20 @@ export async function initStorage() {
       if (!database.objectStoreNames.contains("settings")) {
         database.createObjectStore("settings", { keyPath: "key" });
       }
+
+      // v5: recognition job queue. Purely local bookkeeping — never synced, and
+      // never written onto a note: a partially recognized note must not look
+      // recognized, or hasRecognition would hide it from every retry path.
+      if (!database.objectStoreNames.contains("recognitionJobs")) {
+        const jobStore = database.createObjectStore("recognitionJobs", { keyPath: "id" });
+        jobStore.createIndex("noteId", "noteId");
+        jobStore.createIndex("state", "state");
+      }
     },
   });
 
   await _migrateThumbnailsToNoteContent();
-  console.log("Storage initialized (v4)");
+  console.log(`Storage initialized (v${DB_VERSION})`);
   return db;
 }
 
@@ -757,6 +766,33 @@ export function getFileUrl(_id) {
 export function registerPendingUpload(_fileId, _promise) {}
 export async function waitForFileUrl(_id) {
   return null;
+}
+
+// ─── Recognition jobs ─────────────────────────────────────────────────────────
+//
+// Local-only, deliberately outside the note record. A job holds partial work
+// (completed bands) that must survive a restart without ever being mistaken for
+// a finished recognition.
+
+/** Read every persisted recognition job. */
+export async function getRecognitionJobs() {
+  return db.getAll("recognitionJobs");
+}
+
+/** Insert or replace one job. */
+export async function saveRecognitionJob(job) {
+  await db.put("recognitionJobs", job);
+  return job;
+}
+
+/** Remove one job by id. */
+export async function deleteRecognitionJob(id) {
+  await db.delete("recognitionJobs", id);
+}
+
+/** Remove every persisted job. */
+export async function clearRecognitionJobs() {
+  await db.clear("recognitionJobs");
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────

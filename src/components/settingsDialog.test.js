@@ -18,9 +18,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// The shell it writes mirrors the real one in the single respect this file
+// depends on: renderSettings replaces the container's contents, so the
+// scrolling detail pane is a *new* element after every re-render — which is
+// what the scroll-preservation code has to cope with.
 vi.mock("./settingsMode.js", () => ({
   renderSettings: vi.fn(async (container) => {
-    container.innerHTML = '<div class="settings-panel"></div>';
+    container.innerHTML =
+      '<div class="settings-shell">' +
+      '<div class="settings-detail"><div class="settings-panel"></div></div>' +
+      "</div>";
   }),
 }));
 
@@ -156,13 +163,23 @@ describe("language change", () => {
 
   it("preserves scroll position, so picking a language does not jump to the top", async () => {
     await dialog.openSettingsDialog();
-    const body = document.querySelector(".settings-dialog__body");
+    // The detail pane scrolls, not the dialog body: the body is fixed so the
+    // nav rail stays put while a long section moves beside it.
+    const before = document.querySelector(".settings-detail");
     // jsdom reports 0 height, so scrollTop only holds a value we set directly.
-    Object.defineProperty(body, "scrollTop", { value: 0, writable: true });
-    body.scrollTop = 420;
+    Object.defineProperty(before, "scrollTop", { value: 0, writable: true });
+    before.scrollTop = 420;
 
     window.dispatchEvent(new CustomEvent("languagechange", { detail: { lang: "de" } }));
-    await vi.waitFor(() => expect(body.scrollTop).toBe(420));
+
+    // Asserted on the pane that exists *after* the re-render, since the old one
+    // is discarded — restoring onto the stale element would leave the user at
+    // the top with nothing to show for it.
+    await vi.waitFor(() => {
+      const after = document.querySelector(".settings-detail");
+      expect(after).not.toBe(before);
+      expect(after.scrollTop).toBe(420);
+    });
   });
 
   it("does not re-render once closed", async () => {

@@ -135,6 +135,8 @@ export class NoteToolbar {
    * @param {Object} options - Optional configuration
    * @param {Function} options.onPenSettingsChange - Callback ({ width, colorIndex }) => void
    * @param {Function} options.onOptionsChange - Callback ({ type, value }) => void
+   * @param {Function} options.getRecognizedText - Callback () => string|null,
+   *   the note's recognized text, or null when there is none
    * @param {Function} options.onAction - Callback (action) => void
    * @param {Function} options.onUndo - Callback for undo action
    * @param {Function} options.onRedo - Callback for redo action
@@ -146,6 +148,7 @@ export class NoteToolbar {
     this.onPenSettingsChange = options.onPenSettingsChange || (() => {});
     this.onOptionsChange = options.onOptionsChange || (() => {});
     this.getBackground = options.getBackground || (() => "none");
+    this.getRecognizedText = options.getRecognizedText || (() => null);
     this.onAction = options.onAction || (() => {});
     this.onUndo = options.onUndo || (() => {});
     this.onRedo = options.onRedo || (() => {});
@@ -817,6 +820,9 @@ export class NoteToolbar {
       </div>
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
+        <button id="nc-show-text-btn" class="note-canvas-toolbar__option-btn">
+            ${getIcon("clipboard", 16)} ${t("toolbar.showRecognizedText")}
+        </button>
         <button id="nc-export-pdf-btn" class="note-canvas-toolbar__option-btn">
             ${getIcon("download", 16)} ${t("toolbar.exportPdf")}
         </button>
@@ -828,6 +834,12 @@ export class NoteToolbar {
         </button>`
             : ""
         }
+      </div>
+      <div class="note-canvas-toolbar__separator"></div>
+      <div class="note-canvas-toolbar__options-section">
+        <button id="nc-recognize-btn" class="note-canvas-toolbar__option-btn">
+            ${getIcon("fileText", 16)} ${t("toolbar.recognizeNow")}
+        </button>
       </div>
       <div class="note-canvas-toolbar__separator"></div>
       <div class="note-canvas-toolbar__options-section">
@@ -945,6 +957,27 @@ export class NoteToolbar {
         e.target.classList.add("note-canvas-toolbar__option-btn--active");
       });
     });
+
+    const recognizeBtn = this.optionsDialog.querySelector("#nc-recognize-btn");
+    if (recognizeBtn) {
+      recognizeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.onOptionsChange({ type: "recognize-now" });
+        this._closeOptionsDialog();
+      });
+    }
+
+    const showTextBtn = this.optionsDialog.querySelector("#nc-show-text-btn");
+    if (showTextBtn) {
+      showTextBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        // A disabled button does not emit clicks, so this only documents that
+        // the empty case is handled by the disabled state and nothing else.
+        if (showTextBtn.disabled) return;
+        this.onOptionsChange({ type: "show-recognized-text" });
+        this._closeOptionsDialog();
+      });
+    }
 
     const exportPdfBtn = this.optionsDialog.querySelector("#nc-export-pdf-btn");
     if (exportPdfBtn) {
@@ -1155,6 +1188,7 @@ export class NoteToolbar {
   _openOptionsDialog() {
     this._syncBackgroundActiveState();
     this._syncFullscreenLabel();
+    this._syncRecognizedTextState();
     this.optionsDialog.classList.add("note-canvas-toolbar__options-dialog--open");
     document.addEventListener("pointerdown", this._handleDocumentPointerDown);
   }
@@ -1172,6 +1206,32 @@ export class NoteToolbar {
     btn.innerHTML = `${getIcon(active ? "minimize" : "maximize", 16)} ${
       active ? t("toolbar.exitFullscreen") : t("toolbar.fullscreen")
     }`;
+  }
+
+  /**
+   * Enable the "show recognized text" entry only when there is text to show.
+   *
+   * Runs on every open rather than at build time: the dialog markup is created
+   * once, but a note can be recognized while it is open, and an entry that
+   * stayed greyed out afterwards would look broken.
+   *
+   * A note that was never recognized and one whose recognition found nothing
+   * are indistinguishable here — both have no text — so the tooltip says what
+   * is true of both rather than guessing which happened.
+   *
+   * @private
+   */
+  _syncRecognizedTextState() {
+    const btn = this.optionsDialog.querySelector("#nc-show-text-btn");
+    if (!btn) return;
+
+    const hasText = Boolean(this.getRecognizedText());
+    btn.disabled = !hasText;
+    if (hasText) {
+      btn.removeAttribute("title");
+    } else {
+      btn.title = t("toolbar.noRecognizedText");
+    }
   }
 
   /**

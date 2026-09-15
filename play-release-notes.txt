@@ -7,7 +7,20 @@ tags are only needed when uploading notes as a file; when pasting into the
 Console, paste the text between them).
 
 Android-relevant items only. Windows and Nextcloud entries from
-CHANGELOG.txt are deliberately left out.
+CHANGELOG.md are deliberately left out.
+
+
+0.5.42 -- 479 characters
+------------------------
+<en-US>
+- New: AI handwriting recognition comes to Android. Pick a vision model,
+  local or cloud, and your handwritten notes become searchable. Off by
+  default: nothing is sent until you turn it on and agree to the destination.
+- Recognition runs as a queue you can leave: start it and keep working.
+- Settings are now grouped into sections instead of one long page.
+- Fixed panning and zooming breaking after a call or app switch.
+- Fixed Nextcloud URLs with a port number being rejected.
+</en-US>
 
 
 0.5.41 -- 466 characters

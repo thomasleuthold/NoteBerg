@@ -1280,6 +1280,70 @@ describe("NoteCanvas Class", () => {
   });
 
   // ── handleExternalDataChange ────────────────────────────────────────────────
+  // A queued recognition lands long after it was requested, and the ordinary
+  // datachange path deliberately ignores it (recognition writes are
+  // source:"local"). This handler is the only way an open note learns.
+  describe("_onRecognitionJobComplete", () => {
+    function makeCanvas(overrides = {}) {
+      const c = Object.create(NoteCanvas.prototype);
+      c.noteId = "n1";
+      c.noteData = { id: "n1", recognition: null };
+      c.activeSearchQuery = null;
+      c._highlightSearchTerms = vi.fn();
+      return Object.assign(c, overrides);
+    }
+
+    const RESULT = { fullText: "hi", words: [{ text: "hi" }] };
+
+    function event(detail) {
+      return new CustomEvent("recognition-job-complete", { detail });
+    }
+
+    it("adopts a result for the open note", () => {
+      const c = makeCanvas();
+      c._onRecognitionJobComplete(event({ noteId: "n1", recognition: RESULT }));
+      expect(c.noteData.recognition).toBe(RESULT);
+    });
+
+    it("re-applies an active search so matches highlight without reopening", () => {
+      const c = makeCanvas({ activeSearchQuery: "hi" });
+      c._onRecognitionJobComplete(event({ noteId: "n1", recognition: RESULT }));
+      expect(c._highlightSearchTerms).toHaveBeenCalledWith("hi");
+    });
+
+    it("ignores a result for a different note", () => {
+      // The user may have moved on to another note while the job ran; adopting
+      // its result here would show one note's text on another.
+      const c = makeCanvas();
+      c._onRecognitionJobComplete(event({ noteId: "other", recognition: RESULT }));
+      expect(c.noteData.recognition).toBeNull();
+      expect(c._highlightSearchTerms).not.toHaveBeenCalled();
+    });
+
+    it("does not reload the note", () => {
+      // applyLiveUpdate rebuilds noteData and clears the undo history. Taking
+      // just the recognition field is what keeps undo intact.
+      const c = makeCanvas({ applyLiveUpdate: vi.fn() });
+      c._onRecognitionJobComplete(event({ noteId: "n1", recognition: RESULT }));
+      expect(c.applyLiveUpdate).not.toHaveBeenCalled();
+    });
+
+    it("survives a malformed or empty event", () => {
+      const c = makeCanvas();
+      expect(() => c._onRecognitionJobComplete(new CustomEvent("x"))).not.toThrow();
+      expect(() => c._onRecognitionJobComplete(event({ noteId: "n1" }))).not.toThrow();
+      expect(c.noteData.recognition).toBeNull();
+    });
+
+    it("does nothing once the canvas has been torn down", () => {
+      // destroy() can run while a job is in flight; noteData is gone by then.
+      const c = makeCanvas({ noteData: null });
+      expect(() =>
+        c._onRecognitionJobComplete(event({ noteId: "n1", recognition: RESULT })),
+      ).not.toThrow();
+    });
+  });
+
   // Single owner of "should this datachange reload the open note?". The guards
   // used to be split between this method and a second listener in index.js, so
   // each guard only applied to whichever listener the event routed through.

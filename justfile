@@ -112,6 +112,13 @@ build-nc:
     # the importing module, so the build works on any webroot (/, /nextcloud/, ...).
     npm run build:nextcloud
 
+    # 1b. Copy the hand-written admin-settings script into the built js/.
+    #     It lives outside js/ because step 1 wipes that directory, and it is
+    #     not part of the Vite bundle: the app entry boots the whole note
+    #     editor, which has no business loading on a settings page. Served via
+    #     Util::addScript so Nextcloud applies its CSP nonce.
+    Copy-Item "js-admin\admin.js" "js\noteberg-admin.js"
+
     # 2. Assemble app into a clean temp directory
     if (Test-Path "build-nc-tmp") { Remove-Item -Recurse -Force "build-nc-tmp" }
     New-Item -ItemType Directory -Force -Path "build-nc-tmp\noteberg" | Out-Null
@@ -155,48 +162,81 @@ build-nc:
 # Nextcloud dev & test environments (Podman)
 # ===========================================================================
 
-# Expose a container port to Windows as http://localhost:<listen>.
+# How container ports reach Windows (and the LAN)
 #
-# Why a relay and not `netsh portproxy`:
-# WSL2 automatically forwards localhost to any port listening in the distro's
-# ROOT network namespace — no configuration, no admin. Podman containers do not
-# benefit from that: they listen inside podman's own network namespace, which
-# WSL's forwarder cannot see, so http://localhost:<port> gets nothing.
+# This podman machine is ROOTFUL, so a container's published port is bound by
+# conmon directly in the WSL distro's ROOT network namespace. WSL2 forwards
+# Windows' localhost to that automatically — no relay, no configuration, no
+# admin rights. `http://localhost:8080` therefore just works.
 #
-# portproxy was the old workaround (route Windows -> the VM's eth0 IP), but it
-# needs an ELEVATED shell, and on this setup Windows cannot reach the VM subnet
-# at all — the entry accepts the connection and then resets it, which surfaces in
-# a browser as NS_ERROR_NET_EMPTY_RESPONSE. It also breaks whenever the VM's IP
-# changes on restart.
+# There used to be a `wsl-relay.py` socket forwarder here, bridging a second
+# port into the root namespace. That was needed only while podman ran ROOTLESS,
+# where the container listens in podman's own namespace that WSL cannot see.
+# Under a rootful machine it forwarded a port to itself and was pure overhead,
+# so it is gone. If this machine is ever switched back to rootless
+# (`podman machine set --rootful=false`), localhost:8080 will go dark and the
+# relay — see git history for scripts/wsl-relay.py — becomes relevant again.
 #
-# This relay instead runs a tiny socket forwarder INSIDE the VM's root namespace,
-# bridging <listen> to the container's published port. WSL then forwards
-# localhost:<listen> natively. No elevation, and no dependency on the VM's IP.
-[private]
-_relay listen target:
-    #!powershell.exe
-    $ErrorActionPreference = 'Continue'
-    # Copy the relay into the VM (the repo's /mnt/c path is slow and may not be
-    # mounted in every distro), then start it detached. pkill first so repeated
-    # `just nc-up` calls don't stack relays on the same port.
-    wsl -d podman-machine-default -- sh -c "pkill -f 'wsl-relay.py {{listen}} ' 2>/dev/null; exit 0" 2>&1 | Out-Null
-    $script = (Resolve-Path "scripts/wsl-relay.py").Path
-    $wslPath = wsl -d podman-machine-default -- wslpath -a "$($script -replace '\\','/')"
-    wsl -d podman-machine-default -- sh -c "cp '$wslPath' /tmp/wsl-relay.py; nohup setsid python3 /tmp/wsl-relay.py {{listen}} {{target}} >/dev/null 2>&1 < /dev/null & sleep 1; exit 0" 2>&1 | Out-Null
-    Write-Host "Ready at http://localhost:{{listen}}" -ForegroundColor Green
+# LAN access is a SEPARATE problem the relay never solved. WSL binds its
+# forwarded ports to 127.0.0.1 ONLY, so a phone on the same network cannot
+# reach :8080 no matter what the firewall says — nothing listens on the LAN
+# interface. Bridging that needs a listener bound to 0.0.0.0, which is what
+# `netsh portproxy` provides: 8180 -> 127.0.0.1:8080. It costs one ELEVATED
+# command per port, but it survives reboots and does not care about the VM's IP.
+#
+# Ports: dev 8080 (LAN 8180), nc-test 8081, nc-test33 8082.
+# Only the dev container has a LAN mapping; run `just nc-lan` to (re)create it.
 
-# Stop the relay for <listen>.
-[private]
-_relay-down listen:
+# LAN access needs TWO one-time elevated steps, and missing either one fails
+# silently in a different way:
+#   1. netsh portproxy  - without it nothing listens on the LAN interface
+#                         (connection refused), because WSL binds 127.0.0.1 only
+#   2. firewall rule     - without it Windows drops the SYN (connection times out)
+# Both are persistent and machine-wide, so this only REPORTS what is missing
+# rather than attempting them on every `just nc-up`.
+#
+# NOTE: testing http://<lan-ip>:8180 from this machine does NOT prove it works —
+# loopback bypasses the firewall. Verify from the phone.
+#
+# Show/verify the LAN (phone) prerequisites for the dev container
+nc-lan:
     #!powershell.exe
     $ErrorActionPreference = 'Continue'
-    wsl -d podman-machine-default -- sh -c "pkill -f 'wsl-relay.py {{listen}} ' 2>/dev/null; exit 0" 2>&1 | Out-Null
+    $missing = $false
+    # 1. portproxy: binds 0.0.0.0:8180 -> WSL's loopback 8080
+    $existing = (netsh interface portproxy show all | Select-String -Pattern '\s8180\s')
+    if ($existing) {
+        Write-Host "[ok] portproxy: $($existing.Line.Trim())" -ForegroundColor Green
+    } else {
+        $missing = $true
+        Write-Host "[--] portproxy missing. Run ONCE in an ELEVATED shell:" -ForegroundColor Yellow
+        Write-Host "     netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=8180 connectaddress=127.0.0.1 connectport=8080"
+    }
+    # 2. firewall: without an inbound allow, the SYN is dropped and the phone
+    #    just times out. Queried via netsh, NOT Get-NetFirewallRule: the cmdlet
+    #    returns an empty result (no error) in a non-elevated shell, which made
+    #    this report a present rule as missing.
+    $fwOut = (netsh advfirewall firewall show rule name="NoteBerg NC dev (LAN 8180)" 2>&1) -join "`n"
+    if ($LASTEXITCODE -eq 0 -and $fwOut -match '8180') {
+        Write-Host "[ok] firewall rule present (inbound allow, Private, 8180)" -ForegroundColor Green
+    } else {
+        $missing = $true
+        Write-Host "[--] firewall rule missing. Run ONCE in an ELEVATED shell:" -ForegroundColor Yellow
+        Write-Host "     New-NetFirewallRule -DisplayName 'NoteBerg NC dev (LAN 8180)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8180 -Profile Private -Edge Block"
+        Write-Host "     (Private profile only: the port stays shut on public Wi-Fi.)" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    if ($missing) {
+        Write-Host "LAN access is NOT ready. Apply the step(s) above, then re-run 'just nc-lan'." -ForegroundColor Yellow
+    } else {
+        Write-Host "LAN access ready - open http://<this-machine-lan-ip>:8180 on the phone." -ForegroundColor Green
+        Write-Host "'just nc-up' adds the current LAN IP to trusted_domains."
+    }
     exit 0
 
 # Start the NC dev container (port 8080, repo volume-mounted at /apps-extra/noteberg)
 nc-up:
     podman run --rm --name noteberg-nc -d -p 8080:80 -v "${PWD}:/var/www/html/apps-extra/noteberg" ghcr.io/juliusknorr/nextcloud-dev-php84:latest
-    just _relay 8180 8080
     just _trust-lan-ip noteberg-nc 8180
     Write-Host "Run 'npm run dev:nextcloud' in a separate terminal for watch mode"
 
@@ -213,28 +253,59 @@ nc-up:
 # reach.
 #
 # Containers run with --rm, so this is lost on nc-down and has to run on every
-# start. Non-fatal: a failure here only costs LAN access, not the container.
+# start. Non-fatal: a failure here only costs LAN access, not the container —
+# but it is REPORTED rather than swallowed. A silent failure here is exactly
+# what makes the phone show a bare "400 Bad Request" with no hint why, so the
+# recipe reads the value back and says plainly whether it took.
+#
+# occ writes "Profiler output available at ..." to stderr on this dev image;
+# PowerShell turns any stderr from a native command into an error record, so
+# output is merged with 2>&1 and the RESULT is checked instead of the stream.
 [private]
 _trust-lan-ip container listen:
     #!powershell.exe
     $ErrorActionPreference = 'Continue'
     $ip = (Get-NetIPConfiguration | Where-Object { $_.NetAdapter.Status -eq 'Up' -and $_.IPv4Address -and $_.InterfaceAlias -notlike '*WSL*' -and $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPv4Address.IPAddress -notlike '169.254.*' } | Sort-Object { $_.IPv4DefaultGateway -eq $null } | Select-Object -First 1).IPv4Address.IPAddress
     if (-not $ip) { Write-Host "No LAN IP found - skipping trusted_domains (localhost still works)" -ForegroundColor Yellow; exit 0 }
+    # `podman run -d` returns as soon as the container exists, but this image
+    # then unpacks Nextcloud and installs the DB — ~40s, during which occ is not
+    # even on disk. Writing trusted_domains before that is a no-op, which is how
+    # LAN access silently stayed broken across restarts. Wait for occ to answer.
+    Write-Host "Waiting for Nextcloud to finish installing..." -ForegroundColor DarkGray
+    $deadline = (Get-Date).AddMinutes(4)
+    while ((Get-Date) -lt $deadline) {
+        $st = (podman exec {{container}} //bin/sh -c "test -f /var/www/html/occ && php /var/www/html/occ status --output=json 2>/dev/null" 2>$null) -join ""
+        if ($st -match '"installed":\s*true') { break }
+        Start-Sleep -Seconds 3
+    }
     # //bin/sh rather than bash: the stock nextcloud:*-apache image (nc-test33)
     # has no bash. The doubled slash stops Git Bash / MSYS rewriting the path.
     podman exec {{container}} //bin/sh -c "php /var/www/html/occ config:system:set trusted_domains 4 --value=$ip" 2>&1 | Out-Null
-    Write-Host "Reachable on this network at http://${ip}:{{listen}}" -ForegroundColor Green
+    # Read back: the write above can fail (container still booting, occ error)
+    # without a non-zero exit, so trust the stored value, not the command.
+    $domains = (podman exec {{container}} //bin/sh -c "php /var/www/html/occ config:system:get trusted_domains" 2>&1) -join "`n"
+    if ($domains -match [regex]::Escape($ip)) {
+        Write-Host "Reachable on this network at http://${ip}:{{listen}}" -ForegroundColor Green
+    } else {
+        Write-Host "WARNING: could not add $ip to trusted_domains - LAN access will return 400." -ForegroundColor Red
+        Write-Host "  Retry once the container is up:" -ForegroundColor Red
+        Write-Host "    podman exec {{container}} //bin/sh -c 'php /var/www/html/occ config:system:set trusted_domains 4 --value=$ip'"
+    }
     exit 0
 
-# Stop the NC dev container (port 8080) and clean up the port proxy
+# The LAN portproxy is persistent and machine-wide, so it is intentionally left
+# in place on shutdown; see `just nc-lan`.
+#
+# Stop the NC dev container (port 8080)
 nc-down:
     podman stop noteberg-nc
-    just _relay-down 8180
 
 # Rebuild JS/CSS into the dev container (8080) — hard reload after. Requires: just nc-up
 nc-dev-push:
     npm run build:nextcloud
-    Write-Host "Built for nc-up — hard reload http://localhost:8180"
+    # The admin-settings script is not part of the bundle; see build-nc step 1b.
+    Copy-Item "js-admin\admin.js" "js\noteberg-admin.js"
+    Write-Host "Built for nc-up — hard reload http://localhost:8080"
 
 # Tests the published package as a real user would — no volume mount, no cache tricks
 # php=84 (default, NC 34+) or php=81 (NC 33)
@@ -242,20 +313,17 @@ nc-dev-push:
 nc-test php="84":
     podman stop noteberg-nc-test 2>&1 | Out-Null; $true
     podman run --rm --name noteberg-nc-test -d -p 8081:80 ghcr.io/juliusknorr/nextcloud-dev-php{{php}}:latest
-    just _relay 8181 8081
     Write-Host "Waiting for Nextcloud to initialize..."
     Start-Sleep -Seconds 15
     podman exec noteberg-nc-test bash -c "php /var/www/html/occ config:system:set updater.release.channel --value=beta"
     podman exec noteberg-nc-test bash -c "php /var/www/html/occ config:app:delete core lastupdatedat"
     podman exec noteberg-nc-test bash -c "php /var/www/html/occ app:install --allow-unstable noteberg"
-    just _trust-lan-ip noteberg-nc-test 8181
-    Write-Host "NoteBerg installed from App Store. Open http://localhost:8181 (admin/admin) to test."
+    Write-Host "NoteBerg installed from App Store. Open http://localhost:8081 (admin/admin) to test."
     Write-Host "Run 'just nc-test-down' when done."
 
-# Stop the App Store test container (port 8081) and clean up the port proxy
+# Stop the App Store test container (port 8081)
 nc-test-down:
     podman stop noteberg-nc-test
-    just _relay-down 8181
 
 # Requires: just nc-test container running
 # Rebuild and push local assets into the running nc-test container for rapid CSS iteration
@@ -274,28 +342,25 @@ nc-test-push:
     Write-Host "Assets pushed — hard reload the browser (Ctrl+Shift+R)."
 
 # Uses official nextcloud:33-apache image (self-contained, no occ pre-setup needed)
-# First run: complete the NC web installer at http://localhost:8182 (set admin/admin)
+# First run: complete the NC web installer at http://localhost:8082 (set admin/admin)
 # Spin up a stock Nextcloud 33 (Apache) instance (8082) with NoteBerg volume-mounted
 nc-test33:
     podman stop noteberg-nc-test33 2>&1 | Out-Null; $true
     podman run --rm --name noteberg-nc-test33 -d -p 8082:80 -v "${PWD}:/var/www/html/custom_apps/noteberg" nextcloud:33-apache
-    just _relay 8182 8082
     Write-Host "Waiting for Nextcloud to initialize..."
     Start-Sleep -Seconds 20
     podman exec noteberg-nc-test33 //bin/sh -c "php /var/www/html/occ app:enable noteberg 2>&1"
-    just _trust-lan-ip noteberg-nc-test33 8182
-    Write-Host "Nextcloud 33 running at http://localhost:8182 (admin/admin)"
+    Write-Host "Nextcloud 33 running at http://localhost:8082 (admin/admin)"
     Write-Host "Run 'just nc-test33-push' to deploy local build. Run 'just nc-test33-down' when done."
 
-# Stop the Nextcloud 33 test container (port 8082) and clean up the port proxy
+# Stop the Nextcloud 33 test container (port 8082)
 nc-test33-down:
     podman stop noteberg-nc-test33
-    just _relay-down 8182
 
 # Rebuild JS/CSS into the NC33 test container (8082) — hard reload after. Requires: just nc-test33
 nc-test33-push:
     npm run build:nextcloud
-    Write-Host "Built for nc-test33 — hard reload http://localhost:8182"
+    Write-Host "Built for nc-test33 — hard reload http://localhost:8082"
 
 # Restart the Podman machine when it gets into a broken state
 podman-restart:
@@ -308,11 +373,21 @@ podman-restart:
 # Code quality
 # ===========================================================================
 
-# Lint, check, and format the frontend (biome)
+# Lint, check, and format the frontend (biome), then audit the locales
 check:
     npm run lint
     npm run check
     npm run format
+    just check-i18n
+
+# Audit the locale files: key parity, placeholder parity, untranslated strings.
+#
+# Deliberately has no "short strings are probably brand names" shortcut — that
+# heuristic hid real gaps ("AI Access", "Provider", "Status") for a long time.
+# Anything genuinely identical across languages is listed explicitly in the
+# script's ALLOWED_IDENTICAL, where the decision can be reviewed.
+check-i18n:
+    node scripts/check-i18n.mjs
 
 # Format the frontend (biome)
 format:
@@ -323,11 +398,25 @@ test:
     npm run test
     npm run test:nextcloud
 
+# Lint and test the Nextcloud PHP, inside the dev container.
+#
+# The app ships no composer dependencies, so there is no local PHP toolchain —
+# the dev container is the PHP. It boots Nextcloud, so OCP interfaces under test
+# are the real ones rather than stubs of our own invention.
+#
+# Requires `just nc-up`.
+test-php:
+    @Write-Host "Linting PHP..."
+    podman exec noteberg-nc bash -c 'for f in /var/www/html/apps-extra/noteberg/lib/*.php /var/www/html/apps-extra/noteberg/lib/Controller/*.php /var/www/html/apps-extra/noteberg/lib/AppInfo/*.php /var/www/html/apps-extra/noteberg/lib/Migration/*.php /var/www/html/apps-extra/noteberg/lib/Settings/*.php /var/www/html/apps-extra/noteberg/appinfo/*.php /var/www/html/apps-extra/noteberg/templates/*.php; do php -l "$f" || exit 1; done'
+    @Write-Host "Running PHP tests..."
+    podman exec noteberg-nc php /var/www/html/apps-extra/noteberg/scripts/test-php.php
+
 # Format, check, and test — the full pre-commit sweep
 fct:
     just format
     just check
     just test
+    just test-php
 
 # ===========================================================================
 # Version / release management
@@ -381,9 +470,53 @@ bump-major:
     npm version major --no-git-tag-version
     node sync-version.js
 
-# Push to the GitHub mirror (default: main branch)
-push-gh branch="main":
-    git push github {{branch}}
+# ===========================================================================
+# GitHub publishing (squashed mirror)
+# ===========================================================================
+# GitHub is a *published-release* mirror, not a working remote. `origin`
+# (shiftcloud) keeps the real per-commit history; GitHub only ever receives one
+# squashed commit per publish, so the day-to-day working rhythm — when a
+# feature was started, how often it was amended, when comments were written —
+# never leaves the private remote.
+#
+# Mirroring is branch-to-branch: `main` publishes to github/main,
+# `AI_recognition` publishes to github/AI_recognition. Branch names and publish
+# cadence are therefore visible on GitHub — only the per-commit history is not.
+# PRs keep working, because the branches exist.
+#
+# The squash is built with plumbing (`git commit-tree` on the source branch's
+# tree), so it never checks anything out: publishing works with edits in flight
+# and leaves the working tree untouched.
+#
+#   just publish-gh "Release 0.6.0"                    # main -> github/main
+#   just publish-gh "AI recognition" AI_recognition    # -> github/AI_recognition
+#
+# The commit's own timestamp is the moment you publish (release cadence only).
+# What GitHub has seen per branch is tracked in refs/github-mirror/<branch>
+# (a private ref namespace — these deliberately do not show up in `git branch`).
+# Never merge a mirror ref back into your work.
+#
+# On the FIRST publish of a branch that already exists on GitHub with real
+# history, the squash is parented onto the existing remote tip so the push
+# fast-forwards; the old per-commit history stays below it. Use
+# `just publish-gh-reset <branch>` to instead cut it loose as a fresh root
+# (force-push, discards that branch's published history).
+
+# List the GitHub mirror state: what each branch last published, and whether it is current
+publish-gh-status:
+    powershell -File scripts/publish-github.ps1 -Status
+
+# Show what `just publish-gh` would send to GitHub: the file diff vs that branch's last publish
+publish-gh-preview branch="main":
+    powershell -File scripts/publish-github.ps1 -Preview -Branch "{{branch}}"
+
+# Publish the current state of a branch to GitHub as ONE squashed commit on the same branch name
+publish-gh message branch="main":
+    powershell -File scripts/publish-github.ps1 -Message "{{message}}" -Branch "{{branch}}"
+
+# Cut a branch loose from its published history: next publish becomes a fresh root (FORCE-PUSH)
+publish-gh-reset branch message="Import":
+    powershell -File scripts/publish-github.ps1 -Reset -Branch "{{branch}}" -Message "{{message}}"
 
 # ===========================================================================
 # Utilities

@@ -7,7 +7,7 @@
     "restore": "復元",
     "save": "保存",
     "ok": "OK",
-    "next": "Next",
+    "next": "次へ",
     "loading": "読み込み中...",
     "working": "処理中...",
     "error": "エラー",
@@ -115,15 +115,14 @@
     "title": "設定",
     "sections": {
       "appearance": "外観",
-      "language": "言語",
       "security": "セキュリティ",
       "nextcloud": "Nextcloud 同期",
       "recognition": "手書き認識",
-      "mcp": "MCP Server (AI Integration)",
+      "mcp": "MCP サーバー（AI 連携）",
       "logging": "ログ",
       "dangerZone": "危険な操作",
       "about": "このアプリについて",
-      "help": "ヘルプガイド"
+      "aiProvider": "AI アクセス"
     },
     "appearance": {
       "theme": "テーマ",
@@ -192,7 +191,7 @@
       "windowsOnly": "手書き認識は Windows アプリでのみ利用できます。",
       "languageLabel": "言語",
       "languageDesc": "手書き認識の対象言語",
-      "testBtn": "接続テスト",
+      "testBtn": "認識をテスト（トークンを消費）",
       "testing": "テスト中...",
       "connecting": "接続中...",
       "success": "✓ 接続に成功しました（{{source}}）！",
@@ -207,8 +206,112 @@
         "es-ES": "スペイン語",
         "it-IT": "イタリア語",
         "ja-JP": "日本語",
-        "zh-CN": "中国語（簡体字）"
-      }
+        "zh-CN": "中国語（簡体字）",
+        "auto": "自動検出"
+      },
+      "backendSidecar": "Windows ローカル認識（正確な単語位置）",
+      "backendAi": "AI 画像モデル（おおよその単語位置）",
+      "backendSidecarUnavailable": "Windows ローカル認識（実行されていません）",
+      "endpointLabel": "API エンドポイント",
+      "endpointDesc": "OpenAI 互換のベース URL（LM Studio や Ollama など）。/v1 で終わる必要があります。",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "endpointChoose": "エンドポイントを選択…",
+      "endpointNoneAllowed": "許可されたエンドポイントはありません",
+      "endpointDescNoneAllowed": "Nextcloud の管理者が AI エンドポイントを許可していないため、このインスタンスでは認識を使用できません。",
+      "endpointNoLongerAllowed": "現在は許可されていません",
+      "endpointNotPermitted": "✗ Nextcloud の管理者はこのエンドポイントを許可していません。",
+      "modelLabel": "モデル",
+      "modelDesc": "サーバーが報告するモデル識別子",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "browseModels": "利用可能なモデルを参照",
+      "modelPicked": "{{model}} を選択しました。保存すると適用されます",
+      "apiKeyLabel": "API キー",
+      "apiKeyDesc": "ベアラートークンとして送信されます。ほとんどのローカルサーバーでは任意です。",
+      "apiKeyPlaceholder": "不要な場合は空のままにします",
+      "apiKeySet": "API キーが保存されています。置き換えるには入力してください。",
+      "imageEdgeLabel": "最大画像サイズ",
+      "imageEdgeDesc": "送信する各画像の長辺（ピクセル）。ページは拡大縮小されるため、値を大きくすると小さな手書きも読めるようになります。細かい文字が認識されない場合は上げてください。コストはおよそ二乗で増えます。",
+      "saveBtn": "保存",
+      "saved": "保存しました",
+      "endpointInvalidUrl": "✗ 有効な URL ではありません",
+      "endpointInsecure": "✗ 平文の http は localhost のみ許可されます。リモートサーバーには https を使用してください。",
+      "endpointUnsupported": "✗ http と https のエンドポイントのみ対応しています",
+      "missingEndpoint": "✗ 先にエンドポイントとモデルを入力してください",
+      "testingModel": "テスト画像を送信しています...",
+      "aiSuccess": "✓ 接続に成功しました（{{model}} が応答しました）",
+      "aiNoVision": "⚠ 接続しましたが、応答を利用できませんでした。モデルが画像入力に対応しているか確認してください。",
+      "maxTokensLabel": "最大応答長",
+      "maxTokensDesc": "モデルの応答のトークン上限。手書き1ページには数百程度が必要です。上限を低くすると、転写せずにループするモデルを止められます。",
+      "timeoutLabel": "認識のタイムアウト",
+      "timeoutDesc": "モデルが 1 ページを文字起こしするのを待つ秒数。推論モデルや CPU 上のローカルモデルでは大きくし、応答のないエンドポイントで早く失敗させたい場合は小さくします。",
+      "timeoutDescNextcloud": "モデルが 1 ページを文字起こしするのを待つ秒数。推論モデルや CPU 上のローカルモデルでは大きくし、応答のないエンドポイントで早く失敗させたい場合は小さくします。サーバーは 600 秒に制限します。ウェブサーバー自体のタイムアウトを超える値を使うには、そちらも引き上げる必要があります。",
+      "syncOnlyTitle": "このサーバーでは低速なモデルが中断されることがあります",
+      "syncOnlyBody": "この Nextcloud サーバーは認識をバックグラウンドで実行できません（php-fpm と、Redis や APCu などのメモリキャッシュの設定が必要です）。モデルの処理中はリクエストが開いたままになるため、ウェブサーバーが 1 分ほどで切断することがあり、ネットワークエラーとして表示されます。より高速なモデルや小さい最大画像サイズを使うか、管理者にメモリキャッシュの有効化を依頼してください。",
+      "versionLabel": "モデルバージョン",
+      "versionDesc": "Replicate のモデルページにあるバージョンハッシュ。コミュニティモデルでは必須、公式モデルでは空のままにします。",
+      "versionPlaceholder": "例: 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ 先にモデル名を入力してください",
+      "promptLabel": "システムプロンプト",
+      "promptDesc": "モデルに送る指示です。空欄にすると、更新が続けられる組み込みの既定値を使用します。グリッドと切り抜きの指示は自動的に追加されます。",
+      "promptPlaceholder": "空欄 — 既定値を使用中",
+      "promptReset": "既定値を読み込む",
+      "promptUsingDefault": "既定値を使用中",
+      "promptWarning": "⚠ プロンプトを解析できない可能性があります: {{items}} がありません",
+      "promptWarn": {
+        "empty": "内容",
+        "noJson": "JSON の指示",
+        "noWordsKey": "\"words\" キー",
+        "noRegion": "領域/帯の指示",
+        "noShape": "{{shape}} プレースホルダー",
+        "noBreak": "改行の指示",
+        "noLanguage": "{{language}} プレースホルダー",
+        "noPunctuation": "{{punctuation}} プレースホルダー"
+      },
+      "endpointDescNextcloud": "お使いの Nextcloud サーバーから呼び出されるため、この端末ではなくサーバーから到達できる必要があります。「localhost」は Nextcloud サーバー自身を指します。",
+      "methodLabel": "認識方法",
+      "methodDesc": "手書きをテキストに変換する方法",
+      "providerMissingTitle": "AI アクセスが設定されていません",
+      "providerMissingBody": "AI プロバイダーを設定するまで、手書き認識は無効のままです。",
+      "centralTitle": "管理者によって管理されています",
+      "centralBody": "このインスタンスの AI プロバイダー、モデル、プロンプトは Nextcloud 管理者が設定しており、ここでは変更できません。",
+      "configureProvider": "AI アクセスを設定",
+      "savedNeedsProvider": "保存しました — 認識を開始するには AI アクセスを設定してください"
+    },
+    "modelPicker": {
+      "title": "利用可能なモデル",
+      "searchPlaceholder": "モデルを絞り込む…",
+      "typeFilter": "モデルの種類",
+      "allTypes": "すべての種類",
+      "visionOnly": "ビジョンモデルのみ",
+      "loading": "モデルを読み込み中…",
+      "count": "{{total}} 件中 {{shown}} 件",
+      "truncated": "この一覧はプロバイダーのカタログの一部です。任意のモデル名を入力することもできます。",
+      "noMatches": "この条件に一致するモデルはありません。",
+      "cancel": "キャンセル",
+      "unsupported": "このサーバーはモデル一覧を提供していません。モデル名を入力してください。",
+      "unauthorized": "API キーが拒否され、モデル一覧を読み取れませんでした。",
+      "notConfigured": "先に AI プロバイダーを設定してください。",
+      "failed": "モデル一覧を読み込めませんでした: {{message}}",
+      "types": {
+        "image->text": "画像 → テキスト",
+        "text->text": "テキスト → テキスト",
+        "text->image": "テキスト → 画像",
+        "other": "その他",
+        "unknown": "種類不明"
+      },
+      "caps": {
+        "vision": "ビジョン",
+        "audio": "音声",
+        "video": "動画",
+        "files": "ファイル",
+        "tools": "ツール",
+        "reasoning": "推論"
+      },
+      "searching": "検索中…",
+      "searched": "プロバイダーのカタログ全体を検索しました。",
+      "searchTruncated": "上位の一致を表示しています。絞り込むには検索語を調整してください。",
+      "searchFailed": "検索を利用できないため、読み込み済みのサンプルのみを絞り込みました。",
+      "searchAllPlaceholder": "すべてのモデルを検索…"
     },
     "mcp": {
       "windowsOnly": "MCPサーバーはWindowsアプリでのみ利用できます。",
@@ -326,6 +429,36 @@
       "resetBtn": "リセット",
       "resetConfirmTitle": "ヘルプガイドをリセット",
       "resetConfirmMsg": "各ツールを次に使うときに初回ヒントが再表示されます。"
+    },
+    "aiProvider": {
+      "intro": "一度設定すれば、すべての AI 機能で利用できます。",
+      "providerLabel": "プロバイダー",
+      "providerDesc": "このデバイスが利用できる AI サービス",
+      "providerNone": "未設定",
+      "providerOpenAi": "OpenAI 互換（LM Studio、Ollama、クラウド API）",
+      "providerReplicate": "Replicate",
+      "saveBtn": "AI アクセスを保存",
+      "saved": "AI アクセスを保存しました",
+      "privacyHint": "AI で処理するデータは、このエンドポイントに送信されます。",
+      "privacyHintLocal": "このエンドポイントはお使いのマシン上にあるため、データは端末から出ません。",
+      "privacyHintRemote": "これはリモートサービスのため、そのデータは端末から送信されます。",
+      "consentTitle": "{{host}} にデータを送信しますか？",
+      "consentBody": "AI 機能は、処理を依頼した内容（画像化した手書き、ノートのテキスト、今後の機能が追加するもの）を、端末外のサービスである {{host}} に送信します。送信されるのは各機能に必要な分だけで、実行したときのみです。\n\nこの設定は「設定」からいつでも変更・取り消しできます。",
+      "consentConfirm": "許可",
+      "consentDeclined": "{{host}} へのデータ送信に同意するまで、AI 機能は無効のままです。",
+      "testBtn": "接続をテスト",
+      "testing": "テスト中…",
+      "testOk": "接続できました。",
+      "testOkModels": "接続できました。{{count}} 個のモデルが利用可能です。",
+      "testOkNoListing": "接続できました。このエンドポイントはモデル一覧に対応していませんが、問題ありません。",
+      "testUnauthorized": "認証情報が拒否されました。API キーを確認してください。",
+      "testUnreachable": "エンドポイントに接続できませんでした。{{message}}",
+      "testFailed": "エンドポイントがエラーを返しました（HTTP {{status}}）。",
+      "testNotConfigured": "先に接続先の情報を入力してください。",
+      "testKeyRequired": "リモートエンドポイントには API キーが必要です。"
+    },
+    "nav": {
+      "back": "すべての設定"
     }
   },
   "modals": {
@@ -389,6 +522,13 @@
     },
     "errors": {
       "titleRequired": "タイトルは必須です"
+    },
+    "recognizedText": {
+      "title": "認識されたテキスト",
+      "engineLabel": "{{engine}} により認識",
+      "copy": "コピー",
+      "copied": "コピーしました",
+      "copyFailed": "コピーに失敗しました"
     }
   },
   "auth": {
@@ -449,7 +589,28 @@
     "syncFailedTooltip": "同期に失敗しました: {{error}}",
     "unknownError": "不明なエラー",
     "recognitionRunning": "手書き認識を実行中…",
-    "mcpRunning": "MCP server is running — AI assistants can access your notebooks"
+    "mcpRunning": "MCP サーバーが動作中 — AI アシスタントがノートブックにアクセスできます",
+    "recognitionQueued": "{{count}} 件のノートが認識待ちです",
+    "recognitionFailed": "{{count}} 件の認識に失敗しました",
+    "recognitionJobsTitle": "手書き認識",
+    "recognitionClearFinished": "完了分をクリア",
+    "recognitionPage": "{{total}} ページ中 {{current}} ページ目",
+    "recognitionStarting": "開始しています…",
+    "recognitionWaiting": "待機中",
+    "recognitionDone": "完了",
+    "recognitionFailedOne": "失敗",
+    "recognitionFailReason": {
+      "stale": "ノートが変更されました",
+      "backendChanged": "バックエンドが変更されました",
+      "allowance": "割り当てを使い切りました",
+      "timeout": "タイムアウト",
+      "unreachable": "エンドポイントに接続できません",
+      "auth": "キーが拒否されました",
+      "quota": "割り当てまたはレート制限",
+      "badResponse": "使用できない応答",
+      "unknown": "失敗"
+    },
+    "recognitionUntitled": "無題のノート"
   },
   "breadcrumb": {
     "home": "ホーム",
@@ -506,7 +667,10 @@
       "partEraser": "部分消しゴム",
       "highlighterOnly": "蛍光ペンのみ消去",
       "size": "サイズ"
-    }
+    },
+    "recognizeNow": "手書きを認識",
+    "showRecognizedText": "認識されたテキストを表示",
+    "noRecognizedText": "認識されたテキストがありません"
   },
   "licenses": {
     "title": "オープンソースライセンス",
@@ -561,6 +725,32 @@
       "apply": "適用",
       "cancel": "キャンセル",
       "normalizeLighting": "照明を補正"
+    },
+    "recognition": {
+      "progressTitle": "手書きを認識中",
+      "done": "{{count}} 語を認識しました",
+      "empty": "手書きが認識されませんでした",
+      "failed": "認識に失敗しました",
+      "noBackend": "認識バックエンドが設定されていません",
+      "cancel": "キャンセル",
+      "cancelled": "認識をキャンセルしました",
+      "alreadyRunning": "このノートの認識はすでに実行中です。この 2 回目の実行は開始されませんでした。進行状況はステータスバーで確認でき、そこから取り消せます。",
+      "transcribing": "ページ {{current}}/{{total}} · {{words}} 語 · {{seconds}}秒",
+      "runInBackground": "バックグラウンドで実行",
+      "backgroundNote": "このダイアログは閉じて構いません。認識はバックグラウンドで続行されます。",
+      "queuedNext": "開始を待機しています…",
+      "queuedBehind": "待機中 — 前に {{count}} 件のジョブ",
+      "staleStrokes": "認識の実行中にノートが変更されました。もう一度実行してください。",
+      "confirmTitle": "手書き文字を認識",
+      "confirmScope": "{{count}} ページを {{model}} に送信して文字起こしします。",
+      "confirmScopeModelOnly": "このノートを {{model}} に送信して文字起こしします。",
+      "quotaRemaining": "今月の残りページ数: {{remaining}} / {{limit}}。",
+      "quotaExhausted": "今月の割り当てを使い切りました。管理者が割り当てを増やせます。",
+      "confirmStart": "開始",
+      "optionPunctuation": "句読点を文字起こしする",
+      "optionPunctuationDesc": "ページに書かれた句点・読点・ダッシュを含めます。オフにすると単語だけになります。",
+      "optionBreaks": "改行を保持する",
+      "optionBreaksDesc": "行と段落の区切りを保持します。レイアウトの認識は本文の認識ほど正確ではありません。"
     }
   },
   "recycleBin": {
@@ -621,7 +811,7 @@
     },
     "draw": {
       "title": "描画",
-      "body": "描画をタップすると、ペンや蛍光ペンを選び、色や太さを変更できます。手書き認識は Windows でのみ利用できます。"
+      "body": "描画をタップすると、ペンや蛍光ペンを選び、色や太さを変更できます。手書き認識は Windows では自動で実行されます。他のプラットフォームでは設定から AI 認識を有効にできます。"
     },
     "eraser": {
       "title": "消しゴム",

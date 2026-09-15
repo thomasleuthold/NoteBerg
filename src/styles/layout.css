@@ -998,12 +998,27 @@
   color: var(--text-primary);
 }
 
-/* Only this pane scrolls, so the header stays visible while the (long) settings
-   list moves under it. */
+/* The body fills what the header leaves and does not scroll itself: scrolling
+   belongs to the detail pane alone, so the nav rail stays put while a long
+   section moves beside it. It is still the element that clips, so a shell
+   taller than the dialog is bounded rather than overflowing.
+
+   `min-height: 0` because a flex item's default `min-height: auto` refuses to
+   shrink below its content — without it the body grows to the tallest section
+   and the whole dialog scrolls again, which is the bug this replaces. */
 .settings-dialog__body {
   flex: 1 1 auto;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
   overscroll-behavior: contain;
+}
+
+/* The body's own child wrapper has to pass the bounded height through: it sits
+   between the flex item and the shell, and a plain block would size to content
+   and reintroduce the overflow one level down. */
+.settings-dialog__body > #settings-content {
+  height: 100%;
+  min-height: 0;
 }
 
 /* Inside the dialog the panel provides its own width; the standalone view's
@@ -1014,9 +1029,18 @@
 }
 
 /* The dialog header already shows the title — the panel's own heading would be
-   a second "Settings" directly beneath it. */
+   a second "Settings" directly beneath it. `display: none` also drops it from
+   the shell grid, so the nav and detail rows move up rather than leaving the
+   header's row behind as a gap. */
 .settings-dialog .settings-header {
   display: none;
+}
+
+/* The dialog supplies its own padding and width. */
+.settings-dialog .settings-shell {
+  max-width: none;
+  margin: 0;
+  padding: var(--spacing-lg);
 }
 
 /* Project link in the About section */
@@ -1072,8 +1096,157 @@
    alignment. The track is a fixed width (not max-content) so it also does not
    move as conditional sections appear/disappear (MCP/recognition are
    Windows-only; the Nextcloud rows swap on auth state). */
+/* ── Settings master/detail shell ───────────────────────────────────────────
+   Wide: nav rail beside the panel, both always visible.
+   Narrow: one pane at a time, chosen by [data-view] — the platform Settings
+   pattern on iOS and Android, so it needs no explanation.
+
+   Both layouts share one DOM; only the CSS differs. */
+.settings-shell {
+  display: grid;
+  grid-template-columns: var(--settings-nav-width, 240px) minmax(0, 1fr);
+  grid-template-areas:
+    "header header"
+    "nav    detail";
+  /* The header row takes what it needs; the pane row takes the rest and no
+     more. `minmax(0, 1fr)` rather than `1fr`, since a grid track's implicit
+     `auto` minimum would let the detail pane's content push the row past the
+     shell's height — which is exactly what has to be prevented for the pane to
+     scroll internally. */
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0 var(--spacing-xl);
+  /* `stretch`, not `start`: the panes must inherit the row's bounded height,
+     otherwise each shrinks to its content and scrolls nothing. */
+  align-items: stretch;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--spacing-xl);
+  /* Fills the (bounded) dialog body. Harmless in the standalone view, where the
+     shell's parent is auto-height and 100% resolves to the content height. */
+  height: 100%;
+  min-height: 0;
+}
+
+.settings-shell > .settings-header {
+  grid-area: header;
+}
+
+/* The rail is normally shorter than the dialog, but enough sections (Windows
+   builds show every one) can outgrow a short window. It scrolls on its own
+   rather than being clipped — and independently of the section beside it, which
+   is the point of moving the scroll off the dialog body. */
+.settings-nav {
+  grid-area: nav;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.settings-nav__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Scoped to :is(body, #app) for the same reason .btn-primary is (see main.css):
+   inside the Nextcloud app these are bare <button> elements, so NC's own button
+   styling wins at equal specificity and turns the rail into a stack of pills.
+   Raising this to 0-2-0 settles it without styling anything NC owns. */
+:is(body, #app) .settings-nav__item {
+  display: block;
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 0.95rem;
+  font-weight: 400;
+  line-height: 1.4;
+  min-height: 0;
+  cursor: pointer;
+}
+
+:is(body, #app) .settings-nav__item:hover {
+  background: var(--bg-tertiary);
+}
+
+/* The current section must stay distinguishable from a merely hovered one
+   (--bg-selected was never defined, so the old rule fell through to its
+   fallback and rendered the two identically).
+
+   Background tint plus the normal text colour, not an accent text colour: the
+   dark theme pairs --color-primary-light #1e3a8a with --color-primary-hover
+   #3b82f6, which is 2.8:1 — below the 4.5:1 needed for body text. Keeping
+   --text-primary on the tint reads clearly in both themes. */
+:is(body, #app) .settings-nav__item--current {
+  background: var(--color-primary-light);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* The one scrolling region. Everything above it is height-bounded so that this
+   is where the overflow lands: the nav rail then stays fixed beside a section
+   the user scrolls, instead of riding up out of view with it.
+
+   `min-height: 0` for the same reason the grid row uses minmax(0, 1fr) — a grid
+   item's auto minimum would otherwise refuse to shrink below its content and
+   there would be nothing to scroll. The right padding keeps a scrollbar off the
+   controls' edge; the left one keeps focus rings from being clipped by the
+   scroll container. */
+.settings-detail {
+  grid-area: detail;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline: 2px var(--spacing-sm);
+}
+
+/* Wide screens never need the back button: both panes are on screen. */
+.settings-detail__back {
+  display: none;
+}
+
+/* Inside the shell the panel is the detail pane — it no longer centres itself
+   or caps its own width, since the shell now owns both. */
+.settings-shell .settings-panel {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  /* The panel is a plain block inside the shell, not a grid.
+     
+     It still declares `display: grid; grid-template-columns: 1fr <control>` for
+     the pre-shell layout, where sections were `display: contents` and handed it
+     their rows. Sections are now grids in their own right, so leaving the panel
+     a grid makes each section a grid *item* sized by the panel's first track —
+     the label column — with the control track sitting empty beside it. That is
+     why the rows stopped short of the panel's right edge no matter how wide the
+     dialog got. */
+  display: block;
+}
+
 .settings-panel {
-  --settings-control-width: 250px;
+  /* Longest a text control grows before it stops. Inputs and selects span the
+     row, but an endpoint URL field stretched across a wide dialog is harder to
+     read than one that stops at a sane measure, not easier. */
+  --settings-control-max: 640px;
+
+  /* Buttons are sized by their own label and share one minimum, so a row of
+     them lines up instead of each being as wide as its (i18n-variable) text.
+     A German label that outgrows the minimum simply makes that button wider —
+     it is a floor, not a fixed width. */
+  --settings-button-min: 180px;
   /* Faint divider between rows within a section. Deliberately weaker than the
      --border-secondary section rule so the two levels stay distinguishable. */
   --settings-divider-color: var(--border-primary);
@@ -1085,23 +1258,14 @@
      divider almost touching its label. Padding is immune to that. */
   --settings-row-padding: var(--spacing-lg);
 
-  display: grid;
-  grid-template-columns: 1fr var(--settings-control-width);
-  /* start, not center: both cells carry the same top inset below the divider,
-     so aligning their top edges keeps that inset honest. Centring would let a
-     cell that is taller than its neighbour (e.g. two stacked buttons beside a
-     two-line label) drift upward toward the divider while its leftover space
-     pooled underneath. */
-  align-items: start;
-  column-gap: var(--spacing-xl);
-  row-gap: 0;
+  display: block;
   max-width: 800px;
   margin: 0 auto;
   padding: var(--spacing-xl);
 }
 
 .settings-header {
-  grid-column: 1 / -1;
+  grid-area: header;
 }
 
 .settings-header h2 {
@@ -1111,47 +1275,74 @@
   color: var(--text-primary);
 }
 
-/* Sections are grouping/semantic only — they hand their rows to the panel grid
-   so the shared column applies across section boundaries. The section's own
-   separator therefore has to be drawn by its heading (below) rather than by a
-   border on the section box, which `display: contents` does not render. */
+/* One section is visible at a time.
+
+   Hidden rather than unmounted: the section keeps its state (a typed-but-unsaved
+   endpoint, a scrolled textarea) while the user looks at another one. */
 .settings-section {
-  display: contents;
+  display: none;
 }
 
-/* Section rule: --border-secondary rather than --border-primary. The softer
-   primary grey reads as a recessed/bevelled edge against the panel background;
-   the stronger colour keeps the divider flat and deliberate, matching the rest
-   of the UI. */
+.settings-section--active {
+  display: block;
+}
+
+/* No top rule: a section is a whole view, so there is nothing above it to be
+   separated from. It reads as the title of the pane, which is what it is. */
 .settings-section h3 {
-  grid-column: 1 / -1;
   font-size: 1.25rem;
   font-weight: 600;
-  margin-top: var(--spacing-xl);
+  margin-top: 0;
   margin-bottom: 0;
-  padding-top: var(--spacing-xl);
-  border-top: 1px solid var(--border-secondary);
+  padding-top: 0;
   color: var(--text-primary);
 }
 
-/* First section starts at the top of the panel — no rule above it, or it would
-   sit directly under the dialog header's own border and read as a double line.
-   Matched via :first-child on the section rather than :first-of-type: every
-   section is a <div>, and .settings-header is a <div> too, so :first-of-type
-   would resolve to the header and never match the first section at all. */
-.settings-section:first-child h3,
-.settings-header + .settings-section h3 {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: none;
+/* A row stacks: its label sits above whatever control it names.
+
+   One column throughout, at every width. The two-column layout it replaced put
+   every control in a fixed track, which meant a 250px cap on a textarea and an
+   endpoint URL while the label column absorbed the rest — and it forced rows to
+   be `display: contents` so they could reach a shared grid, which in turn made
+   any wrapper <div> around a group of rows break the alignment.
+
+   A flex column removes all of that: the row owns its own spacing and divider,
+   and nesting a group of rows inside a wrapper changes nothing. */
+.setting-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding-top: var(--settings-row-padding);
+  padding-bottom: var(--settings-row-padding);
 }
 
-/* A row is not a box of its own: the label and the control are placed directly
-   into the panel grid (display: contents) so every control lines up on one
-   column edge regardless of the label text length beside it. */
-.setting-item {
-  display: contents;
+/* Divider above each row. On the row itself now, not on the label: with one
+   column there is nothing to span past, so the arithmetic the two-column
+   version needed is gone. */
+.setting-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  border-top: 1px solid var(--settings-divider-color);
 }
+
+/* No divider above the first row of a section — the heading already separates,
+   and stacking both reads as a double line. :first-child rather than
+   :first-of-type so a group wrapper's first row is caught too. */
+.settings-section > .setting-item:first-child::before,
+.setting-group > .setting-item:first-child::before {
+  content: none;
+}
+
+/* Groups of rows shown or hidden together (the AI provider fields, the
+   recognition AI fields) are containers for the toggling only. With a stacked
+   layout they need no special treatment — a plain block wrapper stacks its rows
+   exactly as the section would. `.setting-item--hidden` still hides the whole
+   group. */
 
 /* Row divider: lighter than the section rule so the hierarchy reads at a
    glance — strong line = new section, faint line = next setting within it.
@@ -1174,44 +1365,19 @@
    <button> or .toggle-switch would inflate the control's own painted box
    (and stretch the toggle's absolutely-positioned slider) rather than adding
    clearance around it. */
-.setting-item > .setting-label,
-.setting-item__actions {
-  padding-top: var(--settings-row-padding);
-  padding-bottom: var(--settings-row-padding);
-}
-
-.setting-item > .setting-label {
-  position: relative;
-}
 
 .setting-item > .setting-control,
 .setting-item > .toggle-switch,
 .setting-item > .theme-toggle-group,
 .setting-item > button {
-  margin-top: var(--settings-row-padding);
-  margin-bottom: var(--settings-row-padding);
-}
-
-.setting-item > .setting-label::before {
-  content: "";
-  position: absolute;
-  /* Span label + column-gap + control column, i.e. the full row width. */
-  left: 0;
-  right: calc(-1 * (var(--settings-control-width) + var(--spacing-xl)));
-  /* Pinned to the cell's top edge — the padding above provides the clearance. */
-  top: 0;
-  border-top: 1px solid var(--settings-divider-color);
-}
-
-/* Full-width rows already span both columns, so their divider must not extend
-   past the panel's right edge. */
-.setting-item--full > .setting-label::before {
-  right: 0;
+  /* Spacing is the row's `gap` now; a margin here would add to it. */
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
 .setting-label {
-  grid-column: 1;
   display: block;
+  width: 100%;
   min-width: 0;
 }
 
@@ -1221,12 +1387,10 @@
   content: none;
 }
 
-/* Rows with no control at all (status text, "Connected as…", platform notices)
-   would otherwise leave an empty second column and read as misaligned. */
-.setting-item--full > .setting-label,
-.setting-item--full > .setting-note {
-  grid-column: 1 / -1;
-}
+/* --full is a no-op in the one-column layout — every row already spans the
+   panel and stacks its control. The class is left in the markup rather than
+   stripped from a dozen call sites; it still reads as "this row has no compact
+   control", which is true. */
 
 .setting-name {
   display: block;
@@ -1241,12 +1405,11 @@
   color: var(--text-secondary);
 }
 
-/* Selects/inputs fill the shared column, so every dropdown is the same width
-   regardless of its option text. */
+/* Text controls span the row up to a readable measure. Beyond that a wider box
+   makes the value harder to scan, not easier. */
 .setting-control {
-  grid-column: 2;
-  justify-self: stretch;
   width: 100%;
+  max-width: var(--settings-control-max);
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
@@ -1254,6 +1417,12 @@
   color: var(--text-primary);
   font-family: var(--font-family);
   font-size: 0.875rem;
+}
+
+/* A textarea is read as a block of text rather than scanned as a single value,
+   so it takes whatever width the panel offers. */
+textarea.setting-control {
+  max-width: none;
 }
 
 /* Toggles keep their intrinsic 48px and sit at the column's left edge, so the
@@ -1269,22 +1438,69 @@
    align-items:start it would sit against the divider. Nudge it down to line up
    with the label's first line (.setting-name), which is what it names. */
 .setting-item > .toggle-switch {
-  grid-column: 2;
-  justify-self: start;
-  margin-top: calc(var(--settings-row-padding) + 2px);
+  flex: none;
 }
 
-.setting-item > .theme-toggle-group {
-  grid-column: 2;
-  margin-top: 0;
-}
+/* Row children span the row by default.
 
-/* Single-button rows stretch to the shared column so buttons match each other
-   in width rather than being sized by their (i18n-variable) label text. */
-.setting-item > button {
-  grid-column: 2;
-  justify-self: stretch;
+   The row is `align-items: flex-start`, so a block child shrinks to its content
+   instead of filling the width — which left the token list and the About text
+   as narrow stubs. Everything that is not a compact control wants the width;
+   the exceptions below opt back out. */
+.setting-item > * {
   width: 100%;
+}
+
+/* Not `max-width: 100%` on the wildcard: that is declared after
+   `.setting-control`'s own cap and at the same specificity, so it would win on
+   source order and silently kill the readable-measure limit. Only the width
+   needs generalising; each control keeps its own cap. */
+.setting-item > *:not(.setting-control) {
+  max-width: 100%;
+}
+
+/* Compact controls keep their own size rather than filling the row. */
+.setting-item > button {
+  width: auto;
+}
+
+/* The switch must keep its declared 48x24 box — NOT `width: auto`.
+   .toggle-switch is an empty inline-block whose visible parts (.toggle-slider
+   and its knob) are absolutely positioned to inset:0, so it has no intrinsic
+   content width: `auto` collapses the track to nothing and leaves only the
+   knob's ring, and `100%` stretches the slider across the whole row.
+
+   The value is restated rather than `revert`: components.css already notes that
+   some older Android WebViews mishandle inherited/computed values on this
+   control, and a toggle that silently vanishes is exactly the failure this
+   comment exists to prevent. Keep in step with .toggle-switch there. */
+.setting-item > .toggle-switch {
+  width: 48px;
+}
+
+/* The two swatches are `flex: 1` within the group, so the group's own width is
+   what sizes them — left to shrink, the boxes came out barely wider than the
+   words "Hell" and "Dunkel".
+
+   A modest width, not the full row: these are previews to pick between, and a
+   pair of half-panel-wide slabs would dominate the section. */
+.setting-item > .theme-toggle-group {
+  flex: none;
+  max-width: 320px;
+}
+
+/* Buttons are sized by their label, with a shared minimum so a set of them
+   lines up rather than each ending up as wide as its own text. A label longer
+   than the minimum (German tends to be) widens that button alone.
+
+   They must never stretch to the row: a full-width "Speichern" reads as a
+   banner rather than a button, which is what the one-column layout exposed. */
+.setting-item > button,
+.setting-item__actions > button,
+.setting-item--actions > button {
+  flex: none;
+  width: auto;
+  min-width: var(--settings-button-min);
 }
 
 /* Button-cluster rows have no .setting-label to hang the divider on, so the
@@ -1293,10 +1509,10 @@
 .setting-item--actions {
   position: relative;
   display: flex;
+  flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--spacing-sm);
-  grid-column: 1 / -1;
   padding-top: var(--settings-row-padding);
   padding-bottom: var(--settings-row-padding);
 }
@@ -1310,38 +1526,31 @@
   border-top: 1px solid var(--settings-divider-color);
 }
 
-.settings-section > .setting-item--actions:first-of-type::before {
+.settings-section > .setting-item--actions:first-child::before,
+.setting-group > .setting-item--actions:first-child::before {
   content: none;
 }
 
-/* Multi-element control cell: two buttons, or an input plus a copy button,
-   sharing the single control column of an otherwise normal labelled row.
+/* Multi-element control cell: two buttons, or an input plus a copy button.
 
-   Stacked, not wrapped. Buttons stretch to the full 220px column, so two of
-   them never fit side by side — a `flex-wrap: wrap` row would break onto a
-   second line only in the languages whose labels happen to be long (German
-   "Zugriffsprotokoll anzeigen" wraps where English "View access log" does
-   not), making the row's height and its spacing above the divider vary by
-   locale. Stacking makes that height deliberate and identical everywhere. */
+   A wrapping row now, not a stack. The old stacking existed because buttons
+   stretched to a 250px column and two could never sit side by side; with
+   content-sized buttons they fit, and wrapping is the honest behaviour when
+   they do not. */
 .setting-item__actions {
-  grid-column: 2;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--spacing-sm);
+  width: 100%;
 }
 
-/* Nested inside a labelled row: the row's clearance already comes from the
-   __actions cell itself, so the controls within it must not add their own. */
+/* An input sharing the cluster with a button takes the leftover space rather
+   than a share of it — "copy this URL" is mostly URL. */
 .setting-item__actions .setting-control {
-  grid-column: auto;
-  width: 100%;
-  margin-top: 0;
-  margin-bottom: 0;
-}
-
-.setting-item__actions > button {
-  width: 100%;
+  flex: 1 1 260px;
+  width: auto;
   margin-top: 0;
   margin-bottom: 0;
 }
@@ -1349,6 +1558,49 @@
 /* A trailing status note sits under the buttons rather than stretching. */
 .setting-item__actions > .setting-note {
   align-self: flex-start;
+}
+
+/* A control with an affordance attached to it — the model field and its
+   "browse models" button. Distinct from .setting-item__actions, which is a
+   cluster of buttons *below* a control; this is one control that happens to
+   have a second way of filling it in.
+
+   The row carries the readable-measure cap so the pair together matches the
+   width of every other control in the panel, and the input inside gives its cap
+   up to the row. Leaving the cap on the input would push the button past it. */
+.setting-control-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+  max-width: var(--settings-control-max);
+}
+
+.setting-control-row > .setting-control {
+  flex: 1 1 auto;
+  max-width: none;
+  min-width: 0;
+}
+
+/* .btn-icon is transparent and borderless, which reads as floating next to a
+   bordered input. Matching the input's border and height ties the two together
+   as one control. Not applied to .btn-icon generally — everywhere else it sits
+   on a toolbar, where borderless is right. */
+.setting-control-row > .btn-icon {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 40px;
+  height: auto;
+  align-self: stretch;
+  padding: 0 var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+}
+
+.setting-control-row > .btn-icon svg {
+  width: 20px;
+  height: 20px;
 }
 
 /* Rows toggled from JS. `display: none` on a `display: contents` row is what
@@ -1376,8 +1628,20 @@
   margin: 0;
 }
 
-/* Spacing between buttons comes from the flex/grid gap, not margins — a
-   trailing margin-right would break the control column's right edge. */
+/* A note carrying a result — "Connected", "Saved", an error — is not incidental
+   text. The handler sets its colour inline; italic at the default weight still
+   made it read as disabled, so a result is upright and slightly heavier. Keyed
+   on the ids that receive one rather than on a new class, so the handlers stay
+   unchanged. */
+#ai-provider-status:not(:empty),
+#recognition-status:not(:empty),
+#connection-status:not(:empty),
+#sync-status:not(:empty) {
+  font-style: normal;
+  font-weight: 500;
+}
+
+/* Spacing between buttons comes from the flex gap, not margins. */
 .setting-item--actions button {
   flex: 0 0 auto;
 }
@@ -1436,83 +1700,119 @@
    directly under the label it belongs to. Proximity still holds — the row gap
    separates rows more than the label/control pair within a row. */
 @media (max-width: 768px) {
-  .settings-panel {
-    grid-template-columns: 1fr;
-    row-gap: 0;
+  /* One pane at a time. The nav is the landing view and the section slides in
+     over it, which is how Settings works on both mobile platforms — a rail
+     beside a panel does not fit a portrait phone, and shrinking it would leave
+     neither half usable. */
+  .settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "header"
+      "nav";
+    max-width: none;
+    padding: var(--spacing-md);
   }
 
-  /* The row becomes a real flex box here, so it can carry its own divider and
-     clearance — the per-cell padding/margin used in the two-column layout
-     would stack once the cells sit above each other. */
-  .setting-item {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--spacing-sm);
-    padding-top: var(--settings-row-padding);
-    padding-bottom: var(--settings-row-padding);
+  .settings-shell[data-view="detail"] {
+    grid-template-areas:
+      "header"
+      "detail";
   }
 
-  /* Only the label/control stacking collapses to one column here — button
-     clusters keep their horizontal, wrapping row. Without this they would
-     inherit the column direction above (same specificity, declared later) and
-     every cluster would become a stack of full-width buttons. */
-  .setting-item--actions {
-    flex-direction: row;
-    align-items: center;
-  }
-
-  .setting-item::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    border-top: 1px solid var(--settings-divider-color);
-  }
-
-  .settings-section > .setting-item:first-of-type::before {
-    content: none;
-  }
-
-  /* Divider is on the row now — retract the desktop label-hosted version.
-     .setting-item--actions is NOT reset here: it is itself a .setting-item, so
-     it already picks up the row-level divider above, and clearing it would
-     leave button-cluster rows with no separator at all. */
-  .setting-item > .setting-label::before {
-    content: none;
-  }
-
-  .setting-item--hidden {
+  /* Only the pane named by the current view is in the grid at all; the other is
+     removed rather than merely hidden, so it cannot be tabbed into. */
+  .settings-shell[data-view="detail"] .settings-nav,
+  .settings-shell[data-view="list"] .settings-detail {
     display: none;
   }
 
-  .setting-item > .setting-label,
-  .setting-item > .setting-control,
-  .setting-item > .toggle-switch,
-  .setting-item > .theme-toggle-group,
-  .setting-item > button,
-  .setting-item__actions {
-    grid-column: auto;
-    justify-self: auto;
-    padding-top: 0;
-    padding-bottom: 0;
-    margin-top: 0;
-    margin-bottom: 0;
+  /* Sticky, because the detail pane is now the scroller and the back button
+     lives inside it: without this the only way out of a long section would be
+     to scroll all the way back up. Opaque background and full width so the
+     section's rows pass underneath it rather than showing through.
+
+     `align-self: start` keeps the sticky box the height of the button — a
+     stretched flex/grid item would be as tall as the pane and cover it. */
+  .settings-detail__back {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-self: start;
+    width: 100%;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--spacing-xs, 4px);
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm) 0;
+    border: none;
+    background: var(--bg-primary);
+    color: var(--accent-primary, var(--text-primary));
+    font-size: 0.95rem;
+    cursor: pointer;
   }
 
-  /* Not included in the shared `width: auto` above: unlike a select/button,
-     which should stretch to fill the row, the switch must keep its fixed
-     48x24 box — `.toggle-slider` is absolutely positioned to inset:0 of it,
-     so collapsing its width to auto (no intrinsic content size) collapses the
-     track to nothing, leaving only the knob's shadow ring visible. */
-  .setting-item > .setting-label,
-  .setting-item > .setting-control,
-  .setting-item > .theme-toggle-group,
+  .settings-detail__back::before {
+    content: "‹";
+    font-size: 1.3em;
+    line-height: 1;
+  }
+
+  /* Narrow, the list stands alone until an entry is chosen, so on a first
+     visit no entry is highlighted: the first section is active in the DOM
+     (wide needs it to be, and it is what the back button returns to), but
+     nothing of it is on screen here, and a highlight would point at a pane
+     the user cannot see. `[data-selection="none"]` is set exactly while that
+     is true — on a first visit and after Back — and cleared the moment a
+     section is actually opened.
+
+     Restated in full rather than `background: none`: the base rule is scoped
+     to :is(body, #app) to outrank Nextcloud's button styling, and a weaker
+     override here would lose to it inside the NC app. */
+  :is(body, #app) .settings-shell[data-selection="none"] .settings-nav__item--current {
+    background: transparent;
+    color: var(--text-primary);
+    font-weight: 400;
+  }
+
+  /* Touch targets: the rail's compact rows are a pointer affordance, and a
+     full-width list on a phone is what the user is aiming at with a thumb.
+
+     Scoped like the base rule above — the media query does not raise
+     specificity, so an unscoped rule here would lose to NC's button styling on
+     a phone exactly as it did on the desktop. */
+  :is(body, #app) .settings-nav__item {
+    padding: var(--spacing-md);
+    font-size: 1rem;
+  }
+
+  /* Everything the old narrow layout had to redeclare — the single column, the
+     flex row, the row-hosted divider — is now the default at every width, so
+     the breakpoint keeps only what is genuinely narrow-specific. */
+
+  /* A text control stops at a readable measure on a wide screen; on a phone the
+     row is already narrower than that, so the cap only gets in the way. */
+  .setting-control {
+    max-width: none;
+  }
+
+  /* Buttons go full width: a 180px minimum beside a 320px screen leaves an
+     awkward stub of empty space, and a thumb target wants the room. */
   .setting-item > button,
+  .setting-item__actions > button,
+  .setting-item--actions > button {
+    width: 100%;
+    min-width: 0;
+  }
+
   .setting-item__actions {
-    width: auto;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .setting-item__actions .setting-control {
+    flex: none;
+    width: 100%;
   }
 }
 
@@ -1536,6 +1836,7 @@
 }
 
 .mcp-token-row-name {
+  flex: 1 1 auto;
   font-weight: 600;
   color: var(--text-primary);
   word-break: break-word;
@@ -1590,7 +1891,6 @@
 .theme-toggle-group {
   display: flex;
   gap: var(--spacing-md);
-  margin-top: var(--spacing-md);
 }
 
 .theme-toggle {
@@ -1650,6 +1950,16 @@
 .about-info {
   color: var(--text-secondary);
   font-size: 0.875rem;
+}
+
+.about-title {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.about-easter-egg {
+  display: inline-flex;
 }
 
 .about-info p {
@@ -1782,7 +2092,7 @@
   align-items: center;
   gap: var(--spacing-xs);
   padding: var(--spacing-sm) var(--spacing-md);
-  background-color: var(--color-success);
+  background-color: var(--nb-status-success);
   color: var(--text-inverse);
   border: none;
   border-radius: var(--radius-md);
@@ -1870,6 +2180,44 @@
   background-color: var(--color-primary);
   border-radius: 9999px;
   transition: width 0.25s ease-in-out;
+}
+
+/* Work whose size is not yet known — a job waiting behind another has made no
+   progress of its own, and a bar pinned at 0% reads as a hang. */
+.modal-progress-bar--indeterminate .modal-progress-fill {
+  animation: modal-progress-indeterminate 1.4s ease-in-out infinite;
+  transform-origin: left center;
+}
+
+@keyframes modal-progress-indeterminate {
+  0% {
+    transform: scaleX(0);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scaleX(0.7);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(0);
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-progress-bar--indeterminate .modal-progress-fill {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
+/* States that the work continues if the dialog is closed. */
+.modal-progress-note {
+  margin: var(--spacing-md) 0 0;
+  font-family: var(--font-family);
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 .modal-password-setup {
@@ -2102,6 +2450,30 @@
   line-height: 1.6;
 }
 
+/* ===== Recognized text modal ===== */
+.recognized-text__engine {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Sized like the logs textarea, but resizable: recognized text varies from one
+   line to a full page, and the user is here to read it. */
+.recognized-text__field {
+  width: 100%;
+  height: 280px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-sizing: border-box;
+}
+
 /* ===== Wide modal ===== */
 .modal--wide {
   max-width: 800px;
@@ -2168,11 +2540,11 @@
 }
 
 .mcp-audit-log-outcome--ok {
-  color: var(--color-success);
+  color: var(--nb-status-success);
 }
 
 .mcp-audit-log-outcome--error {
-  color: var(--color-error);
+  color: var(--nb-status-error);
   cursor: help;
 }
 

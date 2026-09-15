@@ -155,9 +155,23 @@ try {
     overflow: hidden;
   }
 
-  /* Footer only shows app version — not needed in NC (NC has its own footer) */
+  /* The footer used to carry only the app version, which NC shows itself — so
+     it was hidden outright. It now also carries handwriting-recognition status,
+     and a model reached through the NC proxy is the slowest case there is, so
+     hiding it would leave NC users with no sign that a job is running at all
+     (DESIGN §7).
+
+     footer.js shows it only while the queue has something to report, so it
+     costs no space at rest. */
   #app .footer {
-    display: none !important;
+    min-height: 0;
+    padding: 2px 8px;
+    border-top: 1px solid var(--color-border, #ddd);
+  }
+
+  /* NC renders its own version elsewhere. */
+  #app .app-version {
+    display: none;
   }
 
   /* NC inputs.css sets width:130px and padding:12px on div[contenteditable] —
@@ -218,9 +232,11 @@ try {
   </div>
 
   <!-- Footer -->
-  <footer id="footer" class="footer">
+  <footer id="footer" class="footer" style="display: none">
     <div class="footer-left">
-      <!-- No sync status in Nextcloud build -->
+      <!-- No sync status in Nextcloud build; footer.js appends the
+           recognition indicator here and shows the footer when it has
+           something to report. -->
     </div>
     <div class="footer-right">
       <span class="app-version"></span>

@@ -1144,7 +1144,7 @@ describe("initStorage (WebDAV)", () => {
 // ── Settings / stats / stubs ────────────────────────────────────────────────────
 
 describe("settings and stub APIs (WebDAV)", () => {
-  it("getSetting/setSetting round-trip through the in-memory store", async () => {
+  it("getSetting/setSetting round-trip", async () => {
     expect(await storage.getSetting("missing-key")).toBeNull();
     await storage.setSetting("theme", "dark");
     expect(await storage.getSetting("theme")).toBe("dark");
@@ -1298,5 +1298,95 @@ describe("davGet malformed JSON (WebDAV)", () => {
 
     const nb = await storage.getNotebook("nb-a");
     expect(nb).toBeNull();
+  });
+});
+
+// ── Settings persistence ──────────────────────────────────────────────────────
+//
+// These lived in a module-level object and were silently lost on every reload,
+// which made the recognition backend impossible to configure on Nextcloud: each
+// page load reset it to the sidecar default, which does not exist there.
+describe("settings", () => {
+  it("survives a reload", async () => {
+    await storage.setSetting("recognition_backend", "replicate");
+
+    // A fresh module instance is what a page reload actually produces.
+    vi.resetModules();
+    const reloaded = await import("./storage.webdav.js");
+
+    expect(await reloaded.getSetting("recognition_backend")).toBe("replicate");
+  });
+
+  it("round-trips non-string values", async () => {
+    // maxTokens and the boolean toggles must not come back as strings — a
+    // stringified `false` is truthy, and a stringified number breaks arithmetic.
+    await storage.setSetting("recognition_max_tokens", 8000);
+    await storage.setSetting("encrypt_local_data", false);
+
+    expect(await storage.getSetting("recognition_max_tokens")).toBe(8000);
+    expect(await storage.getSetting("encrypt_local_data")).toBe(false);
+  });
+
+  it("returns null for an unset key", async () => {
+    // Callers rely on null to apply their own default.
+    expect(await storage.getSetting("never_set")).toBeNull();
+  });
+
+  it("namespaces keys so it cannot collide with Nextcloud's own storage", async () => {
+    await storage.setSetting("theme", "dark");
+    expect(localStorage.getItem("theme")).toBeNull();
+    expect(localStorage.getItem("noteberg_setting_theme")).toBe('"dark"');
+  });
+
+  it("survives a corrupt stored value", async () => {
+    localStorage.setItem("noteberg_setting_broken", "{not json");
+    expect(await storage.getSetting("broken")).toBeNull();
+  });
+});
+
+// ── Recognition jobs ──────────────────────────────────────────────────────────
+describe("recognition jobs", () => {
+  const job = (id, over = {}) => ({ id, noteId: "n1", state: "queued", ...over });
+
+  it("persists a job across a reload", async () => {
+    // The point of the store: an interrupted job resumes rather than restarting.
+    await storage.saveRecognitionJob(job("j1", { bandIndex: 2 }));
+
+    vi.resetModules();
+    const reloaded = await import("./storage.webdav.js");
+
+    const stored = await reloaded.getRecognitionJobs();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].bandIndex).toBe(2);
+  });
+
+  it("replaces a job with the same id rather than duplicating it", async () => {
+    // Every checkpoint re-saves the same job; appending would grow without bound.
+    await storage.saveRecognitionJob(job("j1", { bandIndex: 0 }));
+    await storage.saveRecognitionJob(job("j1", { bandIndex: 3 }));
+
+    const stored = await storage.getRecognitionJobs();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].bandIndex).toBe(3);
+  });
+
+  it("deletes one job without disturbing the others", async () => {
+    await storage.saveRecognitionJob(job("j1"));
+    await storage.saveRecognitionJob(job("j2"));
+
+    await storage.deleteRecognitionJob("j1");
+
+    const stored = await storage.getRecognitionJobs();
+    expect(stored.map((j) => j.id)).toEqual(["j2"]);
+  });
+
+  it("reports an empty queue when nothing is stored", async () => {
+    expect(await storage.getRecognitionJobs()).toEqual([]);
+  });
+
+  it("survives a corrupt store rather than throwing on startup", async () => {
+    // Resume runs during app init; a parse error here must not break launch.
+    localStorage.setItem("noteberg_recognition_jobs", "{not json");
+    expect(await storage.getRecognitionJobs()).toEqual([]);
   });
 });

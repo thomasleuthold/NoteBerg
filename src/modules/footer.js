@@ -5,8 +5,29 @@
 
 import { APP_FULL_VERSION } from "../config.js";
 import { t } from "../i18n/index.js";
+import { classifyFailure } from "./recognition/failureReason.js";
 
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+
+/**
+ * Leading glyph per job state, in the recognition job list.
+ *
+ * A glance at the list should separate work in progress from work merely
+ * waiting, which the status text alone did not do.
+ *
+ * "running" is absent deliberately: its indicator is a rotating arc drawn in CSS
+ * from borders (components.css), the same idiom as the note-preview spinner. A
+ * rotating text glyph wobbles, because a glyph's baseline and its optical centre
+ * are not the same point.
+ *
+ * "done" has no icon on purpose. A finished row is about to disappear, and a
+ * tick beside every completed job draws the eye to exactly the rows that no
+ * longer need it.
+ */
+const STATE_ICONS = {
+  queued: "⧗",
+  failed: "⚠",
+};
 
 /**
  * Update sync status display (Tauri only)
@@ -115,28 +136,220 @@ async function handleManualSync() {
   }
 }
 
+/** The pen glyph used by the recognition indicator. */
+const PEN_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
+
+/**
+ * Summarize the queue for the footer badge.
+ *
+ * The old indicator was binary — recognition is happening, or it is not. That
+ * was honest for the sidecar, which finishes in under a second. With jobs that
+ * run for minutes, the user needs to know how much is outstanding and whether
+ * anything went wrong, so the badge carries counts and a state.
+ *
+ * @param {Array} jobs
+ * @returns {{visible: boolean, state: string, text: string, title: string}}
+ */
+export function summarizeQueue(jobs) {
+  const list = jobs || [];
+  const running = list.find((j) => j.state === "running");
+  const queued = list.filter((j) => j.state === "queued").length;
+  const failed = list.filter((j) => j.state === "failed").length;
+
+  if (running) {
+    // Page x/N of the note being transcribed, plus anything waiting behind it.
+    const pages = running.total > 0 ? `${running.current}/${running.total}` : "";
+    return {
+      visible: true,
+      state: "running",
+      text: queued > 0 ? `${pages} +${queued}` : pages,
+      title: t("footer.recognitionRunning"),
+    };
+  }
+  if (queued > 0) {
+    return {
+      visible: true,
+      state: "queued",
+      text: String(queued),
+      title: t("footer.recognitionQueued", { count: queued }),
+    };
+  }
+  if (failed > 0) {
+    // Failures persist until dismissed: one nobody saw is the one that matters.
+    return {
+      visible: true,
+      state: "failed",
+      text: String(failed),
+      title: t("footer.recognitionFailed", { count: failed }),
+    };
+  }
+  return { visible: false, state: "idle", text: "", title: "" };
+}
+
+/**
+ * Create the recognition badge and keep it in step with the queue.
+ *
+ * Runs on every platform — see the call site for why.
+ */
+function initRecognitionIndicator() {
+  const host = document.querySelector(".footer-left");
+  const footer = document.querySelector(".footer");
+  if (!host) return;
+
+  const indicator = document.createElement("div");
+  indicator.className = "recognition-indicator";
+  indicator.innerHTML = `${PEN_ICON}<span class="recognition-indicator__count"></span>`;
+  host.appendChild(indicator);
+
+  const countEl = indicator.querySelector(".recognition-indicator__count");
+
+  const apply = (jobs) => {
+    const summary = summarizeQueue(jobs);
+    indicator.style.display = summary.visible ? "flex" : "none";
+    indicator.dataset.state = summary.state;
+    indicator.title = summary.title;
+    countEl.textContent = summary.text;
+
+    // In NC the footer is a strip inside Nextcloud's own chrome, so it earns
+    // its space only while it has something to say.
+    if (footer && IS_NEXTCLOUD) {
+      footer.style.display = summary.visible ? "" : "none";
+    }
+  };
+
+  window.addEventListener("recognition-queue-changed", (e) => apply(e.detail?.jobs));
+  window.addEventListener("recognition-job-progress", async () => {
+    const { getJobs } = await import("./recognition/recognitionQueue.js");
+    apply(getJobs());
+  });
+
+  indicator.addEventListener("click", () => showRecognitionJobs());
+
+  apply([]);
+}
+
+/**
+ * The job list, opened from the badge.
+ *
+ * Deliberately not a modal: recognition must never block writing (DESIGN §7),
+ * and this panel exists precisely so the user can watch long work without being
+ * held by it.
+ */
+async function showRecognitionJobs() {
+  const { getJobs, cancel, clearFinished } = await import("./recognition/recognitionQueue.js");
+
+  document.querySelector(".recognition-jobs")?.remove();
+
+  const panel = document.createElement("div");
+  panel.className = "recognition-jobs";
+
+  const render = () => {
+    const jobs = getJobs();
+    if (jobs.length === 0) {
+      panel.remove();
+      return;
+    }
+
+    panel.innerHTML = `
+      <div class="recognition-jobs__header">
+        <span>${t("footer.recognitionJobsTitle")}</span>
+        <button class="recognition-jobs__close" type="button" aria-label="${t("common.close")}">×</button>
+      </div>
+      <ul class="recognition-jobs__list"></ul>
+      <div class="recognition-jobs__footer">
+        <button class="recognition-jobs__clear" type="button">${t("footer.recognitionClearFinished")}</button>
+      </div>
+    `;
+
+    const list = panel.querySelector(".recognition-jobs__list");
+    for (const job of jobs) {
+      const li = document.createElement("li");
+      li.className = "recognition-jobs__item";
+      li.dataset.state = job.state;
+
+      let status;
+      if (job.state === "running") {
+        status =
+          job.total > 0
+            ? t("footer.recognitionPage", { current: job.current, total: job.total })
+            : t("footer.recognitionStarting");
+      } else if (job.state === "queued") {
+        status = t("footer.recognitionWaiting");
+      } else if (job.state === "failed") {
+        // A short category rather than the backend's sentence. The full message
+        // is kept as the row's tooltip below — it names the setting to change
+        // and is what a bug report needs, but it is far too long for this line.
+        status =
+          job.error === "stale"
+            ? t("canvas.recognition.staleStrokes")
+            : t(`footer.recognitionFailReason.${classifyFailure(job.error)}`);
+      } else {
+        status = t("footer.recognitionDone");
+      }
+
+      // State icon. Decorative only: the status text beside it already names the
+      // state, so announcing the glyph too would just repeat it to a screen
+      // reader. Animation lives in CSS so it stops under prefers-reduced-motion.
+      const icon = document.createElement("span");
+      icon.className = "recognition-jobs__icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = STATE_ICONS[job.state] ?? "";
+
+      const title = document.createElement("span");
+      title.className = "recognition-jobs__title";
+      title.textContent = job.title || t("footer.recognitionUntitled");
+
+      const statusEl = document.createElement("span");
+      statusEl.className = "recognition-jobs__status";
+      statusEl.textContent = status;
+
+      // The untruncated message, for the row that needs explaining. Only on a
+      // failure: a tooltip on a healthy row is noise.
+      if (job.state === "failed" && job.error && job.error !== "stale") {
+        li.title = job.error;
+      }
+
+      li.append(icon, title, statusEl);
+
+      if (job.state === "queued" || job.state === "running") {
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "recognition-jobs__cancel";
+        cancelBtn.textContent = t("canvas.recognition.cancel");
+        cancelBtn.addEventListener("click", () => cancel(job.id));
+        li.append(cancelBtn);
+      }
+
+      list.append(li);
+    }
+
+    panel.querySelector(".recognition-jobs__close")?.addEventListener("click", () => close());
+    panel.querySelector(".recognition-jobs__clear")?.addEventListener("click", () => {
+      clearFinished();
+      render();
+    });
+  };
+
+  const onChange = () => render();
+  const close = () => {
+    window.removeEventListener("recognition-queue-changed", onChange);
+    window.removeEventListener("recognition-job-progress", onChange);
+    panel.remove();
+  };
+
+  window.addEventListener("recognition-queue-changed", onChange);
+  window.addEventListener("recognition-job-progress", onChange);
+
+  document.body.append(panel);
+  render();
+}
+
 /**
  * Initialize footer
  */
 export function initFooter() {
   if (!IS_NEXTCLOUD) {
     const syncStatus = document.querySelector(".sync-status");
-
-    // Create recognition indicator
-    if (syncStatus?.parentElement) {
-      const recognitionIndicator = document.createElement("div");
-      recognitionIndicator.className = "recognition-indicator";
-      recognitionIndicator.title = t("footer.recognitionRunning");
-      recognitionIndicator.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`;
-      syncStatus.insertAdjacentElement("afterend", recognitionIndicator);
-
-      window.addEventListener("recognition-start", () => {
-        recognitionIndicator.style.display = "flex";
-      });
-      window.addEventListener("recognition-end", () => {
-        recognitionIndicator.style.display = "none";
-      });
-    }
 
     if (syncStatus) {
       syncStatus.addEventListener("click", async () => {
@@ -184,10 +397,17 @@ export function initFooter() {
     }
   }
 
-  // Initialize version display
+  // Recognition status is NOT Tauri-only. Sync and MCP are, which is why the
+  // block above is guarded — but a slow model reached through the Nextcloud
+  // proxy is precisely the case that most needs visible progress, and the NC
+  // build showed none at all (DESIGN §7).
+  initRecognitionIndicator();
+
+  // Initialize version display. Hidden in NC, which has its own footer — the
+  // footer exists there now only to carry recognition status.
   const versionEl = document.querySelector(".app-version");
   if (versionEl) {
-    versionEl.textContent = `v${APP_FULL_VERSION}`;
+    versionEl.textContent = IS_NEXTCLOUD ? "" : `v${APP_FULL_VERSION}`;
   }
 
   console.log("Footer initialized");

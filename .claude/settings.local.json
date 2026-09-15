@@ -23,7 +23,9 @@
       "Bash(npm test:*)",
       "Bash(grep:*)",
       "Bash(dir:*)",
-      "WebFetch(domain:alex-d.github.io)"
+      "WebFetch(domain:alex-d.github.io)",
+      "Bash(cat)",
+      "Bash(node /tmp/probe.mjs)"
     ]
   }
 }

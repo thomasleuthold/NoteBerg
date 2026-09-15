@@ -31,6 +31,7 @@ import { startHelpTour } from "../HelpOverlay.js";
 import { getHelpContent, getHelpLabels } from "../helpContent.js";
 import { TextChangeCommand } from "./commands/TextChangeCommand.js";
 import "./TextEditorLayer.css";
+import { searchRegex } from "../../utils/searchPattern.js";
 import { SelectionFloatingBar } from "./SelectionFloatingBar.js";
 import { normalizeBareLines, TextTaskManager } from "./TextTaskManager.js";
 
@@ -635,9 +636,7 @@ export class TextEditorLayer {
     this.clearHighlights();
     if (!query || !this._editorElement) return;
 
-    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = escapeRegex(query).replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
-    const regex = new RegExp(`(${pattern})`, "gi");
+    const regex = searchRegex(query, { capture: true });
 
     // Walk all text nodes in the editor and wrap matches with <mark>
     const walker = document.createTreeWalker(this._editorElement, NodeFilter.SHOW_TEXT);

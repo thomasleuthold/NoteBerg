@@ -12,6 +12,10 @@ import {
   getRenderedMedia,
   setPinnedRenderKeys,
 } from "../../modules/mediaManager.js";
+
+/** On-screen width of the bar marking an approximate hit, in CSS px. */
+const APPROX_MARKER_WIDTH = 6;
+
 import { getPdfInvertDarkMode, getTheme } from "../../modules/theme.js";
 import {
   MARKER_ALPHA,
@@ -155,6 +159,33 @@ function drawMarkersGrouped(
       ctx.restore();
     }
   }
+}
+
+/**
+ * Geometry of the margin bar marking an approximately-located search hit.
+ *
+ * Anchored to the buffer's own left edge rather than the viewport's. The buffer
+ * is a window of content wider than the viewport, repositioned only when
+ * scrolling leaves its bounds; anchoring to the viewport would need a repaint on
+ * every horizontal scroll, and a plain repaint leaves the buffer's painted
+ * window where it was, exposing unpainted canvas. Anchoring to the buffer keeps
+ * the bar inside the painted region with no extra redraw.
+ *
+ * Pure, and exported, so the rule survives a test without standing up a canvas.
+ *
+ * @param {{y: number, h: number}} rect - band bounds in content space
+ * @param {{bufferLeft: number, zoom: number}} view
+ * @returns {{x: number, y: number, w: number, h: number}} in content space
+ */
+export function approximateMarkerBar(rect, view) {
+  return {
+    x: view.bufferLeft,
+    y: rect.y,
+    // Divided by zoom so the on-screen thickness stays constant: without it the
+    // bar balloons when zoomed in and vanishes when zoomed out.
+    w: APPROX_MARKER_WIDTH / (view.zoom || 1),
+    h: rect.h,
+  };
 }
 
 export class CanvasRenderer {
@@ -373,6 +404,33 @@ export class CanvasRenderer {
     this.lineSeparators = separatorYs;
     this.lineIndentLevels = indentLevels;
     this.forceRedraw();
+  }
+
+  /**
+   * Draw the marker for an approximately-located search hit.
+   *
+   * Deliberately a margin bar rather than a tint over the text: the location is
+   * a band, not a word, and shading the content implies the match is somewhere
+   * under the shading — which is only loosely true and makes the handwriting
+   * harder to read.
+   *
+   * Coloured like an exact match, not like its band: band colours are internal
+   * plumbing for the model and mean nothing to the user, so showing six different
+   * highlight colours would imply a distinction that does not exist.
+   *
+   * @param {{y: number, h: number}} rect - band bounds in content space
+   * @private
+   */
+  _drawApproximateMarker(rect) {
+    const bar = approximateMarkerBar(rect, {
+      bufferLeft: this.bufferLeft,
+      zoom: this.zoomScale || 1,
+    });
+
+    this.ctx.save();
+    this.ctx.fillStyle = HIGHLIGHT_STROKE_STYLE;
+    this.ctx.fillRect(bar.x, bar.y, bar.w, bar.h);
+    this.ctx.restore();
   }
 
   /**
@@ -712,9 +770,6 @@ export class CanvasRenderer {
     // Check if we need to leapfrog (reposition buffer)
     if (this._shouldLeapfrog(contentScrollTop, contentScrollLeft)) {
       this._repositionBuffer(contentScrollTop, true, contentScrollLeft);
-    } else {
-      // Even if not leapfrogging, we might want to cleanup occasionally during small scrolls
-      // But _repositionBuffer handles the bulk of it.
     }
     // Always slide the canvas to match scroll position
     this._slideCanvas(contentScrollTop, scrollLeft);
@@ -1359,6 +1414,14 @@ export class CanvasRenderer {
         this.ctx.lineWidth = HIGHLIGHT_LINE_WIDTH;
 
         for (const rect of this.highlightRects) {
+          // A band hit says "the word is somewhere in this band" — nothing
+          // more. Drawing it as a bordered rect would claim a precision the
+          // recognition does not have, so it renders as a soft tint instead.
+          if (rect.band) {
+            this._drawApproximateMarker(rect);
+            continue;
+          }
+
           this.ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
           this.ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
         }

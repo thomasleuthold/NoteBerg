@@ -22,11 +22,14 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 - ☑️ Task checkboxes inline with notes
 
 ### Handwriting Recognition
-- 🔍 Automatic background recognition of handwritten content (Windows only, via local recognition service)
-- 💬 Recognition text used for full-text search across all notes
+- 🔍 Windows: automatic background recognition via a bundled local recognition service — offline, free, exact word positions
+- 🤖 All platforms: optional AI recognition with a vision model you configure yourself — a local one (LM Studio, Ollama) or a cloud API (OpenAI-compatible, Replicate)
+- ✋ AI recognition is off by default and always started manually from the note toolbar; nothing is sent anywhere until you pick a backend and explicitly agree to the destination
+- 💬 Recognition text used for full-text search across all notes — see [ai_integration_design.md](documentation/ai_integration_design.md)
 
-### AI Integration (MCP)
-- 🤖 Optional, off-by-default MCP server lets AI assistants (e.g. Claude Desktop) read your notebooks over a local, token-protected connection (Windows only) — see [mcp.md](documentation/mcp.md)
+### AI Integration
+- ✨ A shared, off-by-default AI provider connection (endpoint, model, API key) configured once in Settings — AI handwriting recognition (above) is its first consumer, with more planned
+- ✨ MCP server: optional, off-by-default, lets AI assistants (e.g. Claude Desktop) read your notebooks over a local, token-protected connection (Windows only) — see [mcp.md](documentation/mcp.md)
 
 ### Media & Import/Export
 - 📄 PDF import — annotate PDFs with pen and text
@@ -53,7 +56,7 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 ### UI & Platform
 - 🌙 Dark mode / light mode with system preference detection
 - 🖥️ Windows app — download the installer from [GitHub Releases](https://github.com/thomasleuthold/NoteBerg/releases) (unsigned build; Windows may warn about an unknown publisher). macOS and Linux are not available yet.
-- 📱 Android app — available via [Google Play open testing](https://play.google.com/store/apps/details?id=eu.noteberg.app) (iOS not tested so far)
+- 📱 Android app — available via [Google Play](https://play.google.com/store/apps/details?id=eu.noteberg.app)
 - 🌐 Nextcloud app — available in the [Nextcloud App Store](https://apps.nextcloud.com/apps/noteberg)
 - 🔡 Internationalization — English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Chinese
 
@@ -153,6 +156,7 @@ NoteBerg/
 - [architecture_design.md](documentation/architecture_design.md) — Architecture and design decisions
 - [note_editor_architecture.md](documentation/note_editor_architecture.md) — Note editor internals (stroke recording, canvas layers, undo/redo)
 - [sync_architecture.md](documentation/sync_architecture.md) — Nextcloud sync engine
+- [ai_integration_design.md](documentation/ai_integration_design.md) — AI integration: provider configuration, consent, and AI handwriting recognition
 - [mcp.md](documentation/mcp.md) — MCP server setup: connect Claude Desktop and other AI assistants to your notebooks
 
 ## Thank You

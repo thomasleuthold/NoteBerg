@@ -115,7 +115,6 @@
     "title": "Settings",
     "sections": {
       "appearance": "Appearance",
-      "language": "Language",
       "security": "Security",
       "nextcloud": "Nextcloud Sync",
       "recognition": "Handwriting Recognition",
@@ -123,7 +122,7 @@
       "logging": "Logging",
       "dangerZone": "Danger Zone",
       "about": "About",
-      "help": "Help Guidance"
+      "aiProvider": "AI Access"
     },
     "appearance": {
       "theme": "Theme",
@@ -192,7 +191,7 @@
       "windowsOnly": "Handwriting recognition is only available in the Windows app.",
       "languageLabel": "Language",
       "languageDesc": "Target language for handwriting recognition",
-      "testBtn": "Test Connection",
+      "testBtn": "Test recognition (uses tokens)",
       "testing": "Testing...",
       "connecting": "Connecting...",
       "success": "✓ Connection successful ({{source}})!",
@@ -207,8 +206,112 @@
         "es-ES": "Spanish",
         "it-IT": "Italian",
         "ja-JP": "Japanese",
-        "zh-CN": "Chinese (Simplified)"
-      }
+        "zh-CN": "Chinese (Simplified)",
+        "auto": "Auto-detect"
+      },
+      "backendSidecar": "Windows local recognizer (exact word positions)",
+      "backendAi": "AI vision model (approximate word positions)",
+      "backendSidecarUnavailable": "Windows local recognizer (not running)",
+      "endpointLabel": "API endpoint",
+      "endpointDesc": "OpenAI-compatible base URL, e.g. LM Studio or Ollama. Must end in /v1.",
+      "endpointPlaceholder": "http://localhost:1234/v1",
+      "endpointChoose": "Choose an endpoint…",
+      "endpointNoneAllowed": "No endpoints permitted",
+      "endpointDescNoneAllowed": "Your Nextcloud administrator has not permitted any AI endpoints, so recognition cannot be used on this instance.",
+      "endpointNoLongerAllowed": "no longer permitted",
+      "endpointNotPermitted": "✗ Your Nextcloud administrator does not permit this endpoint.",
+      "modelLabel": "Model",
+      "modelDesc": "Model identifier as reported by the server",
+      "modelPlaceholder": "qwen2.5-vl-7b-instruct",
+      "browseModels": "Browse available models",
+      "modelPicked": "Selected {{model}} — save to apply",
+      "apiKeyLabel": "API key",
+      "apiKeyDesc": "Sent as a bearer token. Optional for most local servers.",
+      "apiKeyPlaceholder": "Leave empty if not required",
+      "apiKeySet": "An API key is stored. Type to replace it.",
+      "imageEdgeLabel": "Max image size",
+      "imageEdgeDesc": "Longest edge of each image sent, in pixels. The page is scaled to fit, so a larger value makes small handwriting readable — raise it if fine print is missed. Costs time and tokens roughly with the square.",
+      "saveBtn": "Save",
+      "saved": "Saved",
+      "endpointInvalidUrl": "✗ Not a valid URL",
+      "endpointInsecure": "✗ Plain http is only allowed for localhost. Use https for a remote server.",
+      "endpointUnsupported": "✗ Only http and https endpoints are supported",
+      "missingEndpoint": "✗ Enter an endpoint and model first",
+      "testingModel": "Sending a test image...",
+      "aiSuccess": "✓ Connection successful ({{model}} responded)",
+      "aiNoVision": "⚠ Connected, but the response was not usable. Check the model has vision enabled.",
+      "maxTokensLabel": "Max response length",
+      "maxTokensDesc": "Token limit for the model's reply. A page of handwriting needs a few hundred; a low cap stops a model that loops instead of transcribing.",
+      "timeoutLabel": "Recognition timeout",
+      "timeoutDesc": "How long to wait for the model to transcribe one page, in seconds. Raise it for reasoning models or a local model on CPU; lower it to fail faster on a dead endpoint.",
+      "timeoutDescNextcloud": "How long to wait for the model to transcribe one page, in seconds. Raise it for reasoning models or a local model on CPU; lower it to fail faster on a dead endpoint. The server caps this at 600s, and values above your web server's own timeout need that raised to match.",
+      "syncOnlyTitle": "Slow models may be cut short on this server",
+      "syncOnlyBody": "This Nextcloud server cannot run recognition in the background (it needs php-fpm and a configured memory cache such as Redis or APCu). Requests are held open while the model works, so the web server may cut them off after about a minute — which appears as a network error. Use a faster model or a smaller Max image size, or ask your administrator to enable a memory cache.",
+      "versionLabel": "Model version",
+      "versionDesc": "Version hash from the model's page on Replicate. Required for community models; leave empty for official ones.",
+      "versionPlaceholder": "e.g. 5c7d5dc6dd8bf7...",
+      "missingModel": "✗ Enter a model name first",
+      "promptLabel": "System prompt",
+      "promptDesc": "Instructions sent to the model. Leave empty to use the built-in default, which is kept up to date. Grid and crop instructions are appended automatically.",
+      "promptPlaceholder": "Empty — using the built-in default",
+      "promptReset": "Load default",
+      "promptUsingDefault": "Using the built-in default",
+      "promptWarning": "⚠ Prompt may not parse: missing {{items}}",
+      "promptWarn": {
+        "empty": "any content",
+        "noJson": "a JSON instruction",
+        "noWordsKey": "the \"words\" key",
+        "noRegion": "the region/band instruction",
+        "noShape": "the {{shape}} placeholder",
+        "noBreak": "the line-break instruction",
+        "noLanguage": "the {{language}} placeholder",
+        "noPunctuation": "the {{punctuation}} placeholder"
+      },
+      "endpointDescNextcloud": "Called from your Nextcloud server, so it must be reachable from there — not from this device. \"localhost\" means the Nextcloud server itself.",
+      "methodLabel": "Recognition method",
+      "methodDesc": "How handwriting is turned into text",
+      "providerMissingTitle": "AI access is not configured",
+      "providerMissingBody": "Handwriting recognition will stay off until an AI provider is set up.",
+      "centralTitle": "Managed by your administrator",
+      "centralBody": "The AI provider, model and prompt for this instance are set by your Nextcloud administrator and cannot be changed here.",
+      "configureProvider": "Configure AI access",
+      "savedNeedsProvider": "Saved — configure AI access to start recognizing"
+    },
+    "modelPicker": {
+      "title": "Available models",
+      "searchPlaceholder": "Filter models…",
+      "typeFilter": "Model type",
+      "allTypes": "All types",
+      "visionOnly": "Vision models only",
+      "loading": "Loading models…",
+      "count": "{{shown}} of {{total}} models",
+      "truncated": "The list is a sample of the provider's catalog — you can still type any model name.",
+      "noMatches": "No models match this filter.",
+      "cancel": "Cancel",
+      "unsupported": "This server does not offer a model list. Type the model name instead.",
+      "unauthorized": "The API key was rejected, so the model list could not be read.",
+      "notConfigured": "Configure the AI provider first.",
+      "failed": "Could not load the model list: {{message}}",
+      "types": {
+        "image->text": "Image → text",
+        "text->text": "Text → text",
+        "text->image": "Text → image",
+        "other": "Other",
+        "unknown": "Type unknown"
+      },
+      "caps": {
+        "vision": "Vision",
+        "audio": "Audio",
+        "video": "Video",
+        "files": "Files",
+        "tools": "Tools",
+        "reasoning": "Reasoning"
+      },
+      "searching": "Searching…",
+      "searched": "Searched the provider's full catalog.",
+      "searchTruncated": "Showing the top matches — refine the query to narrow them.",
+      "searchFailed": "Search is unavailable, so only the loaded sample was filtered.",
+      "searchAllPlaceholder": "Search all models…"
     },
     "mcp": {
       "windowsOnly": "The MCP server is only available in the Windows app.",
@@ -326,6 +429,36 @@
       "resetBtn": "Reset",
       "resetConfirmTitle": "Reset help guidance",
       "resetConfirmMsg": "This will show the first-use tips again the next time you use each tool."
+    },
+    "aiProvider": {
+      "intro": "Configure once, and every AI feature can use it.",
+      "providerLabel": "Provider",
+      "providerDesc": "Which AI service this device may reach",
+      "providerNone": "Not configured",
+      "providerOpenAi": "OpenAI-compatible (LM Studio, Ollama, cloud APIs)",
+      "providerReplicate": "Replicate",
+      "saveBtn": "Save AI access",
+      "saved": "AI access saved",
+      "privacyHint": "Data you choose to process with AI is sent to this endpoint.",
+      "privacyHintLocal": "This endpoint is on your machine, so nothing leaves your device.",
+      "privacyHintRemote": "This is a remote service, so that data leaves your device.",
+      "consentTitle": "Send data to {{host}}?",
+      "consentBody": "AI features send the content you ask them to process — handwriting rendered as an image, note text, and anything a future feature adds — to {{host}}, a service outside your device. Only what a feature needs is sent, and only when you start it.\n\nYou can change or revoke this at any time in Settings.",
+      "consentConfirm": "Allow",
+      "consentDeclined": "AI features stay off until you agree to send data to {{host}}.",
+      "testBtn": "Test connection",
+      "testing": "Testing…",
+      "testOk": "Connected.",
+      "testOkModels": "Connected. {{count}} model(s) available.",
+      "testOkNoListing": "Connected. This endpoint does not list models, which is fine.",
+      "testUnauthorized": "Rejected the credential. Check the API key.",
+      "testUnreachable": "Could not reach the endpoint. {{message}}",
+      "testFailed": "The endpoint answered with an error (HTTP {{status}}).",
+      "testNotConfigured": "Fill in the provider details first.",
+      "testKeyRequired": "An API key is required for a remote endpoint."
+    },
+    "nav": {
+      "back": "All settings"
     }
   },
   "modals": {
@@ -389,6 +522,13 @@
     },
     "errors": {
       "titleRequired": "Title is required"
+    },
+    "recognizedText": {
+      "title": "Recognized text",
+      "engineLabel": "Recognized by {{engine}}",
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyFailed": "Copy failed"
     }
   },
   "auth": {
@@ -449,7 +589,28 @@
     "syncFailedTooltip": "Sync failed: {{error}}",
     "unknownError": "unknown error",
     "recognitionRunning": "Handwriting recognition running…",
-    "mcpRunning": "MCP server is running — AI assistants can access your notebooks"
+    "mcpRunning": "MCP server is running — AI assistants can access your notebooks",
+    "recognitionQueued": "{{count}} note(s) waiting for recognition",
+    "recognitionFailed": "{{count}} recognition(s) failed",
+    "recognitionJobsTitle": "Handwriting recognition",
+    "recognitionClearFinished": "Clear finished",
+    "recognitionPage": "Page {{current}} of {{total}}",
+    "recognitionStarting": "Starting…",
+    "recognitionWaiting": "Waiting",
+    "recognitionDone": "Done",
+    "recognitionFailedOne": "Failed",
+    "recognitionFailReason": {
+      "stale": "Note changed",
+      "backendChanged": "Backend changed",
+      "allowance": "Allowance used up",
+      "timeout": "Timed out",
+      "unreachable": "Endpoint unreachable",
+      "auth": "Key rejected",
+      "quota": "Quota or rate limit",
+      "badResponse": "Unusable reply",
+      "unknown": "Failed"
+    },
+    "recognitionUntitled": "Untitled note"
   },
   "breadcrumb": {
     "home": "Home",
@@ -506,7 +667,10 @@
       "partEraser": "Part Eraser",
       "highlighterOnly": "Only Erase Highlighters",
       "size": "Size"
-    }
+    },
+    "recognizeNow": "Recognize handwriting",
+    "showRecognizedText": "Show recognized text",
+    "noRecognizedText": "No recognized text"
   },
   "licenses": {
     "title": "Open Source Licenses",
@@ -561,6 +725,32 @@
       "apply": "Apply",
       "cancel": "Cancel",
       "normalizeLighting": "Normalize lighting"
+    },
+    "recognition": {
+      "progressTitle": "Recognizing handwriting",
+      "done": "Recognized {{count}} word(s)",
+      "empty": "No handwriting recognized",
+      "failed": "Recognition failed",
+      "noBackend": "No recognition backend configured",
+      "cancel": "Cancel",
+      "cancelled": "Recognition cancelled",
+      "alreadyRunning": "Recognition is already running for this note. This second run was not started — watch progress in the status bar, or cancel it there.",
+      "transcribing": "Page {{current}} of {{total}} · {{words}} words · {{seconds}}s",
+      "runInBackground": "Run in background",
+      "backgroundNote": "You can close this dialog — recognition continues in the background.",
+      "queuedNext": "Waiting to start…",
+      "queuedBehind": "Waiting — {{count}} job(s) ahead",
+      "staleStrokes": "The note changed while recognition was running. Please run it again.",
+      "confirmTitle": "Recognize handwriting",
+      "confirmScope": "{{count}} page(s) will be sent to {{model}} for transcription.",
+      "confirmScopeModelOnly": "This note will be sent to {{model}} for transcription.",
+      "quotaRemaining": "{{remaining}} of {{limit}} page(s) remaining this month.",
+      "quotaExhausted": "No pages remaining this month. Your administrator can raise the allowance.",
+      "confirmStart": "Start",
+      "optionPunctuation": "Transcribe punctuation",
+      "optionPunctuationDesc": "Include the full stops, commas and dashes written on the page. Turn off to get the words only.",
+      "optionBreaks": "Keep line breaks",
+      "optionBreaksDesc": "Preserve where lines and paragraphs end. Recognition of the layout is less reliable than the text itself."
     }
   },
   "recycleBin": {
@@ -621,7 +811,7 @@
     },
     "draw": {
       "title": "Draw",
-      "body": "Tap Draw to pick a pen or highlighter and change color or width. Handwriting recognition is only available on Windows."
+      "body": "Tap Draw to pick a pen or highlighter and change color or width. Handwriting recognition runs automatically on Windows; on other platforms you can turn on AI recognition in Settings."
     },
     "eraser": {
       "title": "Eraser",
