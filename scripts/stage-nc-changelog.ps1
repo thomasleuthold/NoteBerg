@@ -6,6 +6,16 @@
 # "## [Unreleased] - 0.5.40" (or an older version once released), so a verbatim
 # copy would never match and the store silently shows no release notes.
 #
+# The store's parser (nextcloudappstore) matches release headings with the
+# regex ^## (\d+\.\d+\.\d+) — the version immediately after "## ", WITHOUT
+# brackets — while nightly/pre-release builds fall back to a SEPARATE regex,
+# ^## \[Unreleased\], which DOES require brackets. A Keep-a-Changelog style
+# heading like "## [0.5.41] - 2026-08-19" therefore matches neither regex once
+# stamped with a real version: it shows up fine during RC/beta builds (still
+# "[Unreleased]", matches the pre-release regex) but silently shows no release
+# notes on the final stable build, where the brackets make it fail the stable
+# regex. So the staged heading must drop the brackets entirely.
+#
 # This rewrites an "[Unreleased]" top heading to the packaged version on the way
 # in. Only the staged copy is touched; CHANGELOG.md in the repo is never
 # modified.
@@ -35,7 +45,7 @@ if (-not $baseVer) {
     throw "Could not parse a semver from info.xml <version> '$ncver'."
 }
 
-$lines = Get-Content $source
+$lines = Get-Content $source -Encoding utf8
 $today = Get-Date -Format "yyyy-MM-dd"
 
 # Find the first "## [...]" section heading - that is the release being shipped.
@@ -72,8 +82,9 @@ Fix one of the two:
 }
 else {
     # An [Unreleased] heading: this is the expected path. Stamp it with the
-    # packaged version and today's date.
-    $lines[$idx] = "## [$baseVer] - $today"
+    # packaged version, unbracketed, so it matches the store's stable-release
+    # regex ^## (\d+\.\d+\.\d+) - see note above.
+    $lines[$idx] = "## $baseVer - $today"
     Write-Host "Rewrote changelog heading: '$heading' -> '$($lines[$idx])'"
 }
 

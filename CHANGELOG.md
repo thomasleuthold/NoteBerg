@@ -22,6 +22,7 @@
 ### Fixed
 - **All platforms**: a touch that ended without the browser reporting it — an app switch, an incoming call, or a system edge gesture — could leave panning and pinch-zoom broken for the rest of the session, until the note was closed and reopened
 - **All platforms**: changing the interface language in settings scrolled the panel back to the top
+- **Android**: a Nextcloud server URL with an explicit port (e.g. `https://example.com:8443`) was rejected as "url not allowed on the configured scope"
 
 ### Security
 - **All platforms**: AI recognition sends nothing until you pick a backend and explicitly agree to the destination host. Agreement is recorded per host, so pointing recognition somewhere new asks again, and can be revoked in Settings. A model on your own machine needs no agreement, because nothing leaves the device

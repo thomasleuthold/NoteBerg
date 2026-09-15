@@ -71,8 +71,13 @@ $ErrorActionPreference = 'Stop'
 # Every git call therefore goes through this helper, which pins the preference
 # back to Continue for the duration of the native call and judges success by
 # $LASTEXITCODE alone -- the only reliable signal from a native executable.
+# NOTE: $GitArgs is a single positional array, NOT ValueFromRemainingArguments.
+# With remaining-argument binding PowerShell steals any token that looks like
+# one of its own parameters -- "-p <sha>" was being swallowed whole, silently
+# producing parentless (root) commits that GitHub then rejected as
+# non-fast-forward. Always call as: Invoke-Git @('commit-tree', $tree, '-p', $base)
 function Invoke-Git {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+    param([Parameter(Mandatory = $true, Position = 0)][string[]]$GitArgs)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -90,7 +95,7 @@ function Invoke-Git {
 # Resolve a rev to a full SHA, or $null when it does not exist.
 function Resolve-Rev {
     param([string]$Rev)
-    $r = Invoke-Git rev-parse --verify --quiet $Rev
+    $r = Invoke-Git @('rev-parse', '--verify', '--quiet', $Rev)
     if ($r.ExitCode -ne 0 -or -not $r.Output) { return $null }
     return $r.Output
 }
@@ -99,7 +104,7 @@ function Resolve-Rev {
 # in exactly one place -- it is awkward to quote through just/PowerShell.
 function Resolve-Tree {
     param([string]$Rev)
-    $r = Invoke-Git rev-parse --verify --quiet ($Rev + '^{tree}')
+    $r = Invoke-Git @('rev-parse', '--verify', '--quiet', ($Rev + '^{tree}'))
     if ($r.ExitCode -ne 0 -or -not $r.Output) { return $null }
     return $r.Output
 }
@@ -110,7 +115,7 @@ function Get-MirrorRef {
 }
 
 function Assert-Remote {
-    $r = Invoke-Git remote get-url $Remote
+    $r = Invoke-Git @('remote', 'get-url', $Remote)
     if ($r.ExitCode -ne 0) {
         throw "No git remote named '$Remote'. Configure it, or pass -Remote <name>."
     }
@@ -119,9 +124,9 @@ function Assert-Remote {
 # ---------------------------------------------------------------- Status ----
 if ($Status) {
     Assert-Remote
-    Invoke-Git fetch $Remote --quiet | Out-Null
+    Invoke-Git @('fetch', $Remote, '--quiet') | Out-Null
 
-    $refs = (Invoke-Git for-each-ref --format='%(refname)' 'refs/github-mirror/').Output
+    $refs = (Invoke-Git @('for-each-ref', '--format=%(refname)', 'refs/github-mirror/')).Output
     if (-not $refs) {
         Write-Host "No branches published to $Remote yet."
         return
@@ -203,19 +208,19 @@ if ($Reset) {
     }
 
     # Parentless: a fresh root commit, no ancestry back to the old history.
-    $commit = (Invoke-Git commit-tree $srcTree -m $Message).Output
+    $commit = (Invoke-Git @('commit-tree', $srcTree, '-m', $Message)).Output
     if (-not $commit) { throw 'commit-tree failed' }
 
-    $push = Invoke-Git push $Remote --force "${commit}:refs/heads/$Branch"
+    $push = Invoke-Git @('push', $Remote, '--force', "${commit}:refs/heads/$Branch")
     if ($push.ExitCode -ne 0) { throw "Force-push failed:`n$($push.Output)" }
 
-    Invoke-Git update-ref $mirrorRef $commit | Out-Null
+    Invoke-Git @('update-ref', $mirrorRef, $commit) | Out-Null
     Write-Host "Reset $Remote/$Branch to a single root commit $($commit.Substring(0,7))." -ForegroundColor Green
     return
 }
 
 # --------------------------------------------------------------- Publish ----
-Invoke-Git fetch $Remote --quiet | Out-Null
+Invoke-Git @('fetch', $Remote, '--quiet') | Out-Null
 
 $base = Resolve-Rev $mirrorRef
 $remoteSha = Resolve-Rev "$Remote/$Branch"
@@ -235,17 +240,17 @@ if ($base -and (Resolve-Tree $base) -eq $srcTree) {
 }
 
 $commit = if ($base) {
-    (Invoke-Git commit-tree $srcTree -p $base -m $Message).Output
+    (Invoke-Git @('commit-tree', $srcTree, '-p', $base, '-m', $Message)).Output
 }
 else {
-    (Invoke-Git commit-tree $srcTree -m $Message).Output
+    (Invoke-Git @('commit-tree', $srcTree, '-m', $Message)).Output
 }
 if (-not $commit) { throw 'commit-tree failed' }
 
 # Push first, record second: a failed push must not advance the mirror ref,
 # or the next publish would build on a commit GitHub never received.
-$push = Invoke-Git push $Remote "${commit}:refs/heads/$Branch"
+$push = Invoke-Git @('push', $Remote, "${commit}:refs/heads/$Branch")
 if ($push.ExitCode -ne 0) { throw "Push failed -- mirror ref not advanced, nothing recorded:`n$($push.Output)" }
 
-Invoke-Git update-ref $mirrorRef $commit | Out-Null
+Invoke-Git @('update-ref', $mirrorRef, $commit) | Out-Null
 Write-Host "Published $($commit.Substring(0,7)) to $Remote/$Branch as a single commit." -ForegroundColor Green
