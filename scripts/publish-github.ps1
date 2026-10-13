@@ -229,6 +229,12 @@ $remoteSha = Resolve-Rev "$Remote/$Branch"
 # existing tip so the push fast-forwards and the old history stays below it.
 if (-not $base) { $base = $remoteSha }
 
+# First publish of a branch that is new to the remote: parent onto the
+# remote's main, so the branch shares history with it and a PR against main
+# diffs only this branch's changes. A parentless root here makes GitHub report
+# "entirely different commit histories" and refuse to open a PR.
+if (-not $base -and $Branch -ne 'main') { $base = Resolve-Rev "$Remote/main" }
+
 # Refuse to clobber work pushed outside this script.
 if ($remoteSha -and $base -and $remoteSha -ne $base) {
     throw "$Remote/$Branch ($($remoteSha.Substring(0,7))) has moved since the last publish ($($base.Substring(0,7))). Reconcile before publishing, or use -Reset to overwrite it."
