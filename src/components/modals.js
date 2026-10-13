@@ -1297,6 +1297,15 @@ export function showProgressDialog(title, options = {}) {
     setNote(text) {
       if (noteEl) noteEl.textContent = text || "";
     },
+    /**
+     * Past the point where cancelling is honoured (a file being finalised):
+     * a cancel button that does nothing would report a cancellation that
+     * never happened.
+     */
+    disableCancel() {
+      const btn = overlay.querySelector("#modal-progress-cancel");
+      if (btn) btn.disabled = true;
+    },
     close() {
       overlay.classList.add("modal-closing");
       setTimeout(() => overlay.remove(), 200);

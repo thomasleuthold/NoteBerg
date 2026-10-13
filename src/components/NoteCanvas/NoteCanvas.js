@@ -34,6 +34,10 @@ import {
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
+function _isAndroid() {
+  return typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
+}
+
 import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
@@ -236,6 +240,7 @@ export class NoteCanvas {
     this.lastTouchDistance = null;
     this.initialPinchZoom = null;
     this._isZooming = false; // Flag to suppress scroll events during zoom
+    this._pinchFromTouch = false; // Current pinch is driven by touch events (see _onTouchMoveNav)
     this._textModePanState = null; // Touch-pan state for text mode (threshold detection)
     this.lastTouchX = null;
     this.lastTouchY = null;
@@ -305,6 +310,8 @@ export class NoteCanvas {
     this._onPointerDownNav = this._onPointerDownNav.bind(this);
     this._onPointerMoveNav = this._onPointerMoveNav.bind(this);
     this._onPointerUpNav = this._onPointerUpNav.bind(this);
+    this._onTouchMoveNav = this._onTouchMoveNav.bind(this);
+    this._onTouchEndNav = this._onTouchEndNav.bind(this);
     this._onPointerMoveHover = this._onPointerMoveHover.bind(this);
     this._onPointerLeaveHover = this._onPointerLeaveHover.bind(this);
     this._onWindowPointerEnd = this._onWindowPointerEnd.bind(this);
@@ -1973,6 +1980,9 @@ export class NoteCanvas {
     viewport.addEventListener("pointerup", this._onPointerUpNav);
     viewport.addEventListener("pointercancel", this._onPointerUpNav);
     viewport.addEventListener("pointerleave", this._onPointerUpNav);
+    viewport.addEventListener("touchmove", this._onTouchMoveNav, { passive: true });
+    viewport.addEventListener("touchend", this._onTouchEndNav, { passive: true });
+    viewport.addEventListener("touchcancel", this._onTouchEndNav, { passive: true });
 
     // Mouse hover affordance for images (shows the option button on hover)
     viewport.addEventListener("pointermove", this._onPointerMoveHover);
@@ -2476,6 +2486,11 @@ export class NoteCanvas {
       this.lassoPoints.push({ x: props.clientX, y: props.clientY });
       return true;
     }
+
+    // The viewport extends past the page wherever the note is narrower than
+    // the window (the gutters), and the renderer clips everything to the page,
+    // so a stroke started there would be saved but never visible.
+    if (props.x < 0 || props.x > this.maxContentWidth) return false;
 
     const stroke = this.strokeManager.startStroke({
       ...props,
@@ -4396,6 +4411,29 @@ export class NoteCanvas {
   }
 
   /**
+   * Abort an in-progress eraser gesture without recording undo history — used
+   * when a second finger lands mid-erase and the gesture turns out to be a
+   * pinch, not erasing. Unlike drawing, eraser damage is applied live as it
+   * happens (soft-deletes / stroke splits), so "cancel" means reversing
+   * whatever this gesture has done so far via the same command classes used
+   * to commit it, just never pushed to history.
+   * @private
+   */
+  _cancelEraser() {
+    if (this._eraserBatch?.length > 0) {
+      new EraseStrokesCommand(this._eraserBatch).undo(this);
+    }
+    this._eraserBatch = null;
+
+    if (this._partEraserOps?.length > 0) {
+      new EraseStrokePartsCommand(this._partEraserOps).undo(this);
+    }
+    this._partEraserOps = null;
+
+    this.renderer.clearOverlay();
+  }
+
+  /**
    * Split a stroke into sub-strokes by removing a set of point indices.
    * Returns contiguous segments of remaining points (each with at least 2 points).
    * @param {object} stroke
@@ -4772,6 +4810,44 @@ export class NoteCanvas {
   }
 
   /**
+   * Abort an in-progress lasso move/resize/rotate without recording undo
+   * history — used when a second finger lands mid-transform and the gesture
+   * turns out to be a pinch, not a drag. Restores the strokes' pre-transform
+   * coordinates captured by _startTransform() so nothing is left half-moved.
+   * @private
+   */
+  _cancelTransform() {
+    if (!this.transformState) return;
+
+    const {
+      selectedIndices,
+      initialStrokes,
+      initialBounds,
+      initialLineSeparators,
+      initialLineIndentLevels,
+    } = this.transformState;
+    selectedIndices.forEach((index, i) => {
+      const stroke = this.noteData.strokes[index];
+      if (!stroke) return;
+      stroke.x = initialStrokes[i].x.slice();
+      stroke.y = initialStrokes[i].y.slice();
+      this.spatialIndex.remove(index);
+      this.spatialIndex.insert(stroke, index);
+    });
+
+    // _handleTransformMove moved these along with the strokes; without
+    // restoring them the selection box (and line separators) would stay at the
+    // dragged position, offset from the strokes they describe.
+    this.renderer.setSelectedStrokes(this.renderer.selectedStrokeIndices, { ...initialBounds });
+    this.renderer.setLineSeparators([...initialLineSeparators], [...initialLineIndentLevels]);
+
+    this.transformState = null;
+    this.renderer.forceRedraw();
+    this._updateSelectionOverlay();
+    this._updateTaskCheckboxes();
+  }
+
+  /**
    * Handle wheel events for zoom
    * @private
    */
@@ -4865,10 +4941,69 @@ export class NoteCanvas {
     }
 
     if (this.activePointers.size === 2) {
+      // A second finger landing while the first is mid-gesture means this was
+      // never a single-finger draw/erase/lasso — it's a pinch. Finger 1 already
+      // started on touchdown (there's no way to know it'd be a pinch until now),
+      // so undo whatever it did so far rather than leaving a stray mark, a
+      // partial erase, or a half-dragged selection behind.
+      //
+      // Only a finger's gesture: a stylus (or mouse) stroke in progress is
+      // unrelated to touches landing — typically a resting palm — and must
+      // keep going. Cancelling it would also clear isDrawing and let the palm
+      // pinch-zoom the page mid-writing.
+      if (this.inputHandler?.isDrawing && this.inputHandler.activePointerType === "touch") {
+        this.strokeManager.cancelCurrentStroke();
+        if (this.insertSpaceState) {
+          // Nothing has been shifted yet (that happens on release), so dropping
+          // the state and its indicator is the whole undo. Stay in insert-space
+          // mode: the user has not completed the action it was entered for.
+          this.insertSpaceState = null;
+          this.renderer.clearOverlay();
+        }
+        if (this.mode === "eraser") {
+          this._cancelEraser();
+        }
+        if (this.mode === "lasso") {
+          if (this.transformState) {
+            this._cancelTransform();
+          } else {
+            this.lassoPoints = [];
+            this.renderer.clearOverlay();
+          }
+        }
+        this.inputHandler.cancelActiveStroke();
+        this.renderer.forceRedraw();
+      }
+
+      // Hold both fingers on the viewport for the whole pinch. Single-finger
+      // capture goes to e.target (so taps on checkboxes/overlays still click),
+      // and the stroke cancel above releases finger 1 entirely — in browsers
+      // that left one finger's pointermoves undelivered to these listeners, so
+      // its stored position went stale and the pinch zoomed instead of panning.
+      const viewport = this.scroller.getViewportElement();
+      for (const id of this.activePointers.keys()) {
+        try {
+          viewport.setPointerCapture(id);
+        } catch (_err) {
+          // Pointer already gone (lifted between events) — nothing to capture
+        }
+      }
+
       // Start Pinch
       this._isZooming = true;
+      this._pinchFromTouch = false;
       this.lastTouchDistance = this._getPointersDistance();
       this.initialPinchZoom = this.zoomScale;
+
+      // Seed the pan anchor from the two fingers' midpoint so the first move
+      // event computes a delta from "now", not from a stale single-finger
+      // position (or nothing, if finger 1 never panned at all).
+      const iter = this.activePointers.values();
+      const p1 = iter.next().value;
+      const p2 = iter.next().value;
+      this.lastTouchX = (p1.x + p2.x) / 2;
+      this.lastTouchY = (p1.y + p2.y) / 2;
+
       this._clearCanvasLongPress();
     } else if (this.activePointers.size === 1) {
       // Start Pan
@@ -4921,27 +5056,14 @@ export class NoteCanvas {
     this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (this.activePointers.size === 2) {
-      // Pinch Zoom
       e.preventDefault();
+      // Once touch events have taken over this pinch (_onTouchMoveNav), their
+      // positions are authoritative — see the comment there.
+      if (this._pinchFromTouch) return;
 
       // Get two pointer positions without creating intermediate array (reduces GC pressure)
       const iter = this.activePointers.values();
-      const p1 = iter.next().value;
-      const p2 = iter.next().value;
-      const rect = this.scroller.getViewportElement().getBoundingClientRect();
-
-      const fixedPoint = {
-        x: (p1.x + p2.x) / 2 - rect.left,
-        y: (p1.y + p2.y) / 2 - rect.top,
-      };
-
-      const currentDistance = this._getPointersDistance();
-      const scale = currentDistance / this.lastTouchDistance;
-      const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.initialPinchZoom * scale));
-
-      if (newZoom !== this.zoomScale) {
-        this.setZoom(newZoom, { immediate: false, fixedPoint });
-      }
+      this._updatePinch(iter.next().value, iter.next().value);
     } else if (this.activePointers.size === 1) {
       // Pan
       // In text mode, allow touch panning (with threshold to distinguish from taps)
@@ -4978,26 +5100,127 @@ export class NoteCanvas {
         this.lastMoveTime = Date.now();
         return;
       }
-      const now = Date.now();
-      const dt = now - this.lastMoveTime;
-
-      const dx = x - this.lastTouchX;
-      const dy = y - this.lastTouchY;
-
-      // Calculate velocity (pixels per ms) with low-pass filter
-      if (dt > 0) {
-        const vx = dx / dt;
-        const vy = dy / dt;
-        this.velocityX = this.velocityX * 0.2 + vx * 0.8;
-        this.velocityY = this.velocityY * 0.2 + vy * 0.8;
-      }
-
-      this.lastTouchX = x;
-      this.lastTouchY = y;
-      this.lastMoveTime = now;
-
-      this.scroller.scrollBy(-dx, -dy);
+      this._panBy(x, y);
     }
+  }
+
+  /**
+   * One pinch step: pan by the midpoint's movement, then zoom about it.
+   * Symmetric in p1/p2 (midpoint and distance), so callers need not keep the
+   * two fingers in a stable order.
+   * @param {{x:number, y:number}} p1 - Finger position in client coordinates
+   * @param {{x:number, y:number}} p2 - Finger position in client coordinates
+   * @private
+   */
+  _updatePinch(p1, p2) {
+    const rect = this.scroller.getViewportElement().getBoundingClientRect();
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
+    const fixedPoint = { x: midX - rect.left, y: midY - rect.top };
+
+    const currentDistance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    const scale = currentDistance / this.lastTouchDistance;
+    const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.initialPinchZoom * scale));
+
+    // Pan first, by how far the midpoint has moved since the last frame, so
+    // the content under the previous midpoint lands under the new one; then
+    // zoom about the new midpoint, which keeps it there. setZoom's
+    // fixedPoint alone only anchors a point through the scale change — it
+    // does not follow the fingers sliding across the screen.
+    this._panBy(midX, midY);
+
+    // Unconditionally, even when the zoom is unchanged (pure two-finger pan,
+    // or clamped at min/max zoom): during a pinch _onScroll skips rendering,
+    // so setZoom is the only thing that moves the canvas to the panned
+    // scroll position.
+    this.setZoom(newZoom, { immediate: false, fixedPoint });
+  }
+
+  /**
+   * Drive an active pinch from touch events where the browser provides them.
+   *
+   * Browsers (observed: Firefox on Windows, Chrome and Firefox on Android —
+   * the Android WebView is fine) keep reporting both fingers in touchmove but
+   * stop dispatching pointermove for the second finger shortly into the
+   * gesture. The pointer-tracked position of that finger then freezes, the
+   * computed finger distance grows as the other finger moves, and a two-finger
+   * pan turns into a zoom. Touch positions stay correct, so once one arrives
+   * mid-pinch it becomes the sole source for the rest of the gesture.
+   * @param {TouchEvent} e
+   * @private
+   */
+  _onTouchMoveNav(e) {
+    if (!this._isZooming || this.activePointers.size !== 2) return;
+    // touches also lists a stylus (Chromium) and fingers outside the viewport,
+    // so it is only trusted while it is exactly the two pinch fingers; anything
+    // else hands the pinch back to pointer tracking rather than freezing it.
+    if (e.touches.length !== 2) {
+      this._pinchFromTouch = false;
+      return;
+    }
+    if (this.inputHandler?.isDrawing) return;
+
+    this._pinchFromTouch = true;
+    const [t1, t2] = e.touches;
+    this._updatePinch({ x: t1.clientX, y: t1.clientY }, { x: t2.clientX, y: t2.clientY });
+  }
+
+  /**
+   * When a touch-driven pinch drops to one finger, re-seed the remaining
+   * finger's position from the touch list: its pointer-tracked position may
+   * be the stale one, and single-finger pan would otherwise jump by the gap.
+   * Runs after _onPointerUpNav (pointer events precede touch events), so it
+   * overrides the anchor that handler seeded from activePointers.
+   * @param {TouchEvent} e
+   * @private
+   */
+  _onTouchEndNav(e) {
+    if (!this._pinchFromTouch) return;
+    if (e.touches.length === 0 || this.activePointers.size === 0) {
+      this._pinchFromTouch = false;
+      return;
+    }
+    if (e.touches.length !== 1 || this.activePointers.size !== 1) return;
+
+    const { clientX: x, clientY: y } = e.touches[0];
+    const [pointerId] = this.activePointers.keys();
+    this.activePointers.set(pointerId, { x, y });
+    this.lastTouchX = x;
+    this.lastTouchY = y;
+    this._pinchFromTouch = false;
+  }
+
+  /**
+   * Pan the viewport to a new raw pointer position, tracking velocity for the
+   * momentum scroll that kicks in on release (_onPointerUpNav). Shared by the
+   * single-finger pan and the two-finger pinch's pan component. Only a
+   * single-finger release flings: when one finger of a pinch lifts,
+   * _onPointerUpNav resets the velocity and hands over to a plain pan with the
+   * remaining finger, so two-finger motion itself never carries into momentum.
+   * @param {number} x - Current clientX (or two-finger midpoint X)
+   * @param {number} y - Current clientY (or two-finger midpoint Y)
+   * @private
+   */
+  _panBy(x, y) {
+    const now = Date.now();
+    const dt = now - this.lastMoveTime;
+
+    const dx = x - this.lastTouchX;
+    const dy = y - this.lastTouchY;
+
+    // Calculate velocity (pixels per ms) with low-pass filter
+    if (dt > 0) {
+      const vx = dx / dt;
+      const vy = dy / dt;
+      this.velocityX = this.velocityX * 0.2 + vx * 0.8;
+      this.velocityY = this.velocityY * 0.2 + vy * 0.8;
+    }
+
+    this.lastTouchX = x;
+    this.lastTouchY = y;
+    this.lastMoveTime = now;
+
+    this.scroller.scrollBy(-dx, -dy);
   }
 
   /**
@@ -5132,6 +5355,26 @@ export class NoteCanvas {
    */
   _onVisibilityChange() {
     if (document.visibilityState !== "hidden") return;
+
+    // Stop and save a recording rather than let it run on in the background.
+    // Android silences the microphone for a process that is not in the
+    // foreground (API 28+), so a recording that continues here would keep
+    // running and contain silence from this moment on — the app deliberately
+    // has no microphone foreground service (see AudioRecorderPlugin.kt). Ending
+    // it cleanly, with the audio so far kept, is the honest outcome.
+    //
+    // Android only. On Windows the page also turns hidden when the window is
+    // minimized or fully covered (e.g. by slides during a lecture), while WASAPI
+    // capture carries on unaffected — stopping there would end a recording the
+    // user is still making.
+    //
+    // Before the pointer-state early return below: that one is about gestures,
+    // and a hidden page with no active pointers still needs the recording
+    // stopped.
+    if (_isAndroid() && this.recordingManager?.isRecording()) {
+      this.recordingManager.stopRecordingForBackground();
+    }
+
     if (this.activePointers.size === 0) return;
 
     this.activePointers.clear();
@@ -5663,6 +5906,9 @@ export class NoteCanvas {
         viewport.removeEventListener("pointerup", this._onPointerUpNav);
         viewport.removeEventListener("pointercancel", this._onPointerUpNav);
         viewport.removeEventListener("pointerleave", this._onPointerUpNav);
+        viewport.removeEventListener("touchmove", this._onTouchMoveNav);
+        viewport.removeEventListener("touchend", this._onTouchEndNav);
+        viewport.removeEventListener("touchcancel", this._onTouchEndNav);
       }
     }
 
@@ -5737,8 +5983,12 @@ export class NoteCanvas {
       this.soundDialog = null;
     }
 
+    // Stops and saves a recording that is still running, rather than
+    // discarding it. The promise joins `pending` below so the note's save and
+    // sync see the new recording before close completes.
+    let pendingRecordingSave = null;
     if (this.recordingManager) {
-      this.recordingManager.destroy();
+      pendingRecordingSave = this.recordingManager.destroy();
       this.recordingManager = null;
     }
 
@@ -5775,6 +6025,7 @@ export class NoteCanvas {
     // Wait for recognition, stroke save, and any in-progress PDF import
     const pending = [Promise.resolve()];
     if (pendingRecognition) pending.push(pendingRecognition);
+    if (pendingRecordingSave) pending.push(pendingRecordingSave.catch(() => {}));
     if (pendingStrokeSave) pending.push(pendingStrokeSave);
     if (pendingTextSave) pending.push(pendingTextSave);
     if (this._pendingPdfImport) pending.push(this._pendingPdfImport);

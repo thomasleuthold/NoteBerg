@@ -2,8 +2,13 @@
  * ImageCropper - Handles image cropping and perspective correction
  */
 
-import PerspT from "perspective-transform";
 import { t } from "../../i18n/index.js";
+import { detectDocumentCorners } from "../../utils/documentDetector.js";
+import {
+  hasTransparency,
+  normalizeDocumentLighting,
+  warpPerspective,
+} from "../../utils/imageUtils.js";
 
 export class ImageCropper {
   constructor() {
@@ -12,15 +17,46 @@ export class ImageCropper {
     this.rejectPromise = null;
     this.imageElement = null;
     this.originalImage = null;
+    this._detectedCorners = null;
+    this._detectedCornersPromise = null;
+    this._appliedDetectedCorners = false;
+    this._hasUserMovedCorner = false;
   }
 
   /**
    * Show the cropper UI
    * @param {HTMLImageElement} image - The source image to crop
+   * @param {Object} [options]
+   * @param {"simple"|"perspective"} [options.initialMode="simple"] - Crop mode shown first
+   * @param {boolean} [options.normalizeLighting=false] - Pre-check "normalize lighting"
+   * @param {string} [options.cancelLabel] - Label for the cancel button (e.g. "Retake")
+   * @param {Object} [options.fallbackCorners] - Corners {tl, tr, br, bl} in image pixels,
+   *   used only when detection on `image` itself finds nothing (e.g. the quad the live
+   *   camera viewfinder was tracking when the shutter was pressed)
    * @returns {Promise<Blob|null>} - Resolves with the cropped image Blob, or null if cancelled
    */
-  show(image) {
+  show(image, options = {}) {
     this.originalImage = image;
+    this.options = options;
+    this._detectedCorners = null;
+    this._appliedDetectedCorners = false;
+    this._hasUserMovedCorner = false;
+
+    // Start background corner detection immediately so perspective mode is
+    // ready as soon as it is shown. Detection on the image itself is preferred
+    // over fallbackCorners: it reflects the actual pixels, including any camera
+    // movement between the live viewfinder and the shutter press.
+    const fallbackCorners = options.fallbackCorners || null;
+    this._detectedCornersPromise = detectDocumentCorners(this.originalImage)
+      .catch((err) => {
+        console.warn("[ImageCropper] Corner detection failed:", err);
+        return null;
+      })
+      .then((corners) => {
+        this._detectedCorners = corners || fallbackCorners;
+        return this._detectedCorners;
+      });
+
     return new Promise((resolve, reject) => {
       this.resolvePromise = resolve;
       this.rejectPromise = reject;
@@ -29,11 +65,13 @@ export class ImageCropper {
   }
 
   _createDOM() {
+    const initialMode = this.options?.initialMode || "simple";
+
     // Create crop overlay
     this.overlay = document.createElement("div");
     this.overlay.id = "crop-overlay";
     this.overlay.className = "crop-overlay active";
-    this.overlay.dataset.cropMode = "simple";
+    this.overlay.dataset.cropMode = initialMode;
 
     // Create crop container
     const container = document.createElement("div");
@@ -45,13 +83,35 @@ export class ImageCropper {
 
     const simpleModeBtn = document.createElement("button");
     simpleModeBtn.textContent = t("canvas.crop.simpleCrop");
-    simpleModeBtn.className = "crop-mode-btn crop-mode-simple active";
+    simpleModeBtn.className = `crop-mode-btn crop-mode-simple${initialMode === "simple" ? " active" : ""}`;
     simpleModeBtn.onclick = () => this._switchCropMode("simple");
 
     const perspectiveModeBtn = document.createElement("button");
     perspectiveModeBtn.textContent = t("canvas.crop.perspective");
-    perspectiveModeBtn.className = "crop-mode-btn crop-mode-perspective";
+    perspectiveModeBtn.className = `crop-mode-btn crop-mode-perspective${initialMode === "perspective" ? " active" : ""}`;
     perspectiveModeBtn.onclick = () => this._switchCropMode("perspective");
+
+    // Show spinner while background corner detection is running
+    if (this._detectedCornersPromise) {
+      perspectiveModeBtn.classList.add("is-detecting");
+      this._detectedCornersPromise.finally(() => {
+        if (perspectiveModeBtn) {
+          perspectiveModeBtn.classList.remove("is-detecting");
+        }
+        if (
+          this.overlay &&
+          this.overlay.dataset.cropMode === "perspective" &&
+          !this._appliedDetectedCorners &&
+          !this._hasUserMovedCorner
+        ) {
+          const perspectiveArea = this.overlay.querySelector("#perspective-area");
+          if (perspectiveArea) {
+            this._applyDetectedCornersToUI(perspectiveArea);
+            this._drawPerspectiveLines(perspectiveArea);
+          }
+        }
+      });
+    }
 
     modeToggle.appendChild(simpleModeBtn);
     modeToggle.appendChild(perspectiveModeBtn);
@@ -65,6 +125,7 @@ export class ImageCropper {
     const cropArea = document.createElement("div");
     cropArea.className = "crop-area";
     cropArea.id = "crop-area";
+    cropArea.style.display = initialMode === "perspective" ? "none" : "block";
 
     // Create crop handles
     const handles = ["nw", "ne", "sw", "se"];
@@ -79,7 +140,7 @@ export class ImageCropper {
     const perspectiveArea = document.createElement("div");
     perspectiveArea.className = "perspective-area";
     perspectiveArea.id = "perspective-area";
-    perspectiveArea.style.display = "none";
+    perspectiveArea.style.display = initialMode === "perspective" ? "block" : "none";
 
     const corners = [
       { name: "tl", label: "TL" },
@@ -105,6 +166,9 @@ export class ImageCropper {
     normalizeCheckbox.type = "checkbox";
     normalizeCheckbox.className = "crop-normalize-checkbox";
     normalizeCheckbox.id = "crop-normalize-checkbox";
+    if (this.options?.normalizeLighting) {
+      normalizeCheckbox.checked = true;
+    }
     normalizeLabel.appendChild(normalizeCheckbox);
     normalizeLabel.appendChild(document.createTextNode(t("canvas.crop.normalizeLighting")));
 
@@ -114,7 +178,7 @@ export class ImageCropper {
     applyBtn.onclick = () => this._applyCrop();
 
     const cancelBtn = document.createElement("button");
-    cancelBtn.textContent = t("canvas.crop.cancel");
+    cancelBtn.textContent = this.options?.cancelLabel || t("canvas.crop.cancel");
     cancelBtn.className = "crop-btn crop-cancel-btn";
     cancelBtn.onclick = () => this._close(null);
 
@@ -137,12 +201,17 @@ export class ImageCropper {
     document.body.appendChild(this.overlay);
 
     // Initialize crop area after image loads
-    this.imageElement.onload = () => {
+    let initialized = false;
+    const initCropAndPerspective = () => {
+      if (initialized) return;
       const imgRect = this.imageElement.getBoundingClientRect();
-      const cropWidth = imgRect.width * 0.8;
-      const cropHeight = imgRect.height * 0.8;
-      const cropLeft = (imgRect.width - cropWidth) / 2;
-      const cropTop = (imgRect.height - cropHeight) / 2;
+      if (imgRect.width === 0 && imgRect.height === 0) return;
+      initialized = true;
+
+      const cropWidth = imgRect.width;
+      const cropHeight = imgRect.height;
+      const cropLeft = 0;
+      const cropTop = 0;
 
       cropArea.style.left = `${cropLeft}px`;
       cropArea.style.top = `${cropTop}px`;
@@ -152,7 +221,25 @@ export class ImageCropper {
       this._initCropAreaDrag(cropArea, this.imageElement);
       // Perspective corners start at the full image edges (apply = no change)
       this._initPerspectiveCorners(perspectiveArea, this.imageElement);
+
+      if (
+        this.overlay &&
+        this.overlay.dataset.cropMode === "perspective" &&
+        !this._appliedDetectedCorners &&
+        !this._hasUserMovedCorner &&
+        this._detectedCorners
+      ) {
+        this._applyDetectedCornersToUI(perspectiveArea);
+        this._drawPerspectiveLines(perspectiveArea);
+      }
     };
+
+    this.imageElement.onload = () => {
+      initCropAndPerspective();
+    };
+    if (this.imageElement.complete && this.imageElement.naturalWidth > 0) {
+      initCropAndPerspective();
+    }
   }
 
   _close(result) {
@@ -165,7 +252,7 @@ export class ImageCropper {
     }
   }
 
-  _switchCropMode(mode) {
+  async _switchCropMode(mode) {
     const cropArea = this.overlay.querySelector("#crop-area");
     const perspectiveArea = this.overlay.querySelector("#perspective-area");
     const simpleModeBtn = this.overlay.querySelector(".crop-mode-simple");
@@ -183,6 +270,23 @@ export class ImageCropper {
       perspectiveArea.style.display = "block";
       simpleModeBtn.classList.remove("active");
       perspectiveModeBtn.classList.add("active");
+
+      // Auto-position corners to detected document bounds if available and user hasn't moved them
+      if (!this._appliedDetectedCorners && !this._hasUserMovedCorner) {
+        if (this._detectedCorners) {
+          this._applyDetectedCornersToUI(perspectiveArea);
+        } else if (this._detectedCornersPromise) {
+          await this._detectedCornersPromise;
+          if (
+            this.overlay &&
+            this.overlay.dataset.cropMode === "perspective" &&
+            !this._hasUserMovedCorner
+          ) {
+            this._applyDetectedCornersToUI(perspectiveArea);
+          }
+        }
+      }
+
       // Draw lines now that the area is visible (offsetLeft/offsetTop need display != none)
       this._drawPerspectiveLines(perspectiveArea);
     }
@@ -201,12 +305,15 @@ export class ImageCropper {
     }
 
     if (normalize) {
-      this._normalizeLighting(canvas);
+      normalizeDocumentLighting(canvas);
     }
 
-    // 0.95: this is already the 3rd JPEG generation (camera → import → crop),
-    // and flattened pages are mostly white so the size cost is small
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
+    // If the cropped canvas contains transparency, preserve it as PNG;
+    // otherwise use JPEG (0.95) to save space for flattened document pages.
+    const isTransparent = hasTransparency(canvas);
+    const mimeType = isTransparent ? "image/png" : "image/jpeg";
+    const quality = isTransparent ? undefined : 0.95;
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, mimeType, quality));
     this._close(blob);
   }
 
@@ -244,191 +351,33 @@ export class ImageCropper {
 
   async _applyPerspectiveCorrectionToCanvas(imgRect) {
     const perspectiveArea = this.overlay.querySelector("#perspective-area");
-    const corners = {};
+    const handles = {};
     perspectiveArea.querySelectorAll(".perspective-corner").forEach((corner) => {
-      corners[corner.dataset.corner] = {
-        x: corner.offsetLeft,
-        y: corner.offsetTop,
+      handles[corner.dataset.corner] = {
+        x: parseFloat(corner.style.left) || corner.offsetLeft || 0,
+        y: parseFloat(corner.style.top) || corner.offsetTop || 0,
       };
     });
 
+    // Handle positions are in on-screen container pixels; map them to source pixels
     const containerRect = perspectiveArea.getBoundingClientRect();
     const imgOffsetX = imgRect.left - containerRect.left;
     const imgOffsetY = imgRect.top - containerRect.top;
-
     const scaleX = this.originalImage.naturalWidth / imgRect.width;
     const scaleY = this.originalImage.naturalHeight / imgRect.height;
+    const toSource = ({ x, y }) => ({
+      x: (x - imgOffsetX) * scaleX,
+      y: (y - imgOffsetY) * scaleY,
+    });
 
-    const srcCorners = [
-      (corners.tl.x - imgOffsetX) * scaleX,
-      (corners.tl.y - imgOffsetY) * scaleY,
-      (corners.tr.x - imgOffsetX) * scaleX,
-      (corners.tr.y - imgOffsetY) * scaleY,
-      (corners.br.x - imgOffsetX) * scaleX,
-      (corners.br.y - imgOffsetY) * scaleY,
-      (corners.bl.x - imgOffsetX) * scaleX,
-      (corners.bl.y - imgOffsetY) * scaleY,
-    ];
-
-    // Calculate dimensions
-    const topWidth = Math.sqrt(
-      (srcCorners[2] - srcCorners[0]) ** 2 + (srcCorners[3] - srcCorners[1]) ** 2,
-    );
-    const bottomWidth = Math.sqrt(
-      (srcCorners[4] - srcCorners[6]) ** 2 + (srcCorners[5] - srcCorners[7]) ** 2,
-    );
-    const leftHeight = Math.sqrt(
-      (srcCorners[6] - srcCorners[0]) ** 2 + (srcCorners[7] - srcCorners[1]) ** 2,
-    );
-    const rightHeight = Math.sqrt(
-      (srcCorners[4] - srcCorners[2]) ** 2 + (srcCorners[5] - srcCorners[3]) ** 2,
-    );
-
-    const outputWidth = Math.sqrt(topWidth * bottomWidth);
-    const outputHeight = Math.sqrt(leftHeight * rightHeight);
-
-    const dstCorners = [0, 0, outputWidth, 0, outputWidth, outputHeight, 0, outputHeight];
-
-    let perspT;
-    try {
-      perspT = PerspT(srcCorners, dstCorners);
-    } catch (e) {
-      console.error("[ImageCropper] Failed to create perspective transform:", e);
-      return this._applySimpleCropToCanvas(imgRect); // Fallback to simple crop
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(outputWidth);
-    canvas.height = Math.round(outputHeight);
-    const ctx = canvas.getContext("2d");
-
-    // Source data
-    const srcCanvas = document.createElement("canvas");
-    srcCanvas.width = this.originalImage.naturalWidth;
-    srcCanvas.height = this.originalImage.naturalHeight;
-    const srcCtx = srcCanvas.getContext("2d");
-    srcCtx.drawImage(this.originalImage, 0, 0);
-    const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height).data;
-
-    const outputImageData = ctx.createImageData(canvas.width, canvas.height);
-    const outputData = outputImageData.data;
-
-    const srcW = srcCanvas.width;
-    const srcH = srcCanvas.height;
-
-    for (let y = 0; y < canvas.height; y++) {
-      for (let x = 0; x < canvas.width; x++) {
-        const srcPoint = perspT.transformInverse(x, y);
-        const sx = srcPoint[0];
-        const sy = srcPoint[1];
-
-        // Bilinear interpolation: sample the 4 surrounding pixels weighted
-        // by the fractional position (nearest-neighbor produces jagged text)
-        const x0 = Math.floor(sx);
-        const y0 = Math.floor(sy);
-
-        if (x0 >= 0 && x0 < srcW - 1 && y0 >= 0 && y0 < srcH - 1) {
-          const fx = sx - x0;
-          const fy = sy - y0;
-          const w00 = (1 - fx) * (1 - fy);
-          const w10 = fx * (1 - fy);
-          const w01 = (1 - fx) * fy;
-          const w11 = fx * fy;
-
-          const i00 = (y0 * srcW + x0) * 4;
-          const i10 = i00 + 4;
-          const i01 = i00 + srcW * 4;
-          const i11 = i01 + 4;
-          const dstIndex = (y * canvas.width + x) * 4;
-
-          outputData[dstIndex] =
-            srcData[i00] * w00 + srcData[i10] * w10 + srcData[i01] * w01 + srcData[i11] * w11;
-          outputData[dstIndex + 1] =
-            srcData[i00 + 1] * w00 +
-            srcData[i10 + 1] * w10 +
-            srcData[i01 + 1] * w01 +
-            srcData[i11 + 1] * w11;
-          outputData[dstIndex + 2] =
-            srcData[i00 + 2] * w00 +
-            srcData[i10 + 2] * w10 +
-            srcData[i01 + 2] * w01 +
-            srcData[i11 + 2] * w11;
-          outputData[dstIndex + 3] = 255;
-        } else if (x0 >= 0 && x0 < srcW && y0 >= 0 && y0 < srcH) {
-          // Edge pixels: fall back to nearest-neighbor
-          const srcIndex = (y0 * srcW + x0) * 4;
-          const dstIndex = (y * canvas.width + x) * 4;
-          outputData[dstIndex] = srcData[srcIndex];
-          outputData[dstIndex + 1] = srcData[srcIndex + 1];
-          outputData[dstIndex + 2] = srcData[srcIndex + 2];
-          outputData[dstIndex + 3] = 255;
-        }
-      }
-    }
-
-    ctx.putImageData(outputImageData, 0, 0);
-    return canvas;
-  }
-
-  _normalizeLighting(canvas) {
-    const ctx = canvas.getContext("2d");
-    const w = canvas.width;
-    const h = canvas.height;
-
-    // Blur a downscaled copy to estimate the background illumination.
-    // Working at 1/4 resolution keeps it fast while preserving the slow gradient.
-    const scale = 0.25;
-    const bw = Math.max(1, Math.round(w * scale));
-    const bh = Math.max(1, Math.round(h * scale));
-
-    const blurCanvas = document.createElement("canvas");
-    blurCanvas.width = bw;
-    blurCanvas.height = bh;
-    const blurCtx = blurCanvas.getContext("2d");
-
-    // Draw downscaled
-    blurCtx.drawImage(canvas, 0, 0, bw, bh);
-
-    // Apply a strong blur to wash out all text, leaving only illumination gradient.
-    // blur radius relative to the downscaled size — ~15% of the shorter side works well.
-    const blurRadius = Math.round(Math.min(bw, bh) * 0.15);
-    blurCtx.filter = `blur(${blurRadius}px)`;
-    blurCtx.drawImage(blurCanvas, 0, 0);
-    blurCtx.filter = "none";
-
-    // Read both images at full resolution by scaling the blurred map back up
-    const bgCanvas = document.createElement("canvas");
-    bgCanvas.width = w;
-    bgCanvas.height = h;
-    const bgCtx = bgCanvas.getContext("2d");
-    bgCtx.drawImage(blurCanvas, 0, 0, w, h);
-
-    const srcData = ctx.getImageData(0, 0, w, h);
-    const bgData = bgCtx.getImageData(0, 0, w, h);
-    const pixels = srcData.data;
-    const bg = bgData.data;
-
-    // Contrast curve applied after normalization. Dark text bleeds into the
-    // blurred background estimate and gets brightened by the division, so
-    // re-darken the midtones: white point at 235 (everything above → 255)
-    // and a gamma of 1.4 to pull text back toward black.
-    const contrastLUT = new Uint8ClampedArray(256);
-    const whitePoint = 235;
-    const gamma = 1.4;
-    for (let v = 0; v < 256; v++) {
-      const normalized = Math.min(1, v / whitePoint);
-      contrastLUT[v] = Math.round(normalized ** gamma * 255);
-    }
-
-    for (let i = 0; i < pixels.length; i += 4) {
-      // Use max-channel background brightness to avoid colour casts
-      const bgBright = Math.max(bg[i], bg[i + 1], bg[i + 2], 1);
-      pixels[i] = contrastLUT[Math.min(255, Math.round((pixels[i] / bgBright) * 255))];
-      pixels[i + 1] = contrastLUT[Math.min(255, Math.round((pixels[i + 1] / bgBright) * 255))];
-      pixels[i + 2] = contrastLUT[Math.min(255, Math.round((pixels[i + 2] / bgBright) * 255))];
-      // alpha unchanged
-    }
-
-    ctx.putImageData(srcData, 0, 0);
+    const canvas = warpPerspective(this.originalImage, {
+      tl: toSource(handles.tl),
+      tr: toSource(handles.tr),
+      br: toSource(handles.br),
+      bl: toSource(handles.bl),
+    });
+    // Degenerate quad (no valid transform): fall back to a simple crop
+    return canvas || this._applySimpleCropToCanvas(imgRect);
   }
 
   _initCropAreaDrag(cropArea, img) {
@@ -519,21 +468,56 @@ export class ImageCropper {
   _initPerspectiveCorners(perspectiveArea, img) {
     const imgRect = img.getBoundingClientRect();
 
-    // Place corners exactly at the image edges so apply = no change.
-    // The perspective area is inside crop-image-wrapper which matches the image size,
-    // so coordinates are directly relative to the image.
+    if (!this._appliedDetectedCorners) {
+      const corners = {
+        tl: { x: 0, y: 0 },
+        tr: { x: imgRect.width, y: 0 },
+        br: { x: imgRect.width, y: imgRect.height },
+        bl: { x: 0, y: imgRect.height },
+      };
+
+      Object.entries(corners).forEach(([name, pos]) => {
+        const handle = perspectiveArea.querySelector(`.perspective-${name}`);
+        if (handle) {
+          handle.style.left = `${pos.x}px`;
+          handle.style.top = `${pos.y}px`;
+        }
+      });
+    }
+
+    perspectiveArea.querySelectorAll(".perspective-corner").forEach((handle) => {
+      this._makeDraggable(handle, perspectiveArea);
+    });
+  }
+
+  _applyDetectedCornersToUI(perspectiveArea) {
+    if (!this._detectedCorners || !this.imageElement) return;
+
+    const imgRect = this.imageElement.getBoundingClientRect();
+    const origW = this.originalImage.naturalWidth || imgRect.width;
+    const origH = this.originalImage.naturalHeight || imgRect.height;
+    // Not laid out yet (detection can finish before the crop image loads):
+    // leave the flag unset so initCropAndPerspective applies the corners once
+    // the image has a size, instead of skipping both defaults and detection.
+    if (origW <= 0 || origH <= 0 || imgRect.width <= 0 || imgRect.height <= 0) return;
+    this._appliedDetectedCorners = true;
+
+    const scaleX = imgRect.width / origW;
+    const scaleY = imgRect.height / origH;
+
     const corners = {
-      tl: { x: 0, y: 0 },
-      tr: { x: imgRect.width, y: 0 },
-      br: { x: imgRect.width, y: imgRect.height },
-      bl: { x: 0, y: imgRect.height },
+      tl: { x: this._detectedCorners.tl.x * scaleX, y: this._detectedCorners.tl.y * scaleY },
+      tr: { x: this._detectedCorners.tr.x * scaleX, y: this._detectedCorners.tr.y * scaleY },
+      br: { x: this._detectedCorners.br.x * scaleX, y: this._detectedCorners.br.y * scaleY },
+      bl: { x: this._detectedCorners.bl.x * scaleX, y: this._detectedCorners.bl.y * scaleY },
     };
 
     Object.entries(corners).forEach(([name, pos]) => {
       const handle = perspectiveArea.querySelector(`.perspective-${name}`);
-      handle.style.left = `${pos.x}px`;
-      handle.style.top = `${pos.y}px`;
-      this._makeDraggable(handle, perspectiveArea);
+      if (handle) {
+        handle.style.left = `${pos.x}px`;
+        handle.style.top = `${pos.y}px`;
+      }
     });
   }
 
@@ -547,11 +531,12 @@ export class ImageCropper {
 
     element.addEventListener("pointerdown", (e) => {
       isDragging = true;
+      this._hasUserMovedCorner = true;
       activePointerId = e.pointerId;
       startX = e.clientX;
       startY = e.clientY;
-      startLeft = element.offsetLeft;
-      startTop = element.offsetTop;
+      startLeft = parseFloat(element.style.left) || element.offsetLeft || 0;
+      startTop = parseFloat(element.style.top) || element.offsetTop || 0;
       element.setPointerCapture(e.pointerId);
       e.preventDefault();
       e.stopPropagation();
@@ -588,7 +573,10 @@ export class ImageCropper {
     });
     const corners = {};
     container.querySelectorAll(".perspective-corner").forEach((c) => {
-      corners[c.dataset.corner] = { x: c.offsetLeft, y: c.offsetTop };
+      corners[c.dataset.corner] = {
+        x: parseFloat(c.style.left) || c.offsetLeft || 0,
+        y: parseFloat(c.style.top) || c.offsetTop || 0,
+      };
     });
 
     const lines = [
@@ -600,6 +588,7 @@ export class ImageCropper {
     lines.forEach(([p1, p2]) => {
       const c1 = corners[p1];
       const c2 = corners[p2];
+      if (!c1 || !c2) return;
       const line = document.createElement("div");
       line.className = "perspective-line";
       const length = Math.sqrt((c2.x - c1.x) ** 2 + (c2.y - c1.y) ** 2);

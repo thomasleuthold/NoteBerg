@@ -5,143 +5,168 @@ use std::sync::OnceLock;
 #[cfg(target_os = "windows")]
 mod mcp;
 
+// Platform-independent (pure arithmetic, no I/O), so it builds and its unit
+// tests run on every target — including Android, whose Kotlin AudioDsp port must
+// stay behaviourally identical to it.
+mod audio_dsp;
+// Windows only: `hound` is a Windows-target dependency, and the encoders here
+// are for the cpal capture path. Android encodes in Kotlin via MediaCodec and
+// never reaches this module.
+#[cfg(target_os = "windows")]
+mod audio_encoder;
+mod backup;
+
 // ── Windows native audio recording ───────────────────────────────────────────
 //
-// Uses cpal for cross-platform WASAPI capture and hound for WAV encoding.
-// WAV files have correct duration headers so playback time display works.
+// cpal (WASAPI) capture → lock-free ring → worker thread → DSP → encoder.
+// The capture callback only copies into the ring: no allocation, no locks and
+// no file I/O run in the real-time context. Encoding is AAC/MP4 via Media
+// Foundation, falling back to WAV where MF is unavailable.
 // State is held in a global Mutex so the stateless Tauri commands can access it.
 
 #[cfg(target_os = "windows")]
 mod win_audio {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    use std::sync::{Arc, Mutex};
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    /// An f32 published as `f32::to_bits` so it can be read across threads
+    /// without a lock. Used both for the meter's peak amplitude and for the
+    /// live-adjustable auto-gain aggressiveness.
+    pub struct AtomicF32(AtomicU32);
+
+    impl AtomicF32 {
+        fn new(v: f32) -> Self {
+            Self(AtomicU32::new(v.to_bits()))
+        }
+        #[inline]
+        pub fn store(&self, v: f32) {
+            self.0.store(v.to_bits(), Ordering::Relaxed);
+        }
+        pub fn load(&self) -> f32 {
+            f32::from_bits(self.0.load(Ordering::Relaxed))
+        }
+    }
+
+    /// Register the calling thread with MMCSS ("Pro Audio") for real-time-ish
+    /// scheduling, and return the handle that keeps the registration alive.
+    ///
+    /// Neither cpal's WASAPI capture thread nor a plain `std::thread` gets any
+    /// scheduling priority boost on Windows — unlike Android, where the audio
+    /// HAL runs the capture path at an elevated priority by default. Without
+    /// this, a brief scheduling delay under system load (another process, a
+    /// page fault, disk contention) can starve the audio thread past WASAPI's
+    /// buffer deadline; the callback then silently drops samples (see the
+    /// overrun counter below), which is heard as a click. MMCSS is the
+    /// standard, documented fix real-time audio apps use for exactly this.
+    ///
+    /// Best-effort: every audio app already works without it on a healthy,
+    /// idle system, so a failure here (missing service, restricted
+    /// environment) is not fatal — it only gives up the extra scheduling
+    /// headroom, logged once rather than failing the recording.
+    fn register_mmcss() -> Option<windows::Win32::Foundation::HANDLE> {
+        use windows::Win32::System::Threading::AvSetMmThreadCharacteristicsW;
+        let mut task_index: u32 = 0;
+        // SAFETY: `task_index` is a valid local `u32` the API writes back to;
+        // the returned handle is later passed only to `AvRevertMmThreadCharacteristics`.
+        let handle = unsafe { AvSetMmThreadCharacteristicsW(windows::core::w!("Pro Audio"), &mut task_index) };
+        match handle {
+            Ok(h) if !h.is_invalid() => Some(h),
+            _ => {
+                eprintln!("[WinAudio] MMCSS registration failed; continuing without it");
+                None
+            }
+        }
+    }
+
+    /// RAII guard that reverts `register_mmcss` on drop, so every return path
+    /// out of the worker closure (including an early `?` on encoder failure)
+    /// releases the registration without needing to repeat the revert call.
+    struct MmcssGuard(Option<windows::Win32::Foundation::HANDLE>);
+
+    // SAFETY: the wrapped HANDLE is an opaque MMCSS registration token, never
+    // dereferenced — only ever handed back to AvRevertMmThreadCharacteristics,
+    // which is safe to call from any thread. Needed because HANDLE wraps a raw
+    // pointer and is therefore !Send by default, but this one is moved into
+    // the cpal capture closure, which must be Send.
+    unsafe impl Send for MmcssGuard {}
+
+    impl Drop for MmcssGuard {
+        fn drop(&mut self) {
+            if let Some(h) = self.0 {
+                use windows::Win32::System::Threading::AvRevertMmThreadCharacteristics;
+                // SAFETY: `h` was obtained from a matching, still-valid `AvSetMmThreadCharacteristicsW` call.
+                let _ = unsafe { AvRevertMmThreadCharacteristics(h) };
+            }
+        }
+    }
 
     pub struct RecordingState {
         pub stream: Option<cpal::Stream>,
-        /// Writer shared with the stream callback; take ownership after dropping stream.
-        pub writer: Arc<Mutex<Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>>>,
         pub path: Option<PathBuf>,
-        pub paused: Arc<std::sync::atomic::AtomicBool>,
-        pub amplitude: Arc<Mutex<f32>>,
-        pub proc_state: Arc<Mutex<AudioProcessState>>,
+        pub paused: Arc<AtomicBool>,
+        /// Post-DSP peak, published by the worker so the meter means the same
+        /// thing it does on Android (see F6).
+        pub amplitude: Arc<AtomicF32>,
+        /// Auto-gain aggressiveness (0.0-1.0), read by the worker at each DSP
+        /// block boundary. Lets the frontend adjust the live slider without
+        /// restarting capture.
+        pub aggressiveness: Arc<AtomicF32>,
+        /// Cleared to stop the worker once the stream is dropped and the ring
+        /// has been drained.
+        running: Arc<AtomicBool>,
+        /// Count of callback invocations that could not push all their samples
+        /// because the worker fell behind. Logged once at stop; a non-zero
+        /// count means an overrun happened, though `lost_frames` (below) is
+        /// what actually compensates for it.
+        overruns: Arc<AtomicU32>,
+        /// Set when the worker exits on an encoder error. Without it the worker
+        /// dies quietly, the ring fills, and the user goes on "recording" into
+        /// nothing until they press stop.
+        pub worker_failed: Arc<AtomicBool>,
+        worker: Option<std::thread::JoinHandle<Result<(), String>>>,
     }
 
     // Safety: cpal::Stream is not Send, but we only access it from the Tauri
     // command thread under the Mutex lock and never send it across threads.
     unsafe impl Send for RecordingState {}
 
-    /// Persistent state for the two-stage audio processing chain.
-    pub struct AudioProcessState {
-        comp_detector: f32, // peak level detector for compressor (dB)
-        comp_gain_db: f32,  // smoothed gain reduction from compressor (dB, <= 0)
-        lim_detector: f32,  // peak level detector for limiter (dB)
-        lim_gain_db: f32,   // smoothed gain reduction from limiter (dB, <= 0)
-    }
-
-    impl AudioProcessState {
-        pub fn new() -> Self {
-            Self { comp_detector: -100.0, comp_gain_db: 0.0, lim_detector: -100.0, lim_gain_db: 0.0 }
+    impl RecordingState {
+        /// Stop capture and let the worker finish the file. Returns the number
+        /// of dropped buffers so the caller can log it.
+        pub fn finish(&mut self) -> Result<u32, String> {
+            // Drop the stream first: no more pushes can occur afterwards, so the
+            // worker's "stream stopped and ring empty" check is race-free.
+            drop(self.stream.take());
+            self.running.store(false, Ordering::Release);
+            if let Some(handle) = self.worker.take() {
+                handle
+                    .join()
+                    .map_err(|_| "Audio worker thread panicked".to_string())??;
+            }
+            Ok(self.overruns.load(Ordering::Relaxed))
         }
     }
 
-    /// Port of the browser Web Audio chain:
-    ///   DynamicsCompressor(threshold=-18, knee=12, ratio=3, attack=0.05, release=0.3)
-    ///   → Gain(1.1)
-    ///   → DynamicsCompressor/limiter(threshold=-1, knee=0, ratio=20, attack=0.001, release=0.1)
-    ///
-    /// Follows the WebKit/Chromium DynamicsCompressor spec:
-    ///   per-sample peak detector (attack/release) → gain computer (soft-knee curve) → smoothed gain
-    ///
-    /// Processes samples in-place. Returns output peak for the amplitude meter.
-    pub fn process_audio(samples: &mut [f32], st: &mut AudioProcessState, sample_rate: u32) -> f32 {
-        let sr = sample_rate as f32;
+    /// Capacity of the callback→worker ring, in samples: ~8 s of stereo 48 kHz.
+    /// Sized generously so the worker can fall behind for several seconds
+    /// under heavy system load (a large concurrent build, antivirus scan, disk
+    /// contention) without losing capture data. 1 s previously proved too
+    /// small: a build running in parallel starved the worker long enough that
+    /// the ring filled and stayed full, dropping audio continuously — heard as
+    /// both clicks and, because the lost samples silently shortened the
+    /// stream relative to its wall-clock duration, an accelerated/shrunk
+    /// recording (51 s reported, ~20 s of audio). See `lost_frames` on
+    /// `RecordingState` for the backstop that keeps the timeline correct even
+    /// if this still fills.
+    const RING_CAPACITY: usize = 48_000 * 2 * 8;
 
-        // Compressor: threshold=-18 dB, knee=12 dB, ratio=3, attack=50ms, release=300ms
-        let comp_threshold: f32 = -18.0;
-        let comp_knee: f32      =  12.0;
-        let comp_ratio: f32     =   3.0;
-        let comp_att  = (-1.0_f32 / (0.05 * sr)).exp();
-        let comp_rel  = (-1.0_f32 / (0.3  * sr)).exp();
+    /// Samples the worker moves per wake-up. At 48 kHz stereo this is ~40 ms,
+    /// large enough that the DSP call and the WAV writes amortise well.
+    const WORKER_CHUNK: usize = 4096;
 
-        // Limiter: threshold=-1 dB, knee=0, ratio=20, attack=1ms, release=100ms
-        let lim_threshold: f32 = -1.0;
-        let lim_ratio: f32     = 20.0;
-        let lim_att  = (-1.0_f32 / (0.001 * sr)).exp();
-        let lim_rel  = (-1.0_f32 / (0.1   * sr)).exp();
-
-        let makeup: f32 = 1.1;
-
-        let mut peak = 0f32;
-        for s in samples.iter_mut() {
-            let x = *s;
-
-            // ── Compressor ────────────────────────────────────────────────────
-            let x_db = lin_to_db(x.abs());
-            // Peak detector
-            st.comp_detector = if x_db > st.comp_detector {
-                comp_att * st.comp_detector + (1.0 - comp_att) * x_db
-            } else {
-                comp_rel * st.comp_detector + (1.0 - comp_rel) * x_db
-            };
-            // Gain computer → smooth gain reduction
-            let comp_gc = gain_computer(st.comp_detector, comp_threshold, comp_knee, comp_ratio);
-            st.comp_gain_db = if comp_gc < st.comp_gain_db {
-                comp_att * st.comp_gain_db + (1.0 - comp_att) * comp_gc
-            } else {
-                comp_rel * st.comp_gain_db + (1.0 - comp_rel) * comp_gc
-            };
-            let y = x * db_to_lin(st.comp_gain_db) * makeup;
-
-            // ── Limiter ───────────────────────────────────────────────────────
-            let y_db = lin_to_db(y.abs());
-            st.lim_detector = if y_db > st.lim_detector {
-                lim_att * st.lim_detector + (1.0 - lim_att) * y_db
-            } else {
-                lim_rel * st.lim_detector + (1.0 - lim_rel) * y_db
-            };
-            let lim_gc = gain_computer(st.lim_detector, lim_threshold, 0.0, lim_ratio);
-            st.lim_gain_db = if lim_gc < st.lim_gain_db {
-                lim_att * st.lim_gain_db + (1.0 - lim_att) * lim_gc
-            } else {
-                lim_rel * st.lim_gain_db + (1.0 - lim_rel) * lim_gc
-            };
-            let out = (y * db_to_lin(st.lim_gain_db)).clamp(-1.0, 1.0);
-
-            *s = out;
-            if out.abs() > peak { peak = out.abs(); }
-        }
-        peak
-    }
-
-    /// Gain computer: returns gain reduction in dB (always <= 0).
-    /// Soft-knee curve per the WebAudio spec.
-    #[inline]
-    fn gain_computer(level_db: f32, threshold: f32, knee: f32, ratio: f32) -> f32 {
-        let half_knee = knee / 2.0;
-        if knee > 0.0 && level_db > threshold - half_knee && level_db < threshold + half_knee {
-            // Soft-knee region: quadratic interpolation
-            let x = level_db - threshold + half_knee;
-            (1.0 / ratio - 1.0) / (2.0 * knee) * x * x
-        } else if level_db >= threshold + half_knee {
-            // Above knee: full ratio
-            (level_db - threshold) * (1.0 / ratio - 1.0)
-        } else {
-            0.0
-        }
-    }
-
-    #[inline]
-    fn lin_to_db(x: f32) -> f32 {
-        if x < 1e-6 { -120.0 } else { 20.0 * x.log10() }
-    }
-
-    #[inline]
-    fn db_to_lin(db: f32) -> f32 {
-        10f32.powf(db / 20.0)
-    }
-
-    pub fn start() -> Result<RecordingState, String> {
+    pub fn start(aggressiveness: f32) -> Result<RecordingState, String> {
         let host = cpal::default_host();
         let device = host.default_input_device()
             .ok_or_else(|| "No audio input device found".to_string())?;
@@ -151,104 +176,351 @@ mod win_audio {
         let sample_rate = config.sample_rate().0;
         let channels = config.channels();
 
-        let tmp_path = std::env::temp_dir().join(format!("noteberg_rec_{}.wav", std::time::SystemTime::now()
+        // Extensionless: create_encoder appends .m4a or .wav depending on
+        // whether Media Foundation is available.
+        let tmp_path = std::env::temp_dir().join(format!("noteberg_rec_{}", std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()));
 
-        let wav_spec = hound::WavSpec {
-            channels,
-            sample_rate,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-        let writer = hound::WavWriter::create(&tmp_path, wav_spec)
-            .map_err(|e| format!("Failed to create WAV file: {e}"))?;
-        let writer = Arc::new(Mutex::new(Some(writer)));
-        let writer_clone = Arc::clone(&writer);
-        let paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let paused_clone = Arc::clone(&paused);
-        let amplitude_shared = Arc::new(Mutex::new(0f32));
-        let amplitude_clone = Arc::clone(&amplitude_shared);
-        let compressor = Arc::new(Mutex::new(AudioProcessState::new()));
+        let paused = Arc::new(AtomicBool::new(false));
+        let amplitude = Arc::new(AtomicF32::new(0.0));
+        let aggressiveness = Arc::new(AtomicF32::new(aggressiveness));
+        let running = Arc::new(AtomicBool::new(true));
+        let overruns = Arc::new(AtomicU32::new(0));
+        // Frames (per-channel sample groups, not raw interleaved samples) the
+        // callback could not push into the ring, accumulated since the worker
+        // last drained it. Shared only between the callback and the worker —
+        // the worker consumes it every iteration and inserts an equal span of
+        // silence into the encoded stream, so a dropped span shortens what was
+        // captured but never desyncs the timeline: encoder timestamps are
+        // derived from samples written, and without this compensation a lost
+        // span would silently shrink the file relative to its real elapsed
+        // duration — heard as the whole recording being accelerated on
+        // playback, not just a click at the drop point.
+        let lost_frames = Arc::new(AtomicU64::new(0));
+        let worker_failed = Arc::new(AtomicBool::new(false));
 
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                let compressor_c = Arc::clone(&compressor);
-                let writer_c = Arc::clone(&writer_clone);
-                let amplitude_c = Arc::clone(&amplitude_clone);
-                let paused_c = Arc::clone(&paused_clone);
-                device.build_input_stream(
-                    &config.into(),
-                    move |data: &[f32], _| {
-                        if paused_c.load(std::sync::atomic::Ordering::Relaxed) { return; }
-                        let mut buf = data.to_vec();
-                        let peak = process_audio(&mut buf, &mut compressor_c.lock().unwrap(), sample_rate);
-                        *amplitude_c.lock().unwrap() = peak;
-                        if let Ok(mut guard) = writer_c.lock() {
-                            if let Some(w) = guard.as_mut() {
-                                for s in buf { let _ = w.write_sample((s * i16::MAX as f32) as i16); }
+        let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(RING_CAPACITY);
+
+        // ── Worker thread ────────────────────────────────────────────────────
+        //
+        // Owns the DSP state, the WAV writer and the post-DSP meter value.
+        // Everything that can block — allocation, file I/O, locks — lives here
+        // rather than in the real-time callback (F3).
+        // The encoder is built on the worker thread, not here. Media Foundation
+        // and COM are per-thread: `CoInitializeEx`/`MFStartup` must be matched
+        // by `CoUninitialize`/`MFShutdown` on the same thread, and the runtime
+        // guard is dropped wherever the encoder is dropped — which is the
+        // worker. Creating it on the Tauri command thread (a tokio worker) and
+        // dropping it here would leave an unbalanced STA refcount on a pooled
+        // thread per recording.
+        //
+        // The path is only known after `create_encoder` has chosen AAC or WAV,
+        // so it comes back over a channel and start() waits for it.
+        let (path_tx, path_rx) = std::sync::mpsc::channel::<Result<PathBuf, String>>();
+
+        let worker = {
+            let running = Arc::clone(&running);
+            let amplitude = Arc::clone(&amplitude);
+            let aggressiveness_worker = Arc::clone(&aggressiveness);
+            let paused_worker = Arc::clone(&paused);
+            let worker_failed = Arc::clone(&worker_failed);
+            let lost_frames_worker = Arc::clone(&lost_frames);
+            let tmp_path = tmp_path.clone();
+            std::thread::Builder::new()
+                .name("noteberg-audio".into())
+                .spawn(move || -> Result<(), String> {
+                    // Held for the worker's lifetime; reverted on drop
+                    // regardless of which return path is taken below.
+                    let _mmcss_guard = MmcssGuard(register_mmcss());
+
+                    // AAC/MP4 where Media Foundation is available, WAV otherwise.
+                    let (mut encoder, out_path) =
+                        match crate::audio_encoder::create_encoder(&tmp_path, sample_rate) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                // start() is waiting on this; report and stop.
+                                let _ = path_tx.send(Err(e.clone()));
+                                return Err(e);
                             }
-                        }
-                    },
-                    |e| eprintln!("[WinAudio] stream error: {e}"),
-                    None,
-                ).map_err(|e| format!("Stream build error: {e}"))?
-            }
-            cpal::SampleFormat::I16 => {
-                let compressor_c = Arc::clone(&compressor);
-                let writer_c = Arc::clone(&writer_clone);
-                let amplitude_c = Arc::clone(&amplitude_clone);
-                let paused_c = Arc::clone(&paused_clone);
-                device.build_input_stream(
-                    &config.into(),
-                    move |data: &[i16], _| {
-                        if paused_c.load(std::sync::atomic::Ordering::Relaxed) { return; }
-                        let mut buf: Vec<f32> = data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
-                        let peak = process_audio(&mut buf, &mut compressor_c.lock().unwrap(), sample_rate);
-                        *amplitude_c.lock().unwrap() = peak;
-                        if let Ok(mut guard) = writer_c.lock() {
-                            if let Some(w) = guard.as_mut() {
-                                for s in buf { let _ = w.write_sample((s * i16::MAX as f32) as i16); }
+                        };
+                    if path_tx.send(Ok(out_path)).is_err() {
+                        // start() gave up waiting; nothing will claim the file.
+                        let _ = encoder.finish();
+                        return Ok(());
+                    }
+
+                    // Any error below leaves the recording unusable; flag it so
+                    // the meter poll can tell the UI rather than failing silently.
+                    let mut mark_failed = |e: String| -> String {
+                        worker_failed.store(true, Ordering::Release);
+                        eprintln!("[WinAudio] worker stopped: {e}");
+                        e
+                    };
+
+                    let mut dsp = crate::audio_dsp::DspState::new(sample_rate, aggressiveness_worker.load());
+                    let mut interleaved: Vec<f32> = Vec::with_capacity(WORKER_CHUNK);
+                    let mut mono: Vec<f32> = Vec::with_capacity(WORKER_CHUNK);
+                    let mut pcm: Vec<i16> = Vec::with_capacity(WORKER_CHUNK);
+
+                    // A pause is observed by the worker only after the last
+                    // pre-pause audio has already been processed — the callback
+                    // simply stops pushing, and the ring is usually empty by the
+                    // time the flag is seen. Fading "the current chunk when
+                    // paused" therefore almost never fires, and double-fades
+                    // when the ring happens to hold more than one chunk.
+                    //
+                    // Instead the tail of every chunk is held back: `pending`
+                    // keeps the last fade_len samples, which are either written
+                    // unfaded once the next chunk proves the stream continued,
+                    // or faded out and written when a pause or end of stream is
+                    // observed. The fade then always lands on the real last
+                    // samples before the gap.
+                    let fade_len = dsp.fade_len();
+                    let mut pending: Vec<f32> = Vec::with_capacity(fade_len);
+                    let mut was_paused = false;
+
+                    loop {
+                        let available = consumer.slots();
+                        if available == 0 {
+                            // The stream is dropped before `running` is cleared, so
+                            // once it is false no producer remains and an empty ring
+                            // is empty for good.
+                            if !running.load(Ordering::Acquire) {
+                                break;
                             }
-                        }
-                    },
-                    |e| eprintln!("[WinAudio] stream error: {e}"),
-                    None,
-                ).map_err(|e| format!("Stream build error: {e}"))?
-            }
-            _ => {
-                // Unknown format: write raw without enhancement
-                let writer_c = Arc::clone(&writer_clone);
-                let paused_c = Arc::clone(&paused_clone);
-                device.build_input_stream(
-                    &config.into(),
-                    move |data: &[u8], _| {
-                        if paused_c.load(std::sync::atomic::Ordering::Relaxed) { return; }
-                        if let Ok(mut guard) = writer_c.lock() {
-                            if let Some(w) = guard.as_mut() {
-                                for chunk in data.chunks(2) {
-                                    if chunk.len() == 2 {
-                                        let s = i16::from_le_bytes([chunk[0], chunk[1]]);
-                                        let _ = w.write_sample(s);
-                                    }
+                            // Nothing queued and still recording: the only place a
+                            // pause can be observed, since a paused callback pushes
+                            // nothing.
+                            if paused_worker.load(Ordering::Relaxed) && !was_paused {
+                                was_paused = true;
+                                // Flush the held-back tail with a fade, so the
+                                // audio before the gap ends at silence.
+                                if !pending.is_empty() {
+                                    dsp.apply_fade_out(&mut pending);
+                                    pcm.clear();
+                                    pcm.extend(
+                                        pending.iter().map(|s| (s * i16::MAX as f32) as i16),
+                                    );
+                                    encoder.write(&pcm).map_err(&mut mark_failed)?;
+                                    pending.clear();
                                 }
                             }
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                            continue;
+                        }
+
+                        // Read whole frames only, so the downmix never straddles
+                        // a channel boundary between iterations.
+                        let ch = channels.max(1) as usize;
+                        let want = (available.min(WORKER_CHUNK) / ch) * ch;
+                        if want == 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                            continue;
+                        }
+
+                        interleaved.clear();
+                        match consumer.read_chunk(want) {
+                            Ok(chunk) => {
+                                let (a, b) = chunk.as_slices();
+                                interleaved.extend_from_slice(a);
+                                interleaved.extend_from_slice(b);
+                                chunk.commit_all();
+                            }
+                            Err(_) => continue,
+                        }
+
+                        if was_paused {
+                            dsp.begin_fade_in();
+                            was_paused = false;
+                        }
+
+                        // A ring-buffer overrun since the last iteration means
+                        // the callback had to drop that many captured frames —
+                        // this span of real time was never recorded. Compensate
+                        // with an equal span of silence, run through the same
+                        // DSP → pending → encoder path as real audio, so the
+                        // encoded timeline keeps matching wall-clock time. Without
+                        // this the file simply gets shorter than it should be,
+                        // which on playback sounds like the recording sped up
+                        // (fewer encoded samples than the elapsed real time).
+                        let lost = lost_frames_worker.swap(0, Ordering::AcqRel);
+                        if lost > 0 {
+                            let mut silence = vec![0.0f32; lost as usize];
+                            crate::audio_dsp::process(&mut silence, &mut dsp);
+
+                            pcm.clear();
+                            pcm.extend(pending.drain(..).map(|s| (s * i16::MAX as f32) as i16));
+                            let keep = fade_len.min(silence.len());
+                            let split = silence.len() - keep;
+                            pcm.extend(silence[..split].iter().map(|s| (s * i16::MAX as f32) as i16));
+                            pending.extend_from_slice(&silence[split..]);
+                            encoder.write(&pcm).map_err(&mut mark_failed)?;
+
+                            // The peak meter should reflect the gap rather than
+                            // hold the last real value, so a silent stretch
+                            // under load is visible on the meter too.
+                            amplitude.store(0.0);
+                        }
+
+                        // Cheap relaxed read every chunk (~40 ms), so a live
+                        // slider change takes effect within one chunk.
+                        dsp.set_aggressiveness(aggressiveness_worker.load());
+
+                        crate::audio_dsp::downmix_to_mono(&interleaved, channels, &mut mono);
+                        let peak = crate::audio_dsp::process(&mut mono, &mut dsp);
+                        amplitude.store(peak);
+
+                        // The stream continued, so the previously held-back tail
+                        // was not the last audio before a gap: write it as-is,
+                        // ahead of this chunk.
+                        pcm.clear();
+                        pcm.extend(pending.drain(..).map(|s| (s * i16::MAX as f32) as i16));
+
+                        // Hold back this chunk's own tail for the same reason.
+                        let keep = fade_len.min(mono.len());
+                        let split = mono.len() - keep;
+                        pcm.extend(mono[..split].iter().map(|s| (s * i16::MAX as f32) as i16));
+                        pending.extend_from_slice(&mono[split..]);
+
+                        encoder.write(&pcm).map_err(&mut mark_failed)?;
+                    }
+
+                    // End of stream: the held-back tail really is the last audio,
+                    // so fade it rather than dropping it.
+                    if !pending.is_empty() {
+                        dsp.apply_fade_out(&mut pending);
+                        pcm.clear();
+                        pcm.extend(pending.iter().map(|s| (s * i16::MAX as f32) as i16));
+                        encoder.write(&pcm).map_err(&mut mark_failed)?;
+                    }
+
+                    encoder.finish().map_err(&mut mark_failed)?;
+                    Ok(())
+                })
+                .map_err(|e| format!("Failed to spawn audio worker: {e}"))?
+        };
+
+        // Wait for the worker to report which container it opened. A failure
+        // here means no file exists, so there is nothing to clean up beyond
+        // joining the thread that already returned.
+        let out_path = match path_rx.recv() {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => {
+                running.store(false, Ordering::Release);
+                let _ = worker.join();
+                return Err(e);
+            }
+            Err(_) => {
+                running.store(false, Ordering::Release);
+                let _ = worker.join();
+                return Err("Audio worker stopped before opening the output file".into());
+            }
+        };
+
+        /// Stop the worker and delete the partial file. Used on every failure
+        /// path after the worker exists: returning without this leaves the
+        /// thread looping on 5 ms sleeps forever, holding the output file open.
+        macro_rules! abort_worker {
+            ($running:expr, $worker:expr, $path:expr) => {{
+                $running.store(false, Ordering::Release);
+                let _ = $worker.join();
+                let _ = std::fs::remove_file(&$path);
+            }};
+        }
+
+        // ── Capture callback ─────────────────────────────────────────────────
+        //
+        // Real-time context: no allocation, no locks, no I/O. Converts to f32,
+        // pushes into the ring, publishes the raw input peak only as a fallback
+        // for the window before the worker's first post-DSP value.
+        macro_rules! build_stream {
+            ($sample:ty, $to_f32:expr) => {{
+                let paused = Arc::clone(&paused);
+                let overruns = Arc::clone(&overruns);
+                let lost_frames = Arc::clone(&lost_frames);
+                let ch = channels.max(1) as usize;
+                // Registered on the callback's own first invocation, not here:
+                // cpal owns and spawns the thread this closure runs on, so it
+                // does not exist yet at build_input_stream() time. Held in this
+                // cell for that thread's lifetime, i.e. the whole recording —
+                // dropping the stream (which owns this closure) reverts it.
+                // The one syscall this costs runs only on the first callback,
+                // never a real-time cost afterwards.
+                let mmcss_guard: std::cell::RefCell<Option<MmcssGuard>> =
+                    std::cell::RefCell::new(None);
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[$sample], _: &cpal::InputCallbackInfo| {
+                        {
+                            let mut guard = mmcss_guard.borrow_mut();
+                            if guard.is_none() {
+                                *guard = Some(MmcssGuard(register_mmcss()));
+                            }
+                        }
+                        if paused.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        let conv = $to_f32;
+                        // Ask only for what fits: a short write is an overrun,
+                        // but it still keeps the audio that did fit.
+                        let want = data.len().min(producer.slots());
+                        let written = match producer.write_chunk_uninit(want) {
+                            Ok(chunk) => chunk.fill_from_iter(data.iter().map(|&s| conv(s))),
+                            Err(_) => 0,
+                        };
+                        if written < data.len() {
+                            overruns.fetch_add(1, Ordering::Relaxed);
+                            // Rounds down: a partial trailing frame lost here is
+                            // rare (it would need an overrun to land exactly
+                            // mid-frame) and is not worth the complexity of
+                            // carrying a fractional frame across callbacks.
+                            let lost = (data.len() - written) / ch;
+                            lost_frames.fetch_add(lost as u64, Ordering::Relaxed);
                         }
                     },
                     |e| eprintln!("[WinAudio] stream error: {e}"),
                     None,
-                ).map_err(|e| format!("Stream build error: {e}"))?
+                )
+                .map_err(|e| format!("Stream build error: {e}"))
+            }};
+        }
+
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => build_stream!(f32, |s: f32| s),
+            cpal::SampleFormat::I16 => {
+                build_stream!(i16, |s: i16| s as f32 / i16::MAX as f32)
+            }
+            cpal::SampleFormat::U16 => {
+                build_stream!(u16, |s: u16| (s as f32 - 32768.0) / 32768.0)
+            }
+            other => Err(format!("Unsupported input sample format: {other:?}")),
+        };
+        let stream = match stream {
+            Ok(s) => s,
+            Err(e) => {
+                abort_worker!(running, worker, out_path);
+                return Err(e);
             }
         };
 
-        stream.play().map_err(|e| format!("Stream play error: {e}"))?;
+        if let Err(e) = stream.play() {
+            // Drop the stream before joining: the worker waits for the ring to
+            // drain, and a live stream could still be pushing into it.
+            drop(stream);
+            abort_worker!(running, worker, out_path);
+            return Err(format!("Stream play error: {e}"));
+        }
 
         Ok(RecordingState {
             stream: Some(stream),
-            writer,
-            path: Some(tmp_path),
+            path: Some(out_path),
             paused,
-            amplitude: amplitude_shared,
-            proc_state: compressor,
+            amplitude,
+            aggressiveness,
+            running,
+            overruns,
+            worker_failed,
+            worker: Some(worker),
         })
     }
 }
@@ -412,25 +684,68 @@ fn win_recording() -> &'static Mutex<Option<win_audio::RecordingState>> {
 }
 
 /// Start native audio recording.
+/// Returns which capture pipeline started, so the JS layer can log it. On a
+/// device without a USB cable logcat is unreachable, and a recording made by
+/// the MediaRecorder fallback is indistinguishable from one made by the
+/// AudioRecord engine.
 #[tauri::command]
 #[cfg(target_os = "android")]
-async fn native_audio_start(app: tauri::AppHandle) -> Result<(), String> {
+async fn native_audio_start(app: tauri::AppHandle, aggressiveness: f32) -> Result<serde_json::Value, String> {
     use tauri::Manager;
     app.state::<AudioRecorderPlugin>()
         .0
-        .run_mobile_plugin::<()>("start", serde_json::json!({}))
+        .run_mobile_plugin::<serde_json::Value>("start", serde_json::json!({ "aggressiveness": aggressiveness }))
         .map_err(|e| format!("native_audio_start: {}", e))
 }
 #[tauri::command]
 #[cfg(target_os = "windows")]
-async fn native_audio_start() -> Result<(), String> {
-    let state = win_audio::start()?;
+async fn native_audio_start(aggressiveness: f32) -> Result<serde_json::Value, String> {
+    // Replacing a live recording would drop its RecordingState without joining
+    // the worker, leaking the thread and the open output file.
+    if win_recording().lock().unwrap().is_some() {
+        return Err("A recording is already in progress".into());
+    }
+    let state = win_audio::start(aggressiveness)?;
+    // The encoder picks AAC or falls back to WAV; the extension says which.
+    let pipeline = match state.path.as_ref().and_then(|p| p.extension()).and_then(|e| e.to_str()) {
+        Some("m4a") => "windowsAac",
+        _ => "windowsWav",
+    };
     *win_recording().lock().unwrap() = Some(state);
+    Ok(serde_json::json!({ "pipeline": pipeline }))
+}
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
+async fn native_audio_start(_aggressiveness: f32) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "pipeline": "none" }))
+}
+
+/// Live-update the auto-gain aggressiveness (0.0-1.0) of the recording in
+/// progress, without stopping and restarting capture. No-op if nothing is
+/// recording — the frontend's slider only exists while the active-recording
+/// strip is shown.
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn native_audio_set_aggressiveness(app: tauri::AppHandle, aggressiveness: f32) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<AudioRecorderPlugin>()
+        .0
+        .run_mobile_plugin::<()>("setAggressiveness", serde_json::json!({ "aggressiveness": aggressiveness }))
+        .map_err(|e| format!("native_audio_set_aggressiveness: {}", e))
+}
+#[tauri::command]
+#[cfg(target_os = "windows")]
+async fn native_audio_set_aggressiveness(aggressiveness: f32) -> Result<(), String> {
+    if let Some(state) = win_recording().lock().unwrap().as_ref() {
+        state.aggressiveness.store(aggressiveness);
+    }
     Ok(())
 }
 #[tauri::command]
 #[cfg(not(any(target_os = "android", target_os = "windows")))]
-async fn native_audio_start() -> Result<(), String> { Ok(()) }
+async fn native_audio_set_aggressiveness(_aggressiveness: f32) -> Result<(), String> {
+    Ok(())
+}
 
 /// Stop native audio recording and return { path, mimeType }.
 #[tauri::command]
@@ -446,15 +761,24 @@ async fn native_audio_stop(app: tauri::AppHandle) -> Result<serde_json::Value, S
 #[cfg(target_os = "windows")]
 async fn native_audio_stop() -> Result<serde_json::Value, String> {
     let mut guard = win_recording().lock().unwrap();
-    let state = guard.take().ok_or("Not recording")?;
-    // Drop stream first to stop capture, then finalize writer
-    drop(state.stream);
-    let path = state.path.ok_or("No recording path")?;
-    if let Some(w) = state.writer.lock().unwrap().take() {
-        w.finalize().map_err(|e| format!("WAV finalize: {e}"))?;
+    let mut state = guard.take().ok_or("Not recording")?;
+    // Stops capture, drains the ring and finalizes the WAV on the worker thread.
+    let overruns = state.finish()?;
+    if overruns > 0 {
+        // Audio was lost: the worker could not keep up with the capture callback.
+        // Surfaced here because cpal swallows WASAPI's discontinuity flag, which
+        // is what made the old in-callback drops invisible (F3).
+        eprintln!("[WinAudio] {overruns} buffer(s) dropped during recording");
     }
+    let path = state.path.take().ok_or("No recording path")?;
+    // The encoder chose the extension (AAC/MP4 normally, WAV where Media
+    // Foundation is unavailable), so it is the authority on the type.
+    let mime_type = match path.extension().and_then(|e| e.to_str()) {
+        Some("m4a") => "audio/mp4",
+        _ => "audio/wav",
+    };
     let path_str = path.to_string_lossy().to_string();
-    Ok(serde_json::json!({ "path": path_str, "mimeType": "audio/wav" }))
+    Ok(serde_json::json!({ "path": path_str, "mimeType": mime_type }))
 }
 #[tauri::command]
 #[cfg(not(any(target_os = "android", target_os = "windows")))]
@@ -477,7 +801,7 @@ fn validate_recording_path(
         .and_then(|n| n.to_str())
         .ok_or_else(|| "Recording path has no file name".to_string())?;
     let name_ok = (name.starts_with("noteberg_rec_") || name.starts_with("rec_"))
-        && (name.ends_with(".wav") || name.ends_with(".mp4"));
+        && (name.ends_with(".wav") || name.ends_with(".mp4") || name.ends_with(".m4a"));
     if !name_ok {
         return Err("Refusing to read non-recording file".to_string());
     }
@@ -495,30 +819,135 @@ fn validate_recording_path(
     Ok(canonical)
 }
 
-/// Read a native recording file into base64 on the Rust heap and delete it.
-#[tauri::command]
-async fn native_audio_read_and_delete(
-    #[allow(unused_variables)] app: tauri::AppHandle,
-    path: String,
-) -> Result<String, String> {
-    // `mut` is used only on Android (cache-dir push); allow the unused-mut warning elsewhere.
+/// Delete recording temp files left behind by an earlier run.
+///
+/// A recording whose app was killed mid-write leaves a file nothing will ever
+/// claim: an unfinalized MP4 has no `moov` index and is unplayable, so there is
+/// nothing to recover. Runs once at startup, best-effort.
+///
+/// The prefix accepted depends on the directory, and this matters:
+/// `noteberg_rec_` is ours and unambiguous, but the Android recorder names its
+/// files `rec_`, which is generic. The OS temp dir is shared with every other
+/// program on the machine, so matching `rec_` there would delete other
+/// applications' files. `rec_` is therefore only swept in the app-private cache
+/// dir, where nothing else writes.
+fn sweep_orphaned_recordings(dirs: &[(std::path::PathBuf, bool)]) -> usize {
+    let mut removed = 0;
+    for (dir, is_app_private) in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            let prefix_ok = name.starts_with("noteberg_rec_")
+                || (*is_app_private && name.starts_with("rec_"));
+            let is_recording = prefix_ok
+                && (name.ends_with(".wav") || name.ends_with(".mp4") || name.ends_with(".m4a"));
+            if is_recording && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+/// Resolve the directories a recording file is allowed to live in: the OS temp
+/// dir, plus the app cache dir on Android.
+#[allow(unused_variables)]
+fn recording_allowed_dirs(app: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
     #[allow(unused_mut)]
-    let mut allowed_dirs = vec![std::env::temp_dir()];
+    let mut dirs = vec![std::env::temp_dir()];
     #[cfg(target_os = "android")]
     {
         use tauri::Manager;
         if let Ok(cache_dir) = app.path().app_cache_dir() {
-            allowed_dirs.push(cache_dir);
+            dirs.push(cache_dir);
         }
     }
+    dirs
+}
 
-    let safe_path = validate_recording_path(&path, &allowed_dirs)?;
+/// Size in bytes of a finished recording, so JS knows how many chunks to read.
+#[tauri::command]
+async fn native_audio_file_size(app: tauri::AppHandle, path: String) -> Result<u64, String> {
+    let safe_path = validate_recording_path(&path, &recording_allowed_dirs(&app))?;
+    let meta = std::fs::metadata(&safe_path)
+        .map_err(|e| format!("Failed to stat recording file: {}", e))?;
+    Ok(meta.len())
+}
 
-    let bytes = std::fs::read(&safe_path)
-        .map_err(|e| format!("Failed to read recording file: {}", e))?;
-    let _ = std::fs::remove_file(&safe_path);
-    use base64::{Engine as _, engine::general_purpose};
-    Ok(general_purpose::STANDARD_NO_PAD.encode(&bytes))
+/// Read one slice of a recording file as raw bytes.
+///
+/// Returns `tauri::ipc::Response`, which `invoke` resolves as an ArrayBuffer:
+/// no JSON encoding, no base64, no `atob` on the main thread. The previous
+/// base64 command hit V8's 2^29-character string cap at a ~403 MB file (~35 min
+/// of 48 kHz stereo WAV) and cost 5-6x the file size in transient memory well
+/// before that (F4).
+#[tauri::command]
+async fn native_audio_read_chunk(
+    app: tauri::AppHandle,
+    path: String,
+    offset: u64,
+    len: usize,
+) -> Result<tauri::ipc::Response, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    // Bound the allocation a single call can request regardless of what JS asks
+    // for. JS reads in 4 MB pieces; this is headroom, not the expected size.
+    const MAX_CHUNK: usize = 16 * 1024 * 1024;
+    if len > MAX_CHUNK {
+        return Err(format!("Chunk length {len} exceeds the {MAX_CHUNK} byte limit"));
+    }
+
+    let safe_path = validate_recording_path(&path, &recording_allowed_dirs(&app))?;
+
+    let mut file = std::fs::File::open(&safe_path)
+        .map_err(|e| format!("Failed to open recording file: {}", e))?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("Failed to seek recording file: {}", e))?;
+
+    let mut buf = vec![0u8; len];
+    let mut filled = 0;
+    // A short read is not EOF: loop until the buffer is full or the file ends.
+    while filled < len {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(format!("Failed to read recording file: {}", e)),
+        }
+    }
+    buf.truncate(filled);
+
+    Ok(tauri::ipc::Response::new(buf))
+}
+
+/// Delete a recording temp file once its bytes are safely stored.
+///
+/// Split from the read (the old command did both) so a failure to store the
+/// blob leaves the file on disk instead of destroying the only copy.
+/// Save a copy of a recording temp file wherever the user chooses.
+///
+/// The rescue path for a recording that could not be stored in the app
+/// (recordingRecovery.js): its temp file is otherwise the only copy, and the
+/// startup sweep deletes it. Returns where it was saved, or null if the user
+/// cancelled the picker. Leaves the temp file in place; JS deletes it after a
+/// successful export.
+#[tauri::command]
+async fn native_audio_export(
+    app: tauri::AppHandle,
+    path: String,
+    suggested_name: String,
+    mime_type: String,
+) -> Result<Option<String>, String> {
+    let safe_path = validate_recording_path(&path, &recording_allowed_dirs(&app))?;
+    backup::export_file(&app, &safe_path, suggested_name, &mime_type).await
+}
+
+#[tauri::command]
+async fn native_audio_delete(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let safe_path = validate_recording_path(&path, &recording_allowed_dirs(&app))?;
+    std::fs::remove_file(&safe_path)
+        .map_err(|e| format!("Failed to delete recording file: {}", e))
 }
 
 /// Get current recording amplitude 0.0–1.0.
@@ -536,9 +965,15 @@ async fn native_audio_get_amplitude(app: tauri::AppHandle) -> Result<serde_json:
 async fn native_audio_get_amplitude() -> Result<serde_json::Value, String> {
     let guard = win_recording().lock().unwrap();
     let amplitude = guard.as_ref()
-        .map(|s| *s.amplitude.lock().unwrap())
+        .map(|s| s.amplitude.load())
         .unwrap_or(0.0);
-    Ok(serde_json::json!({ "amplitude": amplitude }))
+    // Reported on the poll JS already makes every 100 ms, so a worker that died
+    // mid-recording is visible immediately instead of at stop.
+    let failed = guard
+        .as_ref()
+        .map(|s| s.worker_failed.load(std::sync::atomic::Ordering::Acquire))
+        .unwrap_or(false);
+    Ok(serde_json::json!({ "amplitude": amplitude, "failed": failed }))
 }
 #[tauri::command]
 #[cfg(not(any(target_os = "android", target_os = "windows")))]
@@ -606,10 +1041,11 @@ async fn native_audio_cancel(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(target_os = "windows")]
 async fn native_audio_cancel() -> Result<(), String> {
     let mut guard = win_recording().lock().unwrap();
-    if let Some(state) = guard.take() {
-        drop(state.stream);
-        // Delete the temp file
-        if let Some(path) = state.path { let _ = std::fs::remove_file(path); }
+    if let Some(mut state) = guard.take() {
+        // Join the worker before deleting: it still holds the WAV writer, and on
+        // Windows the open handle would make the remove fail.
+        let _ = state.finish();
+        if let Some(path) = state.path.take() { let _ = std::fs::remove_file(path); }
     }
     Ok(())
 }
@@ -769,19 +1205,40 @@ pub fn run() {
         .manage(Mutex::new(RecognitionState {
             url: String::new(),
         }))
+        .manage(backup::SharedState::default())
         .invoke_handler(tauri::generate_handler![
             get_recognition_url,
+            backup::backup_choose_destination,
+            backup::backup_begin,
+            backup::backup_add_text,
+            backup::backup_begin_entry,
+            backup::backup_write_chunk,
+            backup::backup_finish,
+            backup::backup_abort,
+            backup::backup_free_space,
+            backup::restore_choose_source,
+            backup::restore_open,
+            backup::restore_unlock,
+            backup::restore_read_text,
+            backup::restore_read_begin,
+            backup::restore_read_chunk,
+            backup::restore_read_end,
+            backup::restore_close,
             save_credential,
             get_credential,
             delete_credential,
             save_pdf,
             native_audio_start,
             native_audio_stop,
-            native_audio_read_and_delete,
+            native_audio_file_size,
+            native_audio_read_chunk,
+            native_audio_delete,
+            native_audio_export,
             native_audio_get_amplitude,
             native_audio_pause,
             native_audio_resume,
             native_audio_cancel,
+            native_audio_set_aggressiveness,
             set_status_bar_appearance,
             get_safe_area_insets,
             #[cfg(target_os = "windows")]
@@ -798,17 +1255,39 @@ pub fn run() {
         builder = builder.plugin(audio_recorder_plugin());
         builder = builder.plugin(device_key_plugin());
         builder = builder.plugin(status_bar_plugin());
+        builder = builder.plugin(backup::android_plugin());
     }
 
     builder
         .setup(|_app| {
             #[cfg(target_os = "windows")]
             {
-                // Enumerate audio endpoints so Windows registers this process for the
-                // microphone privacy list (required for getUserMedia to find the device).
-                register_audio_privacy();
+                // register_audio_privacy() used to run here, writing microphone
+                // consent registry keys for the WebView2 renderer on every start.
+                // It existed so getUserMedia could find a device; Windows now
+                // records through cpal/WASAPI in-process, which needs no
+                // ConsentStore entry.
                 spawn_recognition_sidecar(_app)?;
                 mcp::start(_app);
+            }
+            // Clear temp files from a run that was killed mid-recording. The
+            // OS temp dir is shared, the Android cache dir is app-private; the
+            // sweep is stricter about what it matches in the former.
+            {
+                #[allow(unused_mut)]
+                let mut dirs: Vec<(std::path::PathBuf, bool)> =
+                    vec![(std::env::temp_dir(), false)];
+                #[cfg(target_os = "android")]
+                {
+                    use tauri::Manager;
+                    if let Ok(cache_dir) = _app.path().app_cache_dir() {
+                        dirs.push((cache_dir, true));
+                    }
+                }
+                let removed = sweep_orphaned_recordings(&dirs);
+                if removed > 0 {
+                    eprintln!("[Audio] removed {removed} orphaned recording file(s)");
+                }
             }
             Ok(())
         })
@@ -982,47 +1461,6 @@ fn grant_media_permissions(webview: tauri::webview::PlatformWebview) {
                         &handler,
                     );
                 }
-            }
-        }
-    }
-}
-
-/// Write Windows microphone consent registry entries for the host exe and the
-/// WebView2 renderer, so getUserMedia({ audio }) works without NotFoundError.
-/// Windows blocks audio device access for processes not listed under:
-///   HKCU\...\ConsentStore\microphone\NonPackaged\<path-with-#-separators>
-#[cfg(target_os = "windows")]
-fn register_audio_privacy() {
-    fn grant(path: &str) {
-        let key = path.replace('\\', "#");
-        let reg_key = format!(
-            "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\{}",
-            key
-        );
-        let status = std::process::Command::new("reg")
-            .args(["add", &reg_key, "/v", "Value", "/t", "REG_SZ", "/d", "Allow", "/f"])
-            .status();
-        match status {
-            Ok(s) if s.success() => eprintln!("[Permissions] Mic consent granted: {}", path),
-            Ok(s) => eprintln!("[Permissions] reg add failed ({}): {:?}", path, s.code()),
-            Err(e) => eprintln!("[Permissions] reg add error ({}): {}", path, e),
-        }
-    }
-
-    // 1. Host process
-    if let Ok(exe) = std::env::current_exe() {
-        grant(&exe.to_string_lossy());
-    }
-
-    // 2. WebView2 renderer — find all msedgewebview2.exe under EdgeWebView\Application
-    let wv2_base = std::path::Path::new(
-        r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application",
-    );
-    if let Ok(entries) = std::fs::read_dir(wv2_base) {
-        for entry in entries.flatten() {
-            let candidate = entry.path().join("msedgewebview2.exe");
-            if candidate.exists() {
-                grant(&candidate.to_string_lossy());
             }
         }
     }

@@ -5,6 +5,7 @@
 
 import { APP_NAME, APP_VERSION_WITH_BUILD, PROJECT_URL } from "../config.js";
 import { changeLanguage, getCurrentLanguage, t } from "../i18n/index.js";
+import { getAutoGainAggressiveness, setAutoGainAggressiveness } from "../modules/audioSettings.js";
 import { getCardSize, setCardSize } from "../modules/displayPrefs.js";
 import { resetAllHelp } from "../modules/helpGuidance.js";
 import { getSetting, purgeLocalData, setSetting } from "../modules/storage.js";
@@ -512,6 +513,8 @@ export async function renderSettings(container) {
 
   const cardSize = getCardSize();
   const pdfInvertDarkMode = getPdfInvertDarkMode();
+  // Native-only: recording does not exist on the Nextcloud build.
+  const autoGainAggressiveness = IS_NEXTCLOUD ? 0 : getAutoGainAggressiveness();
 
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? false; // Default: disabled
@@ -583,6 +586,12 @@ export async function renderSettings(container) {
 
   // The bundled local recognizer sidecar is Windows-only; the AI method works everywhere
   const isWindows = /windows/i.test(navigator.userAgent);
+
+  // Backup & restore exist only where there is a local IndexedDB corpus to
+  // back up. Loaded on demand so the Nextcloud bundle never carries the
+  // module (it imports the Tauri archive bridge).
+  const backupSection = IS_NEXTCLOUD ? null : await import("./backupSection.js");
+  const backupSectionHtml = backupSection ? await backupSection.renderBackupSection() : "";
 
   // Check if the local sidecar recognition service is running
   let localRecognitionUrl = "";
@@ -726,6 +735,35 @@ export async function renderSettings(container) {
             <option value="large" ${cardSize === "large" ? "selected" : ""}>${t("settings.appearance.cardSizeLarge")}</option>
           </select>
         </div>
+
+        ${
+          // Native only: recording (and therefore its gain setting) does not
+          // exist on the Nextcloud build.
+          IS_NEXTCLOUD
+            ? ""
+            : `
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">${t("settings.appearance.autoGainAggressiveness")}</span>
+            <span class="setting-description">${t("settings.appearance.autoGainAggressivenessDesc")}</span>
+          </div>
+          <div class="setting-item__actions">
+            <input
+              type="range"
+              id="auto-gain-aggressiveness-slider"
+              class="setting-control"
+              min="0"
+              max="1"
+              step="0.05"
+              value="${autoGainAggressiveness}"
+            />
+            <span id="auto-gain-aggressiveness-value" class="setting-note"
+              >${Math.round(autoGainAggressiveness * 100)}%</span
+            >
+          </div>
+        </div>
+        `
+        }
 
         <div class="setting-item">
           <div class="setting-label">
@@ -1479,6 +1517,8 @@ export async function renderSettings(container) {
         </div>
       </div>
 
+      ${backupSectionHtml}
+
       <div class="settings-section" data-section="dangerZone">
         <h3 class="settings-section-heading--danger">${t("settings.sections.dangerZone")}</h3>
 
@@ -1609,6 +1649,17 @@ export async function renderSettings(container) {
     // Dispatches themechange itself, so any open note re-renders its PDF
     // pages with the new inversion setting, same as an actual theme switch would.
     setPdfInvertDarkMode(pdfInvertDarkToggle.checked);
+  });
+
+  const autoGainSlider = container.querySelector("#auto-gain-aggressiveness-slider");
+  const autoGainValue = container.querySelector("#auto-gain-aggressiveness-value");
+  autoGainSlider?.addEventListener("input", () => {
+    const value = Number(autoGainSlider.value);
+    if (autoGainValue) autoGainValue.textContent = `${Math.round(value * 100)}%`;
+    // This is only ever the default for the *next* recording — a recording in
+    // progress reads its own value from RecordingManager, set at start and
+    // adjustable live via the slider next to its level meter, not from here.
+    setAutoGainAggressiveness(value);
   });
 
   // Encryption toggles event listeners
@@ -2833,6 +2884,12 @@ export async function renderSettings(container) {
     if (!confirmed) return;
     resetAllHelp();
     await renderSettings(container);
+  });
+
+  // Backup & restore listeners (native builds only)
+  backupSection?.initBackupSection(container, {
+    loadNextcloudSync,
+    rerender: () => renderSettings(container),
   });
 
   // Purge local data listener (available regardless of auth status)

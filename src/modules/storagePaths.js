@@ -30,14 +30,19 @@ export const ROOT_FOLDER = "/NoteBerg";
 
 const SAFE_ID = /^[\w-]{1,64}$/;
 
-function assertSafeId(id, kind) {
+/**
+ * Assert that an id is safe to embed in a storage path. Exported because the
+ * backup restore path parses ids out of an untrusted archive and must reject
+ * the archive on the first violation (see restore.js).
+ */
+export function assertSafeId(id, kind) {
   if (typeof id !== "string" || !SAFE_ID.test(id)) {
     throw new Error(`Invalid ${kind} id for storage path: ${JSON.stringify(id)}`);
   }
   return id;
 }
 
-function assertSafeFilename(filename) {
+export function assertSafeFilename(filename) {
   if (
     typeof filename !== "string" ||
     filename.length === 0 ||
@@ -120,6 +125,17 @@ export function getQuickNotesTombstonePath() {
  */
 export function getGlobalNotebookTombstonePath() {
   return `${ROOT_FOLDER}/notebooks/_tombstones.json`;
+}
+
+/**
+ * Strip the root folder from a full storage path, giving the path relative to
+ * the NoteBerg root — the form used for entry names inside a backup archive.
+ * @param {string} path - A path produced by one of the builders above
+ * @returns {string}
+ */
+export function toRootRelativePath(path) {
+  const prefix = `${ROOT_FOLDER}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 
 /**

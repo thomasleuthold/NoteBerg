@@ -93,4 +93,22 @@ describe("VirtualScroller", () => {
     expect(scroller.getScrollLeft()).toBe(100);
     expect(scroller.getScrollTop()).toBe(100);
   });
+
+  it("reports the new scroll position right after scrollBy, before any scroll event", () => {
+    // The native scroll event fires asynchronously. A two-finger pan scrolls and
+    // then, in the same frame, zooms about a fixed point using
+    // getScrollLeft()/getScrollTop(); those must already reflect the pan.
+    scroller.container.scrollBy = vi.fn(function (dx, dy) {
+      this.scrollLeft += dx;
+      this.scrollTop += dy;
+    });
+    onScroll.mockClear();
+
+    scroller.scrollBy(30, 120);
+
+    expect(scroller.getScrollLeft()).toBe(scroller.container.scrollLeft);
+    expect(scroller.getScrollTop()).toBe(scroller.container.scrollTop);
+    expect(scroller.getScrollTop()).toBe(120);
+    expect(onScroll).not.toHaveBeenCalled();
+  });
 });

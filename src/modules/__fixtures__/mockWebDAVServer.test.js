@@ -7,7 +7,9 @@
 import { describe, expect, it } from "vitest";
 import { MockWebDAVServer } from "./mockWebDAVServer.js";
 
-const AUTH = { headers: { Authorization: "Basic dGVzdA==" } };
+// Basic auth for the default "testuser" login.
+const BASIC = `Basic ${btoa("testuser:app-password-123")}`;
+const AUTH = { headers: { Authorization: BASIC } };
 
 describe("MockWebDAVServer fixture", () => {
   it("generates deterministic, monotonic etags instead of random ones", async () => {
@@ -136,14 +138,14 @@ describe("MockWebDAVServer fixture", () => {
     const res = await server.handleRequest(`${server.baseUrl}${server.rootPath}/`, {
       ...AUTH,
       method: "PROPFIND",
-      headers: { Authorization: "Basic dGVzdA==", Depth: "infinity" },
+      headers: { Authorization: BASIC, Depth: "infinity" },
     });
     expect(res.status).toBe(400);
 
     const depth1 = await server.handleRequest(`${server.baseUrl}${server.rootPath}/`, {
       ...AUTH,
       method: "PROPFIND",
-      headers: { Authorization: "Basic dGVzdA==", Depth: "1" },
+      headers: { Authorization: BASIC, Depth: "1" },
     });
     expect(depth1.status).toBe(207);
   });
@@ -195,7 +197,7 @@ describe("MockWebDAVServer fixture", () => {
       {
         ...AUTH,
         method: "PROPFIND",
-        headers: { Authorization: "Basic dGVzdA==", Depth: "infinity" },
+        headers: { Authorization: BASIC, Depth: "infinity" },
       },
     );
     const xml = await res.text();
@@ -206,6 +208,78 @@ describe("MockWebDAVServer fixture", () => {
     expect(hrefs.some((h) => h.endsWith("/nb1/notes/a.json"))).toBe(true);
     // …but nb10's subtree must NOT leak in.
     expect(hrefs.some((h) => h.includes("/nb10"))).toBe(false);
+  });
+
+  describe("account: login name vs user ID (LDAP/AD, email login)", () => {
+    const ldap = () =>
+      new MockWebDAVServer({
+        loginName: "alice@example.com",
+        userId: "5b3c1d2e-0f4a-4b7c-9d8e-1a2b3c4d5e6f",
+      });
+    const auth = (user) => ({ Authorization: `Basic ${btoa(`${user}:pw`)}` });
+
+    it("roots DAV paths at the user ID, not the login name", () => {
+      expect(ldap().rootPath).toBe("/remote.php/dav/files/5b3c1d2e-0f4a-4b7c-9d8e-1a2b3c4d5e6f");
+    });
+
+    it("rejects requests whose Basic auth names neither the login name nor the user ID", async () => {
+      const server = ldap();
+      const res = await server.handleRequest(`${server.baseUrl}${server.rootPath}/`, {
+        method: "PROPFIND",
+        headers: auth("mallory"),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it("answers MKCOL under the login-name root with 409 and PROPFIND with 404", async () => {
+      const server = ldap();
+      const wrongRoot = `${server.baseUrl}/remote.php/dav/files/${encodeURIComponent("alice@example.com")}`;
+      const mkcol = await server.handleRequest(`${wrongRoot}/NoteBerg/notebooks`, {
+        method: "MKCOL",
+        headers: auth("alice@example.com"),
+      });
+      expect(mkcol.status).toBe(409);
+      expect(server.files.has("/NoteBerg/notebooks")).toBe(false);
+
+      const propfind = await server.handleRequest(`${wrongRoot}/NoteBerg`, {
+        method: "PROPFIND",
+        headers: auth("alice@example.com"),
+      });
+      expect(propfind.status).toBe(404);
+    });
+
+    it("accepts the login name for auth on the user-ID root", async () => {
+      const server = ldap();
+      const res = await server.handleRequest(`${server.baseUrl}${server.rootPath}/NoteBerg/x`, {
+        method: "MKCOL",
+        headers: auth("alice@example.com"),
+      });
+      expect(res.status).toBe(201);
+    });
+
+    it("rejects a chunked-upload MOVE whose Destination names the wrong principal", async () => {
+      const server = ldap();
+      const uploads = `${server.baseUrl}/remote.php/dav/uploads/5b3c1d2e-0f4a-4b7c-9d8e-1a2b3c4d5e6f/s1`;
+      await server.handleRequest(uploads, { method: "MKCOL", headers: auth("alice@example.com") });
+      const res = await server.handleRequest(`${uploads}/.file`, {
+        method: "MOVE",
+        headers: {
+          ...auth("alice@example.com"),
+          Destination: `${server.baseUrl}/remote.php/dav/files/alice%40example.com/NoteBerg/f.bin`,
+        },
+      });
+      expect(res.status).toBe(409);
+    });
+
+    it("serves the user ID from the OCS user endpoint", async () => {
+      const server = ldap();
+      const res = await server.handleRequest(
+        `${server.baseUrl}/ocs/v2.php/cloud/user?format=json`,
+        { method: "GET", headers: auth("alice@example.com") },
+      );
+      expect(res.ok).toBe(true);
+      expect((await res.json()).ocs.data.id).toBe("5b3c1d2e-0f4a-4b7c-9d8e-1a2b3c4d5e6f");
+    });
   });
 
   describe("seed DSL", () => {

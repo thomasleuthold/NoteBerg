@@ -122,7 +122,8 @@
       "logging": "ログ",
       "dangerZone": "危険な操作",
       "about": "このアプリについて",
-      "aiProvider": "AI アクセス"
+      "aiProvider": "AI アクセス",
+      "backup": "バックアップ"
     },
     "appearance": {
       "theme": "テーマ",
@@ -135,7 +136,9 @@
       "cardSizeDesc": "概要画面でのノートカードのサイズを設定します",
       "cardSizeSmall": "小",
       "cardSizeMedium": "中",
-      "cardSizeLarge": "大"
+      "cardSizeLarge": "大",
+      "autoGainAggressiveness": "録音のゲインブースト",
+      "autoGainAggressivenessDesc": "新しい録音の既定値: 車の運転中などの大きく一定した背景ノイズの中で、小さな話し声をどれだけ強めるか。値を高くすると背景ノイズ自体も大きくなることがあります。録音中は個別に調整できます。"
     },
     "language": {
       "label": "表示言語",
@@ -699,7 +702,13 @@
       "permissionDenied": "カメラへのアクセスが拒否されました。ブラウザの設定でこのサイトのカメラアクセスを許可してから、もう一度お試しください。",
       "noCamera": "このデバイスにカメラが見つかりませんでした。「画像を挿入」で既存の写真を追加してください。",
       "inUse": "カメラは現在他のアプリケーションで使用されています。そのアプリを閉じてからもう一度お試しください。",
-      "failed": "カメラを起動できませんでした。もう一度お試しになるか、「画像を挿入」で既存の写真を追加してください。"
+      "failed": "カメラを起動できませんでした。もう一度お試しになるか、「画像を挿入」で既存の写真を追加してください。",
+      "modePhoto": "写真",
+      "modeDocument": "ドキュメント",
+      "documentDetected": "ドキュメントを検出しました",
+      "searchingDocument": "枠内にドキュメントを配置してください",
+      "flattenLighting": "照明のムラを補正",
+      "retake": "撮り直す"
     },
     "pdf": {
       "delete": "PDF を削除",
@@ -783,7 +792,15 @@
     "deleteRecordingMessage": "この録音を削除してもよろしいですか？",
     "errorGeneric": "録音を開始できませんでした。",
     "errorNoDevice": "オーディオデバイスが見つかりません。マイクを接続してください。",
-    "errorPermissionDenied": "マイクへのアクセスが拒否されました。システム設定でマイクへのアクセスを許可してください。"
+    "errorPermissionDenied": "マイクへのアクセスが拒否されました。システム設定でマイクへのアクセスを許可してください。",
+    "stoppedInBackground": "アプリがバックグラウンドに移動したため、録音を停止して保存しました。",
+    "autoGainAggressiveness": "ゲインブースト",
+    "autoGainAggressivenessDesc": "車の運転中などの大きく一定した背景ノイズの中で、小さな話し声をどれだけ強めるか。値を高くすると背景ノイズ自体も大きくなることがあります。この録音にのみ適用されます。",
+    "saveFailedTitle": "録音を保存できませんでした",
+    "saveFailedMsg": "録音をアプリに保存できませんでした（{{reason}}）。残しておくにはファイルとして保存してください。後で「音声ファイルを読み込む」からノートに追加し直せます。保存しない場合、次回アプリを起動したときに削除されます。",
+    "saveFailedExport": "ファイルとして保存…",
+    "exportDoneMsg": "録音を {{path}} として保存しました。",
+    "exportFailedMsg": "録音をファイルとして保存できませんでした（{{reason}}）。次回アプリを起動するまで保持されます。"
   },
   "noteNavigator": {
     "toggle": "ナビゲーター",
@@ -836,6 +853,126 @@
     "markAsTask": {
       "title": "タスク",
       "body": "マークしたテキストはチェック可能なタスクになりました。ここまたはタスク一覧でチェックできます。"
+    }
+  },
+  "backup": {
+    "freshness": {
+      "never": "バックアップ未実施",
+      "last": "最終バックアップ: {{when}}（{{count}} 件のノート）",
+      "encrypted": "パスワード保護あり",
+      "staleNudge": "最後のバックアップ以降にノートが変更されています。今すぐバックアップして保護しましょう。",
+      "neverNudge": "このデバイスはまだバックアップされていません。今すぐバックアップしてノートを保護しましょう。"
+    },
+    "estimate": "約 {{notes}} 件のノートと {{files}} 個のファイル、約 {{size}}",
+    "backupTitle": "ファイルにバックアップ",
+    "backupDesc": "すべてのノートブック、ノート、画像、PDF、録音を 1 つの .zip ファイルに保存します。",
+    "backupBtn": "ファイルにバックアップ",
+    "backingUp": "バックアップ中…",
+    "encryptLabel": "ファイルをパスワードで保護",
+    "encryptDesc": "バックアップは暗号化されずに保存されます。ファイルを保護するにはパスワードを設定してください。",
+    "restoreTitle": "ファイルから復元",
+    "restoreDesc": "バックアップの .zip ファイルをこのデバイスに読み戻します。既存のノートがその場で上書きされることはなく、置き換えられたノートはごみ箱に移動します。",
+    "restoreBtn": "ファイルから復元",
+    "restoring": "復元中…",
+    "scopeNote": "Nextcloud の認証情報、マスターパスワード、アプリ設定はバックアップに含まれません。",
+    "password": {
+      "title": "バックアップパスワードの設定",
+      "description": "このパスワードでバックアップファイルを暗号化します。復元時に必要です。",
+      "passwordLabel": "バックアップパスワード",
+      "passwordPlaceholder": "バックアップパスワードを入力",
+      "confirmLabel": "パスワードの確認",
+      "confirmPlaceholder": "バックアップパスワードを再入力",
+      "warning": "<strong>⚠️ このパスワードを忘れると、バックアップは復元できません。</strong> リセットも復旧キーもありません。",
+      "independentNote": "このパスワードはマスターパスワードとは無関係です。どこにも保存されず、毎回入力します。",
+      "confirmBtn": "暗号化して続行"
+    },
+    "progress": {
+      "backupTitle": "バックアップ中",
+      "restoreTitle": "復元中",
+      "scanTitle": "バックアップを読み込み中",
+      "preparing": "準備中…",
+      "notebook": "ノートブック {{current}} / {{total}}",
+      "note": "ノート {{current}} / {{total}}",
+      "writingMedia": "メディアを書き込み中: {{name}}（{{percent}}%）",
+      "readingMedia": "メディアを読み込み中: {{name}}（{{percent}}%）",
+      "writingNotebook": "ノートブックのデータを書き込み中…",
+      "writingNote": "ノートのデータを書き込み中…",
+      "readingNotebook": "ノートブックのデータを読み込み中…",
+      "readingNote": "ノートのデータを読み込み中…",
+      "finalizing": "アーカイブを完了しています…",
+      "saving": "ファイルを保存しています…",
+      "scanning": "このデバイスのノートと比較しています…",
+      "purging": "ローカルデータを削除しています…",
+      "cancelling": "キャンセル中…"
+    },
+    "done": {
+      "backupTitle": "バックアップ完了",
+      "backupMsg": "{{count}} 件のノートを次に書き込みました:<br><strong>{{path}}</strong><br>（{{size}}）",
+      "backupStatus": "✓ バックアップを保存しました（{{size}}）",
+      "backupCancelledStatus": "バックアップをキャンセルしました。ファイルは残っていません。",
+      "backupFailedTitle": "バックアップ失敗",
+      "backupFailedStatus": "✗ バックアップ失敗: {{message}}",
+      "restoreTitle": "復元完了",
+      "restoreMsg": "{{restored}} 件を復元、{{skipped}} 件をスキップ、{{replaced}} 件を置き換えました。",
+      "restoreNotebooks": "ノートブックを {{created}} 件作成、{{restoredNotebooks}} 件をごみ箱から復元、{{kept}} 件はローカルの名前のまま保持しました。",
+      "restoreReplacedHint": "置き換えられたローカルのノートは、末尾に「{{suffix}}」を付けてごみ箱に移動しました。",
+      "openRecycleBin": "ごみ箱を開く",
+      "restoreCancelledTitle": "復元をキャンセルしました",
+      "restoreCancelledMsg": "{{total}} 件中 {{restored}} 件のノートを復元しました。もう一度復元を実行すると続きから完了できます。復元済みのノートはスキップされます。",
+      "restoreStatus": "✓ 復元完了",
+      "restoreCancelledStatus": "{{total}} 件中 {{restored}} 件で復元をキャンセルしました。",
+      "restoreFailedTitle": "復元失敗",
+      "restoreFailedStatus": "✗ 復元失敗: {{message}}"
+    },
+    "restore": {
+      "confirmTitle": "バックアップを復元",
+      "confirmEmpty": "{{notebooks}} 冊のノートブックの {{notes}} 件のノートをこのデバイスに復元しますか？",
+      "confirmNoConflicts": "{{notebooks}} 冊のノートブックの {{notes}} 件のノートをこのデバイスに復元しますか？既存のものは置き換えられません。",
+      "confirmBtn": "復元",
+      "fromApp": "{{date}} に NoteBerg {{version}} で作成。",
+      "modeTitle": "復元方法",
+      "conflictSummary": "{{count}} 件のノートはこのデバイスに既に存在します: {{localNewer}} 件はこちらが新しく、{{backupNewer}} 件はバックアップが新しいです。",
+      "newSummary": "{{count}} 件のノートが追加されます。",
+      "modeMissing": "不足しているものだけを復元",
+      "modeMissingDesc": "既存のノートはそのままにし、このデバイスにないノートだけを追加します。",
+      "modePreferBackup": "バックアップから復元し、置き換えたノートはごみ箱に保持",
+      "modePreferBackupDesc": "バックアップの方が新しい場合はバックアップが優先されます。置き換えられたローカルのノートは「… {{suffix}}」としてごみ箱に残ります。",
+      "modeReplaceAll": "すべて置き換える",
+      "modeReplaceAllDesc": "まずローカルのノートブックとノートをすべて削除してから、バックアップをそのまま復元します。",
+      "review": "{{count}} 件を確認",
+      "reviewTitle": "競合の確認",
+      "reviewDesc": "各ノートについてどちらを残すか選んでください。ローカルを残した場合は変更されず、置き換えた場合はローカルのノートがごみ箱に移動します。",
+      "keepLocal": "ローカルを保持",
+      "useBackup": "バックアップを使用",
+      "allLocal": "すべてローカル",
+      "allBackup": "すべてバックアップ",
+      "localVersion": "ローカル: {{date}}",
+      "backupVersion": "バックアップ: {{date}}",
+      "back": "戻る",
+      "continue": "続行",
+      "replaceAllConfirmTitle": "すべて置き換えますか？",
+      "replaceAllConfirmMsg": "⚠️ バックアップを復元する前に、ごみ箱を含むローカルのノートブックとノートをすべて削除します。この操作は取り消せません。",
+      "replaceAllConfirmBtn": "すべて削除して復元",
+      "replaceAllNcBlockedTitle": "Nextcloud に接続中です",
+      "replaceAllNcBlocked": "すべてを置き換えると Nextcloud には一括削除に見え、サーバー上のノートが削除される可能性があります。先に接続を解除してください。ノートはサーバーに残り、復元後に再接続できます。",
+      "disconnectAndContinue": "接続を解除して続行",
+      "replacedSuffix": "（置換済み）",
+      "passwordTitle": "バックアップパスワード",
+      "passwordMessage": "このバックアップはパスワードで保護されています。続行するにはパスワードを入力してください。",
+      "passwordPlaceholder": "バックアップパスワードを入力",
+      "wrongPassword": "パスワードが違います。もう一度お試しください。"
+    },
+    "errors": {
+      "noteOpen": "開いているノートを閉じてから、もう一度お試しください。",
+      "syncing": "Nextcloud の同期が実行中です。完了を待ってから、もう一度お試しください。",
+      "locked": "アプリがロックされています。マスターパスワードでロックを解除してから、もう一度お試しください。",
+      "notABackup": "「{{file}}」は NoteBerg のバックアップではありません。「ファイルにバックアップ」で作成された manifest.json 入りの .zip ファイルが必要です。",
+      "corrupt": "「{{file}}」は NoteBerg のバックアップですが、破損または不完全なため読み込めません。別のコピーをお試しください。",
+      "unsafeEntry": "「{{file}}」に無効なエントリが含まれているため拒否しました。",
+      "entryTooLarge": "「{{file}}」には大きすぎて復元できないエントリが含まれています。",
+      "newerVersion": "このバックアップはこのアプリより新しい NoteBerg {{version}} で作成されています。復元するには NoteBerg を更新してください。",
+      "diskFull": "バックアップを書き込めませんでした: {{message}}。不完全なファイルは削除しました。",
+      "cacheSpace": "バックアップを作成するための空き容量が不足しています: 約 {{needed}} 必要、{{available}} 利用可能。"
     }
   }
 }

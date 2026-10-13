@@ -122,7 +122,8 @@
       "logging": "Journaux",
       "dangerZone": "Zone de danger",
       "about": "À propos",
-      "aiProvider": "Accès IA"
+      "aiProvider": "Accès IA",
+      "backup": "Sauvegarde"
     },
     "appearance": {
       "theme": "Thème",
@@ -135,7 +136,9 @@
       "cardSizeDesc": "Définir la taille des cartes de notes dans l'aperçu",
       "cardSizeSmall": "Petite",
       "cardSizeMedium": "Moyenne",
-      "cardSizeLarge": "Grande"
+      "cardSizeLarge": "Grande",
+      "autoGainAggressiveness": "Amplification à l'enregistrement",
+      "autoGainAggressivenessDesc": "Réglage par défaut pour les nouveaux enregistrements : à quel point amplifier une voix faible dans un bruit de fond fort et constant (p. ex. en voiture). Une valeur plus élevée peut aussi rendre le bruit de fond plus fort. Réglable individuellement pendant un enregistrement en cours."
     },
     "language": {
       "label": "Langue de l'interface",
@@ -699,7 +702,13 @@
       "permissionDenied": "L'accès à la caméra a été refusé. Veuillez autoriser l'accès à la caméra pour ce site dans les paramètres de votre navigateur, puis réessayer.",
       "noCamera": "Aucune caméra n'a été trouvée sur cet appareil. Veuillez utiliser « Insérer une image » pour ajouter une photo existante.",
       "inUse": "La caméra est actuellement utilisée par une autre application. Veuillez la fermer et réessayer.",
-      "failed": "La caméra n'a pas pu être démarrée. Veuillez réessayer ou utiliser « Insérer une image » pour ajouter une photo existante."
+      "failed": "La caméra n'a pas pu être démarrée. Veuillez réessayer ou utiliser « Insérer une image » pour ajouter une photo existante.",
+      "modePhoto": "Photo",
+      "modeDocument": "Document",
+      "documentDetected": "Document détecté",
+      "searchingDocument": "Positionnez le document dans le cadre",
+      "flattenLighting": "Aplatir l'éclairage",
+      "retake": "Reprendre"
     },
     "pdf": {
       "delete": "Supprimer le PDF",
@@ -783,7 +792,15 @@
     "deleteRecordingMessage": "Voulez-vous vraiment supprimer cet enregistrement ?",
     "errorGeneric": "Impossible de démarrer l'enregistrement.",
     "errorNoDevice": "Aucun périphérique audio détecté. Veuillez connecter un microphone.",
-    "errorPermissionDenied": "Accès au microphone refusé. Veuillez autoriser l'accès au microphone dans les paramètres système."
+    "errorPermissionDenied": "Accès au microphone refusé. Veuillez autoriser l'accès au microphone dans les paramètres système.",
+    "stoppedInBackground": "L'enregistrement a été arrêté et enregistré car l'application est passée en arrière-plan.",
+    "autoGainAggressiveness": "Amplification",
+    "autoGainAggressivenessDesc": "À quel point amplifier une voix faible dans un bruit de fond fort et constant (p. ex. en voiture). Une valeur plus élevée peut aussi rendre le bruit de fond plus fort. S'applique uniquement à cet enregistrement.",
+    "saveFailedTitle": "Enregistrement non sauvegardé",
+    "saveFailedMsg": "L'enregistrement n'a pas pu être stocké dans l'application ({{reason}}). Sauvegardez-le dans un fichier pour le conserver. Vous pourrez ensuite l'ajouter à nouveau à la note avec « Importer un fichier audio ». Sinon, il sera supprimé au prochain démarrage de l'application.",
+    "saveFailedExport": "Sauvegarder dans un fichier…",
+    "exportDoneMsg": "L'enregistrement a été sauvegardé sous {{path}}.",
+    "exportFailedMsg": "L'enregistrement n'a pas pu être sauvegardé dans un fichier ({{reason}}). Il est conservé jusqu'au prochain démarrage de l'application."
   },
   "noteNavigator": {
     "toggle": "Navigateur",
@@ -836,6 +853,126 @@
     "markAsTask": {
       "title": "Tâches",
       "body": "Le texte marqué est maintenant une tâche à cocher. Cochez-la ici ou dans votre liste de tâches."
+    }
+  },
+  "backup": {
+    "freshness": {
+      "never": "Jamais sauvegardé",
+      "last": "Dernière sauvegarde : {{when}} ({{count}} notes)",
+      "encrypted": "protégée par mot de passe",
+      "staleNudge": "Vos notes ont changé depuis la dernière sauvegarde. Sauvegardez maintenant pour les protéger.",
+      "neverNudge": "Cet appareil n’a jamais été sauvegardé. Sauvegardez maintenant pour protéger vos notes."
+    },
+    "estimate": "Environ {{notes}} notes et {{files}} fichiers, ~{{size}}",
+    "backupTitle": "Sauvegarder dans un fichier",
+    "backupDesc": "Enregistrer tous les carnets, notes, images, PDF et enregistrements dans un seul fichier .zip.",
+    "backupBtn": "Sauvegarder dans un fichier",
+    "backingUp": "Sauvegarde…",
+    "encryptLabel": "Protéger le fichier par un mot de passe",
+    "encryptDesc": "Les sauvegardes sont stockées sans chiffrement. Définissez un mot de passe pour protéger le fichier.",
+    "restoreTitle": "Restaurer depuis un fichier",
+    "restoreDesc": "Relire un fichier de sauvegarde .zip sur cet appareil. Les notes existantes ne sont jamais écrasées sur place : les notes remplacées vont dans la corbeille.",
+    "restoreBtn": "Restaurer depuis un fichier",
+    "restoring": "Restauration…",
+    "scopeNote": "Les identifiants Nextcloud, le mot de passe principal et les réglages de l’application ne font pas partie d’une sauvegarde.",
+    "password": {
+      "title": "Définir un mot de passe de sauvegarde",
+      "description": "Ce mot de passe chiffre le fichier de sauvegarde. Il sera nécessaire pour restaurer.",
+      "passwordLabel": "Mot de passe de sauvegarde",
+      "passwordPlaceholder": "Saisir le mot de passe de sauvegarde",
+      "confirmLabel": "Confirmer le mot de passe",
+      "confirmPlaceholder": "Ressaisir le mot de passe de sauvegarde",
+      "warning": "<strong>⚠️ Si vous perdez ce mot de passe, la sauvegarde ne pourra pas être récupérée.</strong> Il n’y a ni réinitialisation ni clé de récupération.",
+      "independentNote": "Ce mot de passe est indépendant du mot de passe principal. Il n’est jamais enregistré : vous le saisissez à chaque fois.",
+      "confirmBtn": "Chiffrer et continuer"
+    },
+    "progress": {
+      "backupTitle": "Sauvegarde en cours",
+      "restoreTitle": "Restauration en cours",
+      "scanTitle": "Lecture de la sauvegarde",
+      "preparing": "Préparation…",
+      "notebook": "Carnet {{current}} sur {{total}}",
+      "note": "Note {{current}} sur {{total}}",
+      "writingMedia": "Écriture du média : {{name}} ({{percent}} %)",
+      "readingMedia": "Lecture du média : {{name}} ({{percent}} %)",
+      "writingNotebook": "Écriture des données du carnet…",
+      "writingNote": "Écriture des données de la note…",
+      "readingNotebook": "Lecture des données du carnet…",
+      "readingNote": "Lecture des données de la note…",
+      "finalizing": "Finalisation de l’archive…",
+      "saving": "Enregistrement du fichier…",
+      "scanning": "Comparaison avec les notes de cet appareil…",
+      "purging": "Suppression des données locales…",
+      "cancelling": "Annulation…"
+    },
+    "done": {
+      "backupTitle": "Sauvegarde terminée",
+      "backupMsg": "{{count}} notes ont été écrites dans<br><strong>{{path}}</strong><br>({{size}}).",
+      "backupStatus": "✓ Sauvegarde enregistrée ({{size}})",
+      "backupCancelledStatus": "Sauvegarde annulée. Aucun fichier n’a été laissé.",
+      "backupFailedTitle": "Échec de la sauvegarde",
+      "backupFailedStatus": "✗ Échec de la sauvegarde : {{message}}",
+      "restoreTitle": "Restauration terminée",
+      "restoreMsg": "{{restored}} notes restaurées, {{skipped}} ignorées, {{replaced}} remplacées.",
+      "restoreNotebooks": "{{created}} carnets créés, {{restoredNotebooks}} sortis de la corbeille, {{kept}} conservés avec leur nom local.",
+      "restoreReplacedHint": "Les notes locales remplacées ont été déplacées dans la corbeille avec le suffixe « {{suffix}} ».",
+      "openRecycleBin": "Ouvrir la corbeille",
+      "restoreCancelledTitle": "Restauration annulée",
+      "restoreCancelledMsg": "{{restored}} notes sur {{total}} ont été restaurées. Relancez la restauration pour terminer : les notes déjà restaurées seront ignorées.",
+      "restoreStatus": "✓ Restauration terminée",
+      "restoreCancelledStatus": "Restauration annulée après {{restored}} notes sur {{total}}.",
+      "restoreFailedTitle": "Échec de la restauration",
+      "restoreFailedStatus": "✗ Échec de la restauration : {{message}}"
+    },
+    "restore": {
+      "confirmTitle": "Restaurer la sauvegarde",
+      "confirmEmpty": "Restaurer {{notes}} notes dans {{notebooks}} carnets sur cet appareil ?",
+      "confirmNoConflicts": "Restaurer {{notes}} notes dans {{notebooks}} carnets sur cet appareil ? Rien d’existant ne sera remplacé.",
+      "confirmBtn": "Restaurer",
+      "fromApp": "Créée le {{date}} avec NoteBerg {{version}}.",
+      "modeTitle": "Comment restaurer",
+      "conflictSummary": "{{count}} notes existent déjà sur cet appareil : {{localNewer}} sont plus récentes ici, {{backupNewer}} sont plus récentes dans la sauvegarde.",
+      "newSummary": "{{count}} notes seront ajoutées.",
+      "modeMissing": "Restaurer uniquement les éléments manquants",
+      "modeMissingDesc": "Les notes existantes ne sont pas touchées. Seules les notes absentes de cet appareil sont ajoutées.",
+      "modePreferBackup": "Restaurer depuis la sauvegarde, garder les notes remplacées dans la corbeille",
+      "modePreferBackupDesc": "La sauvegarde l’emporte là où elle est plus récente. Les notes locales remplacées sont gardées dans la corbeille sous « … {{suffix}} ».",
+      "modeReplaceAll": "Tout remplacer",
+      "modeReplaceAllDesc": "Supprime d’abord TOUS les carnets et notes locaux, puis restaure la sauvegarde à l’identique.",
+      "review": "Examiner {{count}}",
+      "reviewTitle": "Examiner les conflits",
+      "reviewDesc": "Choisissez la version à garder pour chaque note. Une note locale gardée n’est pas modifiée ; une note locale remplacée va dans la corbeille.",
+      "keepLocal": "Garder la locale",
+      "useBackup": "Prendre la sauvegarde",
+      "allLocal": "Toutes locales",
+      "allBackup": "Toutes de la sauvegarde",
+      "localVersion": "Locale : {{date}}",
+      "backupVersion": "Sauvegarde : {{date}}",
+      "back": "Retour",
+      "continue": "Continuer",
+      "replaceAllConfirmTitle": "Tout remplacer ?",
+      "replaceAllConfirmMsg": "⚠️ Ceci supprime TOUS les carnets et notes locaux, corbeille comprise, avant de restaurer la sauvegarde. Cette action est irréversible.",
+      "replaceAllConfirmBtn": "Tout supprimer et restaurer",
+      "replaceAllNcBlockedTitle": "Nextcloud est connecté",
+      "replaceAllNcBlocked": "Tout remplacer ressemblerait à une suppression massive pour Nextcloud et pourrait effacer vos notes sur le serveur. Déconnectez-vous d’abord : vos notes restent sur le serveur, et vous pourrez vous reconnecter après la restauration.",
+      "disconnectAndContinue": "Se déconnecter et continuer",
+      "replacedSuffix": "(remplacée)",
+      "passwordTitle": "Mot de passe de sauvegarde",
+      "passwordMessage": "Cette sauvegarde est protégée par un mot de passe. Saisissez-le pour continuer.",
+      "passwordPlaceholder": "Saisir le mot de passe de sauvegarde",
+      "wrongPassword": "Mot de passe incorrect. Veuillez réessayer."
+    },
+    "errors": {
+      "noteOpen": "Fermez d’abord la note ouverte, puis réessayez.",
+      "syncing": "Une synchronisation Nextcloud est en cours. Attendez qu’elle se termine, puis réessayez.",
+      "locked": "L’application est verrouillée. Déverrouillez-la avec votre mot de passe principal, puis réessayez.",
+      "notABackup": "« {{file}} » n’est pas une sauvegarde NoteBerg. Un fichier .zip contenant un manifest.json créé par « Sauvegarder dans un fichier » est attendu.",
+      "corrupt": "« {{file}} » est une sauvegarde NoteBerg, mais elle est endommagée ou incomplète et ne peut pas être lue. Essayez une autre copie du fichier.",
+      "unsafeEntry": "« {{file}} » contient une entrée invalide et a été rejeté.",
+      "entryTooLarge": "« {{file}} » contient une entrée trop volumineuse pour être restaurée.",
+      "newerVersion": "Cette sauvegarde a été créée avec NoteBerg {{version}}, plus récent que cette application. Mettez NoteBerg à jour pour la restaurer.",
+      "diskFull": "La sauvegarde n’a pas pu être écrite : {{message}}. Le fichier partiel a été supprimé.",
+      "cacheSpace": "Espace libre insuffisant pour créer la sauvegarde : environ {{needed}} nécessaires, {{available}} disponibles."
     }
   }
 }

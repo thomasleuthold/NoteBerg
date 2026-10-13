@@ -46,6 +46,7 @@ const INDEX_FIELDS = new Set([
   "deleted",
   "purged",
   "previousNotebookId",
+  "restoredAt", // set by a backup restore; cleared once the note is uploaded
   "encrypted",
   "background",
   "formatVersion",
@@ -725,7 +726,15 @@ export async function saveFile(blob, id = null) {
   // ~80MB of transient allocation per file, which is what OOM-killed the WebView
   // renderer mid-sync on low-end Android. getFile already reads back either
   // shape, so records written by older versions still load unchanged.
-  await db.put("files", { id: fileId, data: blob, type: mimeType, created: Date.now() });
+  // `size` is recorded so getFileStats can sum the store without touching
+  // the Blob itself.
+  await db.put("files", {
+    id: fileId,
+    data: blob,
+    type: mimeType,
+    size: blob.size,
+    created: Date.now(),
+  });
   return fileId;
 }
 
@@ -846,6 +855,9 @@ export async function updateNoteEtag(noteId, etag, expectedModified) {
   note.lastSyncedEtag = etag;
   if (expectedModified === undefined || note.modified === expectedModified) {
     note.synced = true;
+    // The restored version has reached the server; from here on it merges
+    // like any other edit.
+    delete note.restoredAt;
   }
   await db.put("notes", note);
 }
@@ -860,6 +872,29 @@ export async function getStorageStats() {
     noteCount: notes.length,
     quickNoteCount: notes.filter((n) => !n.notebookId).length,
   };
+}
+
+/**
+ * Size of the binary blob store: how many files it holds and their byte sum.
+ * Used for the backup size estimate; blob sizes are read off the stored Blob
+ * (or buffer, for records written before saveFile stored Blobs directly).
+ */
+export async function getFileStats() {
+  // One record at a time through a cursor. getAll() would materialise every
+  // record at once, and records written before saveFile stored Blobs directly
+  // hold an ArrayBuffer, so a large legacy corpus would land in the JS heap
+  // in full just to be measured. Newer records carry `size`, so their Blob is
+  // never touched.
+  let count = 0;
+  let bytes = 0;
+  let cursor = await db.transaction("files").store.openCursor();
+  while (cursor) {
+    const record = cursor.value;
+    bytes += record?.size ?? record?.data?.size ?? record?.data?.byteLength ?? 0;
+    count++;
+    cursor = await cursor.continue();
+  }
+  return { count, bytes };
 }
 
 export async function clearAllData() {

@@ -122,7 +122,8 @@
       "logging": "Registros",
       "dangerZone": "Zona de risco",
       "about": "Sobre",
-      "aiProvider": "Acesso de IA"
+      "aiProvider": "Acesso de IA",
+      "backup": "Cópia de segurança"
     },
     "appearance": {
       "theme": "Tema",
@@ -135,7 +136,9 @@
       "cardSizeDesc": "Defina o tamanho dos cartões de nota na visão geral",
       "cardSizeSmall": "Pequeno",
       "cardSizeMedium": "Médio",
-      "cardSizeLarge": "Grande"
+      "cardSizeLarge": "Grande",
+      "autoGainAggressiveness": "Reforço de ganho na gravação",
+      "autoGainAggressivenessDesc": "Padrão para novas gravações: o quanto reforçar a fala suave num ruído de fundo forte e constante (por exemplo, ao conduzir). Um valor mais alto também pode tornar o próprio ruído de fundo mais alto. Pode ser ajustado individualmente durante uma gravação em curso."
     },
     "language": {
       "label": "Idioma da interface",
@@ -699,7 +702,13 @@
       "permissionDenied": "O acesso à câmara foi negado. Permita o acesso à câmara para este site nas definições do navegador e tente novamente.",
       "noCamera": "Não foi encontrada nenhuma câmara neste dispositivo. Utilize «Inserir imagem» para adicionar uma foto existente.",
       "inUse": "A câmara está a ser utilizada por outra aplicação. Feche-a e tente novamente.",
-      "failed": "Não foi possível iniciar a câmara. Tente novamente ou utilize «Inserir imagem» para adicionar uma foto existente."
+      "failed": "Não foi possível iniciar a câmara. Tente novamente ou utilize «Inserir imagem» para adicionar uma foto existente.",
+      "modePhoto": "Foto",
+      "modeDocument": "Documento",
+      "documentDetected": "Documento detetado",
+      "searchingDocument": "Posicione o documento no enquadramento",
+      "flattenLighting": "Uniformizar iluminação",
+      "retake": "Tirar novamente"
     },
     "pdf": {
       "delete": "Excluir PDF",
@@ -783,7 +792,15 @@
     "deleteRecordingMessage": "Tem certeza de que deseja excluir esta gravação?",
     "errorGeneric": "Não foi possível iniciar a gravação.",
     "errorNoDevice": "Nenhum dispositivo de áudio encontrado. Conecte um microfone.",
-    "errorPermissionDenied": "Acesso ao microfone negado. Permita o acesso ao microfone nas configurações do sistema."
+    "errorPermissionDenied": "Acesso ao microfone negado. Permita o acesso ao microfone nas configurações do sistema.",
+    "stoppedInBackground": "A gravação foi interrompida e guardada porque a aplicação passou para segundo plano.",
+    "autoGainAggressiveness": "Reforço de ganho",
+    "autoGainAggressivenessDesc": "O quanto reforçar a fala suave num ruído de fundo forte e constante (por exemplo, ao conduzir). Um valor mais alto também pode tornar o próprio ruído de fundo mais alto. Aplica-se apenas a esta gravação.",
+    "saveFailedTitle": "Gravação não guardada",
+    "saveFailedMsg": "Não foi possível guardar a gravação na aplicação ({{reason}}). Guarde-a como arquivo para a manter. Mais tarde, pode voltar a adicioná-la à nota com «Importar arquivo de áudio». Caso contrário, será eliminada na próxima vez que a aplicação for iniciada.",
+    "saveFailedExport": "Guardar como arquivo…",
+    "exportDoneMsg": "A gravação foi guardada como {{path}}.",
+    "exportFailedMsg": "Não foi possível guardar a gravação como arquivo ({{reason}}). É mantida até ao próximo início da aplicação."
   },
   "noteNavigator": {
     "toggle": "Navegador",
@@ -836,6 +853,126 @@
     "markAsTask": {
       "title": "Tarefas",
       "body": "O texto que marcou é agora uma tarefa marcável. Marque-a aqui ou na sua lista de tarefas."
+    }
+  },
+  "backup": {
+    "freshness": {
+      "never": "Nunca foi feita uma cópia",
+      "last": "Última cópia: {{when}} ({{count}} notas)",
+      "encrypted": "protegida por palavra-passe",
+      "staleNudge": "As suas notas mudaram desde a última cópia. Faça uma cópia agora para as proteger.",
+      "neverNudge": "Nunca foi feita uma cópia deste dispositivo. Faça uma cópia agora para proteger as suas notas."
+    },
+    "estimate": "Cerca de {{notes}} notas e {{files}} ficheiros, ~{{size}}",
+    "backupTitle": "Cópia para ficheiro",
+    "backupDesc": "Guardar todos os cadernos, notas, imagens, PDFs e gravações num único ficheiro .zip.",
+    "backupBtn": "Cópia para ficheiro",
+    "backingUp": "A copiar…",
+    "encryptLabel": "Proteger o ficheiro com palavra-passe",
+    "encryptDesc": "As cópias são guardadas sem cifra. Defina uma palavra-passe para proteger o ficheiro.",
+    "restoreTitle": "Restaurar de ficheiro",
+    "restoreDesc": "Voltar a ler um ficheiro .zip de cópia neste dispositivo. As notas existentes nunca são substituídas no lugar: as notas substituídas vão para a reciclagem.",
+    "restoreBtn": "Restaurar de ficheiro",
+    "restoring": "A restaurar…",
+    "scopeNote": "As credenciais Nextcloud, a palavra-passe mestra e as definições da aplicação não fazem parte da cópia.",
+    "password": {
+      "title": "Definir palavra-passe da cópia",
+      "description": "Esta palavra-passe cifra o ficheiro de cópia. Vai precisar dela para restaurar.",
+      "passwordLabel": "Palavra-passe da cópia",
+      "passwordPlaceholder": "Introduza a palavra-passe da cópia",
+      "confirmLabel": "Confirmar palavra-passe",
+      "confirmPlaceholder": "Volte a introduzir a palavra-passe",
+      "warning": "<strong>⚠️ Se perder esta palavra-passe, a cópia não poderá ser recuperada.</strong> Não há reposição nem chave de recuperação.",
+      "independentNote": "Esta palavra-passe é independente da palavra-passe mestra. Nunca é guardada: introduz-a de cada vez.",
+      "confirmBtn": "Cifrar e continuar"
+    },
+    "progress": {
+      "backupTitle": "A fazer cópia",
+      "restoreTitle": "A restaurar",
+      "scanTitle": "A ler a cópia",
+      "preparing": "A preparar…",
+      "notebook": "Caderno {{current}} de {{total}}",
+      "note": "Nota {{current}} de {{total}}",
+      "writingMedia": "A escrever ficheiro: {{name}} ({{percent}}%)",
+      "readingMedia": "A ler ficheiro: {{name}} ({{percent}}%)",
+      "writingNotebook": "A escrever dados do caderno…",
+      "writingNote": "A escrever dados da nota…",
+      "readingNotebook": "A ler dados do caderno…",
+      "readingNote": "A ler dados da nota…",
+      "finalizing": "A finalizar o arquivo…",
+      "saving": "A guardar o ficheiro…",
+      "scanning": "A comparar com as notas deste dispositivo…",
+      "purging": "A apagar dados locais…",
+      "cancelling": "A cancelar…"
+    },
+    "done": {
+      "backupTitle": "Cópia concluída",
+      "backupMsg": "{{count}} notas foram escritas em<br><strong>{{path}}</strong><br>({{size}}).",
+      "backupStatus": "✓ Cópia guardada ({{size}})",
+      "backupCancelledStatus": "Cópia cancelada. Nenhum ficheiro ficou para trás.",
+      "backupFailedTitle": "Falha na cópia",
+      "backupFailedStatus": "✗ Falha na cópia: {{message}}",
+      "restoreTitle": "Restauro concluído",
+      "restoreMsg": "{{restored}} notas restauradas, {{skipped}} ignoradas, {{replaced}} substituídas.",
+      "restoreNotebooks": "{{created}} cadernos criados, {{restoredNotebooks}} recuperados da reciclagem, {{kept}} mantidos com o nome local.",
+      "restoreReplacedHint": "As notas locais substituídas foram movidas para a reciclagem com o sufixo “{{suffix}}”.",
+      "openRecycleBin": "Abrir a reciclagem",
+      "restoreCancelledTitle": "Restauro cancelado",
+      "restoreCancelledMsg": "{{restored}} de {{total}} notas foram restauradas. Execute o restauro novamente para terminar: as notas já restauradas serão ignoradas.",
+      "restoreStatus": "✓ Restauro concluído",
+      "restoreCancelledStatus": "Restauro cancelado após {{restored}} de {{total}} notas.",
+      "restoreFailedTitle": "Falha no restauro",
+      "restoreFailedStatus": "✗ Falha no restauro: {{message}}"
+    },
+    "restore": {
+      "confirmTitle": "Restaurar cópia",
+      "confirmEmpty": "Restaurar {{notes}} notas em {{notebooks}} cadernos neste dispositivo?",
+      "confirmNoConflicts": "Restaurar {{notes}} notas em {{notebooks}} cadernos neste dispositivo? Nada do existente será substituído.",
+      "confirmBtn": "Restaurar",
+      "fromApp": "Criada em {{date}} com o NoteBerg {{version}}.",
+      "modeTitle": "Como restaurar",
+      "conflictSummary": "{{count}} notas já existem neste dispositivo: {{localNewer}} são mais recentes aqui, {{backupNewer}} são mais recentes na cópia.",
+      "newSummary": "Serão adicionadas {{count}} notas.",
+      "modeMissing": "Restaurar apenas o que falta",
+      "modeMissingDesc": "As notas existentes ficam intactas. Só são adicionadas as notas ausentes neste dispositivo.",
+      "modePreferBackup": "Restaurar da cópia, manter as notas substituídas na reciclagem",
+      "modePreferBackupDesc": "A cópia vence onde é mais recente. As notas locais substituídas ficam na reciclagem como “… {{suffix}}”.",
+      "modeReplaceAll": "Substituir tudo",
+      "modeReplaceAllDesc": "Apaga primeiro TODOS os cadernos e notas locais e depois restaura a cópia tal como está.",
+      "review": "Rever {{count}}",
+      "reviewTitle": "Rever conflitos",
+      "reviewDesc": "Escolha que versão manter para cada nota. Uma nota local mantida não muda; uma nota local substituída vai para a reciclagem.",
+      "keepLocal": "Manter local",
+      "useBackup": "Usar cópia",
+      "allLocal": "Todas locais",
+      "allBackup": "Todas da cópia",
+      "localVersion": "Local: {{date}}",
+      "backupVersion": "Cópia: {{date}}",
+      "back": "Voltar",
+      "continue": "Continuar",
+      "replaceAllConfirmTitle": "Substituir tudo?",
+      "replaceAllConfirmMsg": "⚠️ Isto apaga TODOS os cadernos e notas locais, incluindo a reciclagem, antes de restaurar a cópia. Não pode ser anulado.",
+      "replaceAllConfirmBtn": "Apagar tudo e restaurar",
+      "replaceAllNcBlockedTitle": "O Nextcloud está ligado",
+      "replaceAllNcBlocked": "Substituir tudo pareceria uma eliminação em massa para o Nextcloud e poderia apagar as suas notas no servidor. Desligue-se primeiro: as suas notas ficam no servidor e pode voltar a ligar-se depois do restauro.",
+      "disconnectAndContinue": "Desligar e continuar",
+      "replacedSuffix": "(substituída)",
+      "passwordTitle": "Palavra-passe da cópia",
+      "passwordMessage": "Esta cópia está protegida por palavra-passe. Introduza-a para continuar.",
+      "passwordPlaceholder": "Introduza a palavra-passe da cópia",
+      "wrongPassword": "Palavra-passe incorreta. Tente novamente."
+    },
+    "errors": {
+      "noteOpen": "Feche primeiro a nota aberta e tente novamente.",
+      "syncing": "Há uma sincronização Nextcloud em curso. Aguarde que termine e tente novamente.",
+      "locked": "A aplicação está bloqueada. Desbloqueie-a com a sua palavra-passe mestra e tente novamente.",
+      "notABackup": "“{{file}}” não é uma cópia do NoteBerg. Esperava-se um ficheiro .zip com um manifest.json criado por “Cópia para ficheiro”.",
+      "corrupt": "“{{file}}” é uma cópia do NoteBerg, mas está danificada ou incompleta e não pode ser lida. Tente outra cópia do ficheiro.",
+      "unsafeEntry": "“{{file}}” contém uma entrada inválida e foi rejeitado.",
+      "entryTooLarge": "“{{file}}” contém uma entrada demasiado grande para restaurar.",
+      "newerVersion": "Esta cópia foi criada com o NoteBerg {{version}}, mais recente que esta aplicação. Atualize o NoteBerg para a restaurar.",
+      "diskFull": "Não foi possível escrever a cópia: {{message}}. O ficheiro parcial foi apagado.",
+      "cacheSpace": "Espaço livre insuficiente para criar a cópia: cerca de {{needed}} necessários, {{available}} disponíveis."
     }
   }
 }

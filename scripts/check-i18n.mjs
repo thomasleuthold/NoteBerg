@@ -64,6 +64,8 @@ const ALLOWED_IDENTICAL = {
   "modals.createNotebook.descLabel": ["fr"],
   "modals.noteProperties.deletedNo": ["fr"],
   "canvas.crop.perspective": ["fr"],
+  "canvas.camera.modePhoto": ["fr"],
+  "canvas.camera.modeDocument": ["fr"],
   "overview.sections.notes": ["fr"],
   "overview.tabs.notes": ["fr"],
   "overview.notebook.noteCount_one": ["fr"],
@@ -86,6 +88,8 @@ const ALLOWED_IDENTICAL = {
   // accent it ("Vídeo") and French takes an accent too, so those are
   // translated rather than listed here.
   "settings.modelPicker.caps.video": ["de", "it"],
+  // "Local" is the ordinary Spanish and Portuguese word as well.
+  "backup.restore.localVersion": ["es", "pt"],
 };
 
 const flatten = (obj, prefix = "") =>

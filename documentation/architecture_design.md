@@ -114,11 +114,21 @@ Full message-type list and per-message trigger/behavior breakdown: see **[note_e
 
 ## Nextcloud Sync
 
-Authentication uses Login Flow v2 (OAuth-like browser redirect); the resulting credentials (`serverUrl`, `loginName`, `appPassword`) are stored in the OS keychain, never in localStorage or IndexedDB.
+Authentication uses Login Flow v2 (OAuth-like browser redirect); the resulting credentials (`serverUrl`, `loginName`, `appPassword`, `userId`) are stored in the OS keychain, never in localStorage or IndexedDB.
+
+`loginName` is what the user typed and is only used for Basic auth. WebDAV paths (`/remote.php/dav/files/{userId}/`, `/remote.php/dav/uploads/{userId}/`) need Nextcloud's internal user ID, which differs on LDAP/AD backends (UUIDs) and for email/alias logins. `userId` is read from `GET /ocs/v2.php/cloud/user` at login; credentials stored before it existed are backfilled on first use. While the lookup fails, the login name is used (the pre-`userId` behavior) and the lookup is retried after 5 minutes. All URL building goes through `getDavAccount()` in `nextcloudSync.js`. The NC app build is unaffected: it takes the user ID from `OC.currentUser`.
 
 Sync itself is ETag-based (PROPFIND → compare ETags → download/upload deltas → update `lastSyncedEtag`), with per-field conflict merging, an ETag-oscillation workaround for a Nextcloud server-side versioning quirk, and `synced`/`version`/`deleted`/`purged` flags driving the whole state machine.
 
 Full step-by-step engine behavior, conflict resolution rules, concurrency limits, and known edge cases: see **[sync_architecture.md](sync_architecture.md)**.
+
+---
+
+## Backup & Restore
+
+Native builds only (Windows, Android): Settings → Backup writes the whole local corpus into one `.zip` (optionally WinZip AES-256) and restores it non-destructively. Rust (`src-tauri/src/backup.rs`) owns the archive, and JS streams one entry, or one chunk of an entry, per IPC call, so neither side ever holds the whole archive in memory. On Android, `BackupFilePlugin.kt` hands the archive to the Storage Access Framework through the app cache dir. Restored notes re-enter sync as fresh edits, with a `restoredAt` marker that makes the next sync upload them as-is instead of merging the server copy back in.
+
+Archive layout, conflict modes, the sync interaction, and security guards: see **[backup_restore_design.md](backup_restore_design.md)**.
 
 ---
 
@@ -206,28 +216,153 @@ Recognition text is used for full-text search across all notes, regardless of wh
 
 ## Audio Recording
 
+### Shared DSP chain
+
+Both native platforms apply the **same** chain, so a recording sounds the same
+wherever it was made. Previously Windows ran a port of the browser Web Audio
+chain (a downward compressor plus fixed +0.8 dB make-up, which could not raise a
+quiet input at all) and Android had no app-side gain stage whatsoever — the
+level came entirely from each device's VoIP HAL tuning, which is why one device
+recorded usably and another far too quietly.
+
+Chain, on mono samples:
+1. **Downmix to mono** — halves file size; voice memos gain nothing from stereo
+2. **High-pass, 80 Hz** (2nd-order Butterworth) — removes DC offset and rumble that would otherwise bias the level estimate
+3. **Slow AGC** — targets -20 dBFS RMS over a 400 ms window; gain range -6 to +30 dB, rising at most 3 dB/s and falling at most 30 dB/s; gain is interpolated per sample across 10 ms blocks (no zipper noise) and frozen when the block is within 6 dB of the tracked noise floor (so silence is not amplified into hiss)
+4. **Look-ahead peak limiter** — 5 ms delay line, -1 dBFS ceiling, ~80 ms release. Gain reduction is in place before the peak arrives, so nothing can exceed the ceiling and the old hard-clip-a-transient click is gone
+5. **Pause/resume fades** — 5 ms, so a splice is not a step discontinuity
+
+Implemented twice, deliberately: `src-tauri/src/audio_dsp.rs` (Rust, used by
+Windows) and `AudioDsp.kt` (Kotlin, used by Android). The design's first choice
+was one Rust implementation called over JNI; the Kotlin port is the documented
+fallback, taken because the JNI hook-up could not be verified without a device
+build. **The tuning constants must stay identical in both.** `AudioDspTest.kt`
+mirrors the Rust unit tests — same assertions, same thresholds — so a divergence
+fails the build rather than shipping as a level difference between platforms.
+
 ### Windows — Native WASAPI
 
-Uses the `cpal` crate for WASAPI capture and `hound` for WAV encoding. WAV format stores duration in the file header, enabling correct playback time display.
+`cpal` for WASAPI capture. The capture callback runs in a real-time context and
+does **only**: a paused check and a push into a lock-free SPSC ring buffer
+(`rtrb`, ~8 s of 48 kHz stereo). No allocation, no locks, no file I/O — these
+were previously all in the callback and were the cause of clicks and drop-outs,
+made invisible in logs because `cpal` swallows WASAPI's discontinuity flag.
 
-**DSP chain** (mirrors the browser Web Audio API chain):
-1. DynamicsCompressor: threshold -18 dB, knee 12 dB, ratio 3:1, attack 50 ms, release 300 ms
-2. Make-up gain: 1.1×
-3. Limiter: threshold -1 dB, ratio 20:1, attack 1 ms, release 100 ms
+A dedicated worker thread (`noteberg-audio`) drains the ring, runs the DSP, and
+feeds the encoder. It publishes the post-DSP peak for the meter, so the meter
+means the same thing as on Android. Shutdown is ordered so it cannot race: the
+stream is dropped first (no producer can remain), then `running` is cleared; the
+worker treats "ring empty and not running" as end-of-stream.
 
-The compressor uses a per-sample peak detector with attack/release smoothing and a soft-knee gain computer following the WebKit/Chromium DynamicsCompressor spec.
+**Under load.** Both the capture thread and the worker register with MMCSS
+("Pro Audio") for elevated scheduling, best-effort; neither cpal's thread nor a
+plain `std::thread` gets a boost on Windows otherwise. The ring was 1 s and
+proved too small: a parallel build starved the worker, the ring stayed full, and
+audio was dropped continuously. Frames the callback cannot push are counted in
+`lost_frames`, and the worker inserts the same span of silence into the encoded
+stream, so a drop costs that span of audio but never shortens the timeline. (The
+encoder's timestamps come from samples written; without the silence a lossy
+recording played back sped up — e.g. 51 s recorded, ~20 s of audio.) Overruns
+are also counted and logged at stop. A worker that dies on an encoder error sets
+`worker_failed`, reported through the 100 ms amplitude poll, so the UI does not
+go on "recording" into nothing.
+
+**Gain boost.** The AGC's noise-floor margin (the "within 6 dB of the noise
+floor → freeze gain" rule above) is scaled by an *aggressiveness* value, 0.0–1.0,
+taking the margin from 6 dB down to 1.5 dB; the -20 dBFS target is unchanged.
+The default for new recordings is per device (`audioSettings.js`, `localStorage`,
+Settings → Appearance), defaulting to 0.0 (the previous behaviour). The sound
+dialog's slider overrides it for the running recording only, through
+`native_audio_set_aggressiveness`. The worker reads it at each chunk boundary
+(~40 ms), so changes apply without restarting capture.
+
+**Encoding**: AAC-LC in MP4 (`.m4a`, mono, 96 kbps — the Media Foundation
+encoder's floor) via `IMFSinkWriter`. COM and `MFStartup` are owned by a guard
+living on the worker thread. Falls back to WAV where Media Foundation is
+unavailable (Windows N editions without the Media Feature Pack);
+`native_audio_stop` derives the media type from the extension the encoder chose.
+At ~43 MB/hour against ~691 MB/hour for the previous 48 kHz stereo WAV, a
+multi-hour recording is now routine.
 
 ### Android — Kotlin Plugin
 
-`AudioRecorderPlugin` uses Android `MediaRecorder` (MP4/AAC, 44.1 kHz). Communicated via Tauri mobile plugin commands: `start`, `stop`, `pause`, `resume`, `cancel`, `getAmplitude`.
+`AudioRecorderPlugin` prefers `AudioRecorderEngine`: `AudioRecord`
+(`VOICE_RECOGNITION` — flat, unprocessed capture, bypassing OEM AGC and noise
+gating; mono PCM16; 48 kHz with a 44.1 kHz fallback, since only 44.1 kHz capture
+is guaranteed on every device) → the shared DSP → `MediaCodec` AAC-LC 48 kbps →
+`MediaMuxer` MP4. Presentation timestamps derive from samples encoded, not the
+wall clock, so a pause splices seamlessly.
+
+The previous `MediaRecorder` path (VOICE_COMMUNICATION, 44.1 kHz, 32 kbps)
+remains as an **automatic fallback** when the engine fails to start, kept for at
+least one release because the engine is hand-driven and device-sensitive.
+
+Commands: `start` (returns `{ pipeline: "audioRecord" | "mediaRecorder", fallbackReason? }`, logged by `RecordingManager` so a fallback is visible without logcat), `stop`, `pause`, `resume`, `cancel`, `getAmplitude` (also reports `failed`), `setAggressiveness` (a no-op under the MediaRecorder fallback, which has no gain stage).
+
+**No foreground service, by design.** Recording is a while-you-take-notes
+feature: the recorder belongs to an open note, and unattended background capture
+is out of scope. A `microphone` foreground service would buy that at the cost of
+a Play Console declaration (form plus demo video) gating every release on Google
+Play review. Instead the app holds `FLAG_KEEP_SCREEN_ON` for the duration of a
+recording, which keeps the process visible so the Android 9+ background
+microphone restriction never engages. If the app is backgrounded anyway,
+`NoteCanvas._onVisibilityChange` stops and saves the recording and the sound
+dialog explains why. (`WAKE_LOCK` alone would not work: it keeps the CPU awake,
+while the mic restriction keys off process importance — a wake-locked background
+recording runs its full length and contains silence.)
+
+### Handing the file to JS
+
+`native_audio_stop` returns a path; JS then reads it in 4 MB binary chunks
+(`native_audio_file_size` → `native_audio_read_chunk` → `native_audio_delete`).
+`native_audio_read_chunk` returns `tauri::ipc::Response`, which `invoke`
+resolves as an ArrayBuffer — no JSON body, no base64, no `atob` on the main
+thread. The previous single base64 command peaked at 5-6x the file size in
+transient memory and threw "Invalid string length" outright past ~403 MB
+(V8's 2^29-character cap, ~35 min of stereo WAV).
+
+The delete is separate from the read and fires only once the blob is stored, so
+a storage failure does not destroy the temp file. When the read or the store
+fails, `RecordingManager` calls `onSaveFailed`, which by default runs
+`recordingRecovery.js`. It tells the user that the recording was not saved and
+offers "Save as file…": `native_audio_export` copies the temp file to a
+destination the user picks (an `rfd` save dialog on desktop; SAF
+`createDocument` + `copyToUri` through `BackupFilePlugin` on Android), and only
+then is the temp file deleted. The user can add the file to the note again with
+"Import audio file". The dialog runs after the stop has settled, so it does not
+hold up a note close. If the user declines, the temp file is left alone until
+the next startup sweep. At startup, `sweep_orphaned_recordings()`
+deletes recording temp files left by a run killed mid-write (an unfinalized MP4
+has no `moov` index and is unplayable anyway). It matches `noteberg_rec_*` in
+the shared OS temp dir, and the generic Android `rec_*` prefix only in the
+app-private cache dir.
+
+### Closing a note mid-recording
+
+`RecordingManager.destroy()` stops and **saves** rather than cancelling, and
+returns a promise that `NoteCanvas.destroy()` includes in the work it awaits, so
+the note's save and sync see the new recording. Navigating away mid-sentence
+previously discarded the audio silently.
 
 ### Browser (non-native, non-Nextcloud)
 
-`getUserMedia` with `echoCancellation`, `noiseSuppression`, `autoGainControl` constraints → Web Audio API processing chain → `MediaRecorder`. The same compressor/limiter parameters as the native Windows chain are applied via the Web Audio API.
+There is none. The `getUserMedia` + Web Audio + `MediaRecorder` path was removed:
+`RecordingManager` takes the native path whenever `window.__TAURI_INTERNALS__`
+exists — every Windows and Android build — and the only build without Tauri is
+Nextcloud, which never renders the "New recording" button.
 
 ### Nextcloud — Import Only
 
-The Nextcloud build has **no recording code path at all**, browser-based or otherwise. `SoundDialog.js` gates the "New recording" button behind a native-only check (`window.__TAURI_INTERNALS__` present) — in the Nextcloud build that button is never rendered, so the `getUserMedia`/Web Audio chain above is never invoked there. Only importing existing audio files and playback are available in the NC build's sound dialog.
+The Nextcloud build has **no recording code path at all**. `SoundDialog.js` gates the "New recording" button behind a native-only check (`window.__TAURI_INTERNALS__` present), so in the Nextcloud build that button is never rendered. Only importing existing audio files and playback are available in the NC build's sound dialog — including playback of the `.m4a` files the native builds now produce.
+
+### Backgrounding
+
+On Android, `NoteCanvas._onVisibilityChange` calls
+`RecordingManager.stopRecordingForBackground()` when the page becomes hidden,
+and the sound dialog shows a notice (`stoppedInBackground`). It is Android-only
+on purpose: on Windows the page is also hidden when the window is minimized or
+fully covered (e.g. by slides during a lecture), while WASAPI capture carries on
+unaffected, so stopping there would end a recording the user is still making.
 
 ### Recording Storage
 
@@ -261,7 +396,7 @@ Overview cards are **not** backed by a stored thumbnail blob. `renderNoteSnapsho
 
 ### Credentials
 
-Nextcloud credentials (`serverUrl`, `loginName`, `appPassword`) are stored exclusively in the native OS keychain:
+Nextcloud credentials (`serverUrl`, `loginName`, `appPassword`, `userId`) are stored exclusively in the native OS keychain:
 - **Windows:** Windows Credential Manager (`keyring` crate)
 - **macOS:** Keychain Services
 - **Linux:** Secret Service daemon

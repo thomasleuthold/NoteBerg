@@ -255,6 +255,8 @@ describe("CanvasRenderer", () => {
       // Midpoint smoothing ends the committed curve halfway between the last
       // two points. If the remainder is only drawn once the stroke finishes,
       // the ink permanently trails the stylus by half a sample.
+      const overlayCtx = { ...mockCtx, lineTo: vi.fn() };
+      renderer.overlayCtx = overlayCtx;
       const stroke = {
         id: "s-tail",
         x: [0, 10, 20],
@@ -266,7 +268,7 @@ describe("CanvasRenderer", () => {
 
       renderer.drawDirectStroke(stroke); // still drawing — isFinished omitted
 
-      expect(mockCtx.lineTo).toHaveBeenCalledWith(20, 0);
+      expect(overlayCtx.lineTo).toHaveBeenCalledWith(20, 0);
     });
 
     it("re-draws the tail from the same geometry on the next move instead of extending it", () => {
@@ -294,6 +296,110 @@ describe("CanvasRenderer", () => {
       renderer.drawDirectStroke(stroke);
 
       expect(mockCtx.moveTo).toHaveBeenCalledWith(15, 0);
+    });
+  });
+
+  // The provisional tail is a straight line to the newest sample. The next
+  // curve bends toward the following sample and cuts the corner at that point,
+  // so it does NOT cover the old tail. Painted onto the buffer, every tail was
+  // left behind as a tangent spike — visible on fast strokes (sparse samples)
+  // until a zoom or reload repainted the buffer from the stored points.
+  describe("provisional tail never persists on the buffer", () => {
+    let overlayCtx;
+
+    function cornerStroke() {
+      // Right then sharply up: the tail to (20, 0) points along +x, the curve
+      // that replaces it turns toward (20, -10).
+      return {
+        id: "s-corner",
+        x: [0, 10, 20],
+        y: [0, 0, 0],
+        pressure: [0.5, 0.5, 0.5],
+        colorIndex: 0,
+        width: 2,
+      };
+    }
+
+    function addPoint(stroke, x, y) {
+      stroke.x.push(x);
+      stroke.y.push(y);
+      stroke.pressure.push(0.5);
+    }
+
+    beforeEach(() => {
+      renderer.resize(800, 600);
+      renderer.render(0, 600);
+      overlayCtx = {
+        ...mockCtx,
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        stroke: vi.fn(),
+        clearRect: vi.fn(),
+      };
+      renderer.overlayCtx = overlayCtx;
+      mockCtx.lineTo.mockClear();
+    });
+
+    it("does not paint the in-progress tail onto the buffer", () => {
+      renderer.drawDirectStroke(cornerStroke());
+
+      expect(mockCtx.lineTo).not.toHaveBeenCalledWith(20, 0);
+      expect(overlayCtx.lineTo).toHaveBeenCalledWith(20, 0);
+    });
+
+    it("removes the previous tail before drawing the next one", () => {
+      const stroke = cornerStroke();
+      renderer.drawDirectStroke(stroke);
+      expect(overlayCtx.clearRect).not.toHaveBeenCalled();
+
+      addPoint(stroke, 20, -10);
+      renderer.drawDirectStroke(stroke);
+
+      // The old tail's rect is cleared, and it covers the old tail's tip.
+      expect(overlayCtx.clearRect).toHaveBeenCalledTimes(1);
+      const [x, y, w, h] = overlayCtx.clearRect.mock.calls[0];
+      const tipX = renderer._getCenteringOffset() + 20 * renderer.zoomScale;
+      const tipY = (0 - renderer.contentScrollTop) * renderer.zoomScale;
+      expect(tipX).toBeGreaterThanOrEqual(x);
+      expect(tipX).toBeLessThanOrEqual(x + w);
+      expect(tipY).toBeGreaterThanOrEqual(y);
+      expect(tipY).toBeLessThanOrEqual(y + h);
+      expect(overlayCtx.lineTo).toHaveBeenLastCalledWith(20, -10);
+    });
+
+    it("commits the final tail to the buffer and clears it from the overlay", () => {
+      const stroke = cornerStroke();
+      renderer.drawDirectStroke(stroke);
+
+      renderer.drawDirectStroke(stroke, true);
+
+      expect(mockCtx.lineTo).toHaveBeenCalledWith(20, 0);
+      expect(overlayCtx.clearRect).toHaveBeenCalled();
+      expect(renderer._liveTail).toBeNull();
+    });
+
+    it("drops the tail when the stroke is cancelled", () => {
+      // Scratch-out, pinch and media selection abandon the stroke without the
+      // isFinished call and then forceRedraw(); the tail must not linger.
+      renderer.drawDirectStroke(cornerStroke());
+
+      renderer.forceRedraw();
+
+      expect(overlayCtx.clearRect).toHaveBeenCalled();
+      overlayCtx.lineTo.mockClear();
+      renderer.render(0, 600);
+      expect(overlayCtx.lineTo).not.toHaveBeenCalled();
+    });
+
+    it("moves the tail with a scroll while the stroke is in progress", () => {
+      const stroke = cornerStroke();
+      renderer.drawDirectStroke(stroke);
+      overlayCtx.translate = vi.fn();
+
+      renderer.render(50, 600, 0, stroke);
+
+      expect(overlayCtx.translate).toHaveBeenCalledWith(-0, -50 / renderer.zoomScale);
+      expect(overlayCtx.lineTo).toHaveBeenLastCalledWith(20, 0);
     });
   });
 
@@ -773,6 +879,25 @@ describe("CanvasRenderer", () => {
         y: renderer.canvas.height / Number.parseFloat(renderer.canvas.style.height),
       };
     }
+
+    it("shows exactly the page width when the whole note fits in the buffer", () => {
+      // Quantizing rounds the buffer past the page's right edge by a
+      // zoom-dependent amount. Visible, that strip is page-coloured canvas with
+      // no grid, appearing and disappearing as the user zooms.
+      renderer.resize(2000, 800);
+      renderer.setContentSize(1200, 5000);
+      for (const zoom of [0.5, 0.667, 0.853, 1, 1.3]) {
+        renderer.zoomScale = zoom;
+        renderer._repositionBuffer(0, false, 0);
+
+        const cssWidth = Number.parseFloat(renderer.canvas.style.width);
+        const clip = renderer.canvas.style.clipPath;
+        const insetRight = clip && clip !== "none" ? Number.parseFloat(clip.split(" ")[1]) : 0;
+        const visibleWidth = cssWidth * (1 - insetRight / 100);
+
+        expect(visibleWidth).toBeCloseTo(1200 * zoom, 6);
+      }
+    });
 
     it("keeps the horizontal and vertical bitmap scales equal across zoom levels", () => {
       // 1.3 and 1.7 quantize to distinct half-steps and give bitmap dimensions

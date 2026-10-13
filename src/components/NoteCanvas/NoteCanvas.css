@@ -481,9 +481,15 @@
   transform: scale(0.95);
 }
 
-.note-canvas-toolbar__preset-btn--active {
+/* Selected preset: highlight via a ring around the button (border + outer
+   glow) so the color/size dot in the center stays fully visible.
+   Uses :is(body, #app) to match the specificity of the base rule. */
+:is(body, #app) .note-canvas-toolbar__preset-btn--active {
   border-color: var(--color-primary, #3b82f6);
   background-color: #eef2ff;
+  box-shadow:
+    0 0 0 2px var(--color-primary, #3b82f6),
+    0 2px 6px rgba(59, 130, 246, 0.45);
 }
 
 :is(body, #app) .note-canvas-toolbar__save-preset-btn {
@@ -716,7 +722,7 @@
   color: var(--text-primary);
 }
 
-.note-canvas-toolbar__eraser-mode-btn--active {
+:is(body, #app) .note-canvas-toolbar__eraser-mode-btn--active {
   background-color: var(--bg-tertiary);
   color: var(--text-primary);
   border-color: var(--color-primary, #3b82f6);
@@ -908,6 +914,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  font-family: var(
+    --font-family,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif
+  );
+  padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0)
+    env(safe-area-inset-left, 0);
+  box-sizing: border-box;
 }
 
 .crop-container {
@@ -919,12 +936,17 @@
 .crop-image-wrapper {
   position: relative;
   display: inline-block;
+  background-color: #ffffff;
+  background-image: repeating-conic-gradient(#e5e5e5 0% 25%, #ffffff 0% 50%);
+  background-size: 16px 16px;
 }
 
 .crop-image {
   display: block;
-  max-width: 90vw;
-  max-height: 70vh;
+  max-width: min(90vw, 1000px);
+  max-height: min(70vh, calc(100vh - 150px));
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .crop-area {
@@ -942,6 +964,7 @@
   background: white;
   border: 1px solid #3b82f6;
   touch-action: none;
+  box-sizing: border-box;
 }
 
 .crop-nw {
@@ -986,6 +1009,10 @@
   pointer-events: auto;
   touch-action: none;
   z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 .perspective-line {
@@ -1005,16 +1032,17 @@
 
 .crop-controls {
   position: absolute;
-  bottom: -60px;
+  top: calc(100% + 14px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   gap: 10px;
+  z-index: 20;
 }
 
 .crop-mode-toggle {
   position: absolute;
-  top: -50px;
+  bottom: calc(100% + 12px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -1022,29 +1050,65 @@
   background: white;
   padding: 5px;
   border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  z-index: 20;
 }
 
-.crop-btn,
-.crop-mode-btn {
+:is(body, #app) .crop-btn,
+:is(body, #app) .crop-mode-btn {
   padding: 8px 16px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   font-weight: 600;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: normal;
+  margin: 0;
+  min-height: auto;
+  height: auto;
+  box-sizing: border-box;
+  text-transform: none;
+  box-shadow: none;
 }
 
-.crop-apply-btn,
-.crop-mode-btn.active {
+:is(body, #app) .crop-apply-btn,
+:is(body, #app) .crop-mode-btn.active {
   background: #3b82f6;
   color: white;
 }
-.crop-cancel-btn,
-.crop-mode-btn {
+
+:is(body, #app) .crop-cancel-btn,
+:is(body, #app) .crop-mode-btn {
   background: #e5e7eb;
   color: #374151;
 }
 
-.crop-normalize-label {
+:is(body, #app) .crop-mode-perspective {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.crop-mode-perspective.is-detecting::after {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: crop-detecting-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes crop-detecting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+:is(body, #app) .crop-normalize-label {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1052,10 +1116,14 @@
   background: #e5e7eb;
   border-radius: 4px;
   font-weight: 600;
+  font-size: 14px;
+  font-family: inherit;
   color: #374151;
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 .crop-normalize-checkbox {
@@ -1063,6 +1131,62 @@
   height: 16px;
   cursor: pointer;
   accent-color: #3b82f6;
+  margin: 0;
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+  .crop-handle {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border-width: 2px;
+  }
+
+  .crop-nw {
+    top: -12px;
+    left: -12px;
+  }
+  .crop-ne {
+    top: -12px;
+    right: -12px;
+  }
+  .crop-sw {
+    bottom: -12px;
+    left: -12px;
+  }
+  .crop-se {
+    bottom: -12px;
+    right: -12px;
+  }
+
+  .crop-handle::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+
+  .perspective-corner {
+    width: 36px;
+    height: 36px;
+  }
+
+  .perspective-corner::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+
+  .corner-label {
+    font-size: 13px;
+  }
 }
 
 /* Recycle Bin Styles */
@@ -1261,9 +1385,14 @@
   background-color: #444;
 }
 
-.note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__preset-btn--active {
+:is(body, #app)
+  .note-canvas-toolbar__pen-dialog.theme-dark
+  .note-canvas-toolbar__preset-btn--active {
   background-color: #555;
-  border-color: #999;
+  border-color: var(--color-primary, #3b82f6);
+  box-shadow:
+    0 0 0 2px var(--color-primary, #3b82f6),
+    0 2px 6px rgba(59, 130, 246, 0.5);
 }
 
 :is(body, #app) .note-canvas-toolbar__pen-dialog.theme-dark .note-canvas-toolbar__save-preset-btn {
@@ -1370,6 +1499,17 @@
   overflow: hidden;
 }
 
+.sound-dialog__notice {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-warning-bg, rgba(255, 184, 0, 0.12));
+  color: var(--color-text, inherit);
+  border: 1px solid var(--color-warning-border, rgba(255, 184, 0, 0.35));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .sound-dialog__header {
   display: flex;
   align-items: center;
@@ -1444,6 +1584,26 @@
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
   min-width: 36px;
+}
+
+.sound-dialog__gain-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 10px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.sound-dialog__gain-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.sound-dialog__gain-slider {
+  flex: 1;
+  min-width: 0;
 }
 
 :is(body, #app) .sound-dialog__new-btn {

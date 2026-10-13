@@ -122,7 +122,8 @@
       "logging": "Protokollierung",
       "dangerZone": "Gefahrenzone",
       "about": "Über",
-      "aiProvider": "KI-Zugang"
+      "aiProvider": "KI-Zugang",
+      "backup": "Sicherung"
     },
     "appearance": {
       "theme": "Design",
@@ -135,7 +136,9 @@
       "cardSizeDesc": "Größe der Notizkarten in der Übersicht festlegen",
       "cardSizeSmall": "Klein",
       "cardSizeMedium": "Mittel",
-      "cardSizeLarge": "Groß"
+      "cardSizeLarge": "Groß",
+      "autoGainAggressiveness": "Aufnahme-Verstärkung",
+      "autoGainAggressivenessDesc": "Standard für neue Aufnahmen: Wie stark leise Sprache bei lautem, gleichmäßigem Hintergrundgeräusch (z. B. beim Autofahren) verstärkt wird. Höhere Werte können auch das Hintergrundgeräusch selbst lauter machen. Kann während einer laufenden Aufnahme individuell angepasst werden."
     },
     "language": {
       "label": "Sprache",
@@ -699,7 +702,13 @@
       "permissionDenied": "Der Kamerazugriff wurde verweigert. Bitte erlauben Sie den Kamerazugriff für diese Website in Ihren Browsereinstellungen und versuchen Sie es erneut.",
       "noCamera": "Auf diesem Gerät wurde keine Kamera gefunden. Bitte verwenden Sie „Bild einfügen\", um ein vorhandenes Foto hinzuzufügen.",
       "inUse": "Die Kamera wird derzeit von einer anderen Anwendung verwendet. Bitte schließen Sie diese und versuchen Sie es erneut.",
-      "failed": "Die Kamera konnte nicht gestartet werden. Bitte versuchen Sie es erneut oder verwenden Sie „Bild einfügen\", um ein vorhandenes Foto hinzuzufügen."
+      "failed": "Die Kamera konnte nicht gestartet werden. Bitte versuchen Sie es erneut oder verwenden Sie „Bild einfügen\", um ein vorhandenes Foto hinzuzufügen.",
+      "modePhoto": "Foto",
+      "modeDocument": "Dokument",
+      "documentDetected": "Dokument erkannt",
+      "searchingDocument": "Dokument im Rahmen positionieren",
+      "flattenLighting": "Beleuchtung glätten",
+      "retake": "Erneut aufnehmen"
     },
     "pdf": {
       "delete": "PDF löschen",
@@ -783,7 +792,15 @@
     "deleteRecordingMessage": "Möchtest du diese Aufnahme wirklich löschen?",
     "errorGeneric": "Aufnahme konnte nicht gestartet werden.",
     "errorNoDevice": "Kein Audiogerät gefunden. Bitte schließe ein Mikrofon an.",
-    "errorPermissionDenied": "Zugriff auf das Mikrofon verweigert. Bitte erlaube den Mikrofonzugriff in den Systemeinstellungen."
+    "errorPermissionDenied": "Zugriff auf das Mikrofon verweigert. Bitte erlaube den Mikrofonzugriff in den Systemeinstellungen.",
+    "stoppedInBackground": "Aufnahme wurde beendet und gespeichert, weil die App in den Hintergrund gewechselt ist.",
+    "autoGainAggressiveness": "Verstärkung",
+    "autoGainAggressivenessDesc": "Wie stark leise Sprache bei lautem, gleichmäßigem Hintergrundgeräusch (z. B. beim Autofahren) verstärkt werden soll. Höhere Werte können auch das Hintergrundgeräusch selbst lauter machen. Gilt nur für diese Aufnahme.",
+    "saveFailedTitle": "Aufnahme nicht gespeichert",
+    "saveFailedMsg": "Die Aufnahme konnte nicht in der App gespeichert werden ({{reason}}). Speichere sie als Datei, um sie zu behalten. Mit „Audiodatei importieren“ kannst du sie später wieder zur Notiz hinzufügen. Andernfalls wird sie beim nächsten Start der App gelöscht.",
+    "saveFailedExport": "Als Datei speichern…",
+    "exportDoneMsg": "Die Aufnahme wurde als {{path}} gespeichert.",
+    "exportFailedMsg": "Die Aufnahme konnte nicht als Datei gespeichert werden ({{reason}}). Sie bleibt bis zum nächsten Start der App erhalten."
   },
   "noteNavigator": {
     "toggle": "Navigator",
@@ -836,6 +853,126 @@
     "markAsTask": {
       "title": "Aufgaben",
       "body": "Der markierte Text ist jetzt eine abhakbare Aufgabe. Hier oder in der Aufgabenliste abhaken."
+    }
+  },
+  "backup": {
+    "freshness": {
+      "never": "Noch nie gesichert",
+      "last": "Letzte Sicherung: {{when}} ({{count}} Notizen)",
+      "encrypted": "passwortgeschützt",
+      "staleNudge": "Deine Notizen haben sich seit der letzten Sicherung geändert. Sichere sie jetzt.",
+      "neverNudge": "Dieses Gerät wurde noch nie gesichert. Sichere deine Notizen jetzt."
+    },
+    "estimate": "Etwa {{notes}} Notizen und {{files}} Dateien, ~{{size}}",
+    "backupTitle": "In Datei sichern",
+    "backupDesc": "Alle Notizbücher, Notizen, Bilder, PDFs und Aufnahmen in eine einzige .zip-Datei speichern.",
+    "backupBtn": "In Datei sichern",
+    "backingUp": "Sichere…",
+    "encryptLabel": "Datei mit Passwort schützen",
+    "encryptDesc": "Sicherungen werden unverschlüsselt gespeichert. Lege ein Passwort fest, um die Datei zu schützen.",
+    "restoreTitle": "Aus Datei wiederherstellen",
+    "restoreDesc": "Eine Sicherungs-.zip-Datei auf dieses Gerät zurücklesen. Vorhandene Notizen werden nie direkt überschrieben: ersetzte Notizen landen im Papierkorb.",
+    "restoreBtn": "Aus Datei wiederherstellen",
+    "restoring": "Stelle wieder her…",
+    "scopeNote": "Nextcloud-Zugangsdaten, das Master-Passwort und App-Einstellungen sind nicht Teil einer Sicherung.",
+    "password": {
+      "title": "Sicherungspasswort festlegen",
+      "description": "Dieses Passwort verschlüsselt die Sicherungsdatei. Du brauchst es zum Wiederherstellen.",
+      "passwordLabel": "Sicherungspasswort",
+      "passwordPlaceholder": "Sicherungspasswort eingeben",
+      "confirmLabel": "Passwort bestätigen",
+      "confirmPlaceholder": "Sicherungspasswort erneut eingeben",
+      "warning": "<strong>⚠️ Wenn du dieses Passwort verlierst, kann die Sicherung nicht wiederhergestellt werden.</strong> Es gibt kein Zurücksetzen und keinen Wiederherstellungsschlüssel.",
+      "independentNote": "Dieses Passwort ist unabhängig vom Master-Passwort. Es wird nirgends gespeichert – du gibst es jedes Mal ein.",
+      "confirmBtn": "Verschlüsseln und fortfahren"
+    },
+    "progress": {
+      "backupTitle": "Sicherung läuft",
+      "restoreTitle": "Wiederherstellung läuft",
+      "scanTitle": "Sicherung wird gelesen",
+      "preparing": "Vorbereitung…",
+      "notebook": "Notizbuch {{current}} von {{total}}",
+      "note": "Notiz {{current}} von {{total}}",
+      "writingMedia": "Schreibe Medien: {{name}} ({{percent}} %)",
+      "readingMedia": "Lese Medien: {{name}} ({{percent}} %)",
+      "writingNotebook": "Schreibe Notizbuchdaten…",
+      "writingNote": "Schreibe Notizdaten…",
+      "readingNotebook": "Lese Notizbuchdaten…",
+      "readingNote": "Lese Notizdaten…",
+      "finalizing": "Archiv wird abgeschlossen…",
+      "saving": "Datei wird gespeichert…",
+      "scanning": "Vergleiche mit den Notizen auf diesem Gerät…",
+      "purging": "Lokale Daten werden gelöscht…",
+      "cancelling": "Wird abgebrochen…"
+    },
+    "done": {
+      "backupTitle": "Sicherung abgeschlossen",
+      "backupMsg": "{{count}} Notizen wurden geschrieben nach<br><strong>{{path}}</strong><br>({{size}}).",
+      "backupStatus": "✓ Sicherung gespeichert ({{size}})",
+      "backupCancelledStatus": "Sicherung abgebrochen. Es wurde keine Datei zurückgelassen.",
+      "backupFailedTitle": "Sicherung fehlgeschlagen",
+      "backupFailedStatus": "✗ Sicherung fehlgeschlagen: {{message}}",
+      "restoreTitle": "Wiederherstellung abgeschlossen",
+      "restoreMsg": "{{restored}} Notizen wiederhergestellt, {{skipped}} übersprungen, {{replaced}} ersetzt.",
+      "restoreNotebooks": "{{created}} Notizbücher erstellt, {{restoredNotebooks}} aus dem Papierkorb geholt, {{kept}} mit ihrem lokalen Namen behalten.",
+      "restoreReplacedHint": "Ersetzte lokale Notizen wurden mit dem Zusatz „{{suffix}}“ in den Papierkorb verschoben.",
+      "openRecycleBin": "Papierkorb öffnen",
+      "restoreCancelledTitle": "Wiederherstellung abgebrochen",
+      "restoreCancelledMsg": "{{restored}} von {{total}} Notizen wurden wiederhergestellt. Starte die Wiederherstellung erneut, um fortzufahren – bereits wiederhergestellte Notizen werden übersprungen.",
+      "restoreStatus": "✓ Wiederherstellung abgeschlossen",
+      "restoreCancelledStatus": "Wiederherstellung nach {{restored}} von {{total}} Notizen abgebrochen.",
+      "restoreFailedTitle": "Wiederherstellung fehlgeschlagen",
+      "restoreFailedStatus": "✗ Wiederherstellung fehlgeschlagen: {{message}}"
+    },
+    "restore": {
+      "confirmTitle": "Sicherung wiederherstellen",
+      "confirmEmpty": "{{notes}} Notizen in {{notebooks}} Notizbüchern auf diesem Gerät wiederherstellen?",
+      "confirmNoConflicts": "{{notes}} Notizen in {{notebooks}} Notizbüchern auf diesem Gerät wiederherstellen? Nichts Vorhandenes wird ersetzt.",
+      "confirmBtn": "Wiederherstellen",
+      "fromApp": "Erstellt am {{date}} mit NoteBerg {{version}}.",
+      "modeTitle": "Wie wiederherstellen",
+      "conflictSummary": "{{count}} Notizen existieren bereits auf diesem Gerät: {{localNewer}} sind hier neuer, {{backupNewer}} sind in der Sicherung neuer.",
+      "newSummary": "{{count}} Notizen werden hinzugefügt.",
+      "modeMissing": "Nur fehlende Einträge wiederherstellen",
+      "modeMissingDesc": "Vorhandene Notizen bleiben unberührt. Nur Notizen, die auf diesem Gerät fehlen, werden hinzugefügt.",
+      "modePreferBackup": "Aus Sicherung wiederherstellen, ersetzte Notizen im Papierkorb behalten",
+      "modePreferBackupDesc": "Die Sicherung gewinnt, wo sie neuer ist. Ersetzte lokale Notizen bleiben als „… {{suffix}}“ im Papierkorb.",
+      "modeReplaceAll": "Alles ersetzen",
+      "modeReplaceAllDesc": "Löscht zuerst ALLE lokalen Notizbücher und Notizen und stellt dann die Sicherung exakt wieder her.",
+      "review": "{{count}} prüfen",
+      "reviewTitle": "Konflikte prüfen",
+      "reviewDesc": "Wähle für jede Notiz, welche Version behalten wird. Eine behaltene lokale Notiz bleibt unverändert; eine ersetzte lokale Notiz landet im Papierkorb.",
+      "keepLocal": "Lokal behalten",
+      "useBackup": "Sicherung nehmen",
+      "allLocal": "Alle lokal",
+      "allBackup": "Alle aus Sicherung",
+      "localVersion": "Lokal: {{date}}",
+      "backupVersion": "Sicherung: {{date}}",
+      "back": "Zurück",
+      "continue": "Weiter",
+      "replaceAllConfirmTitle": "Alles ersetzen?",
+      "replaceAllConfirmMsg": "⚠️ Dies löscht ALLE lokalen Notizbücher und Notizen einschließlich Papierkorb, bevor die Sicherung wiederhergestellt wird. Das kann nicht rückgängig gemacht werden.",
+      "replaceAllConfirmBtn": "Alles löschen und wiederherstellen",
+      "replaceAllNcBlockedTitle": "Nextcloud ist verbunden",
+      "replaceAllNcBlocked": "Alles zu ersetzen sähe für Nextcloud wie eine Massenlöschung aus und könnte deine Notizen auf dem Server löschen. Trenne zuerst die Verbindung – deine Notizen bleiben auf dem Server, und du kannst dich nach der Wiederherstellung wieder verbinden.",
+      "disconnectAndContinue": "Trennen und fortfahren",
+      "replacedSuffix": "(ersetzt)",
+      "passwordTitle": "Sicherungspasswort",
+      "passwordMessage": "Diese Sicherung ist passwortgeschützt. Gib das Passwort ein, um fortzufahren.",
+      "passwordPlaceholder": "Sicherungspasswort eingeben",
+      "wrongPassword": "Falsches Passwort. Bitte erneut versuchen."
+    },
+    "errors": {
+      "noteOpen": "Schließe zuerst die geöffnete Notiz und versuche es dann erneut.",
+      "syncing": "Eine Nextcloud-Synchronisation läuft. Warte, bis sie fertig ist, und versuche es dann erneut.",
+      "locked": "Die App ist gesperrt. Entsperre sie mit deinem Master-Passwort und versuche es dann erneut.",
+      "notABackup": "„{{file}}“ ist keine NoteBerg-Sicherung. Erwartet wird eine .zip-Datei mit einer manifest.json, erstellt über „In Datei sichern“.",
+      "corrupt": "„{{file}}“ ist eine NoteBerg-Sicherung, aber beschädigt oder unvollständig und kann nicht gelesen werden. Versuche eine andere Kopie der Datei.",
+      "unsafeEntry": "„{{file}}“ enthält einen ungültigen Eintrag und wurde abgelehnt.",
+      "entryTooLarge": "„{{file}}“ enthält einen Eintrag, der zu groß für die Wiederherstellung ist.",
+      "newerVersion": "Diese Sicherung wurde mit NoteBerg {{version}} erstellt, das neuer ist als diese App. Aktualisiere NoteBerg, um sie wiederherzustellen.",
+      "diskFull": "Die Sicherung konnte nicht geschrieben werden: {{message}}. Die unvollständige Datei wurde gelöscht.",
+      "cacheSpace": "Nicht genug freier Speicher für die Sicherung: etwa {{needed}} benötigt, {{available}} verfügbar."
     }
   }
 }

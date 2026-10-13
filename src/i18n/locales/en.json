@@ -122,7 +122,8 @@
       "logging": "Logging",
       "dangerZone": "Danger Zone",
       "about": "About",
-      "aiProvider": "AI Access"
+      "aiProvider": "AI Access",
+      "backup": "Backup"
     },
     "appearance": {
       "theme": "Theme",
@@ -135,7 +136,9 @@
       "cardSizeDesc": "Set the size of note cards in the overview",
       "cardSizeSmall": "Small",
       "cardSizeMedium": "Medium",
-      "cardSizeLarge": "Large"
+      "cardSizeLarge": "Large",
+      "autoGainAggressiveness": "Recording gain boost",
+      "autoGainAggressivenessDesc": "Default for new recordings: how hard to boost quiet speech in loud, steady background noise (e.g. driving). Higher can also make the background noise itself louder. Can be adjusted per recording while it is running."
     },
     "language": {
       "label": "Interface Language",
@@ -699,7 +702,13 @@
       "permissionDenied": "Camera access was denied. Please allow camera access for this site in your browser settings and try again.",
       "noCamera": "No camera was found on this device. Please use \"Insert Image\" to add an existing photo instead.",
       "inUse": "The camera is currently in use by another application. Please close it and try again.",
-      "failed": "The camera could not be started. Please try again, or use \"Insert Image\" to add an existing photo."
+      "failed": "The camera could not be started. Please try again, or use \"Insert Image\" to add an existing photo.",
+      "modePhoto": "Photo",
+      "modeDocument": "Document",
+      "documentDetected": "Document detected",
+      "searchingDocument": "Position document in frame",
+      "flattenLighting": "Flatten lighting",
+      "retake": "Retake"
     },
     "pdf": {
       "delete": "Delete PDF",
@@ -783,7 +792,15 @@
     "deleteRecordingMessage": "Are you sure you want to delete this recording?",
     "errorGeneric": "Could not start recording.",
     "errorNoDevice": "No audio device found. Please connect a microphone.",
-    "errorPermissionDenied": "Microphone access denied. Please allow microphone access in your system settings."
+    "errorPermissionDenied": "Microphone access denied. Please allow microphone access in your system settings.",
+    "stoppedInBackground": "Recording stopped and saved because the app moved to the background.",
+    "autoGainAggressiveness": "Gain boost",
+    "autoGainAggressivenessDesc": "How hard to boost quiet speech in loud, steady background noise (e.g. driving). Higher can also make the background noise itself louder. Applies to this recording only.",
+    "saveFailedTitle": "Recording not saved",
+    "saveFailedMsg": "The recording could not be stored in the app ({{reason}}). Save it as a file to keep it. You can add it to the note again later with “Import audio file”. Otherwise it is deleted the next time the app starts.",
+    "saveFailedExport": "Save as file…",
+    "exportDoneMsg": "The recording was saved as {{path}}.",
+    "exportFailedMsg": "The recording could not be saved as a file ({{reason}}). It is kept until the app next starts."
   },
   "noteNavigator": {
     "toggle": "Navigator",
@@ -836,6 +853,126 @@
     "markAsTask": {
       "title": "Tasks",
       "body": "The text you marked is now a checkable task. Tick it off here or from your task list."
+    }
+  },
+  "backup": {
+    "freshness": {
+      "never": "Never backed up",
+      "last": "Last backup: {{when}} ({{count}} notes)",
+      "encrypted": "password protected",
+      "staleNudge": "Your notes have changed since the last backup. Back up now to protect them.",
+      "neverNudge": "This device has never been backed up. Back up now to protect your notes."
+    },
+    "estimate": "About {{notes}} notes and {{files}} files, ~{{size}}",
+    "backupTitle": "Backup to file",
+    "backupDesc": "Save every notebook, note, image, PDF and recording to a single .zip file.",
+    "backupBtn": "Backup to file",
+    "backingUp": "Backing up…",
+    "encryptLabel": "Protect the file with a password",
+    "encryptDesc": "Backups are stored unencrypted. Set a password to protect the file.",
+    "restoreTitle": "Restore from file",
+    "restoreDesc": "Read a backup .zip file back into this device. Existing notes are never overwritten in place: replaced notes go to the recycle bin.",
+    "restoreBtn": "Restore from file",
+    "restoring": "Restoring…",
+    "scopeNote": "Nextcloud credentials, the master password and app settings are not included in a backup.",
+    "password": {
+      "title": "Set a backup password",
+      "description": "This password encrypts the backup file. You will need it to restore.",
+      "passwordLabel": "Backup password",
+      "passwordPlaceholder": "Enter backup password",
+      "confirmLabel": "Confirm password",
+      "confirmPlaceholder": "Re-enter backup password",
+      "warning": "<strong>⚠️ If you lose this password, the backup cannot be recovered.</strong> There is no reset and no recovery key.",
+      "independentNote": "This password is independent of your master password. It is never stored — you enter it every time.",
+      "confirmBtn": "Encrypt and continue"
+    },
+    "progress": {
+      "backupTitle": "Backing up",
+      "restoreTitle": "Restoring",
+      "scanTitle": "Reading backup",
+      "preparing": "Preparing…",
+      "notebook": "Notebook {{current}} of {{total}}",
+      "note": "Note {{current}} of {{total}}",
+      "writingMedia": "Writing media: {{name}} ({{percent}}%)",
+      "readingMedia": "Reading media: {{name}} ({{percent}}%)",
+      "writingNotebook": "Writing notebook data…",
+      "writingNote": "Writing note data…",
+      "readingNotebook": "Reading notebook data…",
+      "readingNote": "Reading note data…",
+      "finalizing": "Finalizing archive…",
+      "saving": "Saving the file…",
+      "scanning": "Comparing with the notes on this device…",
+      "purging": "Deleting local data…",
+      "cancelling": "Cancelling…"
+    },
+    "done": {
+      "backupTitle": "Backup complete",
+      "backupMsg": "{{count}} notes were written to<br><strong>{{path}}</strong><br>({{size}}).",
+      "backupStatus": "✓ Backup saved ({{size}})",
+      "backupCancelledStatus": "Backup cancelled. No file was left behind.",
+      "backupFailedTitle": "Backup failed",
+      "backupFailedStatus": "✗ Backup failed: {{message}}",
+      "restoreTitle": "Restore complete",
+      "restoreMsg": "{{restored}} notes restored, {{skipped}} skipped, {{replaced}} replaced.",
+      "restoreNotebooks": "{{created}} notebooks created, {{restoredNotebooks}} restored from the recycle bin, {{kept}} kept with their local name.",
+      "restoreReplacedHint": "Replaced local notes were moved to the recycle bin with the suffix “{{suffix}}”.",
+      "openRecycleBin": "Open recycle bin",
+      "restoreCancelledTitle": "Restore cancelled",
+      "restoreCancelledMsg": "{{restored}} of {{total}} notes were restored. Run the restore again to finish — already-restored notes will be skipped.",
+      "restoreStatus": "✓ Restore complete",
+      "restoreCancelledStatus": "Restore cancelled after {{restored}} of {{total}} notes.",
+      "restoreFailedTitle": "Restore failed",
+      "restoreFailedStatus": "✗ Restore failed: {{message}}"
+    },
+    "restore": {
+      "confirmTitle": "Restore backup",
+      "confirmEmpty": "Restore {{notes}} notes in {{notebooks}} notebooks into this device?",
+      "confirmNoConflicts": "Restore {{notes}} notes in {{notebooks}} notebooks into this device? Nothing existing will be replaced.",
+      "confirmBtn": "Restore",
+      "fromApp": "Created {{date}} with NoteBerg {{version}}.",
+      "modeTitle": "How to restore",
+      "conflictSummary": "{{count}} notes already exist on this device: {{localNewer}} are newer here, {{backupNewer}} are newer in the backup.",
+      "newSummary": "{{count}} notes will be added.",
+      "modeMissing": "Restore missing items only",
+      "modeMissingDesc": "Existing notes are left alone. Only notes that are absent on this device are added.",
+      "modePreferBackup": "Restore from backup, keep replaced notes in the recycle bin",
+      "modePreferBackupDesc": "The backup wins where it is newer. Replaced local notes are kept in the recycle bin as “… {{suffix}}”.",
+      "modeReplaceAll": "Replace everything",
+      "modeReplaceAllDesc": "Deletes ALL local notebooks and notes first, then restores the backup exactly.",
+      "review": "Review {{count}}",
+      "reviewTitle": "Review conflicts",
+      "reviewDesc": "Choose which version to keep for each note. A kept local note is not changed; a replaced local note goes to the recycle bin.",
+      "keepLocal": "Keep local",
+      "useBackup": "Use backup",
+      "allLocal": "All local",
+      "allBackup": "All backup",
+      "localVersion": "Local: {{date}}",
+      "backupVersion": "Backup: {{date}}",
+      "back": "Back",
+      "continue": "Continue",
+      "replaceAllConfirmTitle": "Replace everything?",
+      "replaceAllConfirmMsg": "⚠️ This deletes ALL local notebooks and notes, including the recycle bin, before restoring the backup. This cannot be undone.",
+      "replaceAllConfirmBtn": "Delete everything and restore",
+      "replaceAllNcBlockedTitle": "Nextcloud is connected",
+      "replaceAllNcBlocked": "Replacing everything would look like a mass deletion to Nextcloud and could delete your notes on the server. Disconnect first — your notes stay on the server, and you can reconnect after the restore.",
+      "disconnectAndContinue": "Disconnect and continue",
+      "replacedSuffix": "(replaced)",
+      "passwordTitle": "Backup password",
+      "passwordMessage": "This backup is password protected. Enter the password to continue.",
+      "passwordPlaceholder": "Enter backup password",
+      "wrongPassword": "Incorrect password. Please try again."
+    },
+    "errors": {
+      "noteOpen": "Close the open note first, then try again.",
+      "syncing": "A Nextcloud sync is running. Wait for it to finish, then try again.",
+      "locked": "The app is locked. Unlock it with your master password, then try again.",
+      "notABackup": "“{{file}}” is not a NoteBerg backup. Expected a .zip file with a manifest.json created by “Backup to file”.",
+      "corrupt": "“{{file}}” is a NoteBerg backup, but it is damaged or incomplete and cannot be read. Try another copy of the file.",
+      "unsafeEntry": "“{{file}}” contains an invalid entry and was rejected.",
+      "entryTooLarge": "“{{file}}” contains an entry that is too large to restore.",
+      "newerVersion": "This backup was created with NoteBerg {{version}}, which is newer than this app. Update NoteBerg to restore it.",
+      "diskFull": "The backup could not be written: {{message}}. The partial file was deleted.",
+      "cacheSpace": "Not enough free space to create the backup: about {{needed}} needed, {{available}} available."
     }
   }
 }

@@ -7,16 +7,24 @@
  */
 
 // Virtual path prefix under which chunked-upload sessions are stored. Not a
-// real WebDAV path — see _normalizePath.
+// real WebDAV path — see _parseUrl.
 const UPLOADS_PREFIX = "/__uploads__";
 
+const OCS_USER_PATH = "/ocs/v2.php/cloud/user";
+
 export class MockWebDAVServer {
-  constructor() {
+  /**
+   * @param {object} [account]
+   * @param {string} [account.loginName] - what the user types at login; accepted by Basic auth
+   * @param {string} [account.userId] - Nextcloud's internal user ID; the only name valid in
+   *   DAV paths. Differs from loginName on LDAP/AD (UUIDs) and for email/alias logins.
+   */
+  constructor({ loginName = "testuser", userId = loginName } = {}) {
     this.files = new Map(); // path -> { content, etag, mtime, isCollection, locked }
     this.baseUrl = "https://cloud.example.com";
-    this.user = "testuser";
-    this.rootPath = `/remote.php/dav/files/${this.user}`;
-    this.uploadsPath = `/remote.php/dav/uploads/${this.user}`;
+    this.loginName = loginName;
+    this.userId = userId;
+    this.rootPath = `/remote.php/dav/files/${encodeURIComponent(userId)}`;
 
     this._etagCounter = 0;
     this.requests = [];
@@ -172,18 +180,52 @@ export class MockWebDAVServer {
 
   // --- Internals ---
 
-  _normalizePath(url) {
+  /**
+   * Split a request URL into the stored path and the DAV principal it names.
+   * `principal` is null for non-DAV endpoints (OCS).
+   */
+  _parseUrl(url) {
+    const pathname = (url.startsWith(this.baseUrl) ? url.slice(this.baseUrl.length) : url).split(
+      "?",
+    )[0];
+    const dav = pathname.match(/^\/remote\.php\/dav\/(files|uploads)\/([^/]+)(\/.*)?$/);
+    if (!dav) return { path: decodeURIComponent(pathname), principal: null };
+
+    const [, root, principal, rest = ""] = dav;
+    let path = decodeURIComponent(rest);
     // Chunked uploads live under a sibling DAV root (/uploads/{user}) rather
     // than /files/{user}. Map it to a reserved virtual prefix so the session
     // directory and its chunks are stored in the same Map without ever
     // colliding with a real note path.
-    if (url.startsWith(this.baseUrl + this.uploadsPath)) {
-      const rest = url.replace(this.baseUrl + this.uploadsPath, "");
-      return decodeURIComponent(`${UPLOADS_PREFIX}${rest}`);
-    }
-    let path = url.replace(this.baseUrl + this.rootPath, "");
-    if (path === "") path = "/";
-    return decodeURIComponent(path);
+    if (root === "uploads") path = `${UPLOADS_PREFIX}${path}`;
+    else if (path === "") path = "/";
+    return { path, principal: decodeURIComponent(principal) };
+  }
+
+  /** Basic auth accepts the login name (and, like Nextcloud, the user ID). */
+  _authenticates(authorization) {
+    if (!authorization?.startsWith("Basic ")) return false;
+    const bytes = Uint8Array.from(atob(authorization.slice(6)), (c) => c.charCodeAt(0));
+    const user = new TextDecoder().decode(bytes).split(":")[0];
+    return user === this.loginName || user === this.userId;
+  }
+
+  _ocsUser(method) {
+    if (method !== "GET") return { ok: false, status: 405, statusText: "Method Not Allowed" };
+    const body = {
+      ocs: {
+        meta: { status: "ok", statuscode: 200, message: "OK" },
+        data: { id: this.userId, "display-name": this.loginName },
+      },
+    };
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { get: () => null },
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    };
   }
 
   _generateEtag() {
@@ -193,17 +235,35 @@ export class MockWebDAVServer {
 
   async handleRequest(url, options) {
     const method = options.method || "GET";
-    const path = this._normalizePath(url);
+    const { path, principal } = this._parseUrl(url);
     const headers = options.headers || {};
 
     this.requests.push({ method, path, headers: { ...headers } });
 
-    if (!headers.Authorization) {
+    if (!this._authenticates(headers.Authorization)) {
       return { ok: false, status: 401, statusText: "Unauthorized", text: async () => "" };
     }
 
     const fault = this._applyFaults(method, path);
     if (fault) return this._faultResponse(fault);
+
+    if (path === OCS_USER_PATH) return this._ocsUser(method);
+
+    // A DAV root named after anything but the user ID does not exist. Nextcloud
+    // logs "Principal ... not found" and answers writes with 409 (their parent
+    // node is missing) and reads with 404 — the LDAP/email-login failure mode.
+    const destinationPrincipal = headers.Destination
+      ? this._parseUrl(headers.Destination).principal
+      : null;
+    if (
+      (principal !== null && principal !== this.userId) ||
+      (destinationPrincipal !== null && destinationPrincipal !== this.userId)
+    ) {
+      const isWrite = method === "MKCOL" || method === "PUT" || method === "MOVE";
+      return isWrite
+        ? { ok: false, status: 409, statusText: "Conflict", text: async () => "" }
+        : { ok: false, status: 404, statusText: "Not Found", text: async () => "" };
+    }
 
     if (method === "MKCOL") {
       if (this.files.has(path)) return { ok: false, status: 405, statusText: "Method Not Allowed" };
@@ -374,7 +434,7 @@ export class MockWebDAVServer {
     if (method === "MOVE") {
       const destination = headers.Destination;
       if (!destination) return { ok: false, status: 400, statusText: "Bad Request" };
-      const destPath = this._normalizePath(destination);
+      const destPath = this._parseUrl(destination).path;
 
       if (!path.startsWith(`${UPLOADS_PREFIX}/`) || !path.endsWith("/.file")) {
         return { ok: false, status: 501, statusText: "Not Implemented" };
@@ -478,7 +538,7 @@ export function wireMockServer(fetchMock, server) {
         ok: true,
         json: async () => ({
           server: "https://cloud.example.com",
-          loginName: "testuser",
+          loginName: server.loginName,
           appPassword: "app-password-123",
         }),
       });

@@ -31,6 +31,7 @@ import { getSetting, initStorage } from "./modules/storage.js";
 import { initTheme } from "./modules/theme.js";
 import { getIcon } from "./utils/icons.js";
 import { initLogger } from "./utils/logger.js";
+import { preventPagePinchZoom } from "./utils/pageZoomGuard.js";
 
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
@@ -263,16 +264,9 @@ function setupEventListeners() {
   window.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
   window.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
 
-  // Prevent pinch-to-zoom on touch devices (Android/Chrome)
-  window.addEventListener(
-    "touchmove",
-    (e) => {
-      if (e.touches.length > 1) {
-        e.preventDefault();
-      }
-    },
-    { passive: false },
-  );
+  // Prevent pinch-to-zoom on touch devices (Android/Chrome), except inside the
+  // note canvas, which handles its own pinch (see pageZoomGuard.js)
+  window.addEventListener("touchmove", preventPagePinchZoom, { passive: false });
 
   // Prevent context menu in production builds (allow in dev for debugging).
   // In the NC build, #app is embedded in the larger Nextcloud page — only
