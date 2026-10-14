@@ -28,10 +28,38 @@ let inactivityTimer = null;
 let lastSyncTime = 0;
 let currentNoteId = null;
 
+// Suspension depth. Auto-sync is event-driven (navigate, note-created,
+// notebook-created, inactivity), so a caller that rewrites the corpus — a backup
+// restore — cannot just check getIsSyncing() once: a sync can start mid-way
+// through its writes from any of those listeners. Suspending closes every entry
+// point for the duration. A counter rather than a boolean so nested callers
+// cannot resume each other early.
+let suspendDepth = 0;
+
+/**
+ * Stop auto-sync from starting any sync until the matching resumeAutoSync().
+ * Always pair with resumeAutoSync() in a `finally`.
+ */
+export function suspendAutoSync() {
+  suspendDepth++;
+  stopInactivityTimer();
+}
+
+/** Release one suspendAutoSync() call. */
+export function resumeAutoSync() {
+  if (suspendDepth > 0) suspendDepth--;
+}
+
+/** Whether auto-sync is currently held off by suspendAutoSync(). */
+export function isAutoSyncSuspended() {
+  return suspendDepth > 0;
+}
+
 /**
  * Check if we should sync (respects cooldown period)
  */
 async function shouldSync() {
+  if (isAutoSyncSuspended()) return false;
   if (!(await isAuthenticated())) return false;
   if (getIsSyncing()) return false;
 
@@ -81,7 +109,7 @@ export function resetInactivityTimer(noteId) {
   // Set new timer
   inactivityTimer = setTimeout(() => {
     console.log("Auto-sync: Inactivity timeout reached");
-    if (currentNoteId) {
+    if (currentNoteId && !isAutoSyncSuspended()) {
       syncSingleNote(currentNoteId);
     }
   }, INACTIVITY_TIMEOUT);
@@ -158,6 +186,7 @@ export async function syncOnNotebookCreate(notebookId) {
  * @param {string} notebookId - The notebook being opened
  */
 export async function syncOnNotebookOpen(notebookId) {
+  if (isAutoSyncSuspended()) return;
   if (!(await isAuthenticated())) return;
   if (getIsSyncing()) return;
 
@@ -184,6 +213,7 @@ export async function syncOnNotebookOpen(notebookId) {
  * @param {string|null} notebookId - Its notebook (null = quick note). If undefined, looks up from local index.
  */
 export async function syncOnNoteOpen(noteId) {
+  if (isAutoSyncSuspended()) return;
   if (!(await isAuthenticated())) return;
   if (getIsSyncing()) return;
 
@@ -214,6 +244,7 @@ export async function syncOnNoteOpen(noteId) {
  * on mobile (where recognition is unavailable), then syncs the results back.
  */
 export async function syncOnAppStart() {
+  if (isAutoSyncSuspended()) return;
   if (!(await isAuthenticated())) {
     console.log("Auto-sync: Not authenticated, skipping startup sync");
     return;

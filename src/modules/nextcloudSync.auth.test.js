@@ -126,6 +126,7 @@ describe("Nextcloud Sync Module", () => {
         serverUrl: "https://cloud.example.com",
         loginName: "testuser",
         appPassword: "app-password-123",
+        userId: "testuser",
       });
       expect(mockSecureStorage.has("nextcloud_credentials")).toBe(true);
       vi.useRealTimers();

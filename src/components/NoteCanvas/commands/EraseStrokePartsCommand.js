@@ -66,7 +66,13 @@ export class EraseStrokePartsCommand {
    * @param {NoteCanvas} noteCanvas
    */
   undo(noteCanvas) {
-    for (const { originalIndex, originalId, subStrokes } of this.operations) {
+    // Newest first. One gesture routinely re-splits a fragment it just created
+    // (A → S1+S2, then S1 → S3), so a later operation's "original" can be an
+    // earlier operation's sub-stroke. Undone oldest-first, the first step
+    // deletes S1 and the second restores it again, leaving S1 alive next to
+    // the restored A — duplicate ink that saves, syncs and recognizes twice.
+    for (let i = this.operations.length - 1; i >= 0; i--) {
+      const { originalIndex, originalId, subStrokes } = this.operations[i];
       // Restore original
       const original = noteCanvas.noteData.strokes[originalIndex];
       if (original?._deleted) {

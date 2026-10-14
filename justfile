@@ -411,6 +411,10 @@ test-php:
     @Write-Host "Running PHP tests..."
     podman exec noteberg-nc php /var/www/html/apps-extra/noteberg/scripts/test-php.php
 
+# Browser e2e (Playwright + Edge, Tauri runtime mocked) — builds and serves the frontend itself
+test-e2e:
+    npm run test:e2e
+
 # Format, check, and test — the full pre-commit sweep
 fct:
     just format

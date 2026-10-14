@@ -3,6 +3,9 @@ node_modules/
 
 # Build output
 dist/
+dist-e2e/
+test-results/
+playwright-report/
 
 # Logs
 *.log

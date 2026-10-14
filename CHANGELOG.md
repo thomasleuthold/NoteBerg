@@ -1,6 +1,40 @@
 # Changelog
 
-## [Unreleased] - 0.5.42
+## [Unreleased] - 0.5.43
+
+### Added
+- **Windows, Android**: backup and restore. Settings → Backup saves every notebook, note, image, PDF and recording into a single `.zip` file, optionally protected with a password (AES-256), and restores it again. Notes in the recycle bin are included, so the recycle bin survives a restore too
+- **Windows, Android**: restoring never overwrites a note in place. When the backup's version of a note replaces the one on the device, the device's copy is kept in the recycle bin with "(replaced)" added to its title. You choose whether to add only what is missing, to prefer the backup where it is newer, or to replace everything, and notes that differ can be reviewed one by one before anything is written
+- **Windows, Android**: the Backup section shows when you last backed up, and reminds you when that is more than 30 days ago and your notes have grown noticeably since. If you save a backup over an older one, the older file is replaced only once the new backup is complete, so a cancelled or failed backup leaves it intact
+- **Windows, Android**: if a finished recording cannot be stored in the app (for example because storage is full), you are told right away and can save it as a file, to add to the note later with "Import audio file". Before, the recording was lost without notice
+- **All platforms**: a Document mode in the camera. It outlines the page live in the viewfinder, straightens it after the shot, and can flatten shadows and uneven lighting so the page looks scanned. Photo mode works as before
+- **All platforms**: in perspective crop, the image cropper now finds the page corners by itself instead of starting from the image edges
+- **Windows, Android**: a "Recording gain boost" setting (Settings → Appearance), plus a slider next to the level meter to adjust it while recording. A higher value keeps speech audible over steady background noise, such as in a car. The default keeps the previous behaviour
+
+### Changed
+- **Windows**: recordings are saved as AAC (`.m4a`) instead of WAV, about 16 times smaller (roughly 43 MB instead of 690 MB per hour). Windows editions without Media Foundation (N editions without the Media Feature Pack) still record WAV
+- **Windows, Android**: recordings now have the same level on every device. Both platforms apply the same automatic gain and peak limiter, so a quiet microphone is raised and loud peaks no longer clip. On Android this replaces the device's own audio tuning, which made some phones record far too quietly
+- **Windows, Android**: closing a note while it is recording now stops and saves the recording instead of discarding it
+- **Android**: the screen stays on while recording. If the app is sent to the background anyway, the recording is stopped and saved, because Android mutes the microphone for apps in the background; the recordings dialog explains why it stopped
+- **All platforms**: when a second finger lands while the first is drawing, erasing or moving a selection, the gesture becomes a pinch and the first finger's action is undone, instead of leaving a stray stroke, a partial erase or a half-moved selection behind. A pen stroke carries on when a palm touches the screen
+- **Windows**: the app no longer writes microphone permission entries to the registry on every start. Recording no longer goes through the browser engine and does not need them
+
+### Fixed
+- **All platforms**: transparent areas of inserted PNG images turned black
+- **Windows**: recordings could click, drop out, or play back too fast and too short (for example 20 seconds of audio for 51 seconds recorded) while the computer was under heavy load
+- **Windows, Android**: recordings longer than roughly 35 minutes failed to save, and saving a long recording used several times its size in memory
+- **Windows**: WAV recordings synced to another device could not be played there
+- **Windows, Android**: with local encryption (master password) on, images, PDFs and recordings of a note were never downloaded to a device that did not have them yet. Recordings were affected for unencrypted notes as well
+- **Windows, Android**: with local encryption on, a note edited on two devices lost the other device's changes when it synced. Both sides are now merged, as for unencrypted notes
+- **Windows, Android**: with local encryption on, a note with a part that could no longer be decrypted on this device (encrypted with an earlier key) could never be uploaded again, so its later edits never reached your other devices. It now uploads your new edits and restores the unreadable part from the copy on Nextcloud
+- **All platforms**: undoing a partial erase could leave duplicate strokes behind
+- **All platforms**: fast strokes could leave small spikes at the joints between segments, which only disappeared after zooming or reopening the note
+- **All platforms**: in some browsers (Firefox on Windows, Chrome and Firefox on Android) a two-finger pan turned into a zoom partway through the gesture, and panning while zooming drifted away from the fingers
+- **Windows, Android**: a Nextcloud server address entered without `https://` was not recognised
+- **Windows, Android**: Nextcloud sync failed with "Failed to create folder: 409 Conflict" on servers whose accounts come from LDAP or Active Directory, and when logging in with an email address or alias. Existing setups need no action: the correct account is looked up automatically on the next sync
+- **Windows, Android**: temporary files from a recording interrupted by a crash were never deleted. They are now removed at startup
+
+## [0.5.42] - 2026-09-15
 
 ### Added
 - **All platforms**: optional AI handwriting recognition. Handwriting can now be recognized on Android and in the Nextcloud app for the first time, using a vision model you configure yourself — a local one (LM Studio, Ollama) or a cloud API (OpenAI-compatible or Replicate). Recognized text is searchable and syncs to your other devices like any other note content
@@ -50,7 +84,6 @@
 - **All platforms**: PDFs containing JPEG 2000 images failed to open, because a required decoder file was missing from the build
 - **All platforms**: pages of scanned PDFs could render as blank white instead of showing an error, when an image decoder could not be loaded
 - **All platforms**: the note navigator did not update after strokes were added or erased
-- **All platforms**: if one note preview failed to draw, the remaining cards kept showing their loading indicator forever
 - **All platforms**: zooming could get stuck, leaving the page re-rendering continuously without ever settling
 - **All platforms**: the page could look briefly squashed in one direction while pinch-zooming
 - **Android**: the app could close by itself while syncing a note containing a very large PDF, and then do so again on every following sync. Large files are now uploaded in chunks and downloads are limited by total size, so memory no longer runs out

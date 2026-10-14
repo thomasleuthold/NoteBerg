@@ -75,6 +75,9 @@ describe("section visibility per build", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",
@@ -157,6 +160,30 @@ describe("section visibility per build", () => {
 
     expect(found).not.toContain("settings.sections.nextcloud");
     expect(found).not.toContain("settings.sections.dangerZone");
+  });
+
+  it("offers backup and restore on the native builds only", async () => {
+    // The NC build reads WebDAV directly: there is no local corpus to back up,
+    // so the section is absent rather than shown and disabled.
+    const native = await render({ nextcloud: false });
+    const nc = await render({ nextcloud: true });
+
+    expect(headings(native)).toContain("settings.sections.backup");
+    expect(native.querySelector("#backup-create-btn")).not.toBeNull();
+    expect(native.querySelector("#backup-restore-btn")).not.toBeNull();
+    expect(native.querySelector("#backup-encrypt-toggle")).not.toBeNull();
+
+    expect(headings(nc)).not.toContain("settings.sections.backup");
+    expect(nc.querySelector("#backup-create-btn")).toBeNull();
+  });
+
+  it("places backup directly before the danger zone", async () => {
+    const container = await render({ nextcloud: false });
+    const keys = [...container.querySelectorAll(".settings-section[data-section]")].map(
+      (s) => s.dataset.section,
+    );
+    expect(keys.indexOf("backup")).toBeGreaterThan(-1);
+    expect(keys.indexOf("backup")).toBe(keys.indexOf("dangerZone") - 1);
   });
 
   it("omits the interface language picker on Nextcloud", async () => {
@@ -245,6 +272,9 @@ describe("settings navigation", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",
@@ -479,6 +509,9 @@ describe("settings shown per recognition method", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",
@@ -581,6 +614,9 @@ describe("settings shown per recognition method", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",
@@ -654,6 +690,9 @@ describe("settings shown per recognition method", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",
@@ -1017,6 +1056,9 @@ describe("synchronous-server timeout warning", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",
@@ -1120,6 +1162,9 @@ describe("endpoint field shape per build", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",
@@ -1273,6 +1318,9 @@ describe("credential field autofill", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",
@@ -1399,6 +1447,9 @@ describe("central administration hides what the user cannot change", () => {
       getSetting: async () => null,
       setSetting: async () => {},
       purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
     }));
     vi.doMock("../modules/displayPrefs.js", () => ({
       getCardSize: () => "medium",

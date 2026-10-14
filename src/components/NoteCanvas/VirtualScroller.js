@@ -232,6 +232,14 @@ export class VirtualScroller {
    */
   scrollBy(dx, dy) {
     this.container.scrollBy(dx, dy);
+    // Update the cache synchronously rather than waiting for the native
+    // scroll event (which fires asynchronously). Two-finger pan calls this
+    // and then immediately calls setZoom() again on the next pointermove,
+    // whose fixedPoint math reads getScrollLeft()/getScrollTop() — without
+    // this, that math would run against a stale, pre-pan value every frame,
+    // compounding drift as the gesture continues.
+    this.scrollLeft = this.container.scrollLeft;
+    this.scrollTop = this.container.scrollTop;
   }
 
   /**

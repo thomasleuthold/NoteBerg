@@ -144,7 +144,10 @@ describe("Nextcloud Sync Module", () => {
       await hasRemoteChanges("nb1", [{ id: "n1", lastSyncedEtag: "etag-A" }]);
 
       const propfinds = mockServer.requests.filter((r) => r.method === "PROPFIND");
-      const gets = mockServer.requests.filter((r) => r.method === "GET");
+      // File downloads only — the one-time OCS user-ID lookup is not one.
+      const gets = mockServer.requests.filter(
+        (r) => r.method === "GET" && !r.path.startsWith("/ocs/"),
+      );
       expect(propfinds).toHaveLength(1);
       expect(gets).toHaveLength(0);
     });

@@ -122,7 +122,8 @@
       "logging": "日志",
       "dangerZone": "危险操作",
       "about": "关于",
-      "aiProvider": "AI 访问"
+      "aiProvider": "AI 访问",
+      "backup": "备份"
     },
     "appearance": {
       "theme": "主题",
@@ -135,7 +136,9 @@
       "cardSizeDesc": "设置概览中笔记卡片的大小",
       "cardSizeSmall": "小",
       "cardSizeMedium": "中",
-      "cardSizeLarge": "大"
+      "cardSizeLarge": "大",
+      "autoGainAggressiveness": "录音增益增强",
+      "autoGainAggressivenessDesc": "新录音的默认设置：在嘈杂而持续的背景噪音中（例如开车时），应在多大程度上增强轻声说话。数值越高，背景噪音本身也可能变得更响。可在录音过程中单独调整。"
     },
     "language": {
       "label": "界面语言",
@@ -699,7 +702,13 @@
       "permissionDenied": "摄像头访问被拒绝。请在浏览器设置中允许本站访问摄像头，然后重试。",
       "noCamera": "在此设备上未找到摄像头。请使用“插入图片”添加已有照片。",
       "inUse": "摄像头当前正被其他应用程序使用。请关闭该程序后重试。",
-      "failed": "无法启动摄像头。请重试，或使用“插入图片”添加已有照片。"
+      "failed": "无法启动摄像头。请重试，或使用“插入图片”添加已有照片。",
+      "modePhoto": "照片",
+      "modeDocument": "文档",
+      "documentDetected": "已检测到文档",
+      "searchingDocument": "请将文档置于取景框内",
+      "flattenLighting": "均匀光照",
+      "retake": "重拍"
     },
     "pdf": {
       "delete": "删除 PDF",
@@ -783,7 +792,15 @@
     "deleteRecordingMessage": "确定要删除此录音吗？",
     "errorGeneric": "无法开始录音。",
     "errorNoDevice": "未找到音频设备，请连接麦克风。",
-    "errorPermissionDenied": "麦克风访问被拒绝。请在系统设置中允许访问麦克风。"
+    "errorPermissionDenied": "麦克风访问被拒绝。请在系统设置中允许访问麦克风。",
+    "stoppedInBackground": "由于应用切换到后台，录音已停止并保存。",
+    "autoGainAggressiveness": "增益增强",
+    "autoGainAggressivenessDesc": "在嘈杂而持续的背景噪音中（例如开车时），应在多大程度上增强轻声说话。数值越高，背景噪音本身也可能变得更响。仅适用于当前录音。",
+    "saveFailedTitle": "录音未保存",
+    "saveFailedMsg": "无法在应用中保存录音（{{reason}}）。请将其另存为文件以保留。之后可以通过“导入音频文件”将其重新添加到笔记中。否则，它将在下次启动应用时被删除。",
+    "saveFailedExport": "另存为文件…",
+    "exportDoneMsg": "录音已保存为 {{path}}。",
+    "exportFailedMsg": "无法将录音另存为文件（{{reason}}）。它会保留到下次启动应用。"
   },
   "noteNavigator": {
     "toggle": "导航器",
@@ -836,6 +853,126 @@
     "markAsTask": {
       "title": "任务",
       "body": "你标记的文本现在是可勾选的任务。可在此处或任务列表中勾选它。"
+    }
+  },
+  "backup": {
+    "freshness": {
+      "never": "从未备份",
+      "last": "上次备份：{{when}}（{{count}} 条笔记）",
+      "encrypted": "已设密码保护",
+      "staleNudge": "自上次备份以来笔记已有更改。请立即备份以保护它们。",
+      "neverNudge": "此设备从未备份过。请立即备份以保护您的笔记。"
+    },
+    "estimate": "约 {{notes}} 条笔记和 {{files}} 个文件，约 {{size}}",
+    "backupTitle": "备份到文件",
+    "backupDesc": "将所有笔记本、笔记、图片、PDF 和录音保存到一个 .zip 文件中。",
+    "backupBtn": "备份到文件",
+    "backingUp": "正在备份…",
+    "encryptLabel": "用密码保护文件",
+    "encryptDesc": "备份以未加密方式存储。设置密码以保护文件。",
+    "restoreTitle": "从文件恢复",
+    "restoreDesc": "将备份 .zip 文件读回此设备。现有笔记绝不会被原地覆盖：被替换的笔记会进入回收站。",
+    "restoreBtn": "从文件恢复",
+    "restoring": "正在恢复…",
+    "scopeNote": "Nextcloud 凭据、主密码和应用设置不包含在备份中。",
+    "password": {
+      "title": "设置备份密码",
+      "description": "此密码用于加密备份文件。恢复时需要它。",
+      "passwordLabel": "备份密码",
+      "passwordPlaceholder": "输入备份密码",
+      "confirmLabel": "确认密码",
+      "confirmPlaceholder": "再次输入备份密码",
+      "warning": "<strong>⚠️ 如果丢失此密码，备份将无法恢复。</strong> 没有重置，也没有恢复密钥。",
+      "independentNote": "此密码与主密码无关。它不会被保存在任何地方，每次都需要输入。",
+      "confirmBtn": "加密并继续"
+    },
+    "progress": {
+      "backupTitle": "正在备份",
+      "restoreTitle": "正在恢复",
+      "scanTitle": "正在读取备份",
+      "preparing": "正在准备…",
+      "notebook": "笔记本 {{current}} / {{total}}",
+      "note": "笔记 {{current}} / {{total}}",
+      "writingMedia": "正在写入媒体：{{name}}（{{percent}}%）",
+      "readingMedia": "正在读取媒体：{{name}}（{{percent}}%）",
+      "writingNotebook": "正在写入笔记本数据…",
+      "writingNote": "正在写入笔记数据…",
+      "readingNotebook": "正在读取笔记本数据…",
+      "readingNote": "正在读取笔记数据…",
+      "finalizing": "正在完成归档…",
+      "saving": "正在保存文件…",
+      "scanning": "正在与此设备上的笔记比较…",
+      "purging": "正在删除本地数据…",
+      "cancelling": "正在取消…"
+    },
+    "done": {
+      "backupTitle": "备份完成",
+      "backupMsg": "{{count}} 条笔记已写入<br><strong>{{path}}</strong><br>（{{size}}）。",
+      "backupStatus": "✓ 备份已保存（{{size}}）",
+      "backupCancelledStatus": "备份已取消。未留下任何文件。",
+      "backupFailedTitle": "备份失败",
+      "backupFailedStatus": "✗ 备份失败：{{message}}",
+      "restoreTitle": "恢复完成",
+      "restoreMsg": "已恢复 {{restored}} 条笔记，跳过 {{skipped}} 条，替换 {{replaced}} 条。",
+      "restoreNotebooks": "已创建 {{created}} 个笔记本，从回收站恢复 {{restoredNotebooks}} 个，{{kept}} 个保留本地名称。",
+      "restoreReplacedHint": "被替换的本地笔记已移至回收站，并添加了后缀“{{suffix}}”。",
+      "openRecycleBin": "打开回收站",
+      "restoreCancelledTitle": "恢复已取消",
+      "restoreCancelledMsg": "已恢复 {{total}} 条笔记中的 {{restored}} 条。再次运行恢复即可完成，已恢复的笔记将被跳过。",
+      "restoreStatus": "✓ 恢复完成",
+      "restoreCancelledStatus": "恢复在 {{total}} 条笔记中的第 {{restored}} 条后取消。",
+      "restoreFailedTitle": "恢复失败",
+      "restoreFailedStatus": "✗ 恢复失败：{{message}}"
+    },
+    "restore": {
+      "confirmTitle": "恢复备份",
+      "confirmEmpty": "将 {{notebooks}} 个笔记本中的 {{notes}} 条笔记恢复到此设备？",
+      "confirmNoConflicts": "将 {{notebooks}} 个笔记本中的 {{notes}} 条笔记恢复到此设备？现有内容不会被替换。",
+      "confirmBtn": "恢复",
+      "fromApp": "由 NoteBerg {{version}} 创建于 {{date}}。",
+      "modeTitle": "恢复方式",
+      "conflictSummary": "{{count}} 条笔记已存在于此设备：{{localNewer}} 条本地较新，{{backupNewer}} 条备份较新。",
+      "newSummary": "将添加 {{count}} 条笔记。",
+      "modeMissing": "仅恢复缺失的项目",
+      "modeMissingDesc": "现有笔记保持不变，只添加此设备上没有的笔记。",
+      "modePreferBackup": "从备份恢复，被替换的笔记保留在回收站",
+      "modePreferBackupDesc": "备份较新时以备份为准。被替换的本地笔记以“… {{suffix}}”保留在回收站中。",
+      "modeReplaceAll": "全部替换",
+      "modeReplaceAllDesc": "先删除所有本地笔记本和笔记，然后原样恢复备份。",
+      "review": "检查 {{count}} 条",
+      "reviewTitle": "检查冲突",
+      "reviewDesc": "为每条笔记选择保留哪个版本。保留本地则不作更改；替换则本地笔记进入回收站。",
+      "keepLocal": "保留本地",
+      "useBackup": "使用备份",
+      "allLocal": "全部本地",
+      "allBackup": "全部备份",
+      "localVersion": "本地：{{date}}",
+      "backupVersion": "备份：{{date}}",
+      "back": "返回",
+      "continue": "继续",
+      "replaceAllConfirmTitle": "全部替换？",
+      "replaceAllConfirmMsg": "⚠️ 这将在恢复备份之前删除所有本地笔记本和笔记（包括回收站）。此操作无法撤销。",
+      "replaceAllConfirmBtn": "全部删除并恢复",
+      "replaceAllNcBlockedTitle": "已连接 Nextcloud",
+      "replaceAllNcBlocked": "全部替换在 Nextcloud 看来就像批量删除，可能会删除服务器上的笔记。请先断开连接——您的笔记仍保留在服务器上，恢复后可以重新连接。",
+      "disconnectAndContinue": "断开连接并继续",
+      "replacedSuffix": "（已替换）",
+      "passwordTitle": "备份密码",
+      "passwordMessage": "此备份受密码保护。请输入密码以继续。",
+      "passwordPlaceholder": "输入备份密码",
+      "wrongPassword": "密码错误，请重试。"
+    },
+    "errors": {
+      "noteOpen": "请先关闭打开的笔记，然后重试。",
+      "syncing": "Nextcloud 同步正在进行。请等待完成后重试。",
+      "locked": "应用已锁定。请使用主密码解锁，然后重试。",
+      "notABackup": "“{{file}}”不是 NoteBerg 备份。需要由“备份到文件”创建的、包含 manifest.json 的 .zip 文件。",
+      "corrupt": "“{{file}}”是 NoteBerg 备份，但已损坏或不完整，无法读取。请尝试该文件的其他副本。",
+      "unsafeEntry": "“{{file}}”包含无效条目，已被拒绝。",
+      "entryTooLarge": "“{{file}}”包含过大而无法恢复的条目。",
+      "newerVersion": "此备份由比本应用更新的 NoteBerg {{version}} 创建。请更新 NoteBerg 后再恢复。",
+      "diskFull": "无法写入备份：{{message}}。未完成的文件已删除。",
+      "cacheSpace": "可用空间不足，无法创建备份：约需 {{needed}}，可用 {{available}}。"
     }
   }
 }

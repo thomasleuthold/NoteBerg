@@ -3,7 +3,9 @@
  * Uses HTML5 APIs for cross-platform compatibility (desktop + mobile)
  */
 
+import PerspT from "perspective-transform";
 import { t } from "../i18n/index.js";
+import { detectDocumentCorners } from "./documentDetector.js";
 
 /**
  * Maximum dimensions for imported images (3072x3072)
@@ -386,19 +388,550 @@ async function captureWithGetUserMedia(facing = "environment") {
 }
 
 /**
+ * Bilinear perspective warp for quad image rectification.
+ * Takes source image/canvas and 4 corner points {tl, tr, br, bl},
+ * calculates true document width & height, computes homography matrix via perspective-transform,
+ * and samples source pixels with bilinear interpolation.
+ *
+ * @param {HTMLImageElement|HTMLCanvasElement|HTMLVideoElement} source
+ * @param {{ tl: {x:number, y:number}, tr: {x:number, y:number}, br: {x:number, y:number}, bl: {x:number, y:number} }} corners
+ *   Corners in source pixels
+ * @returns {HTMLCanvasElement|null} Rectified canvas, or null when the source has no
+ *   size, corners are missing, or the corners do not define a valid transform —
+ *   callers choose their own fallback
+ */
+export function warpPerspective(source, corners) {
+  const srcW = source?.videoWidth || source?.naturalWidth || source?.width || 0;
+  const srcH = source?.videoHeight || source?.naturalHeight || source?.height || 0;
+  if (!srcW || !srcH || !corners) return null;
+
+  const srcCorners = [
+    corners.tl.x,
+    corners.tl.y,
+    corners.tr.x,
+    corners.tr.y,
+    corners.br.x,
+    corners.br.y,
+    corners.bl.x,
+    corners.bl.y,
+  ];
+
+  const topWidth = Math.hypot(srcCorners[2] - srcCorners[0], srcCorners[3] - srcCorners[1]);
+  const bottomWidth = Math.hypot(srcCorners[4] - srcCorners[6], srcCorners[5] - srcCorners[7]);
+  const leftHeight = Math.hypot(srcCorners[6] - srcCorners[0], srcCorners[7] - srcCorners[1]);
+  const rightHeight = Math.hypot(srcCorners[4] - srcCorners[2], srcCorners[5] - srcCorners[3]);
+
+  const outputWidth = Math.max(20, Math.round(Math.sqrt(topWidth * bottomWidth)));
+  const outputHeight = Math.max(20, Math.round(Math.sqrt(leftHeight * rightHeight)));
+
+  const dstCorners = [0, 0, outputWidth, 0, outputWidth, outputHeight, 0, outputHeight];
+
+  let perspT;
+  try {
+    perspT = PerspT(srcCorners, dstCorners);
+  } catch (e) {
+    console.error("[warpPerspective] Failed to create perspective transform:", e);
+    return null;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = outputWidth;
+  canvas.height = outputHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+
+  let srcCanvas = source;
+  if (source.tagName !== "CANVAS") {
+    srcCanvas = document.createElement("canvas");
+    srcCanvas.width = srcW;
+    srcCanvas.height = srcH;
+    const sCtx = srcCanvas.getContext("2d");
+    if (sCtx) {
+      try {
+        sCtx.drawImage(source, 0, 0);
+      } catch (_e) {}
+    }
+  }
+
+  const srcCtx = srcCanvas.getContext("2d");
+  const srcImageData = srcCtx?.getImageData ? srcCtx.getImageData(0, 0, srcW, srcH) : null;
+  const outputImageData = ctx.createImageData
+    ? ctx.createImageData(outputWidth, outputHeight)
+    : null;
+
+  if (!srcImageData || !outputImageData) {
+    return canvas;
+  }
+
+  const srcData = srcImageData.data;
+  const outputData = outputImageData.data;
+
+  for (let y = 0; y < outputHeight; y++) {
+    for (let x = 0; x < outputWidth; x++) {
+      const srcPt = perspT.transformInverse(x, y);
+      const sx = srcPt[0];
+      const sy = srcPt[1];
+
+      const x0 = Math.floor(sx);
+      const y0 = Math.floor(sy);
+      const x1 = x0 + 1;
+      const y1 = y0 + 1;
+
+      if (x0 >= 0 && x1 < srcW && y0 >= 0 && y1 < srcH) {
+        const wx = sx - x0;
+        const wy = sy - y0;
+        const w00 = (1 - wx) * (1 - wy);
+        const w10 = wx * (1 - wy);
+        const w01 = (1 - wx) * wy;
+        const w11 = wx * wy;
+
+        const i00 = (y0 * srcW + x0) * 4;
+        const i10 = (y0 * srcW + x1) * 4;
+        const i01 = (y1 * srcW + x0) * 4;
+        const i11 = (y1 * srcW + x1) * 4;
+        const dstIndex = (y * outputWidth + x) * 4;
+
+        const a00 = srcData[i00 + 3];
+        const a10 = srcData[i10 + 3];
+        const a01 = srcData[i01 + 3];
+        const a11 = srcData[i11 + 3];
+        const outA = a00 * w00 + a10 * w10 + a01 * w01 + a11 * w11;
+
+        if (outA > 0) {
+          outputData[dstIndex] =
+            (srcData[i00] * a00 * w00 +
+              srcData[i10] * a10 * w10 +
+              srcData[i01] * a01 * w01 +
+              srcData[i11] * a11 * w11) /
+            outA;
+          outputData[dstIndex + 1] =
+            (srcData[i00 + 1] * a00 * w00 +
+              srcData[i10 + 1] * a10 * w10 +
+              srcData[i01 + 1] * a01 * w01 +
+              srcData[i11 + 1] * a11 * w11) /
+            outA;
+          outputData[dstIndex + 2] =
+            (srcData[i00 + 2] * a00 * w00 +
+              srcData[i10 + 2] * a10 * w10 +
+              srcData[i01 + 2] * a01 * w01 +
+              srcData[i11 + 2] * a11 * w11) /
+            outA;
+          outputData[dstIndex + 3] = Math.round(outA);
+        } else {
+          outputData[dstIndex] = 0;
+          outputData[dstIndex + 1] = 0;
+          outputData[dstIndex + 2] = 0;
+          outputData[dstIndex + 3] = 0;
+        }
+      } else if (x0 >= 0 && x0 < srcW && y0 >= 0 && y0 < srcH) {
+        const srcIndex = (y0 * srcW + x0) * 4;
+        const dstIndex = (y * outputWidth + x) * 4;
+        outputData[dstIndex] = srcData[srcIndex];
+        outputData[dstIndex + 1] = srcData[srcIndex + 1];
+        outputData[dstIndex + 2] = srcData[srcIndex + 2];
+        outputData[dstIndex + 3] = srcData[srcIndex + 3];
+      }
+    }
+  }
+
+  ctx.putImageData(outputImageData, 0, 0);
+  return canvas;
+}
+
+/**
+ * Normalize document lighting on a canvas to remove shadows and brighten paper.
+ *
+ * @param {HTMLCanvasElement} canvas
+ */
+export function normalizeDocumentLighting(canvas) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  if (w <= 0 || h <= 0) return;
+
+  const scale = 0.25;
+  const bw = Math.max(1, Math.round(w * scale));
+  const bh = Math.max(1, Math.round(h * scale));
+
+  const blurCanvas = document.createElement("canvas");
+  blurCanvas.width = bw;
+  blurCanvas.height = bh;
+  const blurCtx = blurCanvas.getContext("2d");
+  if (!blurCtx) return;
+
+  try {
+    blurCtx.drawImage(canvas, 0, 0, bw, bh);
+  } catch (_e) {
+    return;
+  }
+
+  const blurRadius = Math.round(Math.min(bw, bh) * 0.15);
+  blurCtx.filter = `blur(${blurRadius}px)`;
+  try {
+    blurCtx.drawImage(blurCanvas, 0, 0);
+  } catch (_e) {
+    return;
+  }
+  blurCtx.filter = "none";
+
+  const bgCanvas = document.createElement("canvas");
+  bgCanvas.width = w;
+  bgCanvas.height = h;
+  const bgCtx = bgCanvas.getContext("2d");
+  if (!bgCtx) return;
+  try {
+    bgCtx.drawImage(blurCanvas, 0, 0, w, h);
+  } catch (_e) {
+    return;
+  }
+
+  const srcData = ctx.getImageData ? ctx.getImageData(0, 0, w, h) : null;
+  const bgData = bgCtx.getImageData ? bgCtx.getImageData(0, 0, w, h) : null;
+  if (!srcData || !bgData) return;
+
+  const pixels = srcData.data;
+  const bg = bgData.data;
+
+  const contrastLUT = new Uint8ClampedArray(256);
+  const whitePoint = 235;
+  const gamma = 1.4;
+  for (let v = 0; v < 256; v++) {
+    const normalized = Math.min(1, v / whitePoint);
+    contrastLUT[v] = Math.round(normalized ** gamma * 255);
+  }
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i + 3] === 0) continue;
+    const bgBright = Math.max(bg[i], bg[i + 1], bg[i + 2], 1);
+    pixels[i] = contrastLUT[Math.min(255, Math.round((pixels[i] / bgBright) * 255))];
+    pixels[i + 1] = contrastLUT[Math.min(255, Math.round((pixels[i + 1] / bgBright) * 255))];
+    pixels[i + 2] = contrastLUT[Math.min(255, Math.round((pixels[i + 2] / bgBright) * 255))];
+  }
+
+  ctx.putImageData(srcData, 0, 0);
+}
+
+/**
+ * Synchronize the overlay canvas position, dimensions, and aspect ratio to match
+ * the actively rendered video stream within a <video> element.
+ *
+ * When a video is contained inside an element with differing aspect ratio, the browser
+ * letterboxes or pillarboxes the video frames. This function calculates the exact pixel
+ * viewport of the video stream and pins the overlay canvas directly over the video frames.
+ *
+ * @param {HTMLVideoElement} video
+ * @param {HTMLCanvasElement} overlayCanvas
+ */
+export function syncOverlayToVideo(video, overlayCanvas) {
+  if (!video || !overlayCanvas || !video.videoWidth || !video.videoHeight) return;
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const cw = video.clientWidth;
+  const ch = video.clientHeight;
+  if (!cw || !ch) return;
+
+  // Advise the browser to size the video element matching its stream aspect ratio
+  if (video.style.aspectRatio !== `${vw} / ${vh}`) {
+    video.style.aspectRatio = `${vw} / ${vh}`;
+  }
+
+  const videoAspect = vw / vh;
+  const elemAspect = cw / ch;
+  let renderW = cw;
+  let renderH = ch;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  // Calculate pillarbox (black bars left/right) or letterbox (black bars top/bottom)
+  if (elemAspect > videoAspect) {
+    renderH = ch;
+    renderW = ch * videoAspect;
+    offsetX = (cw - renderW) / 2;
+    offsetY = 0;
+  } else {
+    renderW = cw;
+    renderH = cw / videoAspect;
+    offsetX = 0;
+    offsetY = (ch - renderH) / 2;
+  }
+
+  const newLeft = `${Math.round(video.offsetLeft + offsetX)}px`;
+  const newTop = `${Math.round(video.offsetTop + offsetY)}px`;
+  const newW = `${Math.round(renderW)}px`;
+  const newH = `${Math.round(renderH)}px`;
+
+  if (overlayCanvas.style.position !== "absolute") overlayCanvas.style.position = "absolute";
+  if (overlayCanvas.style.left !== newLeft) overlayCanvas.style.left = newLeft;
+  if (overlayCanvas.style.top !== newTop) overlayCanvas.style.top = newTop;
+  if (overlayCanvas.style.width !== newW) overlayCanvas.style.width = newW;
+  if (overlayCanvas.style.height !== newH) overlayCanvas.style.height = newH;
+
+  // Match drawing buffer resolution to original stream resolution
+  if (overlayCanvas.width !== vw) overlayCanvas.width = vw;
+  if (overlayCanvas.height !== vh) overlayCanvas.height = vh;
+}
+
+/**
+ * Start live document corner detection on a video element.
+ *
+ * Continuously samples video frames at ~8-10 FPS, runs multi-pass corner detection,
+ * applies exponential moving average (EMA) smoothing across frames, and renders a
+ * high-contrast visual quadrilateral overlay with corner handles.
+ *
+ * @param {HTMLVideoElement} video
+ * @param {HTMLCanvasElement} overlayCanvas
+ * @param {HTMLElement} statusPill
+ * @param {HTMLElement} modal
+ * @returns {{ stop: () => void, setEnabled: (enabled: boolean) => void }}
+ */
+export function startLiveDocumentDetection(video, overlayCanvas, statusPill, modal) {
+  let active = false;
+  let animId = null;
+  let lastTimestamp = 0;
+  let inFlight = false;
+  let smoothedCorners = null;
+  let missedFrames = 0;
+
+  const handleResize = () => {
+    syncOverlayToVideo(video, overlayCanvas);
+  };
+
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("resize", handleResize);
+  }
+  if (video && typeof video.addEventListener === "function") {
+    video.addEventListener("loadedmetadata", handleResize);
+    video.addEventListener("resize", handleResize);
+  }
+
+  function clearOverlay() {
+    if (!overlayCanvas) return;
+    const ctx = overlayCanvas.getContext("2d");
+    if (ctx) {
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    }
+  }
+
+  function updateStatus(detected) {
+    if (!statusPill) return;
+    if (detected) {
+      statusPill.innerHTML =
+        '<span style="width:8px; height:8px; border-radius:50%; background:#10b981; display:inline-block; box-shadow:0 0 8px #10b981;"></span>' +
+        (t("canvas.camera.documentDetected") || "Document detected");
+      statusPill.style.borderColor = "rgba(16, 185, 129, 0.5)";
+    } else {
+      statusPill.innerHTML =
+        '<span style="width:8px; height:8px; border-radius:50%; background:#eab308; display:inline-block;"></span>' +
+        (t("canvas.camera.searchingDocument") || "Position document in frame");
+      statusPill.style.borderColor = "rgba(255, 255, 255, 0.2)";
+    }
+  }
+
+  function renderOverlay(corners) {
+    if (!overlayCanvas) return;
+    const ctx = overlayCanvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+    if (!corners) return;
+
+    const { tl, tr, br, bl } = corners;
+    const w = overlayCanvas.width;
+
+    // Semi-transparent document quad fill
+    ctx.beginPath();
+    ctx.moveTo(tl.x, tl.y);
+    ctx.lineTo(tr.x, tr.y);
+    ctx.lineTo(br.x, br.y);
+    ctx.lineTo(bl.x, bl.y);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(16, 185, 129, 0.22)";
+    ctx.fill();
+
+    // Vibrant border
+    ctx.strokeStyle = "#10b981";
+    ctx.lineWidth = Math.max(3, Math.round(w * 0.004));
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    // Corner circles
+    const radius = Math.max(8, Math.round(w * 0.012));
+    const strokeWidth = Math.max(2, Math.round(radius * 0.35));
+
+    for (const pt of [tl, tr, br, bl]) {
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.strokeStyle = "#10b981";
+      ctx.lineWidth = strokeWidth;
+      ctx.stroke();
+    }
+  }
+
+  const loop = async (timestamp) => {
+    if (!active) return;
+
+    syncOverlayToVideo(video, overlayCanvas);
+
+    // Throttle to ~110ms (~9 FPS) and skip if a detection is still processing
+    if (timestamp - lastTimestamp >= 110 && !inFlight) {
+      if (video && video.videoWidth > 0 && video.videoHeight > 0 && !video.paused) {
+        inFlight = true;
+        lastTimestamp = timestamp;
+
+        try {
+          const detected = await detectDocumentCorners(video);
+          if (active) {
+            if (detected) {
+              missedFrames = 0;
+              if (!smoothedCorners) {
+                smoothedCorners = {
+                  tl: { ...detected.tl },
+                  tr: { ...detected.tr },
+                  br: { ...detected.br },
+                  bl: { ...detected.bl },
+                };
+              } else {
+                const alpha = 0.65;
+                smoothedCorners = {
+                  tl: {
+                    x: smoothedCorners.tl.x * (1 - alpha) + detected.tl.x * alpha,
+                    y: smoothedCorners.tl.y * (1 - alpha) + detected.tl.y * alpha,
+                  },
+                  tr: {
+                    x: smoothedCorners.tr.x * (1 - alpha) + detected.tr.x * alpha,
+                    y: smoothedCorners.tr.y * (1 - alpha) + detected.tr.y * alpha,
+                  },
+                  br: {
+                    x: smoothedCorners.br.x * (1 - alpha) + detected.br.x * alpha,
+                    y: smoothedCorners.br.y * (1 - alpha) + detected.br.y * alpha,
+                  },
+                  bl: {
+                    x: smoothedCorners.bl.x * (1 - alpha) + detected.bl.x * alpha,
+                    y: smoothedCorners.bl.y * (1 - alpha) + detected.bl.y * alpha,
+                  },
+                };
+              }
+              if (modal) modal._detectedCorners = smoothedCorners;
+              renderOverlay(smoothedCorners);
+              updateStatus(true);
+            } else {
+              missedFrames++;
+              if (missedFrames > 2) {
+                smoothedCorners = null;
+                if (modal) modal._detectedCorners = null;
+                clearOverlay();
+                updateStatus(false);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[LiveDocumentDetection] Error:", err);
+        } finally {
+          inFlight = false;
+        }
+      }
+    }
+
+    if (active) {
+      animId = requestAnimationFrame(loop);
+    }
+  };
+
+  return {
+    setEnabled(enabled) {
+      if (enabled === active) return;
+      active = enabled;
+      if (active) {
+        syncOverlayToVideo(video, overlayCanvas);
+        if (statusPill) statusPill.style.display = "flex";
+        if (overlayCanvas) overlayCanvas.style.display = "block";
+        updateStatus(false);
+        animId = requestAnimationFrame(loop);
+      } else {
+        if (animId) {
+          cancelAnimationFrame(animId);
+          animId = null;
+        }
+        if (statusPill) statusPill.style.display = "none";
+        if (overlayCanvas) overlayCanvas.style.display = "none";
+        clearOverlay();
+        smoothedCorners = null;
+        if (modal) modal._detectedCorners = null;
+        inFlight = false;
+      }
+    },
+    stop() {
+      active = false;
+      if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+        window.removeEventListener("resize", handleResize);
+      }
+      if (video && typeof video.removeEventListener === "function") {
+        video.removeEventListener("loadedmetadata", handleResize);
+        video.removeEventListener("resize", handleResize);
+      }
+      if (animId) {
+        cancelAnimationFrame(animId);
+        animId = null;
+      }
+      clearOverlay();
+      smoothedCorners = null;
+      if (modal) modal._detectedCorners = null;
+      inFlight = false;
+    },
+  };
+}
+
+/**
+ * Grab the current video frame as a loaded image.
+ *
+ * Encoded with toBlob and served from an object URL: unlike toDataURL this
+ * does not block the main thread base64-encoding a multi-megapixel frame, and
+ * waiting for the load event (rather than a timeout) guarantees the image is
+ * decoded before anyone measures or draws it.
+ *
+ * @param {HTMLVideoElement} video
+ * @returns {Promise<{img: HTMLImageElement, release: Function}|null>} The image plus
+ *   a release() that frees its object URL, or null if the frame could not be captured
+ */
+async function snapshotVideoFrame(video) {
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  try {
+    ctx.drawImage(video, 0, 0);
+  } catch (_e) {
+    return null;
+  }
+
+  // JPEG: camera frames are opaque, and PNG-encoding a full frame is slow
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
+  if (!blob) return null;
+
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  const loaded = await new Promise((resolve) => {
+    img.addEventListener("load", () => resolve(true), { once: true });
+    img.addEventListener("error", () => resolve(false), { once: true });
+    img.src = url;
+  });
+  if (!loaded || !img.naturalWidth) {
+    URL.revokeObjectURL(url);
+    return null;
+  }
+  return { img, release: () => URL.revokeObjectURL(url) };
+}
+
+/**
  * Wire up the capture button of a camera modal.
  *
- * Shared by createCameraModal (initial wiring) and updateCameraModal (re-wiring
- * once the stream arrives) so the re-entry guard exists on exactly one code path.
- *
- * Encoding a 1920x1080 frame (drawImage + toBlob) takes well over a second on a
- * slow device, during which the modal is still on screen. Without a guard the
- * user taps again — producing a second capture whose onCapture() would call
- * removeChild() on an already-removed modal and throw NotFoundError from inside
- * a toBlob callback, where nothing can catch it.
- *
- * Exported for testing: the guard is the fix for a double-capture bug, so it is
- * verified directly rather than through the whole getUserMedia flow.
+ * Captures the current frame and opens it in the ImageCropper — in perspective
+ * mode with optional lighting normalization for Document mode, simple crop
+ * otherwise. Cancelling the cropper ("Retake") returns to the live viewfinder.
  *
  * @param {HTMLElement} modal - Camera modal element
  * @param {HTMLVideoElement} video - Video element showing the stream
@@ -408,53 +941,76 @@ async function captureWithGetUserMedia(facing = "environment") {
 export function attachCaptureHandler(modal, video, captureBtn, onCapture) {
   let capturing = false;
 
-  captureBtn.onclick = () => {
+  captureBtn.onclick = async () => {
     if (capturing) return;
 
-    // No frame decoded yet: canvas would be 0x0 and toBlob would yield null,
-    // making `new File([null], ...)` throw. Ignore the tap and let the user
-    // retry once the preview is live.
     if (!video.videoWidth || !video.videoHeight) return;
 
     capturing = true;
-    // Dims the preview, disables the controls and shows the existing spinner.
     showLoadingState(modal, true);
     captureBtn.disabled = true;
 
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0);
+    const isDocumentMode = modal?.dataset?.cameraMode === "document";
 
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          // Encoding failed — restore the modal so the user can retry rather
-          // than leaving a dead spinner on screen.
-          capturing = false;
-          captureBtn.disabled = false;
-          showLoadingState(modal, false);
+    // The quad the live viewfinder was tracking at the moment of the shutter
+    // press, read before detection is paused. Only a fallback: the cropper
+    // re-detects on the captured frame itself, which accounts for any camera
+    // movement since the last live detection.
+    const liveCorners = isDocumentMode ? modal?._detectedCorners || null : null;
+
+    const snapshot = await snapshotVideoFrame(video);
+
+    if (snapshot) {
+      // Pause live detection and hide camera viewfinder while crop dialog is open
+      modal?._detectionController?.setEnabled?.(false);
+      if (modal?.style) {
+        modal.style.display = "none";
+      }
+
+      try {
+        const { ImageCropper } = await import("../components/NoteCanvas/ImageCropper.js");
+        const cropper = new ImageCropper();
+        const croppedBlob = await cropper.show(snapshot.img, {
+          initialMode: isDocumentMode ? "perspective" : "simple",
+          normalizeLighting: isDocumentMode && modal?.dataset?.flattenLighting !== "false",
+          cancelLabel: t("canvas.camera.retake"),
+          fallbackCorners: liveCorners,
+        });
+
+        if (croppedBlob) {
+          const type = croppedBlob.type || "image/jpeg";
+          const ext = type === "image/png" ? "png" : "jpg";
+          const prefix = isDocumentMode ? "document" : "camera";
+          const file = new File([croppedBlob], `${prefix}-${Date.now()}.${ext}`, { type });
+          onCapture(file);
           return;
         }
-        const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
-        onCapture(file);
-      },
-      "image/jpeg",
-      0.92,
-    );
+      } catch (err) {
+        console.error("[attachCaptureHandler] Crop error:", err);
+      } finally {
+        snapshot.release();
+      }
+    }
+
+    // User cancelled / retakes photo: restore camera viewfinder
+    if (modal?.style) {
+      modal.style.display = "";
+    }
+    if (isDocumentMode) {
+      modal?._detectionController?.setEnabled?.(true);
+    }
+    capturing = false;
+    captureBtn.disabled = false;
+    showLoadingState(modal, false);
   };
 }
 
 /**
  * Remove the camera modal if it is still in the DOM.
- *
- * Idempotent: capture and cancel can both be in flight (a tap on Cancel while a
- * capture is encoding), and a plain removeChild on an already-removed node
- * throws NotFoundError.
  * @param {HTMLElement} modal
  */
 function removeCameraModal(modal) {
+  modal?._detectionController?.stop();
   modal?.parentNode?.removeChild(modal);
 }
 
@@ -467,14 +1023,12 @@ async function setupAutoFocus(stream) {
     const track = stream.getVideoTracks()[0];
     if (!track) return;
 
-    // Check if focus mode is supported
     const capabilities = track.getCapabilities();
     if (!capabilities.focusMode) {
       console.log("Auto-focus not supported on this camera");
       return;
     }
 
-    // Apply continuous auto-focus if supported
     const constraints = {
       advanced: [{ focusMode: "continuous" }],
     };
@@ -507,6 +1061,7 @@ function showLoadingState(modal, show) {
   const loadingIndicator = modal.querySelector(".camera-loading");
   const video = modal.querySelector("video");
   const controls = modal.querySelector(".camera-controls");
+  const modeContainer = modal.querySelector(".camera-mode-container");
 
   if (loadingIndicator) {
     loadingIndicator.style.display = show ? "flex" : "none";
@@ -517,6 +1072,10 @@ function showLoadingState(modal, show) {
   if (controls) {
     controls.style.opacity = show ? "0.5" : "1";
     controls.style.pointerEvents = show ? "none" : "auto";
+  }
+  if (modeContainer) {
+    modeContainer.style.opacity = show ? "0.5" : "1";
+    modeContainer.style.pointerEvents = show ? "none" : "auto";
   }
 }
 
@@ -539,24 +1098,30 @@ function updateCameraModal(
   showSwitchButton,
   cameraLabel,
 ) {
-  // Update video source
   const video = modal.querySelector("video");
+  const overlayCanvas = modal.querySelector(".camera-document-overlay");
   if (video) {
     video.srcObject = stream;
+    if (overlayCanvas && typeof video.addEventListener === "function") {
+      video.addEventListener(
+        "loadedmetadata",
+        () => {
+          syncOverlayToVideo(video, overlayCanvas);
+        },
+        { once: true },
+      );
+    }
   }
 
-  // Update camera label
   updateCameraLabel(modal, cameraLabel);
-
-  // Hide loading indicator
   showLoadingState(modal, false);
 
-  // Add switch camera button if needed
   if (showSwitchButton && onSwitchCamera) {
-    const videoContainer = modal.querySelector(".video-container");
+    const parentContainer =
+      modal.querySelector(".video-wrapper") || modal.querySelector(".video-container");
     let switchBtn = modal.querySelector(".switch-camera-btn");
 
-    if (!switchBtn) {
+    if (!switchBtn && parentContainer) {
       switchBtn = document.createElement("button");
       switchBtn.className = "switch-camera-btn";
       switchBtn.innerHTML = `
@@ -583,17 +1148,18 @@ function updateCameraModal(
         height: 48px;
         z-index: 10;
       `;
-      videoContainer.appendChild(switchBtn);
+      parentContainer.appendChild(switchBtn);
     }
 
-    switchBtn.onclick = async () => {
-      if (onSwitchCamera) {
-        await onSwitchCamera();
-      }
-    };
+    if (switchBtn) {
+      switchBtn.onclick = async () => {
+        if (onSwitchCamera) {
+          await onSwitchCamera();
+        }
+      };
+    }
   }
 
-  // Update button handlers
   const captureBtn = modal.querySelector(".capture-btn");
   const cancelBtn = modal.querySelector(".cancel-btn");
 
@@ -668,6 +1234,18 @@ function createCameraModal(
     width: 100%;
     max-height: calc(100% - 150px);
     position: relative;
+    overflow: hidden;
+  `;
+
+  const videoWrapper = document.createElement("div");
+  videoWrapper.className = "video-wrapper";
+  videoWrapper.style.cssText = `
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    max-height: 100%;
   `;
 
   const video = document.createElement("video");
@@ -682,6 +1260,53 @@ function createCameraModal(
     background: #000;
     opacity: ${isLoading ? "0.3" : "1"};
     transition: opacity 0.3s ease;
+    display: block;
+    object-fit: contain;
+  `;
+
+  // Overlay canvas for real-time document boundary drawing
+  const overlayCanvas = document.createElement("canvas");
+  overlayCanvas.className = "camera-document-overlay";
+  overlayCanvas.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    border-radius: 8px;
+    display: none;
+  `;
+
+  if (typeof video.addEventListener === "function") {
+    video.addEventListener("loadedmetadata", () => {
+      syncOverlayToVideo(video, overlayCanvas);
+    });
+  }
+
+  // Status pill indicator ("Searching document" / "Document detected")
+  const statusPill = document.createElement("div");
+  statusPill.className = "camera-document-status";
+  statusPill.style.cssText = `
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(4px);
+    color: #ffffff;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+    z-index: 5;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition: border-color 0.2s;
+    white-space: nowrap;
   `;
 
   // Loading indicator (spinner)
@@ -711,6 +1336,11 @@ function createCameraModal(
       }
     </style>
   `;
+
+  videoWrapper.appendChild(video);
+  videoWrapper.appendChild(overlayCanvas);
+  videoWrapper.appendChild(statusPill);
+  videoWrapper.appendChild(loadingIndicator);
 
   // Switch camera button (floating on video, top-right)
   if (showSwitchButton && onSwitchCamera) {
@@ -745,16 +1375,137 @@ function createCameraModal(
         await onSwitchCamera();
       }
     });
-    videoContainer.appendChild(switchBtn);
+    videoWrapper.appendChild(switchBtn);
   }
+
+  videoContainer.appendChild(videoWrapper);
+
+  // Mode selection container
+  const modeContainer = document.createElement("div");
+  modeContainer.className = "camera-mode-container";
+  modeContainer.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    opacity: ${isLoading ? "0.5" : "1"};
+    pointer-events: ${isLoading ? "none" : "auto"};
+    transition: opacity 0.3s ease;
+  `;
+
+  const modePill = document.createElement("div");
+  modePill.className = "camera-mode-pill";
+  modePill.style.cssText = `
+    display: flex;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 24px;
+    padding: 3px;
+    gap: 4px;
+  `;
+
+  const modePhotoBtn = document.createElement("button");
+  modePhotoBtn.type = "button";
+  modePhotoBtn.className = "camera-mode-btn camera-mode-photo";
+  modePhotoBtn.textContent = t("canvas.camera.modePhoto") || "Photo";
+  modePhotoBtn.style.cssText = `
+    padding: 6px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 20px;
+    border: none;
+    cursor: pointer;
+    background: #3b82f6;
+    color: #ffffff;
+    transition: all 0.2s ease;
+  `;
+
+  const modeDocBtn = document.createElement("button");
+  modeDocBtn.type = "button";
+  modeDocBtn.className = "camera-mode-btn camera-mode-doc";
+  modeDocBtn.textContent = t("canvas.camera.modeDocument") || "Document";
+  modeDocBtn.style.cssText = `
+    padding: 6px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 20px;
+    border: none;
+    cursor: pointer;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    transition: all 0.2s ease;
+  `;
+
+  modePill.appendChild(modePhotoBtn);
+  modePill.appendChild(modeDocBtn);
+
+  // Flatten lighting checkbox (visible only in document mode)
+  const flattenContainer = document.createElement("label");
+  flattenContainer.className = "camera-flatten-container";
+  flattenContainer.style.cssText = `
+    display: none;
+    align-items: center;
+    gap: 6px;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+  `;
+
+  const flattenCheckbox = document.createElement("input");
+  flattenCheckbox.type = "checkbox";
+  flattenCheckbox.className = "camera-flatten-checkbox";
+  flattenCheckbox.checked = true;
+  flattenCheckbox.style.cursor = "pointer";
+
+  const flattenLabel = document.createElement("span");
+  flattenLabel.textContent = t("canvas.camera.flattenLighting") || "Flatten lighting";
+
+  flattenContainer.appendChild(flattenCheckbox);
+  flattenContainer.appendChild(flattenLabel);
+
+  modeContainer.appendChild(modePill);
+  modeContainer.appendChild(flattenContainer);
+
+  // Initialize live detection controller
+  const detectionController = startLiveDocumentDetection(video, overlayCanvas, statusPill, modal);
+  modal._detectionController = detectionController;
+  modal.dataset.cameraMode = "photo";
+  modal.dataset.flattenLighting = "true";
+
+  flattenCheckbox.addEventListener("change", () => {
+    modal.dataset.flattenLighting = flattenCheckbox.checked ? "true" : "false";
+  });
+
+  const setMode = (mode) => {
+    modal.dataset.cameraMode = mode;
+    if (mode === "document") {
+      modeDocBtn.style.background = "#3b82f6";
+      modeDocBtn.style.color = "#ffffff";
+      modePhotoBtn.style.background = "transparent";
+      modePhotoBtn.style.color = "rgba(255, 255, 255, 0.7)";
+      flattenContainer.style.display = "flex";
+      detectionController.setEnabled(true);
+    } else {
+      modePhotoBtn.style.background = "#3b82f6";
+      modePhotoBtn.style.color = "#ffffff";
+      modeDocBtn.style.background = "transparent";
+      modeDocBtn.style.color = "rgba(255, 255, 255, 0.7)";
+      flattenContainer.style.display = "none";
+      detectionController.setEnabled(false);
+    }
+  };
+
+  modePhotoBtn.onclick = () => setMode("photo");
+  modeDocBtn.onclick = () => setMode("document");
 
   const controls = document.createElement("div");
   controls.className = "camera-controls";
   controls.style.cssText = `
     display: flex;
     gap: 20px;
-    margin-top: 20px;
-    padding: 20px;
+    margin-top: 16px;
+    padding: 10px 20px 20px;
     opacity: ${isLoading ? "0.5" : "1"};
     pointer-events: ${isLoading ? "none" : "auto"};
     transition: opacity 0.3s ease;
@@ -798,12 +1549,11 @@ function createCameraModal(
     });
   }
 
-  videoContainer.appendChild(video);
-  videoContainer.appendChild(loadingIndicator);
-  controls.appendChild(captureBtn);
   controls.appendChild(cancelBtn);
+  controls.appendChild(captureBtn);
   modal.appendChild(labelContainer);
   modal.appendChild(videoContainer);
+  modal.appendChild(modeContainer);
   modal.appendChild(controls);
 
   return modal;
@@ -878,11 +1628,32 @@ export async function resizeImage(dataUrl, maxDimension = MAX_IMAGE_DIMENSION) {
 }
 
 /**
+ * Check whether a canvas element contains any transparent or semi-transparent pixels.
+ * @param {HTMLCanvasElement} canvas
+ * @returns {boolean}
+ */
+export function hasTransparency(canvas) {
+  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return false;
+  const ctx = canvas.getContext?.("2d", { willReadFrequently: true });
+  if (!ctx || typeof ctx.getImageData !== "function") return false;
+  try {
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] < 255) return true;
+    }
+  } catch (_e) {
+    return false;
+  }
+  return false;
+}
+
+/**
  * Compress image to target file size using JPEG compression
- * Iteratively adjusts quality to meet target size
+ * Iteratively adjusts quality to meet target size.
+ * Preserves PNG format if image contains transparency to avoid black backgrounds.
  * @param {string} dataUrl - Image data URL
  * @param {number} targetSizeKB - Target size in kilobytes (default: TARGET_SIZE_KB)
- * @returns {Promise<string>} - Compressed image data URL
+ * @returns {Promise<string>} - Compressed or transparency-preserved image data URL
  */
 export async function compressImage(dataUrl, targetSizeKB = TARGET_SIZE_KB) {
   const img = await loadImage(dataUrl);
@@ -894,6 +1665,12 @@ export async function compressImage(dataUrl, targetSizeKB = TARGET_SIZE_KB) {
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(img, 0, 0);
+
+  // If the image contains transparency, preserve it as PNG.
+  // JPEG does not support alpha channels — converting to JPEG turns transparent areas black.
+  if (hasTransparency(canvas)) {
+    return canvas.toDataURL("image/png");
+  }
 
   // Binary search for optimal quality
   let minQuality = MIN_QUALITY;
@@ -1038,8 +1815,10 @@ export async function optimizeImageForDisplay(dataUrl, displayWidth, displayHeig
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
-  // Use JPEG with high quality for good compression/quality balance
-  const optimizedDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+  // Preserve PNG format if image contains transparency; use JPEG otherwise
+  const isTransparent = hasTransparency(canvas);
+  const mimeType = isTransparent ? "image/png" : "image/jpeg";
+  const optimizedDataUrl = canvas.toDataURL(mimeType, isTransparent ? undefined : 0.92);
 
   return {
     dataUrl: optimizedDataUrl,

@@ -187,6 +187,63 @@ describe("Nextcloud Sync Module", () => {
       expect(uploadedContent.content).toBe("Hello World");
     });
 
+    it("uploads a restored note as-is instead of merging the server copy back in", async () => {
+      // A backup restore re-dirties the note with lastSyncedEtag=null, which
+      // classifies as modified on both sides. A merge would re-apply the
+      // server's strokes and stroke deletions, undoing the restore. The
+      // restoredAt marker makes local win outright.
+      const noteId = "n-restored";
+      const path = `/NoteBerg/notebooks/nb1/notes/${noteId}.json`;
+      const local = {
+        id: noteId,
+        notebookId: "nb1",
+        content: "backup",
+        modified: 5000,
+        version: 8,
+        synced: false,
+        lastSyncedEtag: null,
+        restoredAt: 5000,
+        strokes: [{ id: "s-kept", x: [1], y: [1] }],
+        deletedStrokes: [],
+      };
+      const remote = {
+        id: noteId,
+        notebookId: "nb1",
+        content: "backup",
+        modified: 4000,
+        version: 7,
+        strokes: [
+          { id: "s-kept", x: [1], y: [1] },
+          { id: "s-ruined", x: [2], y: [2] },
+        ],
+        deletedStrokes: ["s-kept"],
+      };
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(path, {
+        content: JSON.stringify(remote),
+        etag: "etag-remote",
+        mtime: new Date(),
+      });
+      mockNoteStore.set(noteId, local);
+
+      const result = await fullSync([], [local]);
+
+      expect(result.conflicts.notes).toHaveLength(0);
+      expect(result.uploaded.notes.uploaded).toBe(1);
+      const uploaded = JSON.parse(mockServer.files.get(path).content);
+      expect(uploaded.strokes.map((st) => st.id)).toEqual(["s-kept"]);
+      expect(uploaded).not.toHaveProperty("restoredAt");
+      // Uploaded against the server's current etag, so the PUT is not a 412.
+      const put = mockServer.requests.find((r) => r.method === "PUT" && r.path === path);
+      expect(String(put.headers["If-Match"]).replace(/"/g, "")).toBe("etag-remote");
+      // Nothing merged was written back locally either.
+      expect(saveNote).not.toHaveBeenCalled();
+    });
+
     it("should restore locally modified item if deleted remotely", async () => {
       const noteId = "n-restore";
       const local = {

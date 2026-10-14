@@ -191,8 +191,6 @@ NoteBerg stands on the shoulders of many excellent open-source projects. A since
 | [Vitest](https://vitest.dev/) | Unit testing framework |
 | [Testing Library](https://testing-library.com/) | DOM testing utilities |
 | [jsdom](https://github.com/jsdom/jsdom) | DOM environment for tests |
-| [Express](https://expressjs.com/) | Dev proxy server |
-| [cors](https://github.com/expressjs/cors) | CORS middleware for dev proxy |
 | [cross-env](https://github.com/kentcdodds/cross-env) | Cross-platform environment variables for npm scripts |
 | [ESLint](https://eslint.org/) | JavaScript/TypeScript linter |
 | [Prettier](https://prettier.io/) | Code formatter |

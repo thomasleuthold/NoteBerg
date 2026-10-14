@@ -314,6 +314,337 @@ describe("Nextcloud Sync Module", () => {
       mockNoteStore.delete(noteId);
     });
 
+    // Regression: one field encrypted with a key this client no longer holds
+    // (a purge/restore cycle, a changed master password, a field written by
+    // another device) used to throw out of decryptNoteLocally and fail the
+    // whole note's upload — every sync, indefinitely. The note could never
+    // reach the server again, and the log looked identical to a wrong master
+    // password.
+    it("uploads a note whose individual field fails to decrypt, minus that field", async () => {
+      const { isAppUnlocked, getEncryptionKey } = await import("./masterPassword.js");
+      const { decryptObject } = await import("./encryption.js");
+
+      isAppUnlocked.mockReturnValue(true);
+      getEncryptionKey.mockReturnValue("test-key");
+      // strokes decrypt fine; recordings were written with a key we lost.
+      decryptObject.mockImplementation((blob) => {
+        if (blob?.data === "bad") return Promise.reject(new Error("OperationError"));
+        return Promise.resolve([{ id: "s1", x: [1], y: [1] }]);
+      });
+
+      const noteId = "n-partial-decrypt";
+      const notebookId = "nb1";
+
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+
+      const localFull = {
+        id: noteId,
+        notebookId,
+        encrypted: true,
+        strokes: { data: "good", iv: "iv1" },
+        recordings: { data: "bad", iv: "iv2" },
+        deletedStrokes: [],
+        version: 2,
+        modified: 1_700_000_500_000,
+        synced: false,
+        lastSyncedEtag: null,
+      };
+      mockNoteStore.set(noteId, localFull);
+
+      const result = await fullSync([], [{ ...localFull }]);
+
+      // The note must reach the server rather than being blocked forever. The
+      // server has no copy to recover the recordings from, so they go up empty.
+      expect(result.uploaded.notes.uploaded).toBe(1);
+      const remote = JSON.parse(
+        mockServer.files.get(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`).content,
+      );
+      expect(remote.strokes.map((s) => s.id)).toEqual(["s1"]);
+      expect(remote.recordings).toEqual([]);
+
+      isAppUnlocked.mockReturnValue(false);
+      getEncryptionKey.mockReturnValue(null);
+      decryptObject.mockReset();
+    });
+
+    // A field that fails to decrypt holds no new local edits (saveNote
+    // re-encrypts every field it writes with the current key), while the
+    // server's copy of it may be intact. Uploading it empty would destroy the
+    // only good copy; blocking the upload would lose the new edits. Both must
+    // survive: new strokes from here, recordings from the server.
+    describe("field that fails to decrypt, server holds a copy", () => {
+      const noteId = "n-recover-field";
+      const notebookId = "nb1";
+      const notePath = `/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`;
+      const serverRecordings = [
+        { id: "r-server", fileId: "f-server", name: "Lecture", duration: 60, deleted: false },
+      ];
+
+      async function setup() {
+        const { isAppUnlocked, getEncryptionKey } = await import("./masterPassword.js");
+        const { decryptObject } = await import("./encryption.js");
+        isAppUnlocked.mockReturnValue(true);
+        getEncryptionKey.mockReturnValue("test-key");
+        decryptObject.mockImplementation((blob) => {
+          if (blob?.data === "bad") return Promise.reject(new Error("OperationError"));
+          return Promise.resolve([{ id: "s-new", x: [1], y: [1] }]);
+        });
+
+        for (const folder of [
+          `/NoteBerg/notebooks/${notebookId}`,
+          `/NoteBerg/notebooks/${notebookId}/notes`,
+          `/NoteBerg/notebooks/${notebookId}/notes/${noteId}_media`,
+        ]) {
+          mockServer.files.set(folder, { isCollection: true, mtime: new Date() });
+        }
+        mockServer.files.set(
+          `/NoteBerg/notebooks/${notebookId}/notes/${noteId}_media/f-server.m4a`,
+          { content: "audio-bytes", etag: "etag-audio", mtime: new Date() },
+        );
+        // Server copy as last synced: unchanged since (same etag as local).
+        mockServer.files.set(notePath, {
+          content: JSON.stringify({
+            id: noteId,
+            notebookId,
+            strokes: [],
+            recordings: serverRecordings,
+            version: 1,
+            modified: 1_700_000_000_000,
+          }),
+          etag: "etag-synced",
+          mtime: new Date(1_700_000_000_000),
+        });
+
+        // Only this device changed: new strokes (current key), recordings
+        // still encrypted with a key this client lost.
+        const localFull = {
+          id: noteId,
+          notebookId,
+          encrypted: true,
+          strokes: { data: "good", iv: "iv1" },
+          recordings: { data: "bad", iv: "iv2" },
+          deletedStrokes: [],
+          version: 2,
+          modified: 1_700_000_500_000,
+          synced: false,
+          lastSyncedEtag: "etag-synced",
+        };
+        mockNoteStore.set(noteId, localFull);
+        return localFull;
+      }
+
+      async function teardown() {
+        const { isAppUnlocked, getEncryptionKey } = await import("./masterPassword.js");
+        const { decryptObject } = await import("./encryption.js");
+        isAppUnlocked.mockReturnValue(false);
+        getEncryptionKey.mockReturnValue(null);
+        decryptObject.mockReset();
+        mockNoteStore.delete(noteId);
+      }
+
+      it("uploads the new edits and keeps the server's copy of the unreadable field", async () => {
+        const localFull = await setup();
+
+        const result = await fullSync([], [{ ...localFull }]);
+
+        expect(result.uploaded.notes.uploaded).toBe(1);
+        const remote = JSON.parse(mockServer.files.get(notePath).content);
+        expect(remote.strokes.map((s) => s.id)).toEqual(["s-new"]);
+        expect(remote.recordings).toEqual(serverRecordings);
+
+        // The local copy heals too, so the next sync decrypts cleanly.
+        const healed = saveNote.mock.calls.find((c) => c[0]?.id === noteId)?.[0];
+        expect(healed?.recordings).toEqual(serverRecordings);
+        expect(healed?.modified).toBe(localFull.modified);
+
+        await teardown();
+      });
+
+      it("skips the upload for this sync when the server copy cannot be fetched", async () => {
+        const localFull = await setup();
+        const before = mockServer.files.get(notePath).content;
+        mockServer.failNext({ method: "GET", pathMatch: `${noteId}.json`, status: 503 });
+
+        const result = await fullSync([], [{ ...localFull }]);
+
+        // Neither side loses anything: the server copy is untouched and the
+        // note stays unsynced, so the next sync tries again.
+        expect(result.uploaded.notes.uploaded).toBe(0);
+        expect(mockServer.files.get(notePath).content).toBe(before);
+        expect(saveNote.mock.calls.some((c) => c[0]?.id === noteId)).toBe(false);
+
+        await teardown();
+      });
+    });
+
+    // Regression: the "check media for unchanged notes" pass reads the note
+    // with getRawNote, which does NOT decrypt. On a locally-encrypted note
+    // `media` and `recordings` therefore arrive as {data, iv} blobs, and every
+    // check inside downloadNoteMedia is array-shaped — so the pass returned
+    // immediately and downloaded nothing. Encrypted notes never received their
+    // media binaries on any device, however many times they synced.
+    it("downloads media for an unchanged note that is locally encrypted", async () => {
+      const { isAppUnlocked, getEncryptionKey } = await import("./masterPassword.js");
+      const { decryptObject } = await import("./encryption.js");
+
+      const noteId = "n-encrypted-media";
+      const notebookId = "nb1";
+      const fileId = "rec-file-1";
+
+      isAppUnlocked.mockReturnValue(true);
+      getEncryptionKey.mockReturnValue("test-key");
+      // The stored recordings blob decrypts to the real array with its fileId.
+      decryptObject.mockImplementation((blob) => {
+        if (blob?.data === "recordings-blob") {
+          return Promise.resolve([
+            { id: "r1", fileId, name: "Recording", duration: 5, deleted: false },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}_media`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      // The recording binary exists on the server.
+      mockServer.files.set(
+        `/NoteBerg/notebooks/${notebookId}/notes/${noteId}_media/${fileId}.m4a`,
+        { content: "audio-bytes", etag: "etag-audio", mtime: new Date() },
+      );
+
+      const etag = "etag-in-sync";
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
+        content: JSON.stringify({ id: noteId, notebookId, strokes: [], version: 1 }),
+        etag,
+        mtime: new Date(),
+      });
+
+      // Local is in sync (same etag) → takes the "unchanged, check media" path,
+      // and is locally encrypted so its recordings are an opaque blob.
+      const localNote = {
+        id: noteId,
+        notebookId,
+        encrypted: true,
+        recordings: { data: "recordings-blob", iv: "iv1" },
+        strokes: [],
+        version: 1,
+        modified: 1_700_000_000_000,
+        synced: true,
+        lastSyncedEtag: etag,
+      };
+      mockNoteStore.set(noteId, localNote);
+
+      const storage = await import("./storage.js");
+      storage.saveFile.mockClear();
+
+      await fullSync([], [{ ...localNote }]);
+
+      // The binary must have been fetched and stored under its fileId.
+      const savedIds = storage.saveFile.mock.calls.map((c) => c[1]);
+      expect(savedIds).toContain(fileId);
+
+      isAppUnlocked.mockReturnValue(false);
+      getEncryptionKey.mockReturnValue(null);
+      decryptObject.mockReset();
+    });
+
+    // Regression: attemptMerge refuses encrypted notes (it must be safe to call
+    // from the Web Worker, which holds no key), and both callers fell back to
+    // "local wins, remote's edits are lost". For a note edited on two devices
+    // that silently discarded one side's recordings on every sync — no
+    // conflict raised, nothing in the log. fullSync runs on the main thread
+    // where the key IS available, so the note can be decrypted and merged.
+    it("merges recordings from both sides of an encrypted note instead of discarding the remote's", async () => {
+      const { isAppUnlocked, getEncryptionKey } = await import("./masterPassword.js");
+      const { decryptObject } = await import("./encryption.js");
+
+      const noteId = "n-encrypted-merge";
+      const notebookId = "nb1";
+
+      isAppUnlocked.mockReturnValue(true);
+      getEncryptionKey.mockReturnValue("test-key");
+      decryptObject.mockImplementation((blob) => {
+        if (blob?.data === "local-recordings") {
+          return Promise.resolve([
+            { id: "r-windows", fileId: "f-windows", name: "From Windows", deleted: false },
+          ]);
+        }
+        if (blob?.data === "local-strokes") return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes`, {
+        isCollection: true,
+        mtime: new Date(),
+      });
+
+      // The other device added its own recording and uploaded.
+      const remoteNote = {
+        id: noteId,
+        notebookId,
+        strokes: [],
+        deletedStrokes: [],
+        recordings: [
+          { id: "r-android", fileId: "f-android", name: "From Android", deleted: false },
+        ],
+        version: 5,
+        modified: 1_700_000_050_000,
+      };
+      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
+        content: JSON.stringify(remoteNote),
+        etag: "etag-remote",
+        mtime: new Date(1_700_000_050_000),
+      });
+
+      // Local is encrypted, dirty, and has a different recording.
+      const localFull = {
+        id: noteId,
+        notebookId,
+        encrypted: true,
+        strokes: { data: "local-strokes", iv: "iv0" },
+        recordings: { data: "local-recordings", iv: "iv1" },
+        deletedStrokes: [],
+        version: 6,
+        modified: 1_700_000_060_000,
+        synced: false,
+        lastSyncedEtag: "etag-old",
+      };
+      mockNoteStore.set(noteId, localFull);
+
+      const result = await fullSync([], [{ ...localFull }]);
+
+      // Both recordings must survive: the whole point is that neither device's
+      // additions are silently dropped.
+      const uploaded = result.notesToUpload?.find((n) => n.id === noteId);
+      expect(uploaded).toBeDefined();
+      const ids = (uploaded.recordings || []).map((r) => r.id).sort();
+      expect(ids).toEqual(["r-android", "r-windows"]);
+
+      isAppUnlocked.mockReturnValue(false);
+      getEncryptionKey.mockReturnValue(null);
+      decryptObject.mockReset();
+    });
+
     it("should upload an existing notebook modified locally when remote is unchanged", async () => {
       // Scenario: notebook was previously synced (has lastSyncedEtag), user edits title/description.
       // Remote file has not changed — etag still matches lastSyncedEtag.

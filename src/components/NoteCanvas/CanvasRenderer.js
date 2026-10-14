@@ -272,6 +272,8 @@ export class CanvasRenderer {
     this._activeStrokeColor = null; // Resolved colour of activeStrokeId (see drawDirectStroke)
     this.selectedMediaId = null; // ID of selected media item
     this.lastDrawnPointIndex = 0; // Index of the last point processed in the active stroke
+    this._liveTail = null; // Provisional tail of the active pen stroke, drawn on the overlay
+    this._liveTailRect = null; // Screen rect last painted for _liveTail, cleared before redraw
     this.selectionBounds = null;
     this.lineSeparators = []; // Y positions (content coords) of detected line separators
     this.lineIndentLevels = []; // indent level per line band (0 = base, 1 = indented)
@@ -778,6 +780,10 @@ export class CanvasRenderer {
     if (this.activeStroke && this.activeStroke.type === "marker") {
       this._drawMarkerPreview(this.activeStroke, false);
     }
+    // Same for a pen stroke's provisional tail, which lives on the overlay too.
+    if (this._liveTail) {
+      this._drawLiveTail();
+    }
   }
 
   /**
@@ -870,27 +876,104 @@ export class CanvasRenderer {
     // Drawing the tail on every move (not just on the final call) closes that
     // gap. It is deliberately NOT committed - lastDrawnPointIndex stays put, so
     // the next move re-draws the same region from the same starting geometry.
-    // Overdrawing is invisible here because pen strokes are opaque round-capped
-    // lines; markers are translucent and would accumulate alpha, but they return
-    // early above via _drawMarkerPreview and never reach this path.
+    //
+    // While drawing, the tail goes on the overlay, which is wiped before each
+    // redraw. It used to go on the buffer, on the assumption that the next
+    // curve would cover it. It does not: that curve bends toward the next
+    // sample and cuts the corner at P(last), so every provisional straight tail
+    // was left behind as a tangent spike. Sparse samples (fast strokes, and
+    // Chrome on Android, which drops coalesced history) made them long enough
+    // to see, until a zoom or reload repainted the buffer from the stored points.
     const last = pointCount - 1;
     const prev = last - 1;
-    const midX = (stroke.x[prev] + stroke.x[last]) / 2;
-    const midY = (stroke.y[prev] + stroke.y[last]) / 2;
-
-    this.ctx.beginPath();
-    this.ctx.lineWidth = getWidth(stroke.pressure[last]);
-    this.ctx.moveTo(midX, midY);
-    this.ctx.lineTo(stroke.x[last], stroke.y[last]);
-    this.ctx.stroke();
+    const tail = {
+      x0: (stroke.x[prev] + stroke.x[last]) / 2,
+      y0: (stroke.y[prev] + stroke.y[last]) / 2,
+      x1: stroke.x[last],
+      y1: stroke.y[last],
+      width: getWidth(stroke.pressure[last]),
+      color: this._activeStrokeColor,
+    };
 
     if (isFinished) {
+      // The final tail is real ink: commit it to the buffer.
+      this.ctx.beginPath();
+      this.ctx.lineWidth = tail.width;
+      this.ctx.moveTo(tail.x0, tail.y0);
+      this.ctx.lineTo(tail.x1, tail.y1);
+      this.ctx.stroke();
+      this._clearLiveTail();
+
       // Reset for next stroke
       this.activeStrokeId = null;
       this.lastDrawnPointIndex = 0;
+    } else {
+      this._liveTail = tail;
+      this._drawLiveTail();
     }
 
     this.ctx.restore();
+  }
+
+  /**
+   * Paint the provisional tail of the in-progress pen stroke on the overlay,
+   * replacing the previous one. Also called from render() so the tail follows
+   * a scroll or zoom while the stroke is still being drawn.
+   * @private
+   */
+  _drawLiveTail() {
+    // Clear only the previous tail's rect, not the whole overlay, so nothing
+    // else that happens to be on it is wiped at stylus sample rate.
+    this._clearLiveTailRect();
+    const tail = this._liveTail;
+    if (!tail) return;
+
+    const zoom = this.zoomScale || 1;
+    const offsetX = this._getCenteringOffset();
+    const ctx = this.overlayCtx;
+
+    ctx.save();
+    ctx.translate(offsetX, 0);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-this.contentScrollLeft, -this.contentScrollTop);
+    ctx.strokeStyle = tail.color;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = tail.width;
+    ctx.beginPath();
+    ctx.moveTo(tail.x0, tail.y0);
+    ctx.lineTo(tail.x1, tail.y1);
+    ctx.stroke();
+    ctx.restore();
+
+    // Screen-space bounds of what was just painted, padded for the round caps
+    // and antialiasing, so the next call can clear exactly this.
+    const pad = (tail.width * zoom) / 2 + 2;
+    const toScreenX = (x) => offsetX + (x - this.contentScrollLeft) * zoom;
+    const toScreenY = (y) => (y - this.contentScrollTop) * zoom;
+    const left = Math.min(toScreenX(tail.x0), toScreenX(tail.x1)) - pad;
+    const top = Math.min(toScreenY(tail.y0), toScreenY(tail.y1)) - pad;
+    const right = Math.max(toScreenX(tail.x0), toScreenX(tail.x1)) + pad;
+    const bottom = Math.max(toScreenY(tail.y0), toScreenY(tail.y1)) + pad;
+    this._liveTailRect = { x: left, y: top, w: right - left, h: bottom - top };
+  }
+
+  /** @private */
+  _clearLiveTailRect() {
+    const r = this._liveTailRect;
+    if (!r) return;
+    this.overlayCtx.clearRect(r.x, r.y, r.w, r.h);
+    this._liveTailRect = null;
+  }
+
+  /**
+   * Remove the provisional tail and forget it, so render() does not bring it
+   * back. Called when the stroke is finished or cancelled.
+   * @private
+   */
+  _clearLiveTail() {
+    this._clearLiveTailRect();
+    this._liveTail = null;
   }
 
   /**
@@ -1047,6 +1130,10 @@ export class CanvasRenderer {
   }
 
   clearOverlay() {
+    // The live tail is wiped with everything else; forget it so render()
+    // does not bring it back.
+    this._liveTail = null;
+    this._liveTailRect = null;
     this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
   }
 
@@ -1259,6 +1346,28 @@ export class CanvasRenderer {
   }
 
   /**
+   * Hide the part of the buffer that lies past the page's right edge.
+   *
+   * _quantizeExtent rounds the buffer up to a whole number of quanta, so when
+   * the whole note width fits in the buffer it overhangs the page by up to a
+   * quantum, and how far depends on zoom * dpr. Left visible, that overhang
+   * shows as a strip of page-coloured canvas without a grid that grows and
+   * shrinks as you zoom, and anything drawn into it is cut off at whatever the
+   * next zoom level's bitmap edge happens to be.
+   *
+   * Clipping the element rather than the drawing context covers every path that
+   * paints the buffer (full redraws and incremental stroke drawing alike). The
+   * inset is a fraction of the element's own box, so it stays correct under the
+   * residual scale _slideCanvas applies mid-pinch.
+   * @private
+   */
+  _clipCanvasToPage() {
+    const overhang = Math.max(0, this.bufferLeft + this.bufferWidth - this.maxContentWidth);
+    const fraction = this.bufferWidth > 0 ? overhang / this.bufferWidth : 0;
+    this.canvas.style.clipPath = fraction > 0 ? `inset(0 ${fraction * 100}% 0 0)` : "none";
+  }
+
+  /**
    * Draw the entire buffer content
    * @private
    * @param {boolean} fastMode - Skip pressure rendering for scroll performance
@@ -1281,6 +1390,8 @@ export class CanvasRenderer {
     this.ctx.fillStyle = this._getPageBackgroundColor();
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.ctx.restore();
+
+    this._clipCanvasToPage();
 
     // Belt-and-braces: _quantizeExtent floors at one quantum, so a non-positive
     // buffer is unreachable. The background above is already painted, keeping the
@@ -2328,6 +2439,11 @@ export class CanvasRenderer {
    * Force a full redraw of the current buffer (high quality)
    */
   forceRedraw() {
+    // Every path that abandons an in-progress stroke (scratch-out, pinch,
+    // media selection) ends with forceRedraw(); none of them reach the
+    // isFinished call that would otherwise clear the overlay tail. If the
+    // stroke is still live, its next move draws a fresh tail.
+    this._clearLiveTail();
     this.palette = sharedGetThemePalette();
     this._drawBuffer(false); // Always full quality on explicit redraw
   }

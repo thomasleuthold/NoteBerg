@@ -1,7 +1,13 @@
 /**
  * RecordingManager - Manages audio recordings for a note.
  *
- * Uses getUserMedia({ audio: true }) to record from the microphone.
+ * Records through the native recorder behind the Tauri `native_audio_*`
+ * commands: `win_audio` (cpal/WASAPI capture → DSP → AAC via Media Foundation,
+ * falling back to WAV) on Windows, and `AudioRecorderPlugin.kt` on Android
+ * (AudioRecord → DSP → MediaCodec/MediaMuxer, falling back to MediaRecorder).
+ * There is no browser recording path — the Nextcloud build, the only one
+ * without Tauri, never renders the "New recording" button, so `getUserMedia`
+ * was unreachable on every shipped build.
  *
  * Usage:
  *   const rm = new RecordingManager({ onChange, onSave });
@@ -13,40 +19,60 @@
  *   rm.destroy();
  */
 
+import { getAutoGainAggressiveness } from "../../modules/audioSettings.js";
 import { generateId, saveFile } from "../../modules/storage.js";
+import { logger } from "../../utils/logger.js";
 
 let _invoke = null;
 async function _getInvoke() {
   if (!_invoke) ({ invoke: _invoke } = await import("@tauri-apps/api/core"));
   return _invoke;
 }
+/**
+ * Bytes per native_audio_read_chunk call. Small enough that peak JS memory is
+ * one chunk even for a multi-hour recording, large enough that the per-call IPC
+ * overhead stays negligible (a 2 h stereo WAV is ~350 calls).
+ */
+const NATIVE_READ_CHUNK_BYTES = 4 * 1024 * 1024;
+
+/**
+ * How long destroy() waits for a stop-and-save before giving up and letting the
+ * note close anyway. Generous, because the save includes reading a potentially
+ * large file across IPC; a hung native stop must not block navigation forever.
+ */
+const DESTROY_SAVE_TIMEOUT_MS = 30_000;
+
 function _fireAndForget(cmd, args) {
   _getInvoke()
     .then((inv) => inv(cmd, args))
     .catch((err) => console.error(`[RecordingManager] ${cmd} error:`, err));
 }
 
-/** True when running inside any Tauri environment (desktop or mobile) */
-const IS_NATIVE = typeof window.__TAURI_INTERNALS__ !== "undefined";
-
 export class RecordingManager {
   /**
    * @param {Object} options
    * @param {Function} options.onChange - Called whenever recordings list or state changes
    * @param {Function} options.onSave   - Called with ({ recordings, deletedRecordings }) to persist
+   * @param {Function} [options.onSaveFailed] - Called with ({ path, mimeType, error }) when a
+   *   finished recording could not be read or stored. Defaults to offering the user to save
+   *   the temp file elsewhere (recordingRecovery.js); without that, the next startup sweep
+   *   deletes it.
    */
   constructor(options = {}) {
     this.onChange = options.onChange || (() => {});
     this.onSave = options.onSave || (() => {});
+    this.onSaveFailed =
+      options.onSaveFailed ||
+      ((info) =>
+        import("./recordingRecovery.js")
+          .then(({ offerRecordingRecovery }) => offerRecordingRecovery(info))
+          .catch((err) => console.error("[RecordingManager] Recovery offer failed:", err)));
 
     /** @type {Array<{id:string, fileId:string, name:string, duration:number, created:number, deleted:boolean}>} */
     this.recordings = [];
     /** @type {string[]} */
     this.deletedRecordings = [];
 
-    this._mediaRecorder = null;
-    this._audioChunks = [];
-    this._stream = null;
     this._nativeRecording = false;
     this._nativePaused = false;
 
@@ -56,12 +82,34 @@ export class RecordingManager {
     this._pauseStart = null;
     this._timerInterval = null;
 
-    this._audioContext = null;
-    this._analyser = null;
-    this._analyserBuffer = null;
-
     this._nativeAmplitude = 0;
     this._amplitudePollInterval = null;
+
+    /** Set while destroy() waits for an in-flight stop to finish. */
+    this._stopSettled = null;
+
+    /**
+     * Resolves when the stop currently in flight has finished saving. Set by
+     * stopRecording() rather than only by destroy(), because a stop the user
+     * started — or stopRecordingForBackground() — can still be reading and
+     * saving when the note closes.
+     */
+    this._stopInFlight = null;
+
+    /**
+     * True when the last recording was ended by the app being backgrounded
+     * rather than by the user. Read by SoundDialog to explain why it stopped;
+     * cleared when the next recording starts or the notice is acknowledged.
+     */
+    this.stoppedInBackground = false;
+
+    /**
+     * Auto-gain aggressiveness (0.0-1.0) of the recording in progress.
+     * Seeded from the global default (audioSettings.js) at startRecording();
+     * a live change via setAggressiveness() is deliberately not written back
+     * to that default, so it affects only the current recording.
+     */
+    this._aggressiveness = 0;
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -76,29 +124,16 @@ export class RecordingManager {
   }
 
   isRecording() {
-    if (this._nativeRecording) return true;
-    return (
-      this._mediaRecorder !== null &&
-      (this._mediaRecorder.state === "recording" || this._mediaRecorder.state === "paused")
-    );
+    return this._nativeRecording;
   }
 
   isPaused() {
-    if (this._nativeRecording) return this._nativePaused;
-    return this._mediaRecorder !== null && this._mediaRecorder.state === "paused";
+    return this._nativeRecording && this._nativePaused;
   }
 
   /** Returns current input amplitude as 0–1, or 0 if not recording */
   getAmplitude() {
-    if (this._nativeRecording) return this._nativeAmplitude;
-    if (!this._analyser || !this._analyserBuffer) return 0;
-    this._analyser.getByteTimeDomainData(this._analyserBuffer);
-    let max = 0;
-    for (const v of this._analyserBuffer) {
-      const deviation = Math.abs(v - 128) / 128;
-      if (deviation > max) max = deviation;
-    }
-    return max;
+    return this._nativeRecording ? this._nativeAmplitude : 0;
   }
 
   /** Returns elapsed seconds of the active recording */
@@ -108,9 +143,26 @@ export class RecordingManager {
     return Math.floor((Date.now() - this._recordingStartTime - paused) / 1000);
   }
 
+  /** Auto-gain aggressiveness (0.0-1.0) of the recording in progress. */
+  getAggressiveness() {
+    return this._aggressiveness;
+  }
+
   /**
-   * Start recording from microphone.
-   * On Android uses native MediaRecorder via Tauri plugin (bypasses WebView getUserMedia).
+   * Live-update the auto-gain aggressiveness of the recording in progress.
+   * Deliberately does not touch the global default (audioSettings.js): this is
+   * a per-recording override, made while watching the level meter, not a
+   * change to what the next recording starts with.
+   * @param {number} value - 0.0-1.0
+   */
+  setAggressiveness(value) {
+    if (!this.isRecording()) return;
+    this._aggressiveness = Math.min(1, Math.max(0, Number(value) || 0));
+    _fireAndForget("native_audio_set_aggressiveness", { aggressiveness: this._aggressiveness });
+  }
+
+  /**
+   * Start recording from the microphone via the native recorder.
    * @returns {Promise<void>}
    */
   async startRecording() {
@@ -120,124 +172,35 @@ export class RecordingManager {
     this._recordingStartTime = Date.now();
     this._pausedDuration = 0;
     this._pauseStart = null;
-
-    if (IS_NATIVE) {
-      try {
-        await (await _getInvoke())("native_audio_start");
-      } catch (err) {
-        this._recordingId = null;
-        this._recordingStartTime = null;
-        console.error("[RecordingManager] Native audio start error:", err);
-        // Map recognizable native error messages to the standard getUserMedia
-        // error names so the UI shows an actionable message instead of the
-        // generic one: NotAllowedError → "permission denied", NotFoundError →
-        // "no microphone found".
-        const message = String(err);
-        const error = new Error(message);
-        if (/permission denied|permission not granted/i.test(message)) {
-          error.name = "NotAllowedError";
-        } else if (/no audio input device|no input device|device not found/i.test(message)) {
-          error.name = "NotFoundError";
-        }
-        throw error;
-      }
-      this._nativeRecording = true;
-      this._nativeAmplitude = 0;
-      this._startAmplitudePoll();
-      this._startTimer();
-      this.onChange();
-      return;
-    }
+    this._aggressiveness = getAutoGainAggressiveness();
 
     try {
-      this._stream = await this._getUserMediaWithRetry();
+      const started = await (await _getInvoke())("native_audio_start", {
+        aggressiveness: this._aggressiveness,
+      });
+      this._logPipeline(started);
     } catch (err) {
       this._recordingId = null;
       this._recordingStartTime = null;
-      console.error("[RecordingManager] Stream error:", err.name, err.message);
-      throw err;
-    }
-
-    this._audioChunks = [];
-
-    // Build audio processing chain: source → compressor → gain → analyser → destination
-    // The processed stream is fed to MediaRecorder so recordings are auto-gained.
-    let recordingStream = this._stream;
-    try {
-      this._audioContext = new AudioContext();
-      const source = this._audioContext.createMediaStreamSource(this._stream);
-
-      // Dynamics compressor: gentle upward compression for quiet passages
-      const compressor = this._audioContext.createDynamicsCompressor();
-      compressor.threshold.value = -18; // dB
-      compressor.knee.value = 12; // dB — soft knee
-      compressor.ratio.value = 3; // gentle ratio
-      compressor.attack.value = 0.05; // seconds
-      compressor.release.value = 0.3; // seconds
-
-      // Modest make-up gain
-      const gain = this._audioContext.createGain();
-      gain.gain.value = 1.1;
-
-      // Hard limiter at the end of the chain to prevent clipping on loud sounds
-      const limiter = this._audioContext.createDynamicsCompressor();
-      limiter.threshold.value = -1; // dB — kick in just below 0 dBFS
-      limiter.knee.value = 0; // hard knee
-      limiter.ratio.value = 20; // near-brick-wall limiting
-      limiter.attack.value = 0.001; // seconds — fast to catch transients
-      limiter.release.value = 0.1; // seconds
-
-      // Analyser for the level meter
-      this._analyser = this._audioContext.createAnalyser();
-      this._analyser.fftSize = 256;
-      this._analyserBuffer = new Uint8Array(this._analyser.frequencyBinCount);
-
-      const destination = this._audioContext.createMediaStreamDestination();
-
-      source.connect(compressor);
-      compressor.connect(gain);
-      gain.connect(limiter);
-      limiter.connect(this._analyser);
-      this._analyser.connect(destination);
-
-      recordingStream = destination.stream;
-    } catch (_e) {
-      this._analyser = null;
-    }
-
-    const preferredTypes = [
-      "audio/mp4",
-      "audio/webm;codecs=opus",
-      "audio/webm",
-      "audio/ogg;codecs=opus",
-      "audio/ogg",
-    ];
-    const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
-
-    this._mediaRecorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : {});
-    this._mimeType = this._mediaRecorder.mimeType || mimeType || "audio/webm";
-
-    this._mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        this._audioChunks.push(e.data);
+      console.error("[RecordingManager] Native audio start error:", err);
+      // Map recognizable native error messages to the standard getUserMedia
+      // error names so the UI shows an actionable message instead of the
+      // generic one: NotAllowedError → "permission denied", NotFoundError →
+      // "no microphone found".
+      const message = String(err);
+      const error = new Error(message);
+      if (/permission denied|permission not granted/i.test(message)) {
+        error.name = "NotAllowedError";
+      } else if (/no audio input device|no input device|device not found/i.test(message)) {
+        error.name = "NotFoundError";
       }
-    };
+      throw error;
+    }
 
-    this._mediaRecorder.onstop = () => {
-      this._handleRecordingStopped();
-    };
-
-    // Stop recording if the user ends the screen share via the browser UI
-    this._stream.getTracks().forEach((track) => {
-      track.onended = () => {
-        if (this.isRecording()) {
-          this._stopTimer();
-          this._mediaRecorder?.stop();
-        }
-      };
-    });
-
-    this._mediaRecorder.start(1000);
+    this.stoppedInBackground = false;
+    this._nativeRecording = true;
+    this._nativeAmplitude = 0;
+    this._startAmplitudePoll();
     this._startTimer();
     this.onChange();
   }
@@ -246,14 +209,10 @@ export class RecordingManager {
     if (!this.isRecording() || this.isPaused()) return;
     this._pauseStart = Date.now();
     this._stopTimer();
-    if (this._nativeRecording) {
-      this._nativePaused = true;
-      this._stopAmplitudePoll();
-      this._nativeAmplitude = 0;
-      _fireAndForget("native_audio_pause");
-    } else {
-      this._mediaRecorder.pause();
-    }
+    this._nativePaused = true;
+    this._stopAmplitudePoll();
+    this._nativeAmplitude = 0;
+    _fireAndForget("native_audio_pause");
     this.onChange();
   }
 
@@ -264,39 +223,54 @@ export class RecordingManager {
       this._pauseStart = null;
     }
     this._startTimer();
-    if (this._nativeRecording) {
-      this._nativePaused = false;
-      this._startAmplitudePoll();
-      _fireAndForget("native_audio_resume");
-    } else {
-      this._mediaRecorder.resume();
-    }
+    this._nativePaused = false;
+    this._startAmplitudePoll();
+    _fireAndForget("native_audio_resume");
     this.onChange();
   }
 
   stopRecording() {
     if (!this.isRecording()) return;
     this._stopTimer();
-    if (this._nativeRecording) {
-      this._nativeRecording = false;
-      this._nativePaused = false;
-      this._stopAmplitudePoll();
-      _getInvoke()
-        .then((inv) => inv("native_audio_stop"))
-        .then((result) => {
-          this._handleNativeStopped(result);
-        })
-        .catch((err) => {
-          console.error("[RecordingManager] Native audio stop error:", err);
-          this._recordingId = null;
-          this._recordingStartTime = null;
-          this.onChange();
-        });
-      this.onChange();
-      return;
-    }
-    this._mediaRecorder.stop();
-    this._releaseStream();
+    this._nativeRecording = false;
+    this._nativePaused = false;
+    this._stopAmplitudePoll();
+    // Published so destroy() can await a stop it did not itself start.
+    this._stopInFlight = new Promise((resolve) => {
+      this._stopSettled = resolve;
+    });
+    _getInvoke()
+      .then((inv) => inv("native_audio_stop"))
+      .then((result) => {
+        this._handleNativeStopped(result);
+      })
+      .catch((err) => {
+        console.error("[RecordingManager] Native audio stop error:", err);
+        this._recordingId = null;
+        this._recordingStartTime = null;
+        this.onChange();
+        this._settleStop();
+      });
+    this.onChange();
+  }
+
+  /**
+   * Stop because the app is no longer in the foreground, flagging why.
+   *
+   * Android silences the microphone for a backgrounded process, so continuing
+   * would record silence. See NoteCanvas._onVisibilityChange.
+   */
+  stopRecordingForBackground() {
+    if (!this.isRecording()) return;
+    this.stoppedInBackground = true;
+    this.stopRecording();
+  }
+
+  /** Dismiss the "stopped in background" notice. */
+  clearBackgroundNotice() {
+    if (!this.stoppedInBackground) return;
+    this.stoppedInBackground = false;
+    this.onChange();
   }
 
   /** Import an external audio file as a new recording. */
@@ -317,24 +291,46 @@ export class RecordingManager {
     this.onChange();
   }
 
+  /**
+   * Tear down, keeping any recording that is still running.
+   *
+   * Stops and saves rather than cancelling: closing a note used to discard an
+   * in-progress recording silently, so navigating to the overview mid-sentence
+   * destroyed the audio with no warning and no way back.
+   *
+   * @returns {Promise<void>} resolves once a recording in progress has been
+   *   saved. `NoteCanvas.destroy()` includes this in the work it awaits, so the
+   *   note's save and sync see the new recording.
+   */
   destroy() {
     this._stopTimer();
-    if (this._nativeRecording) {
-      this._nativeRecording = false;
-      this._nativePaused = false;
-      this._stopAmplitudePoll();
-      _getInvoke()
-        .then((inv) => inv("native_audio_cancel"))
-        .catch(() => {});
+
+    // A stop may already be in flight — started by the user pressing stop, or
+    // by stopRecordingForBackground(). isRecording() is false the moment
+    // stopRecording() is called, so without this the recording would land via
+    // onSave after NoteCanvas.destroy() had already finished, and the note's
+    // save and sync would miss it.
+    if (!this._nativeRecording) {
+      return this._stopInFlight
+        ? Promise.race([
+            this._stopInFlight,
+            new Promise((resolve) => setTimeout(resolve, DESTROY_SAVE_TIMEOUT_MS)),
+          ])
+        : Promise.resolve();
     }
-    if (this._mediaRecorder && this._mediaRecorder.state !== "inactive") {
-      this._mediaRecorder.ondataavailable = null;
-      this._mediaRecorder.onstop = null;
-      this._mediaRecorder.stop();
-    }
-    this._mediaRecorder = null;
-    this._releaseStream();
-    this._audioChunks = [];
+
+    // stopRecording() drives stop → read → save asynchronously and publishes
+    // _stopInFlight, resolved by _handleNativeStopped and by the stop error
+    // path.
+    this.stopRecording();
+    const done = this._stopInFlight ?? Promise.resolve();
+
+    // Backstop: never leave note close hanging on a native stop that does not
+    // come back.
+    return Promise.race([
+      done,
+      new Promise((resolve) => setTimeout(resolve, DESTROY_SAVE_TIMEOUT_MS)),
+    ]);
   }
 
   // ── Internal ────────────────────────────────────────────────────────────────
@@ -349,52 +345,107 @@ export class RecordingManager {
 
     if (!result?.path) {
       this.onChange();
+      this._settleStop();
       return;
     }
 
-    // Read file on Rust's native heap (avoids Android JVM heap OOM for large files)
+    // Move the file across in binary chunks rather than as one base64 string.
+    // invoke() resolves a Rust `tauri::ipc::Response` as an ArrayBuffer, so
+    // there is no JSON body, no base64 and no atob() on the main thread — the
+    // old path peaked at 5-6x the file size in transient memory and threw
+    // "Invalid string length" outright past ~403 MB (~35 min of stereo WAV).
+    const mimeType = result.mimeType ?? "audio/mp4";
     let blob;
     try {
-      const base64 = await (await _getInvoke())("native_audio_read_and_delete", {
-        path: result.path,
-      });
-      const mimeType = result.mimeType ?? "audio/mp4";
-      const byteChars = atob(base64);
-      const byteArr = new Uint8Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-      blob = new Blob([byteArr], { type: mimeType });
+      blob = await this._readNativeFile(result.path, mimeType);
     } catch (err) {
       console.error("[RecordingManager] Failed to read native recording file:", err);
       this.onChange();
+      this._settleStop();
+      this._reportSaveFailure(result.path, mimeType, err);
       return;
     }
 
-    await this._saveCompletedRecording(id, blob, duration);
+    const { saved, error } = await this._saveCompletedRecording(id, blob, duration);
+
+    // Delete only once the bytes are safely in storage. The previous command
+    // read and deleted in one step, so a saveFile() failure destroyed the only
+    // copy; leaving the temp file behind lets the user save it elsewhere.
+    if (saved) {
+      _fireAndForget("native_audio_delete", { path: result.path });
+    }
+    this._settleStop();
+    if (!saved) this._reportSaveFailure(result.path, mimeType, error);
   }
 
-  async _handleRecordingStopped() {
-    const chunks = this._audioChunks;
-    const id = this._recordingId;
-    const duration = this.getElapsed();
-    const mimeType = this._mimeType || "audio/webm";
+  /**
+   * Tell the user a finished recording was not stored, and let them keep it.
+   * Called after _settleStop(): the recovery dialog waits on the user, and a
+   * note close (destroy) must not wait on that.
+   * @private
+   */
+  _reportSaveFailure(path, mimeType, error) {
+    try {
+      this.onSaveFailed({ path, mimeType, error });
+    } catch (err) {
+      console.error("[RecordingManager] onSaveFailed threw:", err);
+    }
+  }
 
-    this._mediaRecorder = null;
-    this._audioChunks = [];
-    this._mimeType = null;
-    this._recordingId = null;
-    this._recordingStartTime = null;
-    this._pausedDuration = 0;
-    this._pauseStart = null;
+  /**
+   * Record which capture pipeline the native side actually started.
+   *
+   * Logged at warning level so it appears without the user changing the log
+   * level (the logger defaults to `warning`). It is not a fault — a successful
+   * recording says nothing about which pipeline produced it, and on Android the
+   * MediaRecorder fallback is otherwise invisible without logcat.
+   * @private
+   */
+  _logPipeline(started) {
+    const pipeline = started?.pipeline;
+    if (!pipeline) return;
+    logger.warning("RecordingManager", `Recording pipeline: ${pipeline}`, {
+      pipeline,
+      // Present only when the Android engine failed and the fallback took over.
+      ...(started.fallbackReason ? { fallbackReason: started.fallbackReason } : {}),
+    });
+  }
 
-    if (chunks.length === 0) {
-      this.onChange();
-      return;
+  /** Release a destroy() that is waiting for the stop to finish. */
+  _settleStop() {
+    this._stopInFlight = null;
+    if (this._stopSettled) {
+      const resolve = this._stopSettled;
+      this._stopSettled = null;
+      resolve();
+    }
+  }
+
+  /**
+   * Read a native recording file into a Blob, in chunks.
+   * Chromium stores Blob parts lazily and pages large blobs to disk, so peak
+   * JS memory is one chunk rather than the whole file.
+   * @private
+   */
+  async _readNativeFile(path, mimeType) {
+    const inv = await _getInvoke();
+    const size = await inv("native_audio_file_size", { path });
+
+    const chunks = [];
+    for (let offset = 0; offset < size; offset += NATIVE_READ_CHUNK_BYTES) {
+      const len = Math.min(NATIVE_READ_CHUNK_BYTES, size - offset);
+      const bytes = await inv("native_audio_read_chunk", { path, offset, len });
+      // Tauri resolves a Response as ArrayBuffer; older shapes may hand back a
+      // typed array or a plain byte array, all of which Blob accepts directly.
+      const part = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
+      if (!part || part.length === 0) break; // short read: file ended early
+      chunks.push(part);
     }
 
-    const blob = new Blob(chunks, { type: mimeType });
-    await this._saveCompletedRecording(id, blob, duration);
+    return new Blob(chunks, { type: mimeType });
   }
 
+  /** @returns {Promise<{saved: boolean, error?: Error}>} saved is true when the blob reached storage. */
   async _saveCompletedRecording(id, blob, duration) {
     let fileId;
     try {
@@ -402,7 +453,7 @@ export class RecordingManager {
     } catch (err) {
       console.error("[RecordingManager] Failed to save recording:", err);
       this.onChange();
-      return;
+      return { saved: false, error: err };
     }
 
     const now = Date.now();
@@ -418,6 +469,7 @@ export class RecordingManager {
     this.recordings = [...this.recordings, recording];
     this._persist();
     this.onChange();
+    return { saved: true };
   }
 
   _persist() {
@@ -445,6 +497,13 @@ export class RecordingManager {
       try {
         const result = await (await _getInvoke())("native_audio_get_amplitude");
         this._nativeAmplitude = result?.amplitude ?? 0;
+        // The native worker died mid-recording (an encoder or disk failure).
+        // Everything captured from here on is lost, so stop rather than let the
+        // user keep "recording" into nothing until they press stop themselves.
+        if (result?.failed && this._nativeRecording) {
+          logger.warning("RecordingManager", "Native recorder failed; stopping", {});
+          this.stopRecording();
+        }
       } catch (_e) {
         // ignore — recording may have just stopped
       }
@@ -457,42 +516,6 @@ export class RecordingManager {
       this._amplitudePollInterval = null;
     }
     this._nativeAmplitude = 0;
-  }
-
-  _releaseStream() {
-    if (this._stream) {
-      for (const track of this._stream.getTracks()) track.stop();
-      this._stream = null;
-    }
-    if (this._audioContext) {
-      this._audioContext.close();
-      this._audioContext = null;
-      this._analyser = null;
-      this._analyserBuffer = null;
-    }
-  }
-
-  async _getUserMediaWithRetry() {
-    const constraintsEnhanced = {
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
-    };
-    const constraintsBasic = { audio: true, video: false };
-
-    try {
-      return await navigator.mediaDevices.getUserMedia(constraintsEnhanced);
-    } catch (err) {
-      if (err.name === "NotReadableError" || err.name === "OverconstrainedError") {
-        // Android often can't satisfy enhanced audio constraints — fall back to bare audio
-        await new Promise((r) => setTimeout(r, 500));
-        return await navigator.mediaDevices.getUserMedia(constraintsBasic);
-      }
-      throw err;
-    }
   }
 
   _formatRecordingName(timestamp) {

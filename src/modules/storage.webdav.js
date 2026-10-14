@@ -1088,6 +1088,21 @@ async function _sniffMime(blob) {
   if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "application/pdf";
   // WebM magic: 0x1A 0x45 0xDF 0xA3
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "audio/webm";
+  // WAV: "RIFF" .... "WAVE" — bytes 0-3 and 8-11.
+  if (
+    b[0] === 0x52 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x46 &&
+    b[8] === 0x57 &&
+    b[9] === 0x41 &&
+    b[10] === 0x56 &&
+    b[11] === 0x45
+  ) {
+    return "audio/wav";
+  }
+  // MP4/M4A: "ftyp" at bytes 4-7 (the box type of the first box).
+  if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) return "audio/mp4";
   return null;
 }
 

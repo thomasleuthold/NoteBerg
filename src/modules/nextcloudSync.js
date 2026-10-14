@@ -136,11 +136,25 @@ async function runInBatches(items, batchSize, fn) {
 /**
  * Decrypt a locally-encrypted note into plain objects.
  * If the note is not locally encrypted, returns the note unchanged.
+ *
+ * A field that cannot be decrypted comes back as its empty value. Callers that
+ * write the result to the server must use decryptNoteFields() instead, which
+ * names those fields, so the server's copy of them is not overwritten with
+ * nothing (see fillUndecryptableFieldsFromServer).
  * @param {Object} note - Note object (may be locally encrypted)
  * @returns {Promise<Object>} - Note with all content fields decrypted
  */
 async function decryptNoteLocally(note) {
-  if (!note.encrypted) return note;
+  return (await decryptNoteFields(note)).note;
+}
+
+/**
+ * decryptNoteLocally(), also reporting which fields could not be decrypted.
+ * @param {Object} note - Note object (may be locally encrypted)
+ * @returns {Promise<{note: Object, failed: string[]}>}
+ */
+async function decryptNoteFields(note) {
+  if (!note.encrypted) return { note, failed: [] };
 
   if (!isAppUnlocked()) {
     throw new Error("Cannot upload encrypted note - app is locked");
@@ -150,23 +164,128 @@ async function decryptNoteLocally(note) {
   const isBlob = (v) =>
     v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
 
-  return {
+  // Decrypt each field independently, and never let one bad field take the note
+  // with it.
+  //
+  // A single blob encrypted with a key this client no longer holds — a purge and
+  // restore cycle, a changed master password — used to throw straight out of
+  // this function. The caller then failed the whole note's upload, every sync,
+  // forever: the note could never reach the server again and the failure looked
+  // identical to a wrong master password.
+  //
+  // Such a field holds nothing edited since the key changed: saveNote
+  // re-encrypts every field it writes with the current key, so the user's new
+  // edits are always in fields that do decrypt. Reporting the failed fields lets
+  // the upload path keep both — the new edits from here, the unreadable fields
+  // from the server's copy — instead of choosing which one to lose.
+  const failed = [];
+  const decryptField = async (value, fallback) => {
+    if (!isBlob(value)) return value;
+    try {
+      return await decryptObject(value, key);
+    } catch (_e) {
+      failed.push(fallback.name);
+      return fallback.value;
+    }
+  };
+
+  const result = {
     ...note,
-    content: isBlob(note.content) ? await decryptObject(note.content, key) : note.content,
-    strokes: isBlob(note.strokes) ? await decryptObject(note.strokes, key) : note.strokes,
-    media: isBlob(note.media) ? await decryptObject(note.media, key) : note.media,
+    content: await decryptField(note.content, { name: "content", value: "" }),
+    strokes: await decryptField(note.strokes, { name: "strokes", value: [] }),
+    media: await decryptField(note.media, { name: "media", value: [] }),
     recordings: isBlob(note.recordings)
-      ? await decryptObject(note.recordings, key)
+      ? await decryptField(note.recordings, { name: "recordings", value: [] })
       : (note.recordings ?? []),
-    tasks: isBlob(note.tasks) ? await decryptObject(note.tasks, key) : note.tasks || [],
+    tasks: isBlob(note.tasks)
+      ? await decryptField(note.tasks, { name: "tasks", value: [] })
+      : note.tasks || [],
     deletedTasks: isBlob(note.deletedTasks)
-      ? await decryptObject(note.deletedTasks, key)
+      ? await decryptField(note.deletedTasks, { name: "deletedTasks", value: [] })
       : note.deletedTasks || [],
-    recognition: isBlob(note.recognition)
-      ? await decryptObject(note.recognition, key)
-      : note.recognition,
+    recognition: await decryptField(note.recognition, { name: "recognition", value: null }),
     encrypted: undefined,
   };
+
+  if (failed.length > 0) {
+    // Warning, not debug: the local copy of these fields is lost, and the user
+    // should be able to see it in the log without changing settings.
+    console.warn(
+      `[Sync] Note ${note.id}: could not decrypt ${failed.join(", ")} (wrong key or corrupted).`,
+    );
+  }
+
+  return { note: result, failed };
+}
+
+const isLocallyEncryptedBlob = (v) =>
+  v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
+
+/**
+ * Take the fields this client could not decrypt from another copy of the note.
+ * A field the source lacks, or holds only as an encrypted blob, stays empty.
+ * @param {Object} note - Plain note from decryptNoteFields()
+ * @param {string[]} failed - Field names from decryptNoteFields()
+ * @param {Object} source - Plain note to take them from (the server's copy)
+ * @returns {Object}
+ */
+function takeFieldsFrom(note, failed, source) {
+  const filled = { ...note };
+  for (const field of failed) {
+    const value = source?.[field];
+    if (value !== undefined && !isLocallyEncryptedBlob(value)) filled[field] = value;
+  }
+  return filled;
+}
+
+/**
+ * Before an upload, fill the fields that could not be decrypted locally from
+ * the server's copy of the note, so the upload carries this device's new edits
+ * without overwriting the server's intact copy of those fields with nothing.
+ *
+ * Costs one extra GET, and only on this rare path: in the usual case (only
+ * this device changed) fullSync holds just a stub of the remote note.
+ *
+ * @param {Object} note - Plain note from decryptNoteFields()
+ * @param {string[]} failed - Field names from decryptNoteFields()
+ * @param {string} path - The note's remote path
+ * @returns {Promise<Object|null>} The note with those fields taken from the
+ *   server; unchanged (fields empty) when the server has no usable copy, so
+ *   there is nothing to keep; or null when the server copy could not be
+ *   fetched — the caller skips the upload this cycle and retries next sync,
+ *   rather than blank fields the server may still hold.
+ */
+async function fillUndecryptableFieldsFromServer(note, failed, path) {
+  let content;
+  try {
+    ({ content } = await downloadFile(path));
+  } catch (e) {
+    console.warn(
+      `[Sync] Note ${note.id}: could not fetch the server copy to recover ${failed.join(", ")} — skipping this upload, will retry:`,
+      e,
+    );
+    return null;
+  }
+
+  if (!content) {
+    console.warn(
+      `[Sync] Note ${note.id}: no server copy to recover ${failed.join(", ")} from — uploading without them.`,
+    );
+    return note;
+  }
+
+  let remote;
+  try {
+    remote = await decryptNoteFromNextcloud(JSON.parse(content));
+  } catch (_e) {
+    console.warn(
+      `[Sync] Note ${note.id}: server copy is unreadable, cannot recover ${failed.join(", ")} — uploading without them.`,
+    );
+    return note;
+  }
+
+  console.warn(`[Sync] Note ${note.id}: recovered ${failed.join(", ")} from the server copy.`);
+  return takeFieldsFrom(note, failed, remote);
 }
 
 /**
@@ -301,12 +420,132 @@ async function saveCredentials(credentials) {
  * Clear stored credentials from secure storage
  */
 export async function clearCredentials() {
+  resetUserIdLookup();
   try {
     await deleteSecureCredential(NEXTCLOUD_STORAGE_KEY);
   } catch (error) {
     console.error("Failed to clear credentials:", error);
     throw error;
   }
+}
+
+// ─── WebDAV account root ──────────────────────────────────────────────────────
+// WebDAV paths are keyed by the Nextcloud *user ID*, which is not necessarily
+// the login name Login Flow v2 returns: LDAP/AD backends map accounts to UUIDs,
+// and users may log in with an email address or alias. Basic auth accepts the
+// login name, but /remote.php/dav/files/{loginName}/ does not exist on such
+// servers and every request fails (MKCOL answers 409).
+//
+// The user ID is fetched from OCS at login and stored as `creds.userId`.
+// Credentials saved before that field existed are backfilled lazily on first
+// use. Until the lookup succeeds the login name is used — exactly the previous
+// behavior, which is correct whenever login name and user ID coincide.
+
+// After a failed lookup, keep using the login name for this long before asking
+// OCS again, so a sync cycle does not double every request against a server
+// whose OCS endpoint is unreachable.
+const USER_ID_RETRY_MS = 5 * 60 * 1000;
+
+let _userIdLookup = null; // { key, promise } — dedupes concurrent backfills
+let _userIdFailure = null; // { key, at } — last failed backfill
+
+function resetUserIdLookup() {
+  _userIdLookup = null;
+  _userIdFailure = null;
+}
+
+/**
+ * Ask Nextcloud for the internal user ID of the authenticated account.
+ * @throws when the server does not answer with a usable ID
+ */
+async function fetchUserId(serverUrl, authHeader) {
+  const response = await _fetch(`${serverUrl}/ocs/v2.php/cloud/user?format=json`, {
+    method: "GET",
+    headers: {
+      Authorization: authHeader,
+      "OCS-APIRequest": "true",
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`OCS user lookup failed: ${response.status} ${response.statusText}`);
+  }
+  const userId = (await response.json())?.ocs?.data?.id;
+  if (typeof userId !== "string" || !userId) {
+    throw new Error("OCS user lookup returned no user id");
+  }
+  return userId;
+}
+
+/**
+ * Store a backfilled user ID — but only onto the same account it was looked up
+ * for. A logout or re-login while the lookup was in flight must not be undone.
+ */
+async function persistUserId(creds, userId) {
+  const current = await getStoredCredentials();
+  if (
+    current?.serverUrl !== creds.serverUrl ||
+    current?.loginName !== creds.loginName ||
+    current?.appPassword !== creds.appPassword
+  ) {
+    return;
+  }
+  await saveCredentials({ ...current, userId });
+}
+
+async function backfillUserId(creds, key) {
+  try {
+    const userId = await fetchUserId(
+      creds.serverUrl,
+      basicAuth(creds.loginName, creds.appPassword),
+    );
+    await persistUserId(creds, userId);
+    _userIdFailure = null;
+    return userId;
+  } catch (error) {
+    logger.warning("NextcloudSync", "User ID lookup failed — using login name for WebDAV paths", {
+      message: error?.message ?? String(error),
+    });
+    _userIdFailure = { key, at: Date.now() };
+    return creds.loginName;
+  }
+}
+
+/**
+ * The user ID to put into WebDAV paths for `creds`.
+ */
+async function resolveUserId(creds) {
+  if (creds.userId) return creds.userId;
+
+  const key = `${creds.serverUrl}\n${creds.loginName}`;
+  if (_userIdFailure?.key === key && Date.now() - _userIdFailure.at < USER_ID_RETRY_MS) {
+    return creds.loginName;
+  }
+  if (_userIdLookup?.key !== key) {
+    const promise = backfillUserId(creds, key).finally(() => {
+      if (_userIdLookup?.promise === promise) _userIdLookup = null;
+    });
+    _userIdLookup = { key, promise };
+  }
+  return _userIdLookup.promise;
+}
+
+/**
+ * Everything a WebDAV request needs from the stored account: the auth header
+ * and URL builders rooted at the user's DAV principal.
+ * @throws when not authenticated
+ */
+async function getDavAccount() {
+  const creds = await getStoredCredentials();
+  if (!creds) throw new Error("Not authenticated");
+
+  const user = encodeURIComponent(await resolveUserId(creds));
+  const davRoot = `${creds.serverUrl}/remote.php/dav`;
+  return {
+    authHeader: basicAuth(creds.loginName, creds.appPassword),
+    fileUrl: (path) => `${davRoot}/files/${user}${path}`,
+    uploadUrl: (uploadId) => `${davRoot}/uploads/${user}/${uploadId}`,
+  };
 }
 
 /**
@@ -318,13 +557,31 @@ export async function isAuthenticated() {
 }
 
 /**
+ * Normalize a user-entered server URL: default to https:// when no scheme
+ * was typed, and strip a trailing slash. Without this, a bare host like
+ * "example.com" is treated as a path relative to the webview's own origin
+ * (tauri.localhost) instead of an absolute URL.
+ */
+function normalizeServerUrl(serverUrl) {
+  serverUrl = serverUrl.trim().replace(/\/$/, "");
+  if (!/^https?:\/\//i.test(serverUrl)) {
+    serverUrl = `https://${serverUrl}`;
+  }
+  return serverUrl;
+}
+
+/**
  * Test connection to Nextcloud server
  */
 export async function testConnection(serverUrl) {
-  serverUrl = serverUrl.replace(/\/$/, "");
+  serverUrl = normalizeServerUrl(serverUrl);
 
   try {
-    const response = await _fetch(`${serverUrl}/status.php`);
+    const response = await _fetch(`${serverUrl}/status.php`, {
+      headers: {
+        "User-Agent": `${APP_NAME}/${APP_VERSION}`,
+      },
+    });
     if (!response.ok) {
       return { success: false, error: `Server returned HTTP ${response.status}` };
     }
@@ -366,7 +623,7 @@ export async function testConnection(serverUrl) {
  * Calls onLoginUrlReady callback with login URL when available
  */
 export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
-  serverUrl = serverUrl.replace(/\/$/, "");
+  serverUrl = normalizeServerUrl(serverUrl);
 
   try {
     // Step 1: Initialize login flow
@@ -460,6 +717,20 @@ export async function startLoginFlow(serverUrl, onLoginUrlReady = null) {
       appPassword: credentials.appPassword,
     };
 
+    // A failed lookup must not fail the login: without userId the first sync
+    // retries it (see resolveUserId).
+    resetUserIdLookup();
+    try {
+      savedCreds.userId = await fetchUserId(
+        serverUrl,
+        basicAuth(savedCreds.loginName, savedCreds.appPassword),
+      );
+    } catch (error) {
+      logger.warning("NextcloudSync", "User ID lookup after login failed — will retry on sync", {
+        message: error?.message ?? String(error),
+      });
+    }
+
     await saveCredentials(savedCreds);
     console.log("Nextcloud authentication successful");
 
@@ -541,13 +812,9 @@ async function pollForCredentials(endpoint, token, popup) {
  * Create a folder in Nextcloud using WebDAV
  */
 async function createFolder(path) {
-  const creds = await getStoredCredentials();
-  if (!creds) throw new Error("Not authenticated");
+  const { authHeader, fileUrl } = await getDavAccount();
 
-  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
-  const authHeader = basicAuth(creds.loginName, creds.appPassword);
-
-  const response = await _fetch(webdavUrl, {
+  const response = await _fetch(fileUrl(path), {
     method: "MKCOL",
     headers: {
       Authorization: authHeader,
@@ -606,15 +873,13 @@ const CHUNK_SIZE = 8 * 1024 * 1024;
  * Cross-restart resume is real complexity for a rare case, so it is out of scope.
  */
 async function uploadFileChunked(path, blob, mtime = null) {
-  const creds = await getStoredCredentials();
-  if (!creds) throw new Error("Not authenticated");
+  const { authHeader, fileUrl, uploadUrl } = await getDavAccount();
 
-  const authHeader = basicAuth(creds.loginName, creds.appPassword);
   // Session-directory name only — never persisted, so a timestamp plus random
   // suffix is enough to keep concurrent uploads from colliding.
   const uploadId = `noteberg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const uploadRoot = `${creds.serverUrl}/remote.php/dav/uploads/${creds.loginName}/${uploadId}`;
-  const destinationUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
+  const uploadRoot = uploadUrl(uploadId);
+  const destinationUrl = fileUrl(path);
 
   const mkcolResponse = await _fetch(uploadRoot, {
     method: "MKCOL",
@@ -717,8 +982,7 @@ async function uploadFile(
   etag = null,
   { requireAbsent = false } = {},
 ) {
-  const creds = await getStoredCredentials();
-  if (!creds) throw new Error("Not authenticated");
+  const { authHeader, fileUrl } = await getDavAccount();
 
   // Large binaries go through the chunked endpoint (see CHUNKED_UPLOAD_THRESHOLD).
   // Only media uploads pass a Blob, and that call site passes no etag/mtime/
@@ -734,10 +998,10 @@ async function uploadFile(
     }
   }
 
-  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
+  const webdavUrl = fileUrl(path);
 
   const headers = {
-    Authorization: basicAuth(creds.loginName, creds.appPassword),
+    Authorization: authHeader,
     // Every other caller uploads JSON; only media passes a Blob. Sending
     // application/json for binary media was harmless (WebDAV stores the bytes
     // either way) but wrong, and it misleads anything reading the file back.
@@ -810,15 +1074,12 @@ async function uploadFile(
  * Download a file from Nextcloud using WebDAV
  */
 async function downloadFile(path, asBinary = false) {
-  const creds = await getStoredCredentials();
-  if (!creds) throw new Error("Not authenticated");
+  const { authHeader, fileUrl } = await getDavAccount();
 
-  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
-
-  const response = await _fetch(webdavUrl, {
+  const response = await _fetch(fileUrl(path), {
     method: "GET",
     headers: {
-      Authorization: basicAuth(creds.loginName, creds.appPassword),
+      Authorization: authHeader,
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
     },
@@ -1029,11 +1290,20 @@ async function cleanupOrphanedMedia(note) {
  * so callers can mark the note for re-upload (self-healing).
  */
 async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
-  if (note.media !== undefined && !Array.isArray(note.media)) return new Set();
+  if (note.media !== undefined && !Array.isArray(note.media)) {
+    console.warn(
+      `[Sync] Media check skipped for note ${note.id}: media is not an array (${typeof note.media}) — still encrypted?`,
+    );
+    return new Set();
+  }
   const hasRecordings = Array.isArray(note.recordings) && note.recordings.some((r) => !r.deleted);
 
-  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings)
+  if ((!note.media || note.media.length === 0) && !note.pdfSource && !hasRecordings) {
+    console.log(
+      `[Sync] Media check for note ${note.id}: nothing to fetch (media=${note.media?.length ?? 0} pdfSource=${Boolean(note.pdfSource)} recordings=${Array.isArray(note.recordings) ? note.recordings.length : typeof note.recordings})`,
+    );
     return new Set();
+  }
 
   const mediaFolder = getNoteMediaFolder(note.id, note.notebookId);
   let remoteFiles = preloadedRemoteFiles;
@@ -1062,6 +1332,10 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
 
   const missingOnServer = new Set();
 
+  console.log(
+    `[Sync] Media check for note ${note.id}: ${itemsToDownload.length} file id(s) referenced`,
+  );
+
   for (const item of itemsToDownload) {
     const fileId = item.fileId;
     if (!fileId) continue;
@@ -1069,6 +1343,7 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
     // Check if file exists locally
     const existing = await checkFileExists(fileId);
     if (existing) continue;
+    console.log(`[Sync] Media check: note ${note.id} is missing ${fileId} locally — fetching`);
 
     // Need to find the remote filename. It should be fileId + extension.
     // Since we don't store the extension in the note JSON explicitly in all versions,
@@ -1122,15 +1397,12 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
  * Returns a flat list of all files with their ETags and modification times
  */
 async function fetchRemoteState() {
-  const creds = await getStoredCredentials();
-  if (!creds) throw new Error("Not authenticated");
+  const { authHeader, fileUrl } = await getDavAccount();
 
-  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${ROOT_FOLDER}`;
-
-  const response = await _fetch(webdavUrl, {
+  const response = await _fetch(fileUrl(ROOT_FOLDER), {
     method: "PROPFIND",
     headers: {
-      Authorization: basicAuth(creds.loginName, creds.appPassword),
+      Authorization: authHeader,
       Depth: "infinity", // Get everything recursively
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -1212,15 +1484,12 @@ async function fetchRemoteStateShallow() {
  * List files in a folder using WebDAV PROPFIND
  */
 export async function listFiles(path) {
-  const creds = await getStoredCredentials();
-  if (!creds) throw new Error("Not authenticated");
+  const { authHeader, fileUrl } = await getDavAccount();
 
-  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
-
-  const response = await _fetch(webdavUrl, {
+  const response = await _fetch(fileUrl(path), {
     method: "PROPFIND",
     headers: {
-      Authorization: basicAuth(creds.loginName, creds.appPassword),
+      Authorization: authHeader,
       Depth: "1",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -1272,15 +1541,12 @@ export async function hasRemoteChanges(notebookId, localNotes) {
  * List folders in a folder using WebDAV PROPFIND
  */
 export async function listFolders(path) {
-  const creds = await getStoredCredentials();
-  if (!creds) throw new Error("Not authenticated");
+  const { authHeader, fileUrl } = await getDavAccount();
 
-  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
-
-  const response = await _fetch(webdavUrl, {
+  const response = await _fetch(fileUrl(path), {
     method: "PROPFIND",
     headers: {
-      Authorization: basicAuth(creds.loginName, creds.appPassword),
+      Authorization: authHeader,
       Depth: "1",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -1368,15 +1634,12 @@ function parseWebDAVResponse(rawXml, includeCollections = false) {
  * Delete a file from Nextcloud using WebDAV
  */
 async function deleteFile(path) {
-  const creds = await getStoredCredentials();
-  if (!creds) throw new Error("Not authenticated");
+  const { authHeader, fileUrl } = await getDavAccount();
 
-  const webdavUrl = `${creds.serverUrl}/remote.php/dav/files/${creds.loginName}${path}`;
-
-  const response = await _fetch(webdavUrl, {
+  const response = await _fetch(fileUrl(path), {
     method: "DELETE",
     headers: {
-      Authorization: basicAuth(creds.loginName, creds.appPassword),
+      Authorization: authHeader,
     },
   });
 
@@ -1685,8 +1948,23 @@ export async function syncNotes(notes) {
       };
 
       // Decrypt local encryption before syncing media — syncNoteMedia needs a plain media array.
-      // decryptNoteLocally is a no-op when note.encrypted is falsy.
-      const decryptedNote = await decryptNoteLocally(syncedNote);
+      // decryptNoteFields is a no-op when note.encrypted is falsy.
+      const decrypted = await decryptNoteFields(syncedNote);
+      let decryptedNote = decrypted.note;
+      if (decrypted.failed.length > 0) {
+        decryptedNote = await fillUndecryptableFieldsFromServer(
+          decryptedNote,
+          decrypted.failed,
+          path,
+        );
+        if (!decryptedNote) {
+          return { success: false, id: note.id, error: "server copy unavailable" };
+        }
+        // Heal the local copy too: saveNote re-encrypts the recovered fields
+        // with the current key, so the next sync decrypts cleanly. modified is
+        // kept, so updateNoteEtag still marks the note synced after the upload.
+        await saveNote({ ...decryptedNote, synced: false });
+      }
 
       // Sync media files (upload binaries) — must use decrypted media array.
       // If any binary fails to upload, skip the note JSON so synced stays false
@@ -1709,6 +1987,7 @@ export async function syncNotes(notes) {
       delete noteForUpload.encrypted;
       delete noteForUpload._currentFileEtag;
       delete noteForUpload.previousNotebookId;
+      delete noteForUpload.restoredAt;
 
       // Prepare content
       const content = JSON.stringify(noteForUpload, null, 2);
@@ -1812,10 +2091,29 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
           // in which case fullSync logic handles it (local modified + remote unchanged = upload local).
         });
 
-        if (
-          (local.media && local.media.length > 0) ||
-          (Array.isArray(local.recordings) && local.recordings.some((r) => !r.deleted && r.fileId))
-        ) {
+        // Two shapes have to pass this gate, and the old condition let neither
+        // recording case through:
+        //
+        //  - `local` is the INDEX entry, and splitNote() strips `fileId` from
+        //    the index copy of `recordings` (it keeps id/name/duration/deleted
+        //    only). Requiring `r.fileId` here therefore excluded every note
+        //    whose media is a recording, encrypted or not.
+        //  - On a locally-encrypted note `recordings` and `media` are {data,iv}
+        //    blobs rather than arrays, so the Array.isArray test failed too.
+        //
+        // The queue only decides whether to *look*; downloadNoteMedia re-reads
+        // the full note and does the real filtering, so a false positive here
+        // costs one cheap check and a false negative costs the binaries
+        // permanently. Err toward looking.
+        const isEncryptedBlob = (v) =>
+          v && typeof v === "object" && typeof v.data === "string" && typeof v.iv === "string";
+        const mayHaveMedia =
+          (Array.isArray(local.media) && local.media.length > 0) ||
+          isEncryptedBlob(local.media) ||
+          (Array.isArray(local.recordings) && local.recordings.some((r) => !r.deleted)) ||
+          isEncryptedBlob(local.recordings) ||
+          Boolean(local.pdfSource);
+        if (mayHaveMedia) {
           mediaCheckQueue.push(local);
         }
       }
@@ -1828,6 +2126,9 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
   console.log(
     `[Sync] Incremental check: ${notebooksToDownload.length} notebooks, ${notesToDownload.length} notes to download.`,
   );
+  for (const item of notesToDownload) {
+    console.log(`[Sync] Queued for download: note=${item.noteId} path=${item.path}`);
+  }
 
   // Step 3: Download changed items in parallel batches
   const CONCURRENCY = 5;
@@ -1866,12 +2167,30 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
 
         return decrypted;
       }
+      // downloadFile returns { content: null } for a 404 rather than throwing,
+      // so an empty body lands here and not in the catch below. Without this
+      // the note is dropped from the download set in complete silence and the
+      // sync reports "downloaded 0 notes" as though nothing was pending —
+      // which is indistinguishable from there being nothing to do.
+      console.error(
+        `[Sync] Note ${item.noteId} was listed for download but its file is missing or empty: ${item.path}`,
+      );
     } catch (e) {
       console.error(`Failed to download note ${item.noteId}:`, e);
     }
     return null;
   });
-  notes.push(...downloadedNotes.filter((n) => n));
+
+  if (downloadedNotes.filter((n) => n).length < notesToDownload.length) {
+    console.warn(
+      `[Sync] ${notesToDownload.length - downloadedNotes.filter((n) => n).length} of ${notesToDownload.length} queued note download(s) produced nothing — changes made on another device will not appear here.`,
+    );
+  }
+  const keptNotes = downloadedNotes.filter((n) => n);
+  console.log(
+    `[Sync] Note downloads: queued=${notesToDownload.length} returned=${keptNotes.length} (ids: ${keptNotes.map((n) => n.id).join(", ") || "none"})`,
+  );
+  notes.push(...keptNotes);
 
   // Check media for unchanged notes (fix for missing images)
   // Must use getRawNote to get the full content (with fileIds) — the index stub
@@ -1882,8 +2201,26 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
     await runInBatches(mediaCheckQueue, CONCURRENCY, async (stub) => {
       const remoteMedia = remoteMediaMap.get(stub.id);
       if (!remoteMedia || remoteMedia.length === 0) return;
-      const fullNote = await getRawNote(stub.id);
-      if (!fullNote) return;
+      const rawNote = await getRawNote(stub.id);
+      if (!rawNote) return;
+
+      // getRawNote does NOT decrypt, so on a locally-encrypted note `media` and
+      // `recordings` arrive as {data, iv} blobs rather than arrays. Every check
+      // inside downloadNoteMedia is array-shaped, so it returned immediately and
+      // this whole pass silently did nothing for encrypted notes — their media
+      // binaries were never downloaded on any device, no matter how many times
+      // the note synced. Decrypt first so the check can actually see the
+      // fileIds it is meant to be looking for.
+      let fullNote = rawNote;
+      if (rawNote.encrypted) {
+        try {
+          fullNote = await decryptNoteLocally(rawNote);
+        } catch (e) {
+          console.warn(`[Sync] Note ${stub.id}: cannot check media, local decryption failed:`, e);
+          return;
+        }
+      }
+
       const missing = await downloadNoteMedia(fullNote, remoteMedia);
       if (missing.size > 0) notesWithMissingMedia.add(stub.id);
     });
@@ -1965,6 +2302,50 @@ function mergeStrokes(
 /**
  * Attempt to merge two versions of a note
  */
+/**
+ * Merge a locally-encrypted note with its remote counterpart.
+ *
+ * `attemptMerge` refuses encrypted notes outright, because it must also be safe
+ * to call from the Web Worker, which holds no key. Both callers then fell back
+ * to "local wins, remote's edits are lost" — which silently discarded whatever
+ * the other device had added. For a note edited on two devices that meant one
+ * side's recordings, media and strokes vanished on every sync, with no conflict
+ * raised and nothing in the log.
+ *
+ * fullSync runs on the main thread, where the key IS available (syncNotes
+ * already decrypts these same notes to upload them), so the note can be
+ * decrypted first and then merged like any other. A field that cannot be
+ * decrypted is taken from the remote before merging. Returns null when the app
+ * is locked, leaving the caller's existing local-wins fallback in place.
+ *
+ * @returns {Promise<Object|null>} the merged PLAIN note, or null
+ */
+async function attemptMergeEncrypted(fullLocal, remote) {
+  if (!isAppUnlocked()) {
+    console.warn(
+      `[Sync] Note ${fullLocal.id}: app is locked, cannot merge encrypted note — local will win and the remote's edits will be lost.`,
+    );
+    return null;
+  }
+
+  let plainLocal;
+  try {
+    const decrypted = await decryptNoteFields(fullLocal);
+    // A field this client cannot read holds no local edits (see
+    // decryptNoteFields), so the remote's copy is the only one worth keeping.
+    // Merged as an empty value instead, it could win against the remote's.
+    plainLocal = takeFieldsFrom(decrypted.note, decrypted.failed, remote);
+  } catch (e) {
+    console.warn(`[Sync] Note ${fullLocal.id}: could not decrypt for merge:`, e);
+    return null;
+  }
+
+  // decryptNoteFields clears `encrypted`, so attemptMerge no longer refuses.
+  // The merged note is plain; saveNote re-encrypts it on the way back to disk,
+  // and syncNotes uploads Nextcloud-side plain as it always has.
+  return attemptMerge(plainLocal, remote);
+}
+
 export function attemptMerge(local, remote) {
   // If the local note is encrypted (worker cannot decrypt), merging is not possible.
   // Return null so the caller treats this as a conflict to be resolved on the main thread.
@@ -2315,9 +2696,33 @@ export async function fullSync(localNotebooks, localNotes) {
       // Locally-encrypted notes cannot be merged in the worker (no decryption key).
       // Treat as "local wins": upload the local version using the remote etag as the
       // If-Match base so the PUT succeeds even though remote changed.
-      if (local.encrypted) {
-        console.log(`[Sync:classify] note=${local.id} → encrypted local-wins upload`);
+      if (local.restoredAt) {
+        // Restored from a backup and not uploaded since. The user asked for this
+        // exact version back, and a merge would re-apply the server's strokes and
+        // stroke deletions on top of it, undoing the restore. Local wins outright,
+        // with the remote etag as the If-Match base so the PUT succeeds. The
+        // marker is cleared by updateNoteEtag once the upload lands.
+        console.log(`[Sync:classify] note=${local.id} -> restored from backup, local-wins upload`);
         notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
+      } else if (local.encrypted) {
+        const merged = await attemptMergeEncrypted(fullLocal, remote);
+        if (merged) {
+          console.log(
+            `[Sync:classify] note=${local.id} → encrypted merge succeeded, uploading merged`,
+          );
+          notesToUpload.push({ ...merged, lastSyncedEtag: remote._currentFileEtag });
+          // Save locally so this client shows the merged state immediately, and
+          // so the other device's additions are not lost if the upload fails.
+          // saveNote re-applies local encryption.
+          await saveNote({ ...merged, synced: false });
+        } else {
+          // Could not decrypt (locked, or a field written with another key):
+          // fall back to the previous behaviour rather than merging blind.
+          console.log(
+            `[Sync:classify] note=${local.id} → encrypted local-wins upload (merge unavailable)`,
+          );
+          notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
+        }
       } else {
         const merged = attemptMerge(fullLocal, remote);
         if (merged) {
@@ -2378,9 +2783,17 @@ export async function fullSync(localNotebooks, localNotes) {
         );
         const fullLocal = await getFullNote(local);
         if (local.encrypted) {
-          // Cannot merge encrypted notes — upload local with remote etag as base so
-          // the PUT succeeds; remote's edits will be lost (same as the encrypted path above).
-          notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
+          const merged = await attemptMergeEncrypted(fullLocal, remote);
+          if (merged) {
+            console.log(
+              `[Sync:classify] note=${local.id} → stale-fork encrypted merge succeeded, uploading merged`,
+            );
+            notesToUpload.push({ ...merged, lastSyncedEtag: remote._currentFileEtag });
+            await saveNote({ ...merged, synced: false });
+          } else {
+            // Undecryptable: previous behaviour, local wins.
+            notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
+          }
         } else {
           const merged = attemptMerge(fullLocal, remote);
           if (merged) {

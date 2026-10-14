@@ -24,6 +24,7 @@ import {
   getDeletedNotebooks,
   getDeletedNotes,
   getFile,
+  getFileStats,
   getNote,
   getNoteIndex,
   getQuickNotes,
@@ -85,6 +86,11 @@ function cloneRecord(record) {
 vi.mock("idb", () => ({
   openDB: vi.fn(() => {
     // Per-transaction objectStore: writes go directly into stores
+    // Cursor over a snapshot of the store, one record per step, as IndexedDB does.
+    function makeCursor(values, i) {
+      if (i >= values.length) return null;
+      return { value: values[i], continue: () => Promise.resolve(makeCursor(values, i + 1)) };
+    }
     function makeTxStore(name) {
       return {
         get: vi.fn((id) => Promise.resolve(stores[name]?.get(id) ?? null)),
@@ -92,6 +98,9 @@ vi.mock("idb", () => ({
           if (stores[name]) stores[name].set(record.id ?? record.key, cloneRecord(record));
           return Promise.resolve();
         }),
+        openCursor: vi.fn(() =>
+          Promise.resolve(makeCursor([...(stores[name]?.values() ?? [])], 0)),
+        ),
       };
     }
     return Promise.resolve({
@@ -121,6 +130,7 @@ vi.mock("idb", () => ({
         for (const n of names) storeMap[n] = makeTxStore(n);
         return {
           objectStore: vi.fn((name) => storeMap[name] ?? makeTxStore(name)),
+          store: storeMap[names[0]],
           done: Promise.resolve(),
         };
       }),
@@ -532,6 +542,52 @@ describe("updateNoteEtag", () => {
 
   it("is a no-op when the note does not exist", async () => {
     await expect(updateNoteEtag("missing", "etag", 1000)).resolves.toBeUndefined();
+  });
+
+  it("clears the restore marker once the restored version has been uploaded", async () => {
+    // A backup restore stamps restoredAt so sync uploads the note as-is instead
+    // of merging the server copy in. Once that upload lands the note is an
+    // ordinary note again.
+    seedNote(makeNote({ synced: false, modified: 1000 }));
+    stores.notes.get("note-1").restoredAt = 999;
+
+    await updateNoteEtag("note-1", "new-etag", 1000);
+
+    expect(stores.notes.get("note-1").synced).toBe(true);
+    expect(stores.notes.get("note-1")).not.toHaveProperty("restoredAt");
+  });
+
+  it("keeps the restore marker while the note is still pending upload", async () => {
+    seedNote(makeNote({ synced: false, modified: 2000 }));
+    stores.notes.get("note-1").restoredAt = 999;
+
+    await updateNoteEtag("note-1", "new-etag", 1000);
+
+    expect(stores.notes.get("note-1").synced).toBe(false);
+    expect(stores.notes.get("note-1").restoredAt).toBe(999);
+  });
+});
+
+describe("restoredAt on save", () => {
+  it("lives on the index, where the sync classifier reads it, not in content", async () => {
+    await saveNote({ ...makeNote(), restoredAt: 7 });
+
+    expect(stores.notes.get("note-1").restoredAt).toBe(7);
+    expect(stores.noteContent.get("note-1")).not.toHaveProperty("restoredAt");
+  });
+});
+
+describe("getFileStats", () => {
+  it("sums recorded sizes, falling back to the payload for records written without one", async () => {
+    stores.files.set("new", { id: "new", data: new Blob(["abcdef"]), size: 6 });
+    stores.files.set("legacy-blob", { id: "legacy-blob", data: new Blob(["ab"]) });
+    stores.files.set("legacy-buffer", { id: "legacy-buffer", data: new ArrayBuffer(3) });
+
+    expect(await getFileStats()).toEqual({ count: 3, bytes: 11 });
+  });
+
+  it("reports an empty store as zero", async () => {
+    expect(await getFileStats()).toEqual({ count: 0, bytes: 0 });
   });
 });
 

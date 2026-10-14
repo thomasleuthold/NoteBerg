@@ -153,6 +153,8 @@ export class SoundDialog {
       this._dialogEl.style.display = "block";
     } else {
       this._stopMeter();
+      // Same dismissal as _close(): this is the other way the dialog closes.
+      this.rm.clearBackgroundNotice?.();
       // Move audio element back to parentElement so it keeps playing
       this._audioEl.style.display = "none";
       this.parentElement.appendChild(this._audioEl);
@@ -163,6 +165,9 @@ export class SoundDialog {
   _close() {
     this._open = false;
     this._stopMeter();
+    // The user has seen the notice by the time they close the dialog; leaving
+    // it set would show it again next time they open it.
+    this.rm.clearBackgroundNotice?.();
     // Move audio element back to parentElement so it keeps playing
     this._audioEl.style.display = "none";
     this.parentElement.appendChild(this._audioEl);
@@ -300,6 +305,17 @@ export class SoundDialog {
     header.appendChild(closeBtn);
     this._dialogEl.appendChild(header);
 
+    // Explain a recording the user did not stop themselves: backgrounding the
+    // app ends it, because Android silences the mic for a background process
+    // and the alternative would be a recording that runs on in silence.
+    if (this.rm.stoppedInBackground) {
+      const notice = document.createElement("div");
+      notice.className = "sound-dialog__notice";
+      notice.setAttribute("role", "status");
+      notice.textContent = t("soundDialog.stoppedInBackground");
+      this._dialogEl.appendChild(notice);
+    }
+
     // Active recording strip OR new-recording button + player
     if (recording) {
       const strip = document.createElement("div");
@@ -345,6 +361,39 @@ export class SoundDialog {
       strip.appendChild(stopBtn);
 
       this._dialogEl.appendChild(strip);
+
+      // Live auto-gain aggressiveness override for this recording only (native
+      // only — RecordingManager no-ops elsewhere). Starts from the recording's
+      // current value (the global default at the time it started), and is
+      // adjusted by ear while watching the meter above; it is not written back
+      // to the global default, which stays a separate, explicit choice in
+      // Settings.
+      if (_IS_NATIVE) {
+        const gainRow = document.createElement("div");
+        gainRow.className = "sound-dialog__gain-row";
+
+        const gainLabel = document.createElement("label");
+        gainLabel.className = "sound-dialog__gain-label";
+        gainLabel.htmlFor = "sound-dialog-aggressiveness";
+        gainLabel.textContent = t("soundDialog.autoGainAggressiveness");
+        gainRow.appendChild(gainLabel);
+
+        const gainSlider = document.createElement("input");
+        gainSlider.type = "range";
+        gainSlider.id = "sound-dialog-aggressiveness";
+        gainSlider.className = "sound-dialog__gain-slider";
+        gainSlider.min = "0";
+        gainSlider.max = "1";
+        gainSlider.step = "0.05";
+        gainSlider.value = String(this.rm.getAggressiveness());
+        gainSlider.title = t("soundDialog.autoGainAggressivenessDesc");
+        gainSlider.addEventListener("input", () => {
+          this.rm.setAggressiveness(Number(gainSlider.value));
+        });
+        gainRow.appendChild(gainSlider);
+
+        this._dialogEl.appendChild(gainRow);
+      }
     } else {
       // New recording button (native only)
       if (_IS_NATIVE) {

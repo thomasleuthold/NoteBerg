@@ -138,6 +138,43 @@ window.scrollTo = vi.fn();
 window.requestAnimationFrame = vi.fn((cb) => setTimeout(cb, 0));
 window.cancelAnimationFrame = vi.fn((id) => clearTimeout(id));
 
+describe("_onVisibilityChange and a running recording", () => {
+  // Android mutes the microphone of a background app, so a recording is ended
+  // and saved when the page is hidden. Windows hides the page on minimize or
+  // full occlusion while capture keeps working, so there it must keep running.
+  let host;
+  let userAgent;
+
+  beforeEach(() => {
+    host = Object.create(NoteCanvas.prototype);
+    host.activePointers = new Map();
+    host.recordingManager = {
+      isRecording: () => true,
+      stopRecordingForBackground: vi.fn(),
+    };
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    userAgent = vi.spyOn(navigator, "userAgent", "get");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("stops and saves the recording on Android", () => {
+    userAgent.mockReturnValue("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36");
+    host._onVisibilityChange();
+    expect(host.recordingManager.stopRecordingForBackground).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps recording on Windows", () => {
+    userAgent.mockReturnValue(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/129.0",
+    );
+    host._onVisibilityChange();
+    expect(host.recordingManager.stopRecordingForBackground).not.toHaveBeenCalled();
+  });
+});
+
 describe("per-frame caches", () => {
   // _getStrokeTasks and _getFirstPdfPage run on every scroll frame. They are
   // pure functions of noteData.tasks / the media list, so they are exercised
@@ -313,6 +350,9 @@ describe("NoteCanvas Class", () => {
         width: 800,
         height: 600,
       }));
+      viewportElement.setPointerCapture = vi.fn();
+      viewportElement.releasePointerCapture = vi.fn();
+      viewportElement.hasPointerCapture = vi.fn(() => false);
       Object.assign(this, {
         getViewportSize: () => ({ width: 800, height: 600 }),
         getViewportElement: () => viewportElement,
@@ -331,7 +371,14 @@ describe("NoteCanvas Class", () => {
     InputHandler.mockImplementation(function () {
       Object.assign(this, {
         isDrawing: false,
+        activePointerType: null,
         getContentCoordinates: vi.fn(() => ({ x: 0, y: 0 })),
+        cancelActiveStroke: vi.fn(function () {
+          if (!this.isDrawing) return false;
+          this.isDrawing = false;
+          this.activePointerType = null;
+          return true;
+        }),
         destroy: vi.fn(),
       });
     });
@@ -629,6 +676,24 @@ describe("NoteCanvas Class", () => {
         expect.any((await import("./commands/index.js")).DrawStrokeCommand),
       );
     });
+
+    it("ignores strokes that start in the gutter beside the page", async () => {
+      // A note narrower than the window leaves viewport on either side of the
+      // page. Nothing there is rendered, so a stroke started there must not be
+      // recorded as invisible note data.
+      await noteCanvas.load("note-1");
+      noteCanvas._setMode("draw");
+      const props = { y: 10, pressure: 0.5, pointerType: "pen", pointerId: 1 };
+
+      expect(noteCanvas._onStrokeStart({ ...props, x: noteCanvas.maxContentWidth + 1 })).toBe(
+        false,
+      );
+      expect(noteCanvas._onStrokeStart({ ...props, x: -1 })).toBe(false);
+      expect(noteCanvas.strokeManager.startStroke).not.toHaveBeenCalled();
+
+      expect(noteCanvas._onStrokeStart({ ...props, x: noteCanvas.maxContentWidth })).toBe(true);
+      expect(noteCanvas.strokeManager.startStroke).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("Eraser", () => {
@@ -703,6 +768,300 @@ describe("NoteCanvas Class", () => {
       noteCanvas._onWheel(event);
 
       expect(noteCanvas.zoomScale).toBeGreaterThan(1.0);
+    });
+  });
+
+  describe("Two-finger touch gestures (non-stylus pan/zoom)", () => {
+    let viewport;
+
+    beforeEach(async () => {
+      await noteCanvas.load("note-1");
+      noteCanvas._setMode("draw");
+      viewport = noteCanvas.scroller.getViewportElement();
+    });
+
+    function firePointer(type, pointerId, clientX, clientY) {
+      viewport.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId,
+          pointerType: "touch",
+          clientX,
+          clientY,
+          bubbles: true,
+        }),
+      );
+    }
+
+    it("cancels an in-progress touch stroke when a second finger lands, instead of drawing with it", () => {
+      // Finger 1 starts a stroke, same as any single-touch draw in draw mode.
+      noteCanvas.strokeManager.currentStroke = {
+        pointerType: "touch",
+        x: [10],
+        y: [10],
+        pressure: [0.5],
+      };
+      noteCanvas.inputHandler.isDrawing = true;
+      noteCanvas.inputHandler.activePointerType = "touch";
+
+      // Finger 2 lands before finger 1 lifts.
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+
+      expect(noteCanvas.strokeManager.cancelCurrentStroke).toHaveBeenCalled();
+      expect(noteCanvas.inputHandler.cancelActiveStroke).toHaveBeenCalled();
+      expect(noteCanvas.inputHandler.isDrawing).toBe(false);
+      expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalled();
+    });
+
+    it("does not touch the stroke when a second finger lands and nothing was drawing", () => {
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+
+      expect(noteCanvas.strokeManager.cancelCurrentStroke).not.toHaveBeenCalled();
+      expect(noteCanvas.inputHandler.cancelActiveStroke).not.toHaveBeenCalled();
+    });
+
+    it("pans by the two-finger midpoint delta while pinch-zooming", () => {
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+      // Midpoint starts at (150, 100).
+
+      // Move both fingers right by 20px and apart (pinch-out) — midpoint shifts to (170, 100).
+      firePointer("pointermove", 1, 100, 100);
+      firePointer("pointermove", 2, 240, 100);
+
+      expect(noteCanvas.scroller.scrollBy).toHaveBeenCalledWith(-20, -0);
+    });
+
+    function fireTouch(type, points) {
+      const event = new Event(type, { bubbles: true });
+      const touches = points.map(([clientX, clientY], i) => ({ identifier: i, clientX, clientY }));
+      Object.defineProperty(event, "touches", { value: touches });
+      viewport.dispatchEvent(event);
+    }
+
+    it("follows both fingers from touch events when the browser stops sending the second finger's pointermoves", () => {
+      // Observed in Firefox/Chrome (not the Android WebView): touchmove keeps
+      // reporting both fingers, but pointermove for the second one stops.
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+      // Midpoint (150, 100), distance 100.
+
+      // Pure two-finger pan: both fingers slide down 40px, distance unchanged —
+      // but only finger 1's pointermove arrives.
+      firePointer("pointermove", 1, 100, 140);
+      fireTouch("touchmove", [
+        [100, 140],
+        [200, 140],
+      ]);
+
+      // Pointer-only tracking would see finger 2 frozen at (200,100): a
+      // midpoint move of 20px and a growing distance, i.e. a zoom.
+      const scrolled = noteCanvas.scroller.scrollBy.mock.calls.reduce((sum, [, dy]) => sum + dy, 0);
+      expect(scrolled).toBe(-40);
+      expect(noteCanvas.zoomScale).toBeCloseTo(1, 5);
+    });
+
+    it("hands the pinch back to pointer tracking when touches is not just the two pinch fingers", () => {
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+      fireTouch("touchmove", [
+        [100, 100],
+        [200, 100],
+      ]);
+
+      // A stylus (listed in touches on Chromium) lands mid-pinch.
+      fireTouch("touchmove", [
+        [100, 100],
+        [200, 100],
+        [400, 400],
+      ]);
+      noteCanvas.scroller.scrollBy.mockClear();
+      firePointer("pointermove", 1, 100, 140);
+      firePointer("pointermove", 2, 200, 140);
+
+      const scrolled = noteCanvas.scroller.scrollBy.mock.calls.reduce((sum, [, dy]) => sum + dy, 0);
+      expect(scrolled).toBe(-40);
+    });
+
+    it("does not pan with a single finger in draw mode without a stylus", () => {
+      firePointer("pointerdown", 1, 100, 100);
+
+      // Single touch in draw mode is reserved for InputHandler (drawing), not nav/pan.
+      firePointer("pointermove", 1, 150, 100);
+
+      expect(noteCanvas.scroller.scrollBy).not.toHaveBeenCalled();
+    });
+
+    it("undoes a partial eraser gesture when a second finger lands mid-erase", () => {
+      noteCanvas._setMode("eraser");
+      const stroke = { id: "s1", x: [50, 60], y: [50, 60], width: 2, _deleted: true };
+      noteCanvas.noteData.strokes = [stroke];
+      noteCanvas._eraserBatch = [{ index: 0, id: "s1" }];
+      noteCanvas.inputHandler.isDrawing = true;
+      noteCanvas.inputHandler.activePointerType = "touch";
+
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+
+      expect(stroke._deleted).toBe(false);
+      expect(noteCanvas._eraserBatch).toBeNull();
+      expect(noteCanvas.historyManager.push).not.toHaveBeenCalled();
+      expect(noteCanvas.inputHandler.isDrawing).toBe(false);
+    });
+
+    it("undoes a partial part-eraser gesture when a second finger lands mid-erase", () => {
+      noteCanvas._setMode("eraser");
+      noteCanvas.eraserMode = "part";
+      // Mid-gesture state: s1 was split, its fragment appended at index 1.
+      const original = { id: "s1", x: [50, 60, 70], y: [50, 60, 70], width: 2, _deleted: true };
+      const fragment = { id: "f1", x: [50, 60], y: [50, 60], width: 2, _deleted: false };
+      noteCanvas.noteData.strokes = [original, fragment];
+      noteCanvas.noteData.deletedStrokes = ["s1"];
+      noteCanvas._partEraserOps = [
+        { originalIndex: 0, originalId: "s1", subStrokes: [{ stroke: fragment, index: 1 }] },
+      ];
+      noteCanvas.inputHandler.isDrawing = true;
+      noteCanvas.inputHandler.activePointerType = "touch";
+
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+
+      expect(original._deleted).toBe(false);
+      expect(fragment._deleted).toBe(true);
+      expect(noteCanvas.noteData.deletedStrokes).not.toContain("s1");
+      expect(noteCanvas._partEraserOps).toBeNull();
+      expect(noteCanvas.historyManager.push).not.toHaveBeenCalled();
+    });
+
+    it("abandons an in-progress insert-space drag when a second finger lands", () => {
+      noteCanvas._setMode("insert-space");
+      noteCanvas.insertSpaceState = { startY: 100, currentY: 160 };
+      noteCanvas.inputHandler.isDrawing = true;
+      noteCanvas.inputHandler.activePointerType = "touch";
+      noteCanvas.renderer.clearOverlay.mockClear();
+
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+
+      expect(noteCanvas.insertSpaceState).toBeNull();
+      expect(noteCanvas.renderer.clearOverlay).toHaveBeenCalled();
+      // Nothing was shifted, so nothing to undo — and the user stays in the
+      // mode to try again rather than being bounced back to pan.
+      expect(noteCanvas.historyManager.push).not.toHaveBeenCalled();
+      expect(noteCanvas.mode).toBe("insert-space");
+    });
+
+    it("discards an in-progress lasso selection trail when a second finger lands", () => {
+      noteCanvas._setMode("lasso");
+      noteCanvas.lassoPoints = [
+        { x: 10, y: 10 },
+        { x: 20, y: 20 },
+      ];
+      noteCanvas.inputHandler.isDrawing = true;
+      noteCanvas.inputHandler.activePointerType = "touch";
+
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+
+      expect(noteCanvas.lassoPoints).toEqual([]);
+      expect(noteCanvas.inputHandler.isDrawing).toBe(false);
+    });
+
+    it("reverts an in-progress lasso transform (move/resize/rotate) when a second finger lands", () => {
+      noteCanvas._setMode("lasso");
+      const stroke = { id: "s1", x: [100, 110], y: [100, 110] };
+      noteCanvas.noteData.strokes = [stroke];
+      noteCanvas.transformState = {
+        mode: "move",
+        handle: null,
+        startX: 0,
+        startY: 0,
+        initialBounds: { minX: 95, minY: 95, maxX: 115, maxY: 115 },
+        initialStrokes: [{ x: [100, 110], y: [100, 110] }],
+        selectedIndices: [0],
+        initialLineSeparators: [105],
+        initialLineIndentLevels: [0],
+      };
+      // Simulate the drag having moved the stroke already.
+      stroke.x = [150, 160];
+      stroke.y = [150, 160];
+      noteCanvas.inputHandler.isDrawing = true;
+      noteCanvas.inputHandler.activePointerType = "touch";
+
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+
+      expect(stroke.x).toEqual([100, 110]);
+      expect(stroke.y).toEqual([100, 110]);
+      // The selection box and line separators go back with the strokes, not
+      // left at the dragged position.
+      expect(noteCanvas.renderer.setSelectedStrokes).toHaveBeenLastCalledWith(
+        noteCanvas.renderer.selectedStrokeIndices,
+        { minX: 95, minY: 95, maxX: 115, maxY: 115 },
+      );
+      expect(noteCanvas.renderer.setLineSeparators).toHaveBeenLastCalledWith([105], [0]);
+      expect(noteCanvas.transformState).toBeNull();
+      expect(noteCanvas.historyManager.push).not.toHaveBeenCalled();
+      expect(noteCanvas.inputHandler.isDrawing).toBe(false);
+    });
+
+    it("leaves a stylus stroke alone when two touches (a resting palm) land mid-stroke", () => {
+      noteCanvas.strokeManager.currentStroke = {
+        pointerType: "pen",
+        x: [10],
+        y: [10],
+        pressure: [0.5],
+      };
+      noteCanvas.inputHandler.isDrawing = true;
+      noteCanvas.inputHandler.activePointerType = "pen";
+
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+      firePointer("pointermove", 1, 80, 100);
+      firePointer("pointermove", 2, 260, 120);
+
+      expect(noteCanvas.strokeManager.cancelCurrentStroke).not.toHaveBeenCalled();
+      expect(noteCanvas.inputHandler.cancelActiveStroke).not.toHaveBeenCalled();
+      expect(noteCanvas.inputHandler.isDrawing).toBe(true);
+      // The palm must not pan or zoom the page under the pen either.
+      expect(noteCanvas.scroller.scrollBy).not.toHaveBeenCalled();
+      expect(noteCanvas.scroller.setZoom).not.toHaveBeenCalled();
+    });
+
+    it("keeps a stylus erase when two touches land mid-erase", () => {
+      noteCanvas._setMode("eraser");
+      const stroke = { id: "s1", x: [50, 60], y: [50, 60], width: 2, _deleted: true };
+      noteCanvas.noteData.strokes = [stroke];
+      noteCanvas._eraserBatch = [{ index: 0, id: "s1" }];
+      noteCanvas.inputHandler.isDrawing = true;
+      noteCanvas.inputHandler.activePointerType = "pen";
+
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+
+      expect(stroke._deleted).toBe(true);
+      expect(noteCanvas._eraserBatch).toEqual([{ index: 0, id: "s1" }]);
+    });
+
+    it("moves the canvas on a two-finger pan even when zoom is clamped and unchanged", () => {
+      noteCanvas.zoomScale = noteCanvas.maxZoom;
+      firePointer("pointerdown", 1, 100, 100);
+      firePointer("pointerdown", 2, 200, 100);
+      noteCanvas.renderer.setZoom.mockClear();
+
+      // Spread apart (would zoom in past max → clamped) while sliding down 30px.
+      firePointer("pointermove", 1, 90, 130);
+      firePointer("pointermove", 2, 230, 130);
+
+      expect(noteCanvas.zoomScale).toBe(noteCanvas.maxZoom);
+      expect(noteCanvas.scroller.scrollBy).toHaveBeenCalled();
+      // During a pinch only setZoom repositions the canvas, so it must run after
+      // the pan even though the zoom value did not change.
+      expect(noteCanvas.renderer.setZoom).toHaveBeenCalled();
+      const lastPan = noteCanvas.scroller.scrollBy.mock.invocationCallOrder.at(-1);
+      const lastZoom = noteCanvas.renderer.setZoom.mock.invocationCallOrder.at(-1);
+      expect(lastZoom).toBeGreaterThan(lastPan);
     });
   });
 

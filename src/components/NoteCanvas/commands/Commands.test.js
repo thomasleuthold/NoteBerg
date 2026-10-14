@@ -684,6 +684,37 @@ describe("NoteCanvas Commands", () => {
       expect(noteCanvas.renderer.forceRedraw).toHaveBeenCalledTimes(1);
     });
 
+    it("undoes a gesture that re-split its own fragment back to just the original", () => {
+      // One drag: s1 → sub1 + sub2, then the eraser moves on over sub1 → sub3.
+      // State after the gesture: s1 and sub1 deleted, sub2 and sub3 live.
+      mockStrokes[0]._deleted = true;
+      const sub1 = { id: "sub1", x: [1], y: [1], _deleted: true };
+      const sub2 = { id: "sub2", x: [2], y: [2], _deleted: false };
+      const sub3 = { id: "sub3", x: [3], y: [3], _deleted: false };
+      mockStrokes.push(sub1, sub2, sub3);
+      noteCanvas.noteData.deletedStrokes.push("s1", "sub1");
+
+      const cmd = new EraseStrokePartsCommand([
+        makeOperation({ originalIndex: 0, originalId: "s1", subStrokeIndices: [2, 3] }),
+        makeOperation({ originalIndex: 2, originalId: "sub1", subStrokeIndices: [4] }),
+      ]);
+
+      cmd.undo(noteCanvas);
+
+      // Only the original survives — no fragment left duplicating its ink.
+      expect(mockStrokes[0]._deleted).toBe(false);
+      expect(sub1._deleted).toBe(true);
+      expect(sub2._deleted).toBe(true);
+      expect(sub3._deleted).toBe(true);
+
+      cmd.redo(noteCanvas);
+
+      expect(mockStrokes[0]._deleted).toBe(true);
+      expect(sub1._deleted).toBe(true);
+      expect(sub2._deleted).toBe(false);
+      expect(sub3._deleted).toBe(false);
+    });
+
     it("redo is a no-op when the original is already deleted", () => {
       mockStrokes[0]._deleted = true;
       const operation = makeOperation({ originalIndex: 0, originalId: "s1", subStrokeIndices: [] });

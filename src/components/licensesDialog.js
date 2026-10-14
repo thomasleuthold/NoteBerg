@@ -118,20 +118,6 @@ const licenses = [
     licenseUrl: "https://github.com/vitest-dev/vitest/blob/main/LICENSE",
   },
   {
-    name: "Express",
-    description: "Fast, unopinionated, minimalist web framework for Node.js",
-    url: "https://expressjs.com/",
-    license: "MIT License",
-    licenseUrl: "https://github.com/expressjs/express/blob/master/LICENSE",
-  },
-  {
-    name: "cors",
-    description: "Node.js CORS middleware",
-    url: "https://github.com/expressjs/cors",
-    license: "MIT License",
-    licenseUrl: "https://github.com/expressjs/cors/blob/master/LICENSE",
-  },
-  {
     name: "jsdom",
     description: "A JavaScript implementation of many web standards",
     url: "https://github.com/jsdom/jsdom",

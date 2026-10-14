@@ -22,7 +22,8 @@
 
 ### Media & Import/Export
 - PDF import — annotate PDFs with pen and text
-- Image insertion with cropping and perspective correction
+- Image insertion with cropping and perspective correction, with automatic page corner detection
+- Document mode in the camera — outlines the page live, straightens it after the shot, and can flatten shadows for a scanned look
 - PDF export with automatic A4 pagination
 
 ### Organization
@@ -60,8 +61,8 @@
 - Windows: desktop installer from GitHub Releases: https://github.com/thomasleuthold/NoteBerg/releases (unsigned build; Windows may warn about an unknown publisher)]]></description>
 	<screenshot>https://raw.githubusercontent.com/thomasleuthold/NoteBerg/main/documentation/screenshots/main1.png</screenshot>
 	<screenshot>https://raw.githubusercontent.com/thomasleuthold/NoteBerg/main/documentation/screenshots/main2.png</screenshot>
-	<version>0.5.42</version>
-	<release-date>2026-09-15</release-date>
+	<version>0.5.43-beta.1</version>
+	<release-date>2026-10-10</release-date>
 	<licence>MIT</licence>
 	<author mail="noteberg@posteo.org">Thomas Leuthold</author>
 	<namespace>NoteBerg</namespace>
