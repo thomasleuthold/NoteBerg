@@ -23,6 +23,7 @@ const KEYS = [
   "insert",
   "firstImage",
   "markAsTask",
+  "firstTextBox",
 ];
 
 export function getHelpContent() {

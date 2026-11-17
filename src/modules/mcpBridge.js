@@ -45,6 +45,7 @@ import {
   getSetting,
   setSetting,
 } from "./storage.js";
+import { inReadingOrder } from "./textBoxes.js";
 
 const MCP_ENABLED_KEY = "mcp_enabled";
 // List of {id, name} token metadata (storage.js setting) — each token's
@@ -77,10 +78,12 @@ const NOTE_FORMAT_HANDLERS = {
     hasRecognition: note.hasRecognition,
     attachments: listAttachments(note),
   }),
-  // Raw HTML as-is — the editor's real output, not a derived plain-text
-  // guess. Formatting (tables, colors, font sizes) is real user content;
-  // stripping it would be lossy and not reconstructible from stripped text.
-  text_html: (note) => ({ html: note.content ?? "" }),
+  // Raw HTML — the editor's real output, not a derived plain-text guess.
+  // Formatting (tables, colors, font sizes) is real user content; stripping
+  // it would be lossy and not reconstructible from stripped text. Text boxes
+  // keep their wrappers and positions, in reading order (top to bottom, then
+  // left to right) rather than the order they were created in.
+  text_html: (note) => ({ html: inReadingOrder(note.content ?? "") }),
   recognized_text: (note) => ({ fullText: note.recognition?.fullText ?? "" }),
   recognized_words: (note) => ({ words: note.recognition?.words ?? [] }),
   strokes_raw: (note) => ({ strokes: note.strokes ?? [] }),
@@ -516,7 +519,7 @@ async function readResource(uri) {
             id: note.id,
             notebookId: note.notebookId,
             title: note.title,
-            html: note.content ?? "",
+            html: inReadingOrder(note.content ?? ""),
             recognizedText: note.recognition?.fullText ?? "",
             _note:
               "This is a compact snapshot, not every representation. Call get_note with this note's id and format 'attachments_list', 'strokes_images', 'note_pdf', etc. for images, PDF export, or other formats.",
@@ -554,6 +557,9 @@ async function getTaskMarkers(notebookId) {
         id: task.id,
         type: task.type,
         checked: task.checked,
+        status: task.status || (task.checked ? "done" : "open"),
+        priority: task.priority || "none",
+        dueDate: task.dueDate || null,
         noteId: task.noteId,
         noteTitle: task.noteTitle,
         // Free to include — note is already fully fetched above; saves a

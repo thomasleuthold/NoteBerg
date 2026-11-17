@@ -7,7 +7,7 @@ import { fetch } from "@tauri-apps/plugin-http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MockWebDAVServer, wireMockServer } from "./__fixtures__/mockWebDAVServer.js";
 import { attemptMerge, fullSync } from "./nextcloudSync.js";
-import { saveNote } from "./storage.js";
+import { getNoteBase, saveNote } from "./storage.js";
 
 // --- Mocks ---
 
@@ -69,6 +69,7 @@ vi.mock("./storage.js", async (importOriginal) => {
     initStorage: vi.fn(() => Promise.resolve()),
     updateNote: vi.fn(() => Promise.resolve()),
     saveNote: vi.fn(() => Promise.resolve()),
+    getNoteBase: vi.fn(() => Promise.resolve(null)),
     // getNote / getRawNote return whatever was seeded in mockNoteStore
     getNote: vi.fn((id) => Promise.resolve(mockNoteStore.get(id) ?? null)),
     getRawNote: vi.fn((id) => Promise.resolve(mockNoteStore.get(id) ?? null)),
@@ -98,28 +99,30 @@ describe("Nextcloud Sync Module", () => {
   });
 
   describe("Conflict Resolution", () => {
-    it("should handle true conflict (divergent content)", async () => {
+    it("keeps both texts and every other field when the text diverges (no conflict dialog)", async () => {
       const noteId = "note1";
       const notebookId = "nb1";
 
-      // Local state
       const localNote = {
         id: noteId,
         notebookId,
         title: "Local Title",
-        content: "Local Content",
+        content: "<p>Local Content</p>",
+        strokes: [{ id: "s-local", x: [1], y: [1] }],
+        tasks: [{ id: "t-local", text: "mine", modified: 900 }],
         modified: 1000,
         synced: false,
         lastSyncedEtag: "old-etag",
       };
-
-      // Remote state (Newer)
       const remoteNote = {
         id: noteId,
         notebookId,
         title: "Remote Title",
-        content: "Remote Content",
+        content: "<p>Remote Content</p>",
+        strokes: [{ id: "s-remote", x: [2], y: [2] }],
+        tasks: [{ id: "t-remote", text: "theirs", modified: 1500 }],
         modified: 2000,
+        lastModifiedBy: "bob",
       };
 
       mockServer.files.set(`/NoteBerg/notebooks/${notebookId}`, {
@@ -130,7 +133,8 @@ describe("Nextcloud Sync Module", () => {
         isCollection: true,
         mtime: new Date(),
       });
-      mockServer.files.set(`/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`, {
+      const path = `/NoteBerg/notebooks/${notebookId}/notes/${noteId}.json`;
+      mockServer.files.set(path, {
         isCollection: false,
         content: JSON.stringify(remoteNote),
         etag: "new-etag",
@@ -139,10 +143,57 @@ describe("Nextcloud Sync Module", () => {
 
       const result = await fullSync([], [localNote]);
 
-      // Should detect conflict
-      expect(result.conflicts.notes).toHaveLength(1);
-      expect(result.conflicts.notes[0].local.title).toBe("Local Title");
-      expect(result.conflicts.notes[0].remote.title).toBe("Remote Title");
+      expect(result.conflicts.notes).toHaveLength(0);
+      expect(result.uploaded.notes.uploaded).toBe(1);
+      const uploaded = JSON.parse(mockServer.files.get(path).content);
+      // Neither text was lost; the older side is marked as the conflicting copy
+      expect(uploaded.content).toContain("Local Content");
+      expect(uploaded.content).toContain("Remote Content");
+      expect(uploaded.content).toContain('class="merge-hint"');
+      // The losing copy is local (older), attributed to the signed-in user
+      expect(uploaded.content).toContain('data-by="testuser"');
+      // And nothing outside the text was dropped with the losing side
+      expect(uploaded.strokes.map((st) => st.id).sort()).toEqual(["s-local", "s-remote"]);
+      expect(uploaded.tasks.map((t) => t.id).sort()).toEqual(["t-local", "t-remote"]);
+      // Newer note wins the title (last write wins)
+      expect(uploaded.title).toBe("Remote Title");
+    });
+
+    it("merges against the stored baseline: independent edits to different blocks both survive", async () => {
+      const noteId = "n-base";
+      const path = `/NoteBerg/notebooks/nb1/notes/${noteId}.json`;
+      getNoteBase.mockResolvedValueOnce("<p>one</p><p>two</p>");
+      const local = {
+        id: noteId,
+        notebookId: "nb1",
+        content: "<p>ONE</p><p>two</p>",
+        modified: 2000,
+        synced: false,
+        lastSyncedEtag: "old",
+      };
+      const remote = {
+        id: noteId,
+        notebookId: "nb1",
+        content: "<p>one</p><p>TWO</p>",
+        modified: 1500,
+      };
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set(path, {
+        content: JSON.stringify(remote),
+        etag: "new",
+        mtime: new Date(),
+      });
+
+      await fullSync([], [local]);
+
+      expect(getNoteBase).toHaveBeenCalledWith(noteId);
+      const uploaded = JSON.parse(mockServer.files.get(path).content);
+      expect(uploaded.content).toBe("<p>ONE</p><p>TWO</p>");
+      expect(uploaded.content).not.toContain("merge-hint");
     });
 
     it("should auto-merge when local content contains remote (No Conflict)", async () => {
@@ -401,6 +452,106 @@ describe("Nextcloud Sync Module", () => {
       const merged = attemptMerge(local, remote);
       expect(merged).not.toBeNull();
       expect(merged.strokes.find((s) => s.id === "s-remote")).toBeTruthy();
+    });
+  });
+
+  describe("attemptMerge text handling", () => {
+    const note = (overrides) => ({ id: "n", modified: 1000, strokes: [], ...overrides });
+
+    it("merges diverging text instead of giving up on the whole note", () => {
+      const merged = attemptMerge(
+        note({ content: "<p>a</p><p>local</p>", modified: 2000 }),
+        note({ content: "<p>a</p><p>remote</p>", modified: 1000 }),
+      );
+      expect(merged).not.toBeNull();
+      expect(merged.content).toContain("local");
+      expect(merged.content).toContain("remote");
+    });
+
+    it("uses the baseline for a three-way merge of independent edits", () => {
+      const base = "<p>one</p><p>two</p><p>three</p>";
+      const merged = attemptMerge(
+        note({ content: "<p>ONE</p><p>two</p><p>three</p>", modified: 2000 }),
+        note({ content: "<p>one</p><p>two</p><p>THREE</p>", modified: 1500 }),
+        { base },
+      );
+      expect(merged.content).toBe("<p>ONE</p><p>two</p><p>THREE</p>");
+    });
+
+    it("honours a local deletion of everything when the baseline proves it", () => {
+      // Without a baseline the old containment heuristic would resurrect the text
+      const merged = attemptMerge(
+        note({ content: "", modified: 2000 }),
+        note({ content: "<p>a</p>", modified: 1000 }),
+        { base: "<p>a</p>" },
+      );
+      expect(merged.content).toBe("");
+    });
+
+    it("attributes the other side's copy to the remote author and records nothing for unknown ones", () => {
+      const merged = attemptMerge(
+        note({ content: "<p>L</p>", modified: 2000 }),
+        note({ content: "<p>R</p>", modified: 1000, lastModifiedBy: "bob" }),
+        { base: "<p>x</p>", localAuthor: "alice" },
+      );
+      expect(merged.content).toContain('data-by="bob"');
+    });
+
+    it("still returns null for structurally unmergeable notes (encrypted blob content)", () => {
+      expect(
+        attemptMerge(note({ strokes: { data: "x", iv: "y" } }), note({ strokes: [] })),
+      ).toBeNull();
+    });
+  });
+
+  describe("delete versus concurrent edit", () => {
+    const note = (overrides) => ({ id: "n-del", modified: 1000, strokes: [], ...overrides });
+
+    it("keeps the other device's strokes and text in a note trashed meanwhile (restorable)", () => {
+      const trashedElsewhere = note({
+        deleted: true,
+        content: "<p>old</p>",
+        modified: 2000,
+      });
+      const editedHere = note({
+        deleted: false,
+        content: "<p>old</p><p>new edit</p>",
+        strokes: [{ id: "s-new", x: [1], y: [1] }],
+        modified: 1500,
+      });
+
+      const merged = attemptMerge(editedHere, trashedElsewhere, { base: "<p>old</p>" });
+
+      expect(merged.deleted).toBe(true); // the delete propagates...
+      expect(merged.content).toContain("new edit"); // ...but nothing typed is lost
+      expect(merged.strokes.map((st) => st.id)).toEqual(["s-new"]);
+    });
+
+    it("re-uploads an edit made while the note was purged elsewhere instead of dropping it", async () => {
+      const path = "/NoteBerg/notebooks/nb1/notes/n-purged.json";
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/_tombstones.json", {
+        content: JSON.stringify({ notes: [{ id: "n-purged", deletedAt: Date.now() }] }),
+        etag: "t1",
+        mtime: new Date(),
+      });
+      const local = {
+        id: "n-purged",
+        notebookId: "nb1",
+        content: "<p>typed after the purge</p>",
+        modified: 3000,
+        synced: false,
+      };
+
+      const result = await fullSync([], [local]);
+
+      expect(result.notesToDelete).toEqual([]);
+      expect(mockServer.files.has(path)).toBe(true);
+      expect(JSON.parse(mockServer.files.get(path).content).content).toContain("typed after");
     });
   });
 

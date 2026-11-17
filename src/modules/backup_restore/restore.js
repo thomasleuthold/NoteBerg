@@ -36,6 +36,7 @@
  */
 
 import { mimeFromExt } from "../mime.js";
+import { isShared } from "../sharing/sharePermissions.js";
 import {
   checkFileExists,
   copyNote,
@@ -267,12 +268,20 @@ function noteStatus(backup, local) {
 export async function scanRestore(archive, index) {
   const localNotebooks = new Map((await getAllNotebooksForSync()).map((nb) => [nb.id, nb]));
   const localNotes = new Map((await getAllNotesForSync()).map((n) => [n.id, n]));
+  // Notebooks shared with this user are their owner's: a restore never writes
+  // into them, whatever the archive says about their id
+  const isSharedHere = (notebookId) => isShared(localNotebooks.get(notebookId));
+  let skippedShared = 0;
 
   const notebooks = [];
   for (const [id, { name }] of index.notebooks) {
     const nb = parseJsonEntry(await archive.readText(name), name);
     if (nb.id !== id)
       throw new RestoreError("corrupt", `Notebook id mismatch in ${name}`, { name });
+    if (isSharedHere(id)) {
+      skippedShared++;
+      continue;
+    }
     const local = localNotebooks.get(id);
     let status = "new";
     if (local && !local.purged) status = local.deleted ? "undelete" : "keep";
@@ -294,6 +303,10 @@ export async function scanRestore(archive, index) {
     const note = parseJsonEntry(await archive.readText(name), name);
     if (note.id !== id) throw new RestoreError("corrupt", `Note id mismatch in ${name}`, { name });
     const local = localNotes.get(id);
+    if (isSharedHere(notebookId) || (local && isSharedHere(local.notebookId))) {
+      skippedShared++;
+      continue;
+    }
     const status = noteStatus(note, local);
     notes.push({
       id,
@@ -331,6 +344,7 @@ export async function scanRestore(archive, index) {
     notes,
     conflicts,
     hasLocalData,
+    skippedShared,
     counts: {
       notebooks: notebooks.length,
       notes: notes.length,

@@ -99,6 +99,44 @@ describe("Nextcloud Sync Module", () => {
   });
 
   describe("Sync Logic (Incremental & Filtering)", () => {
+    it("never uploads this user's sharing fields with a notebook", async () => {
+      mockServer.files.set("/NoteBerg/notebooks", { isCollection: true, mtime: new Date() });
+      const notebook = {
+        id: "nb-owned",
+        title: "Mine",
+        modified: Date.now(),
+        origin: "shared",
+        remoteBasePath: "/Shared_NoteBerg/alice_x",
+        ownerUid: "alice",
+        ownerDisplayName: "Alice",
+        sharePermissions: 7,
+        shareId: "1",
+        normalized: true,
+        shareEnded: false,
+        strandedNoteIds: ["n1"],
+      };
+
+      await syncNotebooks([notebook]);
+
+      const uploaded = JSON.parse(
+        mockServer.files.get("/NoteBerg/notebooks/nb-owned/_notebook.json").content,
+      );
+      expect(uploaded.title).toBe("Mine");
+      for (const field of [
+        "origin",
+        "remoteBasePath",
+        "ownerUid",
+        "ownerDisplayName",
+        "sharePermissions",
+        "shareId",
+        "normalized",
+        "shareEnded",
+        "strandedNoteIds",
+      ]) {
+        expect(uploaded).not.toHaveProperty(field);
+      }
+    });
+
     it("should upload a new notebook", async () => {
       // Ensure parent notebooks folder exists
       mockServer.files.set("/NoteBerg/notebooks", { isCollection: true, mtime: new Date() });
@@ -753,6 +791,33 @@ describe("Nextcloud Sync Module", () => {
       // Remote content must be preserved, not overwritten
       const file = mockServer.files.get("/NoteBerg/notebooks/nb1/notes/n-412.json");
       expect(JSON.parse(file.content).content).toBe("Concurrent remote edit");
+    });
+
+    it("stamps the uploader on the note and reports the uploaded text as the next baseline", async () => {
+      mockServer.files.set("/NoteBerg/notebooks/nb1", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/notebooks/nb1/notes", {
+        isCollection: true,
+        mtime: new Date(),
+      });
+      const note = {
+        id: "n-author",
+        notebookId: "nb1",
+        content: "<p>hello</p>",
+        modified: 1000,
+        synced: false,
+        lastSyncedEtag: null,
+      };
+
+      const result = await syncNotes([note]);
+
+      expect(result.uploaded).toBe(1);
+      const uploaded = JSON.parse(
+        mockServer.files.get("/NoteBerg/notebooks/nb1/notes/n-author.json").content,
+      );
+      expect(uploaded.lastModifiedBy).toBe("testuser");
+      expect(result.metadata["n-author"].baseContent).toBe("<p>hello</p>");
+      // The baseline is local bookkeeping: it must never be part of the uploaded file
+      expect(JSON.stringify(uploaded)).not.toContain("baseContent");
     });
 
     it("should recover from a 412 on the next sync cycle without losing either side's changes", async () => {

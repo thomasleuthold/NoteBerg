@@ -283,6 +283,18 @@ describe("copyNote (WebDAV)", () => {
     expect(server.files.has("/NoteBerg/notebooks/nb-a/notes/n1_media/f1.png")).toBe(false);
     expect(server.files.has(`/NoteBerg/notebooks/nb-b/notes/${copy.id}_media/f1.png`)).toBe(true);
   });
+
+  it("does not hand out the purged original's file locations for the copy", async () => {
+    seedNoteWithMedia();
+    // The original's file was opened this session: its location is known
+    await storage.saveMediaForNote(new Blob(["x"], { type: "image/png" }), "f1", "n1", "nb-a");
+    await storage.copyNote("n1", "nb-b");
+
+    await storage.permanentlyDeleteNote("n1");
+
+    // The copy holds the same file id; its URL must not lead into the deleted folder
+    expect(storage.getFileUrl("f1") ?? "").not.toContain("/nb-a/notes/n1_media/");
+  });
 });
 
 // ── cleanupNoteMedia ──────────────────────────────────────────────────────────
@@ -331,6 +343,20 @@ describe("delete semantics (WebDAV)", () => {
     const json = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/notes/n1.json").content);
     expect(json.deleted).toBe(true);
     expect(server.files.has("/NoteBerg/notebooks/nb-a/_tombstones.json")).toBe(false);
+  });
+
+  it("delete and restore of a note bump its version, as the native storage does", async () => {
+    seedNoteWithMedia();
+    const read = () =>
+      JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/notes/n1.json").content).version;
+    const before = read();
+
+    await storage.deleteNote("n1");
+    const deleted = read();
+    await storage.restoreNote("n1");
+
+    expect(deleted).toBe((before || 0) + 1);
+    expect(read()).toBe(deleted + 1);
   });
 
   it("permanentlyDeleteNote removes files and writes the tombstone", async () => {
@@ -1388,5 +1414,438 @@ describe("recognition jobs", () => {
     // Resume runs during app init; a parse error here must not break launch.
     localStorage.setItem("noteberg_recognition_jobs", "{not json");
     expect(await storage.getRecognitionJobs()).toEqual([]);
+  });
+});
+
+// ── Concurrent writers ────────────────────────────────────────────────────────
+// Two people (or two tabs) editing one note: each save is read-modify-write of
+// the whole JSON file, so without merging the last PUT would silently replace
+// the other's strokes and text.
+
+describe("concurrent writers (WebDAV)", () => {
+  const NOTE_PATH = "/NoteBerg/notebooks/nb-a/notes/n1.json";
+  const readNote = () => JSON.parse(server.files.get(NOTE_PATH).content);
+  const strokeIds = () => readNote().strokes.map((s) => s.id);
+
+  /** Another client writes the note: new content, new etag, as the server would. */
+  function foreignWrite(changes) {
+    const current = readNote();
+    server.seed(NOTE_PATH, {
+      isCollection: false,
+      content: JSON.stringify({ ...current, ...changes, version: (current.version || 0) + 1 }),
+    });
+  }
+
+  const stroke = (id) => ({ id, x: [1], y: [1] });
+
+  function seedSharedNote(extra = {}) {
+    server.seedJson(NOTE_PATH, {
+      id: "n1",
+      notebookId: "nb-a",
+      title: "Shared",
+      content: "<p>one</p><p>two</p>",
+      strokes: [stroke("s1")],
+      deletedStrokes: [],
+      modified: 1000,
+      version: 1,
+      ...extra,
+    });
+  }
+
+  function datachangeSources() {
+    const sources = [];
+    const listener = (e) => sources.push(e.detail?.source);
+    window.addEventListener("datachange", listener);
+    return { sources, stop: () => window.removeEventListener("datachange", listener) };
+  }
+
+  /** A second writer lands between this client's GET and its PUT, once. */
+  function raceOnce(changes) {
+    const base = fetchImpl;
+    let raced = false;
+    fetchImpl = (url, options) => {
+      if (options?.method === "PUT" && url.includes("/n1.json") && !raced) {
+        raced = true;
+        foreignWrite(changes);
+      }
+      return base(url, options);
+    };
+    return () => raced;
+  }
+
+  it("a single writer is unaffected: strokes are replaced, the write is conditional and local", async () => {
+    seedSharedNote();
+    const events = datachangeSources();
+    const putHeaders = [];
+    const base = fetchImpl;
+    fetchImpl = (url, options) => {
+      if (options?.method === "PUT" && url.includes("/n1.json")) putHeaders.push(options.headers);
+      return base(url, options);
+    };
+    await storage.getNote("n1");
+
+    await storage.updateNote("n1", { strokes: [stroke("s2")] });
+    await storage.updateNote("n1", { strokes: [stroke("s3")] });
+    events.stop();
+
+    expect(strokeIds()).toEqual(["s3"]);
+    expect(putHeaders).toHaveLength(2);
+    expect(putHeaders.every((h) => h["If-Match"])).toBe(true);
+    expect(events.sources).toEqual(["local", "local"]);
+  });
+
+  it("stamps every write with the signed-in user", async () => {
+    seedSharedNote();
+    await storage.updateNote("n1", { title: "Renamed" });
+    expect(readNote().lastModifiedBy).toBe("testuser");
+  });
+
+  it("keeps the other writer's strokes when this editor saves its own, and tells the editor", async () => {
+    seedSharedNote();
+    await storage.getNote("n1"); // the editor opens the note
+    foreignWrite({ strokes: [stroke("s1"), stroke("s-other")] });
+    const events = datachangeSources();
+
+    // The editor only knows s1 and its own new stroke
+    await storage.updateNoteCoalesced("n1", {
+      strokes: [stroke("s1"), stroke("s-mine")],
+      deletedStrokes: [],
+    });
+    events.stop();
+
+    expect(strokeIds().sort()).toEqual(["s-mine", "s-other", "s1"]);
+    // Not "local": the open editor must adopt what it has not seen
+    expect(events.sources).toEqual(["merge"]);
+  });
+
+  it("respects an erase made in the editor while merging in the other side's strokes", async () => {
+    seedSharedNote();
+    await storage.getNote("n1");
+    foreignWrite({ strokes: [stroke("s1"), stroke("s-other")] });
+
+    await storage.updateNoteCoalesced("n1", { strokes: [], deletedStrokes: ["s1"] });
+
+    expect(strokeIds()).toEqual(["s-other"]);
+    expect(readNote().deletedStrokes).toEqual(["s1"]);
+  });
+
+  it("keeps merging until the editor re-reads, so the next stroke-only save cannot drop theirs", async () => {
+    seedSharedNote();
+    await storage.getNote("n1");
+    foreignWrite({ strokes: [stroke("s1"), stroke("s-other")] });
+    await storage.updateNoteCoalesced("n1", {
+      strokes: [stroke("s1"), stroke("s-a")],
+      deletedStrokes: [],
+    });
+
+    // The editor still has no s-other and sends its next snapshot
+    await storage.updateNoteCoalesced("n1", {
+      strokes: [stroke("s1"), stroke("s-a"), stroke("s-b")],
+      deletedStrokes: [],
+    });
+
+    expect(strokeIds().sort()).toEqual(["s-a", "s-b", "s-other", "s1"]);
+  });
+
+  it("is not fooled by another reader refreshing the note before the editor saves", async () => {
+    // Recognition and live updates read the note around the time it is closed. If a
+    // plain read moved the mark, the editor's save would think nobody else had written.
+    seedSharedNote();
+    await storage.getNote("n1", { track: true }); // the editor opens the note
+    foreignWrite({ strokes: [stroke("s1"), stroke("s-other")] }); // the other user closes theirs
+    await storage.getNote("n1"); // recognition reads the note
+
+    await storage.updateNoteCoalesced("n1", {
+      strokes: [stroke("s1"), stroke("s-mine")],
+      deletedStrokes: [],
+    });
+
+    expect(strokeIds().sort()).toEqual(["s-mine", "s-other", "s1"]);
+  });
+
+  it("measures saves against the latest editor load, not an older one", async () => {
+    seedSharedNote();
+    await storage.getNote("n1", { track: true });
+    foreignWrite({ strokes: [stroke("s1"), stroke("s-other")] });
+    await storage.getNote("n1", { track: true }); // the note is reopened and now includes s-other
+
+    const events = datachangeSources();
+    await storage.updateNoteCoalesced("n1", {
+      strokes: [stroke("s1"), stroke("s-other"), stroke("s-mine")],
+      deletedStrokes: [],
+    });
+    events.stop();
+
+    expect(events.sources).toEqual(["local"]);
+    expect(strokeIds().sort()).toEqual(["s-mine", "s-other", "s1"]);
+  });
+
+  it("merges independent text edits against the editor's baseline", async () => {
+    seedSharedNote();
+    await storage.getNote("n1");
+    foreignWrite({ content: "<p>one</p><p>TWO by them</p>" });
+
+    await storage.updateNote("n1", { content: "<p>ONE by me</p><p>two</p>" });
+
+    expect(readNote().content).toBe("<p>ONE by me</p><p>TWO by them</p>");
+  });
+
+  it("keeps both versions of a block edited on both sides and marks the duplicate", async () => {
+    seedSharedNote();
+    await storage.getNote("n1");
+    foreignWrite({ content: "<p>one</p><p>theirs</p>", lastModifiedBy: "bob" });
+
+    await storage.updateNote("n1", { content: "<p>one</p><p>mine</p>" });
+
+    const { content } = readNote();
+    expect(content).toContain("mine");
+    expect(content).toContain("theirs");
+    expect(content).toContain('class="merge-hint"');
+  });
+
+  it("keeps the editor's lineage as the text baseline, so their text survives later saves", async () => {
+    seedSharedNote();
+    await storage.getNote("n1");
+    foreignWrite({ content: "<p>one</p><p>two</p><p>from them</p>" });
+    await storage.updateNote("n1", { content: "<p>ONE</p><p>two</p>" });
+    expect(readNote().content).toContain("from them");
+
+    // The editor never saw "from them"; its next save must not read that as a deletion
+    await storage.updateNote("n1", { content: "<p>ONE!</p><p>two</p>" });
+
+    expect(readNote().content).toContain("from them");
+    expect(readNote().content).toContain("ONE!");
+  });
+
+  it("retries a PUT that loses the race and merges the writer that won", async () => {
+    seedSharedNote();
+    await storage.getNote("n1");
+    const raced = raceOnce({ strokes: [stroke("s1"), stroke("s-race")] });
+
+    await storage.updateNoteCoalesced("n1", {
+      strokes: [stroke("s1"), stroke("s-mine")],
+      deletedStrokes: [],
+    });
+
+    expect(raced()).toBe(true);
+    expect(strokeIds().sort()).toEqual(["s-mine", "s-race", "s1"]);
+  });
+
+  it("merges after a lost race even when this client never read the note before", async () => {
+    seedSharedNote();
+    const raced = raceOnce({ strokes: [stroke("s1"), stroke("s-race")] });
+
+    await storage.updateNote("n1", { strokes: [stroke("s-mine")] });
+
+    expect(raced()).toBe(true);
+    expect(strokeIds().sort()).toEqual(["s-mine", "s-race", "s1"]);
+  });
+
+  it("gives up with the 412 after repeated races instead of looping", async () => {
+    seedSharedNote();
+    await storage.getNote("n1");
+    const base = fetchImpl;
+    let puts = 0;
+    fetchImpl = (url, options) => {
+      if (options?.method === "PUT" && url.includes("/n1.json")) {
+        puts++;
+        foreignWrite({ title: `raced ${puts}` });
+      }
+      return base(url, options);
+    };
+
+    await expect(storage.updateNote("n1", { title: "Mine" })).rejects.toMatchObject({
+      status: 412,
+    });
+    expect(puts).toBe(3);
+  });
+
+  it("applies last-write-wins fields as the editor sent them, never unioning tags back in", async () => {
+    seedSharedNote({ tags: ["a", "b"] });
+    await storage.getNote("n1");
+    foreignWrite({ tags: ["a", "b", "c"] });
+
+    await storage.updateNote("n1", { tags: ["a"] });
+
+    expect(readNote().tags).toEqual(["a"]);
+  });
+
+  it("forgets a note's sync state when it is permanently deleted", async () => {
+    seedSharedNote();
+    await storage.getNote("n1");
+    foreignWrite({ strokes: [stroke("s1"), stroke("s-other")] });
+    await storage.updateNote("n1", { title: "merged once" }); // needsMerge is now set
+    await storage.permanentlyDeleteNote("n1");
+    server.seedFolder("/NoteBerg/notebooks/nb-a/notes");
+    server.seedJson(NOTE_PATH, {
+      id: "n1",
+      notebookId: "nb-a",
+      title: "Recreated",
+      strokes: [stroke("s-fresh")],
+      modified: 1,
+    });
+
+    // No stale merge state from the previous life of this id: plain replace
+    await storage.updateNote("n1", { strokes: [stroke("s-new")] });
+
+    expect(strokeIds()).toEqual(["s-new"]);
+  });
+});
+
+describe("notebook writes and local-only sharing fields (WebDAV)", () => {
+  it("never PUTs sharing fields, whether they come from the caller or an annotated record", async () => {
+    await storage.updateNotebook("nb-a", {
+      title: "Renamed",
+      origin: "shared",
+      sharePermissions: 7,
+      ownerUid: "alice",
+      strandedNoteIds: ["n1"],
+    });
+
+    const saved = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/_notebook.json").content);
+    expect(saved.title).toBe("Renamed");
+    expect(saved).not.toHaveProperty("origin");
+    expect(saved).not.toHaveProperty("sharePermissions");
+    expect(saved).not.toHaveProperty("ownerUid");
+    expect(saved).not.toHaveProperty("strandedNoteIds");
+  });
+
+  it("strips them on soft delete and restore as well", async () => {
+    await storage.deleteNotebook("nb-a");
+    await storage.restoreNotebook("nb-a");
+    const saved = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/_notebook.json").content);
+    expect(Object.keys(saved)).not.toContain("origin");
+    expect(saved.deleted).toBe(false);
+  });
+});
+
+describe("etags of compressed responses (WebDAV)", () => {
+  it("saves a note when the server's GET etag carries a -gzip suffix", async () => {
+    // Apache's mod_deflate appends "-gzip" to the etag of a compressed body; the
+    // file's real etag (what If-Match is compared with) does not have it.
+    server.seedJson("/NoteBerg/notebooks/nb-a/notes/n1.json", {
+      id: "n1",
+      notebookId: "nb-a",
+      title: "Old",
+      modified: 1,
+    });
+    const base = fetchImpl;
+    fetchImpl = async (url, options) => {
+      const res = await base(url, options);
+      if ((options?.method ?? "GET") !== "GET" || !res.headers) return res;
+      const etag = res.headers.get("etag");
+      return {
+        ...res,
+        headers: {
+          get: (n) => (n.toLowerCase() === "etag" ? etag?.replace(/"$/, '-gzip"') : null),
+        },
+      };
+    };
+
+    await storage.getNote("n1");
+    await storage.updateNote("n1", { title: "New" });
+
+    const saved = JSON.parse(server.files.get("/NoteBerg/notebooks/nb-a/notes/n1.json").content);
+    expect(saved.title).toBe("New");
+  });
+
+  it("strips quotes, the weak marker and compression suffixes", async () => {
+    const { bareEtag } = await import("./storage.webdav.js");
+    expect(bareEtag('"abc"')).toBe("abc");
+    expect(bareEtag('W/"abc"')).toBe("abc");
+    expect(bareEtag('"abc-gzip"')).toBe("abc");
+    expect(bareEtag('"abc-br"')).toBe("abc");
+    expect(bareEtag(null)).toBeUndefined();
+  });
+});
+
+// Review P4, 4.7 / 4.9: the open note's saves and live take-ins run in the
+// note-file worker (inline here, the same code) and carry little.
+describe("the open note's work off the main thread (WebDAV)", () => {
+  const stroke = (id, v, y = 1) => ({ id, x: [1, 2], y: [y, y + 1], v });
+  const NOTE = "/NoteBerg/notebooks/nb-a/notes/n1.json";
+  const stored = () => JSON.parse(server.files.get(NOTE).content);
+
+  beforeEach(() => {
+    server.seedJson(NOTE, {
+      id: "n1",
+      notebookId: "nb-a",
+      title: "Note 1",
+      content: "<p>a</p>",
+      strokes: [stroke("s1", "000000001-000-x"), stroke("s2", "000000002-000-x")],
+      deletedStrokes: [],
+      modified: 1000,
+      version: 1,
+    });
+  });
+
+  it("merges a save of only the unconfirmed strokes with the ones on the server", async () => {
+    await storage.getNote("n1", { track: true });
+    await storage.updateNote("n1", {
+      strokes: [stroke("s3", "000000009-000-me")],
+      strokesPartial: true,
+      deletedStrokes: ["s1"],
+    });
+
+    expect(
+      stored()
+        .strokes.map((s) => s.id)
+        .sort(),
+    ).toEqual(["s2", "s3"]);
+    expect(stored().deletedStrokes).toEqual(["s1"]);
+    expect(stored()).not.toHaveProperty("strokesPartial");
+  });
+
+  it("hands back the written note without its strokes", async () => {
+    await storage.getNote("n1", { track: true });
+    const written = await storage.updateNote("n1", { title: "Renamed" });
+    expect(written.title).toBe("Renamed");
+    expect(written).not.toHaveProperty("strokes");
+  });
+
+  it("takes the server's version in as a delta against what the editor holds", async () => {
+    await storage.getNote("n1", { track: true });
+    // Someone else drew a stroke and changed the text
+    const theirs = stored();
+    theirs.strokes.push(stroke("s9", "000000005-000-other"));
+    theirs.content = "<p>a</p><p>theirs</p>";
+    server.seedJson(NOTE, theirs);
+
+    const view = {
+      held: [
+        ["s1", "000000001-000-x"],
+        ["s2", "000000002-000-x"],
+      ],
+      soft: [],
+      changed: [],
+      deletedStrokes: [],
+      media: [],
+      deletedMedia: [],
+      tasks: [],
+      deletedTasks: [],
+      recordings: [],
+      deletedRecordings: [],
+      content: "<p>a</p>",
+      title: "Note 1",
+    };
+    const read = await storage.takeInStoredNote("n1", view, {
+      baseline: "<p>a</p>",
+      editorText: "<p>a</p><p>mine</p>",
+    });
+
+    expect(read.delta.strokes.added.map((s) => s.id)).toEqual(["s9"]);
+    expect(read.delta.strokes.changed).toEqual([]);
+    expect(read.text.remote).toBe("<p>a</p><p>theirs</p>");
+    expect(read.text.merged).toContain("mine");
+    expect(read.text.merged).toContain("theirs");
+    expect(read.etag).toBeTruthy();
+  });
+
+  it("reads only the text for LiveText", async () => {
+    await storage.getNote("n1", { track: true });
+    await expect(storage.readStoredNoteText("n1")).resolves.toEqual({
+      content: "<p>a</p>",
+      author: undefined,
+    });
   });
 });

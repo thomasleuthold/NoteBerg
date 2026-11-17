@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createClock } from "../../modules/hlc.js";
+import { NoteVersioner } from "../../modules/noteVersions.js";
 import { NoteCanvas } from "./NoteCanvas.js";
 
 // Polyfill DOMMatrix for pdfjs-dist (safeguard)
@@ -36,6 +38,7 @@ globalThis.PointerEvent = class PointerEvent extends Event {
     this.pointerId = props.pointerId || 0;
     this.pressure = props.pressure || 0;
     this.pointerType = props.pointerType || "mouse";
+    this.buttons = props.buttons ?? 0;
   }
 };
 
@@ -59,6 +62,8 @@ if (!globalThis.ResizeObserver) {
 // Mock dependencies
 vi.mock("../../modules/storage.js", () => ({
   getNote: vi.fn(),
+  getNoteIndex: vi.fn(async () => null),
+  getNotebook: vi.fn(async () => null),
   updateNote: vi.fn(),
   updateNoteCoalesced: vi.fn(() => Promise.resolve()),
   flushNoteWrites: vi.fn(() => Promise.resolve()),
@@ -116,11 +121,12 @@ vi.mock("./PdfTextLayerManager.js", () => {
   }
   return { PdfTextLayerManager: PdfTextLayerManagerMock };
 });
-vi.mock("./TextEditorLayer.js", () => {
-  class TextEditorLayerMock {
+vi.mock("./TextLayer.js", () => {
+  class TextLayerMock {
     init = vi.fn();
     update = vi.fn();
     setMode = vi.fn();
+    setReadOnly = vi.fn();
     setContentHeight = vi.fn();
     getContent = vi.fn(() => "");
     forceSave = vi.fn();
@@ -129,8 +135,12 @@ vi.mock("./TextEditorLayer.js", () => {
     clearHighlights = vi.fn();
     renderTaskCheckboxes = vi.fn();
     cleanupOrphanedTextTasks = vi.fn();
+    findTaskElement = vi.fn(() => null);
+    flushHistory = vi.fn();
+    boxIdsBelow = vi.fn(() => []);
+    moveBoxes = vi.fn();
   }
-  return { TextEditorLayer: TextEditorLayerMock };
+  return { TextLayer: TextLayerMock };
 });
 
 // Mock global window events
@@ -715,6 +725,63 @@ describe("NoteCanvas Class", () => {
       expect(stroke._deleted).toBe(true);
       expect(noteCanvas.historyManager.push).toHaveBeenCalled();
     });
+
+    it("saves once when the gesture ends, not on every move", async () => {
+      await noteCanvas.load("note-1");
+      const strokes = [1, 2, 3].map((i) => ({ id: `s${i}`, x: [i], y: [i], _deleted: false }));
+      mockNoteData.strokes = strokes;
+      noteCanvas._setMode("eraser");
+      noteCanvas._strokeIntersectsCircle = vi.fn(() => true);
+
+      noteCanvas._onStrokeStart({ x: 1, y: 1, clientX: 1, clientY: 1, pointerType: "pen" });
+      for (const i of [0, 1, 2]) {
+        // Each move hits one more stroke
+        noteCanvas.spatialIndex.query.mockReturnValue([i]);
+        noteCanvas._onStrokeMove([{ x: i, y: i, clientX: i, clientY: i }]);
+      }
+      expect(noteCanvas.strokeManager.forceSave).not.toHaveBeenCalled();
+
+      noteCanvas._onStrokeEnd();
+      expect(strokes.every((s) => s._deleted)).toBe(true);
+      expect(noteCanvas.strokeManager.forceSave).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("Insert space", () => {
+    it("records the shift although nothing of this editor's lies below the line", async () => {
+      // A collaborator's ink drawn there meanwhile still has to move (DESIGN §10.7 D)
+      await noteCanvas.load("note-1");
+      mockNoteData.strokes = [];
+      noteCanvas.noteData.media = [];
+      noteCanvas._setMode("insert-space");
+      noteCanvas.insertSpaceState = { startY: 100, currentY: 160 };
+
+      noteCanvas._onStrokeEnd();
+
+      expect(noteCanvas.noteData.shifts).toEqual([expect.objectContaining({ y: 100, delta: 60 })]);
+      expect(noteCanvas.strokeManager.forceSave).toHaveBeenCalled();
+    });
+
+    it("moves the text boxes below the line in the same undo step, after pending typing", async () => {
+      await noteCanvas.load("note-1");
+      mockNoteData.strokes = [];
+      noteCanvas.noteData.media = [];
+      const layer = noteCanvas.textEditorLayer;
+      layer.boxIdsBelow.mockReturnValue(["tb_1"]);
+      const order = [];
+      layer.flushHistory.mockImplementation(() => order.push("typing"));
+      noteCanvas.historyManager.push.mockImplementation(() => order.push("shift"));
+      noteCanvas._setMode("insert-space");
+      noteCanvas.insertSpaceState = { startY: 100, currentY: 160 };
+
+      noteCanvas._onStrokeEnd();
+
+      expect(layer.boxIdsBelow).toHaveBeenCalledWith(100);
+      expect(order).toEqual(["typing", "shift"]);
+      const [command] = noteCanvas.historyManager.push.mock.calls.at(-1);
+      expect(command.boxIds).toEqual(["tb_1"]);
+      expect(layer.moveBoxes).toHaveBeenCalledWith(["tb_1"], 60);
+    });
   });
 
   describe("Lasso Selection", () => {
@@ -745,6 +812,306 @@ describe("NoteCanvas Class", () => {
         expect.objectContaining({ minX: expect.any(Number) }),
       );
     });
+
+    it("never selects or moves a text box (the lasso is for strokes only)", async () => {
+      await noteCanvas.load("note-1");
+      mockNoteData.strokes = [];
+      noteCanvas.spatialIndex.query.mockReturnValue([]);
+      noteCanvas._setMode("lasso");
+
+      // A lasso around the whole page, where a box would be
+      noteCanvas._onStrokeStart({ x: 0, y: 0, clientX: 0, clientY: 0, pointerType: "pen" });
+      noteCanvas._onStrokeMove([{ x: 1200, y: 0, clientX: 1200, clientY: 0 }]);
+      noteCanvas._onStrokeMove([{ x: 1200, y: 2000, clientX: 1200, clientY: 2000 }]);
+      noteCanvas._onStrokeMove([{ x: 0, y: 2000, clientX: 0, clientY: 2000 }]);
+      noteCanvas._onStrokeEnd();
+
+      const layer = noteCanvas.textEditorLayer;
+      expect(layer.moveBoxes).not.toHaveBeenCalled();
+      expect(layer.boxIdsBelow).not.toHaveBeenCalled();
+      expect(noteCanvas.renderer.setSelectedStrokes).not.toHaveBeenCalledWith(
+        expect.any(Set),
+        expect.objectContaining({ minX: expect.any(Number) }),
+      );
+    });
+  });
+
+  describe("a notebook shared with the user", () => {
+    const sharedNotebook = (sharePermissions, extra = {}) => ({
+      id: "nb-shared",
+      origin: "shared",
+      sharePermissions,
+      ...extra,
+    });
+
+    async function loadIn(notebook) {
+      const { getNotebook } = await import("../../modules/storage.js");
+      mockNoteData.notebookId = notebook?.id ?? null;
+      mockNoteData.tasks = [{ id: "t1", type: "text", checked: false, modified: 1 }];
+      getNotebook.mockResolvedValue(notebook);
+      await noteCanvas.load("note-1");
+    }
+
+    describe("read-only", () => {
+      beforeEach(async () => {
+        await loadIn(sharedNotebook(1));
+      });
+
+      it("builds the editor for a viewer", async () => {
+        const { NoteToolbar } = await import("./NoteToolbar.js");
+        expect(noteCanvas.readOnly).toBe(true);
+        expect(noteCanvas.permissions).toEqual({ canEdit: false, canManage: false });
+        expect(NoteToolbar.mock.calls.at(-1)[2]).toMatchObject({
+          canEdit: false,
+          canManage: false,
+        });
+        expect(noteCanvas.strokeManager.readOnly).toBe(true);
+        expect(noteCanvas.textEditorLayer.setReadOnly).toHaveBeenCalledWith(true);
+      });
+
+      it("only lets the user look around", () => {
+        for (const mode of ["draw", "eraser", "lasso", "text", "insert-space"]) {
+          noteCanvas._setMode(mode);
+          expect(noteCanvas.mode).toBe("pan");
+        }
+      });
+
+      it("keeps a stylus from switching into drawing", () => {
+        noteCanvas._onStrokeStart({ x: 1, y: 1, clientX: 1, clientY: 1, pointerType: "pen" });
+        expect(noteCanvas.mode).toBe("pan");
+        expect(noteCanvas.strokeManager.startStroke).not.toHaveBeenCalled();
+      });
+
+      it("ignores editing shortcuts", () => {
+        noteCanvas._onKeyDown({ ctrlKey: true, key: "z", preventDefault: vi.fn() });
+        noteCanvas._onKeyDown({ ctrlKey: true, key: "y", preventDefault: vi.fn() });
+        noteCanvas._onKeyDown({ ctrlKey: true, key: "v", preventDefault: vi.fn() });
+        expect(noteCanvas.historyManager.undo).not.toHaveBeenCalled();
+        expect(noteCanvas.historyManager.redo).not.toHaveBeenCalled();
+      });
+
+      it("does not select media, so it cannot be moved, cropped or deleted", () => {
+        expect(noteCanvas._handleMediaInteraction(1, 1, 1, 1)).toEqual({ consumed: false });
+      });
+
+      it("does not tick a task: the box is put back and nothing is saved", async () => {
+        const { updateNoteCoalesced } = await import("../../modules/storage.js");
+        noteCanvas.textEditorLayer.renderTaskCheckboxes.mockClear();
+
+        noteCanvas._toggleTask("t1", true);
+
+        expect(noteCanvas.noteData.tasks[0].checked).toBe(false);
+        expect(noteCanvas.textEditorLayer.renderTaskCheckboxes).toHaveBeenCalled();
+        expect(updateNoteCoalesced).not.toHaveBeenCalled();
+      });
+
+      it("never writes: not tasks, not text, not media, not recordings", async () => {
+        const storage = await import("../../modules/storage.js");
+        storage.updateNote.mockClear();
+        storage.updateNoteCoalesced.mockClear();
+
+        noteCanvas._saveTasks();
+        noteCanvas._createTextTask("t2");
+        noteCanvas._onTextContentChange("<p>typed</p>");
+        await noteCanvas._saveMediaChanges();
+        noteCanvas._saveRecordingChanges([], []);
+
+        expect(storage.updateNote).not.toHaveBeenCalled();
+        expect(storage.updateNoteCoalesced).not.toHaveBeenCalled();
+        expect(noteCanvas.noteData.content).not.toBe("<p>typed</p>");
+        expect(noteCanvas.noteData.tasks).toHaveLength(1);
+      });
+
+      it("cannot add or remove media, images or PDFs through any entry point", async () => {
+        const { pickImages } = await import("../../utils/imageUtils.js");
+        const { importPdf } = await import("../../modules/pdfManager.js");
+        noteCanvas.mediaManager.removeItem.mockClear?.();
+
+        await noteCanvas.insertImage("picker");
+        await noteCanvas.insertPdf();
+        await noteCanvas.deletePdf();
+        await noteCanvas.deleteSelectedMedia("m1");
+        noteCanvas._showPdfOptions(1, 1);
+
+        expect(pickImages).not.toHaveBeenCalled();
+        expect(importPdf).not.toHaveBeenCalled();
+        expect(document.getElementById("pdf-options-menu")).toBeNull();
+      });
+
+      it("offers no paste on the canvas, by context menu or long-press", async () => {
+        const { AppClipboard } = await import("./AppClipboard.js");
+        const copied = { id: "c1", x: [1, 2], y: [1, 2], pressure: [1, 1], width: 2 };
+        AppClipboard.copy("strokes", [copied], { minX: 1, minY: 1, maxX: 2, maxY: 2 });
+        try {
+          const before = noteCanvas.noteData.strokes.length;
+          noteCanvas._showPasteMenu(10, 10);
+          noteCanvas._pasteAtContentPoint(10, 10);
+          expect(noteCanvas.inputHandler.getContentCoordinates).not.toHaveBeenCalled();
+          expect(noteCanvas.noteData.strokes).toHaveLength(before);
+        } finally {
+          AppClipboard.type = null;
+        }
+      });
+
+      it("offers no PDF menu", () => {
+        noteCanvas.noteData.pdfSource = "pdf-1";
+        noteCanvas._renderPdfControls();
+        expect(container.querySelector(".note-canvas__pdf-controls")).toBeNull();
+      });
+    });
+
+    describe("collaborative", () => {
+      beforeEach(async () => {
+        await loadIn(sharedNotebook(7));
+      });
+
+      it("lets the user edit, but not manage the note", async () => {
+        const { NoteToolbar } = await import("./NoteToolbar.js");
+        expect(noteCanvas.readOnly).toBe(false);
+        expect(noteCanvas.permissions).toEqual({ canEdit: true, canManage: false });
+        expect(NoteToolbar.mock.calls.at(-1)[2]).toMatchObject({ canEdit: true, canManage: false });
+        expect(noteCanvas.strokeManager.readOnly).toBe(false);
+        noteCanvas._setMode("draw");
+        expect(noteCanvas.mode).toBe("draw");
+      });
+
+      it("lets the user change tasks", () => {
+        noteCanvas._toggleTask("t1", true);
+        expect(noteCanvas.noteData.tasks[0].checked).toBe(true);
+      });
+    });
+
+    describe("a share that ends while the note is open", () => {
+      beforeEach(async () => {
+        await loadIn(sharedNotebook(7));
+        noteCanvas.textEditorLayer.setReadOnly.mockClear();
+      });
+
+      const endShare = (notebookId = "nb-shared") =>
+        window.dispatchEvent(new CustomEvent("share-ended", { detail: { notebookId } }));
+
+      it("stops accepting changes, rebuilds the toolbar for a viewer and says why", async () => {
+        const { NoteToolbar } = await import("./NoteToolbar.js");
+        expect(noteCanvas.readOnly).toBe(false);
+
+        endShare();
+
+        expect(noteCanvas.readOnly).toBe(true);
+        expect(noteCanvas.permissions).toEqual({ canEdit: false, canManage: false });
+        expect(noteCanvas.strokeManager.readOnly).toBe(true);
+        expect(noteCanvas.textEditorLayer.setReadOnly).toHaveBeenCalledWith(true);
+        expect(NoteToolbar.mock.calls.at(-1)[2]).toMatchObject({ canEdit: false });
+        expect(container.querySelector(".note-canvas__share-ended")).not.toBeNull();
+      });
+
+      it("removes the PDF button that was already showing", () => {
+        noteCanvas.noteData.pdfSource = "pdf-1";
+        noteCanvas._renderPdfControls();
+        expect(container.querySelector(".note-canvas__pdf-controls")).not.toBeNull();
+        endShare();
+        expect(container.querySelector(".note-canvas__pdf-controls")).toBeNull();
+      });
+
+      it("drops out of drawing mode", () => {
+        noteCanvas._setMode("draw");
+        endShare();
+        expect(noteCanvas.mode).toBe("pan");
+      });
+
+      it("lets the notice be dismissed", () => {
+        endShare();
+        container.querySelector(".note-canvas__share-ended button").click();
+        expect(container.querySelector(".note-canvas__share-ended")).toBeNull();
+      });
+
+      it("ignores the end of some other share", () => {
+        endShare("another-notebook");
+        expect(noteCanvas.readOnly).toBe(false);
+        expect(container.querySelector(".note-canvas__share-ended")).toBeNull();
+      });
+
+      it("shows the notice only once", () => {
+        endShare();
+        endShare();
+        expect(container.querySelectorAll(".note-canvas__share-ended")).toHaveLength(1);
+      });
+
+      it("stops listening when the note is closed", () => {
+        noteCanvas.destroy();
+        expect(() => endShare()).not.toThrow();
+      });
+
+      it("drops a stroke being drawn instead of letting it finish on screen", () => {
+        noteCanvas._setMode("draw");
+        noteCanvas.inputHandler.isDrawing = true;
+
+        endShare();
+
+        expect(noteCanvas.strokeManager.cancelCurrentStroke).toHaveBeenCalled();
+        expect(noteCanvas.inputHandler.cancelActiveStroke).toHaveBeenCalled();
+      });
+
+      it("saves a running recording before turning read-only", async () => {
+        const order = [];
+        noteCanvas.recordingManager = {
+          isRecording: () => true,
+          finishRecording: vi.fn(async () => order.push("recording saved")),
+          destroy: vi.fn(async () => {}),
+        };
+        const become = noteCanvas._becomeReadOnly.bind(noteCanvas);
+        noteCanvas._becomeReadOnly = (message) => {
+          order.push("read-only");
+          become(message);
+        };
+
+        endShare();
+        await vi.waitFor(() => expect(noteCanvas.readOnly).toBe(true));
+
+        expect(order).toEqual(["recording saved", "read-only"]);
+      });
+    });
+
+    describe("a note the owner deletes while it is open", () => {
+      const storedDeleted = () => ({ ...structuredClone(noteCanvas.noteData), deleted: true });
+
+      it("turns read-only and says so, for a collaborator", async () => {
+        await loadIn(sharedNotebook(7));
+
+        noteCanvas._takeInNote(storedDeleted());
+
+        expect(noteCanvas.readOnly).toBe(true);
+        expect(container.querySelector(".note-canvas__share-ended")).not.toBeNull();
+      });
+
+      it("leaves an own note editable (its owner can restore it)", async () => {
+        await loadIn({ id: "nb-own" });
+
+        noteCanvas._takeInNote(storedDeleted());
+
+        expect(noteCanvas.readOnly).toBe(false);
+        expect(container.querySelector(".note-canvas__share-ended")).toBeNull();
+      });
+    });
+
+    describe("ended", () => {
+      it("is view-only even if the share once granted editing", async () => {
+        await loadIn(sharedNotebook(7, { shareEnded: true }));
+        expect(noteCanvas.readOnly).toBe(true);
+      });
+    });
+
+    describe("an own notebook or a quick note", () => {
+      it("is unaffected", async () => {
+        await loadIn({ id: "nb-own" });
+        expect(noteCanvas.permissions).toEqual({ canEdit: true, canManage: true });
+        expect(noteCanvas.readOnly).toBe(false);
+      });
+
+      it("a quick note has no notebook to ask", async () => {
+        await loadIn(null);
+        expect(noteCanvas.permissions).toEqual({ canEdit: true, canManage: true });
+      });
+    });
   });
 
   describe("Zooming", () => {
@@ -768,6 +1135,112 @@ describe("NoteCanvas Class", () => {
       noteCanvas._onWheel(event);
 
       expect(noteCanvas.zoomScale).toBeGreaterThan(1.0);
+    });
+  });
+
+  describe("a pen hovering over the page", () => {
+    const hover = (pointerType, buttons) =>
+      noteCanvas.scroller
+        .getViewportElement()
+        .dispatchEvent(new PointerEvent("pointermove", { pointerType, buttons, bubbles: true }));
+
+    it("holds off the live check: writing is about to resume", async () => {
+      await noteCanvas.load("note-1");
+      expect(noteCanvas.liveRefresh.isIdle()).toBe(true);
+      hover("pen", 0);
+      expect(noteCanvas.liveRefresh.isIdle()).toBe(false);
+    });
+
+    it("is not a mouse passing over it", async () => {
+      await noteCanvas.load("note-1");
+      hover("mouse", 0);
+      expect(noteCanvas.liveRefresh.isIdle()).toBe(true);
+    });
+  });
+
+  // Looking for other people's changes to the open note belongs to notebook
+  // sharing, a preview that is off until the user turns it on. Off, the open note
+  // is refreshed only by the periodic sync, as before sharing existed.
+  describe("looking for others' changes while the note is open", () => {
+    afterEach(() => {
+      localStorage.removeItem("sharing_enabled");
+    });
+
+    it("is not scheduled while sharing is off", async () => {
+      localStorage.setItem("sharing_enabled", "false");
+      await noteCanvas.load("note-1");
+      expect(noteCanvas.liveRefresh._timer).toBeNull();
+    });
+
+    it("is scheduled while sharing is on", async () => {
+      localStorage.setItem("sharing_enabled", "true");
+      await noteCanvas.load("note-1");
+      expect(noteCanvas.liveRefresh._timer).not.toBeNull();
+    });
+
+    it("starts and stops when sharing is switched on and off meanwhile", async () => {
+      localStorage.setItem("sharing_enabled", "false");
+      await noteCanvas.load("note-1");
+
+      localStorage.setItem("sharing_enabled", "true");
+      window.dispatchEvent(
+        new CustomEvent("sharing-preference-changed", { detail: { enabled: true } }),
+      );
+      expect(noteCanvas.liveRefresh._timer).not.toBeNull();
+
+      localStorage.setItem("sharing_enabled", "false");
+      window.dispatchEvent(
+        new CustomEvent("sharing-preference-changed", { detail: { enabled: false } }),
+      );
+      expect(noteCanvas.liveRefresh._timer).toBeNull();
+    });
+
+    it("makes no request for a look while sharing is off, but still takes in a change announced earlier", async () => {
+      localStorage.setItem("sharing_enabled", "false");
+      await noteCanvas.load("note-1");
+      noteCanvas._liveCheckNextcloud = vi.fn();
+      noteCanvas._liveSyncOpenNote = vi.fn();
+      noteCanvas._takeInExternalChange = vi.fn(async () => true);
+
+      await expect(noteCanvas._liveCheck()).resolves.toBeUndefined();
+      expect(noteCanvas._liveCheckNextcloud).not.toHaveBeenCalled();
+      expect(noteCanvas._liveSyncOpenNote).not.toHaveBeenCalled();
+      expect(noteCanvas._takeInExternalChange).not.toHaveBeenCalled();
+
+      noteCanvas.pendingLiveUpdate = true;
+      await noteCanvas._liveCheck();
+      expect(noteCanvas._takeInExternalChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops listening when the note is closed", async () => {
+      await noteCanvas.load("note-1");
+      const refresh = vi.spyOn(noteCanvas.liveRefresh, "refresh");
+      await noteCanvas.destroy();
+      window.dispatchEvent(
+        new CustomEvent("sharing-preference-changed", { detail: { enabled: true } }),
+      );
+      expect(refresh).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("typing", () => {
+    it("holds off the live check when it happens in the note", async () => {
+      await noteCanvas.load("note-1");
+      const editor = document.createElement("div");
+      editor.setAttribute("contenteditable", "true");
+      noteCanvas.containerElement.appendChild(editor);
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+      expect(noteCanvas.liveRefresh.isIdle()).toBe(false);
+    });
+
+    it("does not when it happens in a field outside the note", async () => {
+      await noteCanvas.load("note-1");
+      const field = document.createElement("input");
+      document.body.appendChild(field);
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.remove();
+      expect(noteCanvas.liveRefresh.isIdle()).toBe(true);
     });
   });
 
@@ -1112,6 +1585,47 @@ describe("NoteCanvas Class", () => {
       expect(noteCanvas.historyManager.push).toHaveBeenCalledWith(
         expect.any((await import("./commands/index.js")).InsertMediaCommand),
       );
+    });
+
+    // Text mode's paste and drop (text boxes DESIGN §12): the image is a page
+    // image at the caret, selected, one undo step; the text is not touched
+    it("places a pasted image at a point, on the page, selected, as one undo step", async () => {
+      await noteCanvas.load("note-1");
+      noteCanvas.noteData.media = [];
+      noteCanvas.mediaManager.setItems(noteCanvas.noteData.media);
+      const { processImageFile } = await import("../../utils/imageUtils.js");
+      processImageFile.mockResolvedValue({
+        dataUrl: "data:image/png;base64,dGVzdA==",
+        width: 400,
+        height: 200,
+      });
+      global.fetch = vi.fn(() =>
+        Promise.resolve({ blob: () => Promise.resolve(new Blob(["test"], { type: "image/png" })) }),
+      );
+      noteCanvas.historyManager.push.mockClear();
+      const textBefore = noteCanvas.noteData.content;
+
+      // Near the right edge: kept on the page
+      await noteCanvas.insertImageFiles(
+        [new File(["x"], "shot.png", { type: "image/png" })],
+        {
+          x: 1100,
+          y: 240,
+        },
+        { select: true },
+      );
+
+      const images = noteCanvas.mediaManager.getItems().filter((m) => m.type === "image");
+      expect(images).toHaveLength(1);
+      expect(images[0]).toMatchObject({ x: 1000, y: 240, width: 200, height: 100 });
+      expect(images[0].pending).toBeUndefined();
+      expect(noteCanvas.historyManager.push).toHaveBeenCalledTimes(1);
+      expect(noteCanvas.historyManager.push).toHaveBeenCalledWith(
+        expect.any((await import("./commands/index.js")).InsertMediaCommand),
+      );
+      expect(noteCanvas.selectedMediaId).toBe(images[0].id);
+      expect(noteCanvas.noteData.content).toBe(textBefore);
+      expect(noteCanvas.textChanged).toBeFalsy();
     });
 
     // On a slow device, encoding and storing a camera photo takes seconds. The
@@ -1523,80 +2037,6 @@ describe("NoteCanvas Class", () => {
     });
   });
 
-  // ── hasContentChanged ───────────────────────────────────────────────────────
-  // Gates whether a `datachange` event reloads the note. A false positive here
-  // is destructive: applyLiveUpdate() rebuilds noteData from storage and clears
-  // the undo history, so a reload after every stroke leaves nothing to undo.
-  describe("hasContentChanged", () => {
-    let canvas;
-    let getNote;
-
-    beforeEach(async () => {
-      ({ getNote } = await import("../../modules/storage.js"));
-      canvas = Object.create(NoteCanvas.prototype);
-      canvas.noteId = "n1";
-    });
-
-    it("ignores soft-deleted strokes when comparing counts", async () => {
-      // Erasing leaves the stroke in memory but drops it from what gets saved,
-      // so a raw length comparison would report a change after every erase.
-      canvas.noteData = {
-        strokes: [{ id: "a" }, { id: "b", _deleted: true }],
-        background: "grid",
-      };
-      getNote.mockResolvedValue({
-        strokes: [{ id: "a" }],
-        background: "grid",
-      });
-
-      expect(await canvas.hasContentChanged("n1")).toBe(false);
-    });
-
-    it("does not reload when local is ahead and the stored copy is not a synced download", async () => {
-      // `synced` is undefined in the Nextcloud build. Treating that as "safe to
-      // reload" discarded in-progress work and wiped undo.
-      canvas.noteData = {
-        strokes: [{ id: "a" }, { id: "b" }],
-        background: "grid",
-      };
-      getNote.mockResolvedValue({ strokes: [{ id: "a" }], background: "grid" });
-
-      expect(await canvas.hasContentChanged("n1")).toBe(false);
-    });
-
-    it("still reloads when the stored copy is a synced download with fewer strokes", async () => {
-      // Another device erased a stroke — that must reach us.
-      canvas.noteData = {
-        strokes: [{ id: "a" }, { id: "b" }],
-        background: "grid",
-      };
-      getNote.mockResolvedValue({
-        strokes: [{ id: "a" }],
-        background: "grid",
-        synced: true,
-      });
-
-      expect(await canvas.hasContentChanged("n1")).toBe(true);
-    });
-
-    it("reports a change when a stroke was genuinely added remotely", async () => {
-      canvas.noteData = { strokes: [{ id: "a" }], background: "grid" };
-      getNote.mockResolvedValue({
-        strokes: [{ id: "a" }, { id: "b" }],
-        background: "grid",
-      });
-
-      expect(await canvas.hasContentChanged("n1")).toBe(true);
-    });
-
-    it("reports a change when the background changed", async () => {
-      canvas.noteData = { strokes: [{ id: "a" }], background: "grid" };
-      getNote.mockResolvedValue({ strokes: [{ id: "a" }], background: "blank" });
-
-      expect(await canvas.hasContentChanged("n1")).toBe(true);
-    });
-  });
-
   // ── flushPendingSaves ───────────────────────────────────────────────────────
   // Closing the tab/app never runs destroy(), so without an explicit flush the
   // last strokes drawn are never written. Regression guard for exactly that.
@@ -1703,6 +2143,119 @@ describe("NoteCanvas Class", () => {
     });
   });
 
+  // The owner made the share view only while the note is open
+  describe("when the right to edit is taken away", () => {
+    function makeCanvas() {
+      const c = Object.create(NoteCanvas.prototype);
+      const order = [];
+      c.noteId = "n1";
+      c.noteData = { id: "n1", notebookId: "nb-shared" };
+      c.readOnly = false;
+      c.flushPendingSaves = vi.fn(async () => void order.push("flush"));
+      c._becomeReadOnly = vi.fn(() => order.push("read-only"));
+      return { c, order };
+    }
+    const event = (notebookId) =>
+      new CustomEvent("share-access-reduced", { detail: { notebookId } });
+
+    it("stores what the user typed first, then stops accepting changes and says why", async () => {
+      const { c, order } = makeCanvas();
+
+      await c._onAccessReduced(event("nb-shared"));
+
+      expect(order).toEqual(["flush", "read-only"]);
+      expect(c._becomeReadOnly).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores another notebook", async () => {
+      const { c } = makeCanvas();
+      await c._onAccessReduced(event("other"));
+      expect(c.flushPendingSaves).not.toHaveBeenCalled();
+      expect(c._becomeReadOnly).not.toHaveBeenCalled();
+    });
+
+    it("does nothing to a note closed while its changes were being stored", async () => {
+      const { c } = makeCanvas();
+      c.flushPendingSaves = vi.fn(async () => {
+        c.noteId = null;
+      });
+      await c._onAccessReduced(event("nb-shared"));
+      expect(c._becomeReadOnly).not.toHaveBeenCalled();
+    });
+  });
+
+  // The text of an open note goes to and from the storage worker as requests
+  // with answers: a save reports whether storage took it, a read returns what is
+  // stored. liveText.js builds on exactly these two answers.
+  describe("text requests to the storage worker", () => {
+    function makeCanvas(answer) {
+      const c = Object.create(NoteCanvas.prototype);
+      c.noteId = "n1";
+      c._contentRequests = new Map();
+      c._nextContentRequest = 0;
+      c._encryptionKey = () => null;
+      const posted = [];
+      c.strokeManager = {
+        worker: {
+          postMessage: (message) => {
+            posted.push(message);
+            queueMicrotask(() => c._onWorkerMessage({ data: answer(message) }));
+          },
+        },
+      };
+      return { c, posted };
+    }
+
+    it("a save names the text it replaces and resolves with what the worker did", async () => {
+      const { c, posted } = makeCanvas((m) => ({
+        type: "CONTENT_SAVED",
+        requestId: m.requestId,
+        noteId: "n1",
+        outcome: "stale",
+      }));
+
+      await expect(c._writeText("<p>new</p>", "<p>old</p>")).resolves.toBe("stale");
+      expect(posted[0]).toMatchObject({
+        type: "SAVE_CONTENT",
+        content: "<p>new</p>",
+        expected: "<p>old</p>",
+      });
+    });
+
+    it("a read returns the stored text and its author", async () => {
+      const { c } = makeCanvas((m) => ({
+        type: "CONTENT",
+        requestId: m.requestId,
+        noteId: "n1",
+        content: "<p>stored</p>",
+        author: "bob",
+      }));
+      await expect(c._readStoredText()).resolves.toEqual({
+        content: "<p>stored</p>",
+        author: "bob",
+      });
+    });
+
+    it("a read of text that cannot be decrypted returns nothing", async () => {
+      const { c } = makeCanvas((m) => ({ type: "CONTENT", requestId: m.requestId, content: null }));
+      await expect(c._readStoredText()).resolves.toBeNull();
+    });
+
+    it("adopting stored text shows it without an undo step that would revert it", () => {
+      const c = Object.create(NoteCanvas.prototype);
+      c.noteData = { content: "<p>old</p>", tasks: [] };
+      c.textEditorLayer = { replaceContent: vi.fn(), renderTaskCheckboxes: vi.fn() };
+      c.historyManager = { clear: vi.fn() };
+      c.activeSearchQuery = null;
+
+      c._adoptText("<p>merged</p>");
+
+      expect(c.noteData.content).toBe("<p>merged</p>");
+      expect(c.textEditorLayer.replaceContent).toHaveBeenCalledWith("<p>merged</p>");
+      expect(c.historyManager.clear).toHaveBeenCalled();
+    });
+  });
+
   // Single owner of "should this datachange reload the open note?". The guards
   // used to be split between this method and a second listener in index.js, so
   // each guard only applied to whichever listener the event routed through.
@@ -1715,8 +2268,7 @@ describe("NoteCanvas Class", () => {
       c.isInitialized = true;
       c.inputHandler = { isDrawing: false };
       c.pendingLiveUpdate = false;
-      c.hasContentChanged = vi.fn(async () => true);
-      c.applyLiveUpdate = vi.fn(async () => {});
+      c.applyLiveUpdate = vi.fn(async () => true);
       return Object.assign(c, overrides);
     }
 
@@ -1750,21 +2302,175 @@ describe("NoteCanvas Class", () => {
       expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
     });
 
+    it("takes in nothing while the user is drawing, not even the text, until they pause", async () => {
+      // Replacing editor content mid-stroke is exactly what must never happen
+      canvas.liveText = { reconcile: vi.fn(async () => {}) };
+      canvas.inputHandler.isDrawing = true;
+
+      await canvas.handleExternalDataChange(new CustomEvent("datachange"));
+
+      expect(canvas.liveText.reconcile).not.toHaveBeenCalled();
+      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
+      expect(canvas.pendingLiveUpdate).toBe(true);
+
+      // The live check at the user's next pause takes it in, once
+      canvas.inputHandler.isDrawing = false;
+      await canvas._liveCheck();
+      expect(canvas.liveText.reconcile).toHaveBeenCalledTimes(1);
+      expect(canvas.applyLiveUpdate).toHaveBeenCalledTimes(1);
+      expect(canvas.pendingLiveUpdate).toBe(false);
+    });
+
+    it("takes in a version the Nextcloud app merged in on save", async () => {
+      canvas.liveText = { reconcile: vi.fn(async () => {}) };
+      await canvas.handleExternalDataChange(
+        new CustomEvent("datachange", { detail: { noteId: "n1", source: "merge" } }),
+      );
+      expect(canvas.liveText.reconcile).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not look at the stored text for its own writes", async () => {
+      canvas.liveText = { reconcile: vi.fn(async () => {}) };
+      await canvas.handleExternalDataChange(
+        new CustomEvent("datachange", { detail: { noteId: "n1", source: "local" } }),
+      );
+      expect(canvas.liveText.reconcile).not.toHaveBeenCalled();
+    });
+
     it("ignores an event addressed to a different note", async () => {
       await canvas.handleExternalDataChange(
         new CustomEvent("datachange", { detail: { noteId: "other" } }),
       );
-      expect(canvas.hasContentChanged).not.toHaveBeenCalled();
       expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
     });
 
-    it("does not reload when only metadata changed", async () => {
-      canvas.hasContentChanged = vi.fn(async () => false);
+    /** The canvas with the real take-in path over a stored note. */
+    async function withStoredNote(stored, inMemory = {}) {
+      const base = { strokes: [], deletedStrokes: [], media: [], tasks: [], background: "none" };
+      const { getNote } = await import("../../modules/storage.js");
+      getNote.mockResolvedValue(structuredClone({ ...base, ...stored }));
+      const c = makeCanvas();
+      delete c.applyLiveUpdate; // the real one
+      c.noteData = { ...base, ...structuredClone(stored), ...inMemory };
+      c.strokeManager = { markDirty: vi.fn() };
+      c.spatialIndex = { insert: vi.fn(), build: vi.fn(), getContentBounds: () => null };
+      c.renderer = {
+        drawAddedStrokes: vi.fn(),
+        forceRedraw: vi.fn(),
+        setData: vi.fn(),
+        setSelectedStrokes: vi.fn(),
+      };
+      c.contentHeight = 1000;
+      c.mediaManager = { setItems: vi.fn(), getItems: () => [] };
+      c.historyManager = { clear: vi.fn() };
+      c._saveTasks = vi.fn();
+      c._updateTaskCheckboxes = vi.fn();
+      c._updateNavigatorSubjects = vi.fn();
+      c._renderPdfControls = vi.fn();
+      // As load() leaves it: what the editor holds is the starting point
+      c.versions = new NoteVersioner({ clock: createClock({ device: "editor" }) });
+      c.versions.adopt(c.noteData);
+      return c;
+    }
+    const stroke = (id, x = 1, v) => ({
+      id,
+      x: [x, x + 1],
+      y: [1, 2],
+      pressure: [1, 1],
+      width: 2,
+      ...(v ? { v } : {}),
+    });
+    // A stamp later than anything this editor made: another device's edit
+    const LATER = "zzzzzzzzz-000-other";
 
-      await expect(canvas.handleExternalDataChange(new CustomEvent("datachange"))).resolves.toBe(
-        false,
+    it("redraws and writes nothing when only metadata changed", async () => {
+      const stored = { id: "n1", strokes: [stroke("a")], lastSyncedEtag: "new" };
+      const c = await withStoredNote(stored, { lastSyncedEtag: "old" });
+
+      await expect(c.handleExternalDataChange(new CustomEvent("datachange"))).resolves.toBe(false);
+      expect(c.renderer.forceRedraw).not.toHaveBeenCalled();
+      expect(c.renderer.drawAddedStrokes).toHaveBeenCalledWith([]);
+      expect(c.historyManager.clear).not.toHaveBeenCalled();
+      expect(c.strokeManager.markDirty).not.toHaveBeenCalled();
+      expect(c._saveTasks).not.toHaveBeenCalled();
+    });
+
+    it("takes in a change that keeps the stroke count (a stroke moved)", async () => {
+      const c = await withStoredNote(
+        { id: "n1", strokes: [stroke("a", 50, LATER)] },
+        { strokes: [stroke("a", 1)] },
       );
-      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
+
+      await expect(c.handleExternalDataChange(new CustomEvent("datachange"))).resolves.toBe(true);
+      expect(c.noteData.strokes[0].x[0]).toBe(50);
+      expect(c.renderer.forceRedraw).toHaveBeenCalled();
+    });
+
+    it("keeps a move the user made but has not saved yet against the stored copy", async () => {
+      const c = await withStoredNote({ id: "n1", strokes: [stroke("a", 1)] });
+      // Moved after the editor last took in storage; the save is still pending
+      c.noteData.strokes[0].x = [80, 81];
+
+      await c.handleExternalDataChange(new CustomEvent("datachange"));
+      expect(c.noteData.strokes[0].x[0]).toBe(80);
+      // Storage lacks it: the editor's state is to be saved
+      expect(c.strokeManager.markDirty).toHaveBeenCalled();
+    });
+
+    it("stamps the user's edits and returns the version bookkeeping for a save", async () => {
+      const c = await withStoredNote({ id: "n1", strokes: [stroke("a")] });
+      c.noteData.strokes.push(stroke("b"));
+      c.noteData.deletedStrokes.push("a");
+      c.noteData.strokes[0]._deleted = true;
+
+      const fields = c._versionFields("strokes");
+      expect(c.noteData.strokes[1].v).toBeTruthy();
+      expect(fields.tombstones).toEqual({ a: expect.any(String) });
+
+      c.readOnly = true;
+      expect(c._versionFields("strokes")).toBeUndefined();
+    });
+
+    it("sends the version bookkeeping with a task save", async () => {
+      const c = await withStoredNote({ id: "n1", tasks: [] });
+      c._saveTasks = NoteCanvas.prototype._saveTasks;
+      c.strokeManager.worker = { postMessage: vi.fn() };
+      c.noteData.tasks.push({ id: "t1", type: "text", checked: false });
+      c.noteData.deletedTasks = ["t0"];
+
+      c._saveTasks();
+      const message = c.strokeManager.worker.postMessage.mock.calls[0][0];
+      expect(message.tasks[0].v).toBeTruthy();
+      expect(message.versionFields.tombstones).toEqual({ t0: expect.any(String) });
+    });
+
+    it("takes in one stroke erased and another drawn", async () => {
+      const c = await withStoredNote(
+        { id: "n1", strokes: [stroke("b")], deletedStrokes: ["a"] },
+        { strokes: [stroke("a")] },
+      );
+
+      await c.handleExternalDataChange(new CustomEvent("datachange"));
+      expect(c.noteData.strokes.map((s) => s.id)).toEqual(["b"]);
+    });
+
+    it("paints only the arrived strokes on a note with rendered PDF pages", async () => {
+      const page = { id: "p1", type: "pdf-page", fileId: "f", page: 1 };
+      const c = await withStoredNote(
+        { id: "n1", strokes: [stroke("a"), stroke("b")], media: [page] },
+        // What the renderer adds to a page while the note is open
+        { strokes: [stroke("a")], media: [{ ...page, renderable: {}, loading: false }] },
+      );
+      const shownMedia = c.noteData.media;
+
+      await c.handleExternalDataChange(new CustomEvent("datachange"));
+      expect(c.renderer.forceRedraw).not.toHaveBeenCalled();
+      expect(c.renderer.drawAddedStrokes).toHaveBeenCalledWith([
+        expect.objectContaining({ id: "b" }),
+      ]);
+      // The rendered page stays what the media manager shows
+      expect(c.noteData.media).toBe(shownMedia);
+      expect(c.mediaManager.setItems).not.toHaveBeenCalled();
     });
 
     it("stands down while the instance is still loading (index.js rebuilds it)", async () => {
@@ -1775,15 +2481,262 @@ describe("NoteCanvas Class", () => {
       expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
     });
 
-    it("does not reload if the note was closed during the content check", async () => {
-      canvas.hasContentChanged = vi.fn(async () => {
-        canvas.noteId = null; // destroy() ran mid-await
-        return true;
+    it("takes nothing in if the note was closed while it was read", async () => {
+      const c = await withStoredNote({ id: "n1", strokes: [stroke("a"), stroke("b")] });
+      c.noteData.strokes = [stroke("a")];
+      const { getNote } = await import("../../modules/storage.js");
+      getNote.mockImplementationOnce(async () => {
+        c.noteId = null; // destroy() ran mid-await
+        return { id: "n1", strokes: [stroke("a"), stroke("b")] };
       });
 
-      await canvas.handleExternalDataChange(new CustomEvent("datachange"));
+      await expect(c.handleExternalDataChange(new CustomEvent("datachange"))).resolves.toBe(false);
+      expect(c.noteData.strokes.map((s) => s.id)).toEqual(["a"]);
+    });
+  });
+});
 
-      expect(canvas.applyLiveUpdate).not.toHaveBeenCalled();
+describe("task methods", () => {
+  // The task methods only touch noteData, the renderer's selection and a few
+  // UI refresh hooks, so they run on a bare instance with those stubbed.
+  let host;
+  let ids;
+
+  const bar = (id, y, x0 = 100, x1 = 300) => ({ id, x: [x0, x1], y: [y, y + 30], width: 2 });
+
+  beforeEach(async () => {
+    const { generateId } = await import("../../modules/storage.js");
+    ids = 0;
+    generateId.mockImplementation(() => `task-${++ids}`);
+
+    host = Object.create(NoteCanvas.prototype);
+    host.noteData = { strokes: [], tasks: [], deletedTasks: [], content: "" };
+    host.selectionRotated = false;
+    host.selectedTaskId = null;
+    host.renderer = {
+      selectedStrokeIndices: new Set(),
+      setSelectedStrokes: vi.fn(),
+    };
+    host.selectionOverlay = { hide: vi.fn(), setTaskMode: vi.fn() };
+    host.historyManager = { push: vi.fn() };
+    host.textEditorLayer = { renderTaskCheckboxes: vi.fn() };
+    host._saveTasks = vi.fn();
+    host._updateTaskCheckboxes = vi.fn();
+    host._updateNavigatorSubjects = vi.fn();
+    host._updateSelectionOverlay = vi.fn();
+  });
+
+  afterEach(async () => {
+    const { generateId } = await import("../../modules/storage.js");
+    generateId.mockImplementation(() => "mock-id");
+  });
+
+  describe("_markSelectedStrokesAsTask", () => {
+    const selectAll = () => {
+      host.renderer.selectedStrokeIndices = new Set(host.noteData.strokes.map((_, i) => i));
+    };
+
+    it("does nothing without a selection", () => {
+      host._markSelectedStrokesAsTask();
+      expect(host.noteData.tasks).toEqual([]);
+      expect(host._saveTasks).not.toHaveBeenCalled();
+    });
+
+    it("makes one open task per line of the selection, with default properties", () => {
+      host.noteData.strokes = [bar("a", 100), bar("b", 200)];
+      selectAll();
+      host._markSelectedStrokesAsTask();
+
+      expect(host.noteData.tasks.map((t) => t.strokeIds)).toEqual([["a"], ["b"]]);
+      expect(host.noteData.tasks[0]).toMatchObject({
+        type: "stroke",
+        status: "open",
+        priority: "none",
+        dueDate: "",
+        checked: false,
+      });
+      expect(host._saveTasks).toHaveBeenCalledTimes(1);
+    });
+
+    it("folds an indented line into the task above it", () => {
+      host.noteData.strokes = [bar("a", 100), bar("b", 200, 180, 300), bar("c", 300)];
+      selectAll();
+      host._markSelectedStrokesAsTask();
+
+      expect(host.noteData.tasks.map((t) => t.strokeIds)).toEqual([["a", "b"], ["c"]]);
+    });
+
+    it("treats a rotated selection as one block", () => {
+      host.noteData.strokes = [bar("a", 100), bar("b", 200)];
+      host.selectionRotated = true;
+      selectAll();
+      host._markSelectedStrokesAsTask();
+
+      expect(host.noteData.tasks).toHaveLength(1);
+      expect(host.noteData.tasks[0].strokeIds).toEqual(["a", "b"]);
+    });
+
+    it("replaces an existing task that shares strokes and records it as deleted", () => {
+      host.noteData.strokes = [bar("a", 100)];
+      host.noteData.tasks = [{ id: "old", type: "stroke", strokeIds: ["a"] }];
+      selectAll();
+      host._markSelectedStrokesAsTask();
+
+      expect(host.noteData.tasks.map((t) => t.id)).toEqual(["task-1"]);
+      expect(host.noteData.deletedTasks).toEqual(["old"]);
+    });
+
+    it("leaves unrelated tasks alone", () => {
+      host.noteData.strokes = [bar("a", 100), bar("z", 500)];
+      host.noteData.tasks = [{ id: "other", type: "stroke", strokeIds: ["z"] }];
+      host.renderer.selectedStrokeIndices = new Set([0]);
+      host._markSelectedStrokesAsTask();
+
+      expect(host.noteData.tasks.map((t) => t.id)).toEqual(["other", "task-1"]);
+      expect(host.noteData.deletedTasks).toEqual([]);
+    });
+
+    it("pushes one undoable command for all created tasks and clears the selection", () => {
+      host.noteData.strokes = [bar("a", 100), bar("b", 200)];
+      selectAll();
+      host._markSelectedStrokesAsTask();
+
+      expect(host.historyManager.push).toHaveBeenCalledTimes(1);
+      expect(host.renderer.setSelectedStrokes).toHaveBeenLastCalledWith(new Set(), null);
+      expect(host._updateTaskCheckboxes).toHaveBeenCalled();
+    });
+  });
+
+  describe("status and removal", () => {
+    beforeEach(() => {
+      host.noteData.tasks = [{ id: "t", type: "text", status: "open", checked: false }];
+    });
+
+    it("_cycleTaskStatus goes open, doing, done, open and saves each time", () => {
+      const seen = [];
+      for (let i = 0; i < 3; i++) {
+        host._cycleTaskStatus("t");
+        seen.push([host.noteData.tasks[0].status, host.noteData.tasks[0].checked]);
+      }
+      expect(seen).toEqual([
+        ["doing", false],
+        ["done", true],
+        ["open", false],
+      ]);
+      expect(host._saveTasks).toHaveBeenCalledTimes(3);
+      expect(host.textEditorLayer.renderTaskCheckboxes).toHaveBeenCalledWith(host.noteData.tasks);
+    });
+
+    it("_cycleTaskStatus ignores an unknown task", () => {
+      host._cycleTaskStatus("nope");
+      expect(host._saveTasks).not.toHaveBeenCalled();
+    });
+
+    it("_toggleTask sets done or open", () => {
+      host._toggleTask("t", true);
+      expect(host.noteData.tasks[0]).toMatchObject({ status: "done", checked: true });
+      host._toggleTask("t", false);
+      expect(host.noteData.tasks[0]).toMatchObject({ status: "open", checked: false });
+    });
+
+    it("_removeTaskFromSelectedStrokes removes the task, keeps the strokes, records the deletion", () => {
+      host.noteData.strokes = [bar("a", 100)];
+      host.noteData.tasks = [{ id: "t", type: "stroke", strokeIds: ["a"] }];
+      host.selectedTaskId = "t";
+      host._removeTaskFromSelectedStrokes();
+
+      expect(host.noteData.tasks).toEqual([]);
+      expect(host.noteData.deletedTasks).toEqual(["t"]);
+      expect(host.noteData.strokes).toHaveLength(1);
+      expect(host.selectedTaskId).toBeNull();
+      expect(host._saveTasks).toHaveBeenCalled();
+    });
+
+    it("_removeTaskFromSelectedStrokes does nothing without a selected task", () => {
+      host._removeTaskFromSelectedStrokes();
+      expect(host._saveTasks).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("_selectTaskStrokes", () => {
+    it("selects the live strokes of the task with padded bounds", () => {
+      host.noteData.strokes = [
+        bar("a", 100),
+        { ...bar("gone", 100), _deleted: true },
+        bar("z", 400),
+      ];
+      host.noteData.tasks = [{ id: "t", type: "stroke", strokeIds: ["a", "gone"] }];
+      host._selectTaskStrokes("t");
+
+      const [indices, bounds] = host.renderer.setSelectedStrokes.mock.calls[0];
+      expect([...indices]).toEqual([0]);
+      expect(bounds.minX).toBeLessThan(100);
+      expect(bounds.maxY).toBeGreaterThan(130);
+      expect(host.selectedTaskId).toBe("t");
+      expect(host.selectionOverlay.setTaskMode).toHaveBeenCalledWith(true);
+    });
+
+    it("ignores text tasks, unknown tasks and tasks whose strokes are all gone", () => {
+      host.noteData.strokes = [{ ...bar("a", 100), isDeleted: true }];
+      host.noteData.tasks = [
+        { id: "txt", type: "text" },
+        { id: "dead", type: "stroke", strokeIds: ["a"] },
+      ];
+      for (const id of ["txt", "nope", "dead"]) host._selectTaskStrokes(id);
+      expect(host.renderer.setSelectedStrokes).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("_openTaskPropertiesDialog", () => {
+    let showTaskPropertiesDialog;
+
+    beforeEach(() => {
+      showTaskPropertiesDialog = vi.fn();
+      vi.doMock("../TaskPropertiesDialog.js", () => ({ showTaskPropertiesDialog }));
+      host.noteData.tasks = [{ id: "t", type: "text", status: "open", priority: "none" }];
+      host.noteData.content =
+        '<div><span class="task-text" data-task-id="t">Call Bob</span><br>about the offer</div>';
+    });
+
+    afterEach(() => {
+      vi.doUnmock("../TaskPropertiesDialog.js");
+    });
+
+    it("passes details and recognised text, and saves what the dialog returns", async () => {
+      showTaskPropertiesDialog.mockResolvedValue({
+        status: "doing",
+        priority: "high",
+        dueDate: "2026-12-01",
+        title: "Call Rob",
+      });
+      await host._openTaskPropertiesDialog("t");
+
+      const [, options] = showTaskPropertiesDialog.mock.calls[0];
+      expect(options.suggestedTitle).toBe("Call Bob");
+      expect(options.details.text).toEqual(["about the offer"]);
+      expect(host.noteData.tasks[0]).toMatchObject({
+        status: "doing",
+        checked: false,
+        priority: "high",
+        dueDate: "2026-12-01",
+        title: "Call Rob",
+        label: "Call Rob",
+      });
+      expect(host._saveTasks).toHaveBeenCalledTimes(1);
+      expect(host.textEditorLayer.renderTaskCheckboxes).toHaveBeenCalled();
+    });
+
+    it("saves nothing when cancelled", async () => {
+      showTaskPropertiesDialog.mockResolvedValue(null);
+      await host._openTaskPropertiesDialog("t");
+      expect(host._saveTasks).not.toHaveBeenCalled();
+      expect(host.noteData.tasks[0].priority).toBe("none");
+    });
+
+    it("ignores a missing task id or task", async () => {
+      await host._openTaskPropertiesDialog("");
+      await host._openTaskPropertiesDialog("nope");
+      expect(showTaskPropertiesDialog).not.toHaveBeenCalled();
     });
   });
 });

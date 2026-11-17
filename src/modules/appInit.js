@@ -4,6 +4,7 @@
  */
 
 import { autoUnlockFromKeyring, isAppUnlocked, isMasterPasswordSet } from "./masterPassword.js";
+import { registerSharedBases } from "./sharing/sharedBases.js";
 import { fixCorruptedNotes, getSetting } from "./storage.js";
 
 const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
@@ -76,6 +77,11 @@ export async function initializeApp() {
     } else {
       console.log("[AppInit] No encryption enabled - proceeding without master password");
     }
+
+    // Point the path helpers at where notebooks shared with this user are mounted,
+    // so nothing resolves a shared notebook into the own tree before the first sync
+    const { getAllNotebooksForSync } = await import("./storage.js");
+    registerSharedBases(await getAllNotebooksForSync());
 
     const totalTime = Math.round(performance.now() - startTime);
     console.log(`[AppInit] App initialization complete in ${totalTime}ms`);

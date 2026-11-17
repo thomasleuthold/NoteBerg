@@ -141,6 +141,9 @@ export class NoteToolbar {
    * @param {Function} options.onUndo - Callback for undo action
    * @param {Function} options.onRedo - Callback for redo action
    * @param {Function} options.onEraserSettingsChange - Callback ({ eraserMode, eraserSize, eraserHighlighterOnly }) => void
+   * @param {boolean} [options.canEdit=true] - false offers only viewing: no drawing, text, insert,
+   *   undo/redo, background or recognition tools (a read-only shared notebook)
+   * @param {boolean} [options.canManage=true] - false removes deleting the note (any shared notebook)
    */
   constructor(container, onModeChange, options = {}) {
     this.container = container;
@@ -153,6 +156,8 @@ export class NoteToolbar {
     this.onUndo = options.onUndo || (() => {});
     this.onRedo = options.onRedo || (() => {});
     this.onEraserSettingsChange = options.onEraserSettingsChange || (() => {});
+    this.canEdit = options.canEdit ?? true;
+    this.canManage = options.canManage ?? true;
     this.element = null;
     this.panBtn = null;
     this.drawBtn = null;
@@ -280,13 +285,23 @@ export class NoteToolbar {
 
     this._createOptionsDialog();
 
+    // Every control is built so the rest of the class can address it; a viewer is
+    // simply never shown the ones that change the note
     this.element.appendChild(this.panBtn);
-    this.element.appendChild(this.textBtn);
-    this.element.appendChild(this.drawBtnContainer);
-    this.element.appendChild(this.eraserBtnContainer);
-    this.element.appendChild(this.lassoBtn);
-    this.element.appendChild(this.undoBtn);
-    this.element.appendChild(this.redoBtn);
+    if (this.canEdit) {
+      this.element.appendChild(this.textBtn);
+      this.element.appendChild(this.drawBtnContainer);
+      this.element.appendChild(this.eraserBtnContainer);
+      this.element.appendChild(this.lassoBtn);
+      this.element.appendChild(this.undoBtn);
+      this.element.appendChild(this.redoBtn);
+    } else {
+      this.insertBtn.remove();
+      const readOnlyHint = document.createElement("span");
+      readOnlyHint.className = "note-canvas-toolbar__readonly-hint";
+      readOnlyHint.textContent = t("sharing.badge.readOnly");
+      this.element.appendChild(readOnlyHint);
+    }
     this.element.appendChild(this.optionsBtnContainer);
     this.container.appendChild(this.element);
   }
@@ -434,7 +449,8 @@ export class NoteToolbar {
   }
 
   _openEraserDialog() {
-    if (getTheme() === "dark") {
+    const theme = getTheme();
+    if (theme === "dark" || theme === "tva") {
       this.eraserDialog.classList.add("theme-dark");
     } else {
       this.eraserDialog.classList.remove("theme-dark");
@@ -805,7 +821,7 @@ export class NoteToolbar {
    * @private
    */
   _getOptionsDialogHTML() {
-    return `
+    const background = `
       <div class="note-canvas-toolbar__options-section">
         <label class="note-canvas-toolbar__options-label">${t("toolbar.background.label")}</label>
         <div class="note-canvas-toolbar__background-list">
@@ -817,8 +833,8 @@ export class NoteToolbar {
             <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-medium">${t("toolbar.background.gridMedium")}</button>
             <button class="note-canvas-toolbar__option-btn background-option" data-value="grid-large">${t("toolbar.background.gridLarge")}</button>
         </div>
-      </div>
-      <div class="note-canvas-toolbar__separator"></div>
+      </div>`;
+    const view = `
       <div class="note-canvas-toolbar__options-section">
         <button id="nc-show-text-btn" class="note-canvas-toolbar__option-btn">
             ${getIcon("clipboard", 16)} ${t("toolbar.showRecognizedText")}
@@ -834,20 +850,25 @@ export class NoteToolbar {
         </button>`
             : ""
         }
-      </div>
-      <div class="note-canvas-toolbar__separator"></div>
+      </div>`;
+    const recognize = `
       <div class="note-canvas-toolbar__options-section">
         <button id="nc-recognize-btn" class="note-canvas-toolbar__option-btn">
             ${getIcon("fileText", 16)} ${t("toolbar.recognizeNow")}
         </button>
-      </div>
-      <div class="note-canvas-toolbar__separator"></div>
+      </div>`;
+    const remove = `
       <div class="note-canvas-toolbar__options-section">
         <button id="nc-delete-note-btn" class="note-canvas-toolbar__delete-btn">
             ${getIcon("trash", 16)} ${t("toolbar.deleteNote")}
         </button>
-      </div>
-    `;
+      </div>`;
+
+    // Changing the background and recognizing write to the note; deleting it is the owner's.
+    // Viewing, exporting and fullscreen are for everyone.
+    return [this.canEdit && background, view, this.canEdit && recognize, this.canManage && remove]
+      .filter(Boolean)
+      .join(`<div class="note-canvas-toolbar__separator"></div>`);
   }
 
   /**
@@ -1141,7 +1162,8 @@ export class NoteToolbar {
     // Refresh colors in case theme changed
     this._refreshColorSwatches();
 
-    if (getTheme() === "dark") {
+    const theme = getTheme();
+    if (theme === "dark" || theme === "tva") {
       this.penSettingsDialog.classList.add("theme-dark");
     } else {
       this.penSettingsDialog.classList.remove("theme-dark");
@@ -1315,6 +1337,15 @@ export class NoteToolbar {
    * Update current pen settings (called externally to sync state)
    * @param {Object} settings - { width, colorIndex, type }
    */
+  /**
+   * Show pen presets saved elsewhere (a collaborator's, taken into the open note).
+   * @param {Array} presets
+   */
+  setPresets(presets) {
+    this.penPresets = presets;
+    if (this.penSettingsDialog) this._renderDialogContent();
+  }
+
   setPenSettings(settings) {
     if (settings.width !== undefined) {
       this.penWidth = settings.width;

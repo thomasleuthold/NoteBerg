@@ -5,7 +5,9 @@
  */
 
 import { getTheme } from "../modules/theme.js";
-import { sanitizeNoteHtml } from "./sanitizeHtml.js";
+import { BACKGROUND_SPACING, isGridBackground } from "./backgroundGrid.js";
+import "../styles/textBoxes.css";
+import { hasStaticTextBoxes, renderStaticTextBoxes } from "./textBoxesDom.js";
 
 export const MARKER_ALPHA = 0.3;
 
@@ -18,15 +20,15 @@ export const MARKER_ALPHA = 0.3;
 export function getThemePalette(themeOverride) {
   const theme = themeOverride || getTheme();
 
-  if (theme === "dark") {
-    // Dark theme: white first, then colors visible on dark backgrounds
+  if (theme === "dark" || theme === "tva") {
+    // Dark / TVA theme: white (or amber phosphor in TVA) first, then colors visible on dark backgrounds
     return [
-      "#ffffff",
+      theme === "tva" ? "#ff9e22" : "#ffffff",
       "#ff7272",
       "#7cb7ff",
       "#38ffb6",
       "#ffec46",
-      "#fc9e51",
+      theme === "tva" ? "#fff3db" : "#fc9e51",
       "#b39bfc",
       "#f472b6",
       "#2dd4bf",
@@ -68,7 +70,7 @@ export function getThemePalette(themeOverride) {
 export function getMarkerPalette(themeOverride) {
   const theme = themeOverride || getTheme();
 
-  if (theme === "dark") {
+  if (theme === "dark" || theme === "tva") {
     return [
       "#f8f0b0",
       "#c4f7d6",
@@ -327,66 +329,24 @@ export function drawBackgroundPattern(ctx, backgroundType, width, height, startY
   ctx.lineWidth = 1;
   ctx.beginPath();
 
-  switch (backgroundType) {
-    case "ruled-narrow":
-      // Draw horizontal lines every 20px
-      for (let y = Math.max(20, Math.ceil(startY / 20) * 20); y < height; y += 20) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-      }
-      break;
-
-    case "ruled-medium":
-      // Draw horizontal lines every 30px
-      for (let y = Math.max(30, Math.ceil(startY / 30) * 30); y < height; y += 30) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-      }
-      break;
-
-    case "ruled-wide":
-      // Draw horizontal lines every 40px
-      for (let y = Math.max(40, Math.ceil(startY / 40) * 40); y < height; y += 40) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-      }
-      break;
-
-    case "grid-small":
-      // Draw grid with 20px squares
-      for (let y = Math.max(20, Math.ceil(startY / 20) * 20); y < height; y += 20) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-      }
-      for (let x = 20; x < width; x += 20) {
+  const spacing = BACKGROUND_SPACING[backgroundType];
+  if (spacing) {
+    // Horizontal lines (ruled and grid)
+    for (
+      let y = Math.max(spacing, Math.ceil(startY / spacing) * spacing);
+      y < height;
+      y += spacing
+    ) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+    }
+    // Vertical lines (grid only)
+    if (isGridBackground(backgroundType)) {
+      for (let x = spacing; x < width; x += spacing) {
         ctx.moveTo(x, startY);
         ctx.lineTo(x, height);
       }
-      break;
-
-    case "grid-medium":
-      // Draw grid with 30px squares
-      for (let y = Math.max(30, Math.ceil(startY / 30) * 30); y < height; y += 30) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-      }
-      for (let x = 30; x < width; x += 30) {
-        ctx.moveTo(x, startY);
-        ctx.lineTo(x, height);
-      }
-      break;
-
-    case "grid-large":
-      // Draw grid with 40px squares
-      for (let y = Math.max(40, Math.ceil(startY / 40) * 40); y < height; y += 40) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-      }
-      for (let x = 40; x < width; x += 40) {
-        ctx.moveTo(x, startY);
-        ctx.lineTo(x, height);
-      }
-      break;
+    }
   }
 
   ctx.stroke();
@@ -469,8 +429,8 @@ export function renderNotePreview(canvas, note, options = {}) {
   ctx.scale(dpr, dpr);
 
   // Fill solid background (prevents black on JPEG-encoded thumbnails)
-  const isDark = getTheme() === "dark";
-  ctx.fillStyle = isDark ? "#1e1e2e" : "#ffffff";
+  const theme = getTheme();
+  ctx.fillStyle = theme === "tva" ? "#0d0800" : theme === "dark" ? "#1e1e2e" : "#ffffff";
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   if (fullSize) {
@@ -558,6 +518,7 @@ function snapshotTextLayout(editorElement, thumbWidth, thumbHeight, dpr) {
       const font = `${cs.fontStyle} ${cs.fontWeight} ${thumbFontSize.toFixed(2)}px ${cs.fontFamily}`;
       const color = cs.color;
 
+      const done = Boolean(el.closest(".task-text--done"));
       for (const rect of rects) {
         const contentX = (rect.left - editorRect.left) / editorZoom;
         const contentY = (rect.top - editorRect.top) / editorZoom;
@@ -567,10 +528,45 @@ function snapshotTextLayout(editorElement, thumbWidth, thumbHeight, dpr) {
           text,
           font,
           color,
+          alpha: done ? 0.6 : 1,
           tx: contentX * thumbScale * dpr,
           ty: (contentY + rect.height * 0.85) * thumbScale * dpr,
         });
+        // A done task's text is struck through, as in the editor
+        if (done) {
+          draws.push({
+            type: "line",
+            color,
+            x1: contentX * thumbScale * dpr,
+            x2: (contentX + rect.width) * thumbScale * dpr,
+            y: (contentY + rect.height * 0.55) * thumbScale * dpr,
+            lineWidth: Math.max(0.5, thumbScale * dpr),
+          });
+        }
       }
+    }
+
+    // Task checkboxes (text tasks in their line, stroke tasks beside their ink)
+    for (const box of editorElement.querySelectorAll(
+      ".task-text-checkbox, .text-boxes__stroke-task",
+    )) {
+      const rect = box.getBoundingClientRect();
+      if (!rect.width && !rect.height) continue;
+      const contentY = (rect.top - editorRect.top) / editorZoom;
+      if (contentY > contentHeight) continue;
+      const cs = window.getComputedStyle(box);
+      const checked =
+        box.classList.contains("task-text-checkbox--checked") ||
+        box.getAttribute("aria-checked") === "true";
+      draws.push({
+        type: "checkbox",
+        x: ((rect.left - editorRect.left) / editorZoom) * thumbScale * dpr,
+        y: contentY * thumbScale * dpr,
+        size: (rect.width / editorZoom) * thumbScale * dpr,
+        color: checked ? cs.backgroundColor : cs.borderTopColor,
+        checked,
+        lineWidth: Math.max(0.5, (parseFloat(cs.borderTopWidth) || 1) * thumbScale * dpr),
+      });
     }
 
     for (const cell of editorElement.querySelectorAll("td, th")) {
@@ -607,10 +603,37 @@ function drawTextSnapshot(ctx, draws) {
       ctx.strokeStyle = cmd.color;
       ctx.lineWidth = cmd.lineWidth;
       ctx.strokeRect(cmd.x, cmd.y, cmd.w, cmd.h);
+    } else if (cmd.type === "line") {
+      ctx.strokeStyle = cmd.color;
+      ctx.lineWidth = cmd.lineWidth;
+      ctx.beginPath();
+      ctx.moveTo(cmd.x1, cmd.y);
+      ctx.lineTo(cmd.x2, cmd.y);
+      ctx.stroke();
+    } else if (cmd.type === "checkbox") {
+      const { x, y, size } = cmd;
+      if (cmd.checked) {
+        ctx.fillStyle = cmd.color;
+        ctx.fillRect(x, y, size, size);
+        // The check mark
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = Math.max(1, size / 8);
+        ctx.beginPath();
+        ctx.moveTo(x + size * 0.22, y + size * 0.52);
+        ctx.lineTo(x + size * 0.42, y + size * 0.72);
+        ctx.lineTo(x + size * 0.78, y + size * 0.3);
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = cmd.color;
+        ctx.lineWidth = cmd.lineWidth;
+        ctx.strokeRect(x, y, size, size);
+      }
     } else {
       ctx.font = cmd.font;
       ctx.fillStyle = cmd.color;
+      ctx.globalAlpha = cmd.alpha ?? 1;
       ctx.fillText(cmd.text, cmd.tx, cmd.ty);
+      ctx.globalAlpha = 1;
     }
   }
 }
@@ -666,19 +689,25 @@ export async function renderNoteSnapshot(canvas, note) {
     mediaManager.destroy();
   }
 
-  // 4. Text layer — inject HTML into a hidden off-screen element so the browser lays it out
-  //    at 1200px width (the content coordinate space), then walk with getBoundingClientRect().
-  if (note.content) {
+  // 4. Text layer — the note's text boxes in a hidden off-screen element, laid
+  //    out at 1200px width (the content coordinate space) by the editor's own
+  //    box stylesheet (textBoxes.css), then walked with getBoundingClientRect().
+  //    Same layout as the editor: boxes at their positions, the same font, line
+  //    height and padding (no browser-specific rules, which once collapsed
+  //    empty lines in Firefox).
+  //    Task checkboxes come with it: text tasks in their line, stroke tasks
+  //    left of their ink.
+  if (hasStaticTextBoxes(note)) {
     const ghost = document.createElement("div");
-    ghost.className = "text-editor";
+    ghost.className = "text-boxes";
     // opacity:0 keeps the element invisible while still participating in layout
     // (visibility:hidden causes getBoundingClientRect to return zeros in some browsers).
     ghost.style.cssText =
       "position:fixed;left:0;top:-9999px;width:1200px;opacity:0;pointer-events:none;z-index:-1;";
-    // note.content is untrusted synced HTML — sanitize before attaching to the DOM
-    ghost.innerHTML = sanitizeNoteHtml(note.content);
     document.body.appendChild(ghost);
     try {
+      // note.content is untrusted synced HTML — sanitized by the builder
+      renderStaticTextBoxes(ghost, note.content, { tasks: note.tasks, strokes: note.strokes });
       drawTextSnapshot(ctx, snapshotTextLayout(ghost, thumbWidth, thumbHeight, dpr));
     } finally {
       document.body.removeChild(ghost);

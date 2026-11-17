@@ -17,6 +17,7 @@
 
 ### Text Editing
 - Rich text editor (WYSIWYG) with formatting, tables, colors, and font sizes
+- Text boxes anywhere on the page: tap to type, drag to move, change the width; they snap to the page's lines and grid, and work on PDF pages too
 - Automatic mode switching between drawing and text editing
 - Task checkboxes inline with notes
 
@@ -36,6 +37,7 @@
 ### Sync & Storage
 - Offline-first — all data stored locally in IndexedDB
 - Nextcloud sync via WebDAV with conflict resolution
+- Notebook sharing (preview, off by default): share a notebook with another Nextcloud user to read or edit; open notes pick up the other person's changes
 
 ### UI
 - Dark mode / light mode with system preference detection
@@ -61,8 +63,8 @@
 - Windows: desktop installer from GitHub Releases: https://github.com/thomasleuthold/NoteBerg/releases (unsigned build; Windows may warn about an unknown publisher)]]></description>
 	<screenshot>https://raw.githubusercontent.com/thomasleuthold/NoteBerg/main/documentation/screenshots/main1.png</screenshot>
 	<screenshot>https://raw.githubusercontent.com/thomasleuthold/NoteBerg/main/documentation/screenshots/main2.png</screenshot>
-	<version>0.5.43-beta.1</version>
-	<release-date>2026-10-10</release-date>
+	<version>0.5.44</version>
+	<release-date>2026-11-16</release-date>
 	<licence>MIT</licence>
 	<author mail="noteberg@posteo.org">Thomas Leuthold</author>
 	<namespace>NoteBerg</namespace>

@@ -95,6 +95,41 @@ describe("TaskCheckboxLayer", () => {
     expect(callbacks.onTaskClick).toHaveBeenCalledWith("t1");
   });
 
+  it("sets data-status and data-priority attributes on checkbox", () => {
+    const tasks = [
+      {
+        id: "t1",
+        type: "stroke",
+        strokeIds: ["s1"],
+        status: "doing",
+        priority: "urgent",
+        checked: false,
+      },
+    ];
+    const strokes = [{ id: "s1", x: [10], y: [10], _deleted: false }];
+
+    layer.update(tasks, strokes, 1, 0, 0, 0);
+
+    const checkbox = viewportElement.querySelector(".note-canvas__task-checkbox");
+    expect(checkbox.getAttribute("data-status")).toBe("doing");
+    expect(checkbox.getAttribute("data-priority")).toBe("urgent");
+    expect(checkbox.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("calls onCycleStatus when available on click", () => {
+    callbacks.onCycleStatus = vi.fn();
+    const tasks = [{ id: "t1", type: "stroke", strokeIds: ["s1"], status: "open" }];
+    const strokes = [{ id: "s1", x: [10], y: [10], _deleted: false }];
+
+    layer.update(tasks, strokes, 1, 0, 0, 0);
+
+    const checkbox = viewportElement.querySelector(".note-canvas__task-checkbox");
+    checkbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(callbacks.onCycleStatus).toHaveBeenCalledWith("t1");
+    expect(callbacks.onToggle).not.toHaveBeenCalled();
+  });
+
   it("destroys correctly", () => {
     const tasks = [{ id: "t1", type: "stroke", strokeIds: ["s1"], checked: false }];
     const strokes = [{ id: "s1", x: [10], y: [10], _deleted: false }];
@@ -104,5 +139,54 @@ describe("TaskCheckboxLayer", () => {
 
     layer.destroy();
     expect(viewportElement.querySelector(".note-canvas__task-checkbox-layer")).toBeNull();
+  });
+});
+
+describe("TaskCheckboxLayer - read-only", () => {
+  let viewportElement;
+  let callbacks;
+  let layer;
+
+  const tasks = [{ id: "t1", type: "stroke", strokeIds: ["s1"], checked: false }];
+  const strokes = [{ id: "s1", x: [10, 20], y: [10, 20] }];
+
+  beforeEach(() => {
+    viewportElement = document.createElement("div");
+    document.body.appendChild(viewportElement);
+    callbacks = { onToggle: vi.fn(), onTaskClick: vi.fn() };
+    layer = new TaskCheckboxLayer(viewportElement, callbacks);
+    layer.update(tasks, strokes, 1, 0, 0, 0);
+  });
+
+  afterEach(() => {
+    layer.destroy();
+    document.body.removeChild(viewportElement);
+  });
+
+  it("shows tasks but neither ticks them nor selects their strokes", () => {
+    layer.setReadOnly(true);
+    const checkbox = viewportElement.querySelector(".note-canvas__task-checkbox");
+
+    checkbox.click();
+    viewportElement.querySelector(".note-canvas__task-bounding-box").click();
+
+    expect(callbacks.onToggle).not.toHaveBeenCalled();
+    expect(callbacks.onTaskClick).not.toHaveBeenCalled();
+    expect(checkbox.getAttribute("aria-checked")).toBe("false");
+    expect(
+      viewportElement.querySelector(".note-canvas__task-checkbox-layer--readonly"),
+    ).toBeTruthy();
+  });
+
+  it("works as before when not read-only, and again after being switched back", () => {
+    const checkbox = viewportElement.querySelector(".note-canvas__task-checkbox");
+    checkbox.click();
+    expect(callbacks.onToggle).toHaveBeenCalledWith("t1", true);
+
+    layer.setReadOnly(true);
+    layer.setReadOnly(false);
+    checkbox.click();
+    expect(callbacks.onToggle).toHaveBeenCalledTimes(2);
+    expect(viewportElement.querySelector(".note-canvas__task-checkbox-layer--readonly")).toBeNull();
   });
 });

@@ -23,6 +23,7 @@ These were manual steps. The browser half of each now runs in `e2e/`; any native
 | Pen pressure, pen-then-finger, pinch (2.1, 2.2) | `input.e2e.js` | 2.1: feel on real hardware |
 | Lasso move, undo/redo (2.3) | `canvas.e2e.js` | — |
 | Paste formatted text and images (3.2) | `text.e2e.js` | — |
+| Text boxes: create, type, move, resize, reload, toolbar, snapping, PDF pages, legacy main text, thumbnail (3.x) | `textBoxes.e2e.js`, `textCaret.e2e.js` | 3.2–3.7: real touch and pen, the on-screen keyboard, old clients, Firefox |
 | Insert image, insert PDF (4.1, 4.5) | `media.e2e.js` | 4.1: crop by touch; 4.4: a large PDF on Android |
 | Camera denied, document capture (4.2, 4.4) | `camera.e2e.js` | 4.2: Android's permission prompt; 4.3: a real phone camera |
 | PDF export content (5.1) | `media.e2e.js` | 5.1: the Windows save dialog |
@@ -70,6 +71,13 @@ These were manual steps. The browser half of each now runs in `e2e/`; any native
 | # | P | Steps | Expected | Covers |
 |---|---|---|---|---|
 | 3.1 ★ | A | Switch to text mode. Type with the on-screen keyboard, using autocorrect and swipe typing. Add a task checkbox. Tick it. | The keyboard does not cover the line you are typing in. Autocorrect and swipe-typed words land correctly, with no duplicated or lost characters. The checkbox toggles. | Real IME composition, viewport resize |
+| 3.2 ★ | A | Text mode. Tap on empty page with a finger, type, tap beside the box. Then with the pen: tap into the text you typed at a word, type. Drag across the page with one finger, and pinch. | The first tap starts a box with the keyboard open. The tap beside closes the box and the keyboard. The pen tap puts the caret at the word. Dragging pans and pinching zooms; neither starts a box. | Keyboard on mount within the tap, caret at the tap point, tap vs pan on real touch |
+| 3.3 | A | In a box: drag the bar above it with a finger, then with the pen; drag its right edge with a finger; open ⋮ on the bar and choose Delete. Tap just below the text, then about three lines below. Zoom out fully and grab the bar again. | Moves and resizes follow the finger and the pen, and snap to the lines; the right edge is easy to grab with a finger. ⋮ opens a menu (a tap on it deletes nothing); Delete removes the box. Just below continues the text; three lines below starts a new box. The bar is still easy to grab when zoomed out. | Handles under real touch and pen, continue zone |
+| 3.3b | A W N | In a box away from the page's top left, tap the table button and pick a size in its grid, once by tapping a cell and once by dragging from the first cell to 3 x 2 (finger and pen); with the caret in a cell (keyboard open on A), tap the table button and Insert row below. Leave the box at once. | The grid opens beside the toolbar and marks the size while dragging; the table appears in that box with the size marked; the row is added, and the box stays in edit with the keyboard open. After reopening the note the table is there. | Table plugin's dropdown under the zoomed layer, its changes saved without a keystroke |
+| 3.4 ★ | A W | Open a note with typed text and handwriting written in the previous release. Tap into the text and out again. Then move its text with the bar above it. Undo. | Before the move the text sits exactly where it was next to the ink, and tapping in and out changes nothing (the note does not sync). The move takes the text along; undo puts it back. | Legacy main box, mounting is no edit |
+| 3.5 ★ | A W N | With one device still on the previous release: on the new one, create two boxes in a note and sync. On the old one, open it, type into the second box's text and at the very end of the note, and sync. Back on the new one, sync. | The old device shows both boxes' text as paragraphs below the other text, editable. After the round trip, both boxes are in place, the edit is in the second box, and the text typed at the end is in the last box. Nothing is duplicated. | Old clients (S2), normalization on load |
+| 3.6 | A W | Offline on two devices: move a box on one, type in the same box on the other. Reconnect and sync both. Then repeat in a notebook shared with a collaborator, both editing at once. | One box, at the new place, with the typed text. No second copy, no conflict mark. | Merge of boxes by id against a real server |
+| 3.7 | N | In Chrome and in Firefox: create a box, move it, resize it. Drop an image file on the page in text mode. In Firefox, look at the overview thumbnail of a note with empty lines between paragraphs. | Boxes work in both. The dropped image lands on the page at the drop point. The thumbnail keeps the empty lines (it matches Chrome's). On W, dropping a file is not supported (nothing happens). | Browser input, drop event, Firefox layout |
 
 ## 4. Images, camera, PDF import
 
@@ -88,6 +96,7 @@ These were manual steps. The browser half of each now runs in `e2e/`; any native
 | 5.1 ★ | W | **Export PDF** on any note. Save it. Open the result. | A save dialog opens, and the saved file opens in a PDF viewer. | `save_pdf` (`rfd` dialog, file write) |
 | 5.2 ★ | A | **Export PDF** on a note with strokes, an image and an imported PDF page. | The PDF opens in a viewer app via the system chooser, with all of that content. | `save_pdf` Android → `PdfSavePlugin` (FileProvider, `ACTION_VIEW`) |
 | 5.3 | N | Same as 5.2. | The browser's print or save flow shows the same content. | Browser export path |
+| 5.4 ★ | W | **Export PDF** on a note with legacy text, a text box beside handwriting, a ticked and an open text task, and a handwritten task. | Text is in the app's font and sits next to its ink as in the note; the box is at its place, with no frame. Every task has its checkbox, ticked ones ticked. In the PDF viewer (Edge, Acrobat), the typed text can be selected and copied, and the viewer's search finds a word of it; the selection covers the word where it is shown. | Export with the editor's text layout (fonts in the iframe, html2canvas), the invisible text layer (fontkit, Inter) |
 
 ## 6. Audio recording
 
@@ -178,7 +187,9 @@ These cannot be set up cheaply by hand. Each one is a known risk that this pass 
 | `src-tauri/src/mcp.rs`, `mcpBridge.js` | Section 12 |
 | `InputHandler.js`, `NoteNavigator.js`, `StrokeManager.js` | 2.1 |
 | `imageUtils.js`, `documentDetector.js`, `ImageCropper.js` | 4.1–4.4 |
-| `pdfManager.js`, `pdfExport.js` | 4.5, section 5 |
+| `pdfManager.js`, `pdfExport.js`, `textBoxesDom.js`, `textBoxes.css` | 4.5, section 5, 3.7 |
+| `TextLayer.js`, `TextBox.js`, `TextTaskManager.js`, `textBoxes.js`, `TextLayer.css` | 3.1–3.4, 3.7 |
+| `textMerge.js`, `liveText.js` | 3.5, 3.6, 8.3 |
 | `nextcloudSync.js`, `storage.js`, `StorageWorker.js` | Section 8, 11.1 |
 | `storage.webdav.js`, `lib/**`, `templates/**`, `appinfo/**` | Every N step, 7.3 |
 | `recognition/**`, `src-recognition-backend/**` | Section 7 |

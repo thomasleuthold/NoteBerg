@@ -929,3 +929,44 @@ describe("destroy awaits a stop it did not start", () => {
     await expect(rm.destroy()).resolves.toBeUndefined();
   });
 });
+
+describe("read-only (a viewer of a shared notebook)", () => {
+  const existing = [{ id: "r1", fileId: "f1", name: "Recording", duration: 3 }];
+
+  async function readOnlyManager() {
+    const RecordingManager = await loadManager();
+    const onSave = vi.fn();
+    const manager = new RecordingManager({ readOnly: true, onSave });
+    manager.setRecordings(existing.map((r) => ({ ...r })));
+    return { manager, onSave };
+  }
+
+  it("never starts recording", async () => {
+    const { manager } = await readOnlyManager();
+    await manager.startRecording();
+    expect(manager.isRecording()).toBe(false);
+    expect(invokeMock).not.toHaveBeenCalledWith("native_audio_start", expect.anything());
+  });
+
+  it("never imports an audio file", async () => {
+    const { manager, onSave } = await readOnlyManager();
+    await manager.importFile(new Blob(["x"], { type: "audio/mp4" }), 5);
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(manager.getRecordings()).toHaveLength(1);
+  });
+
+  it("never deletes a recording, and keeps them for playback", async () => {
+    const { manager, onSave } = await readOnlyManager();
+    manager.deleteRecording("r1");
+    expect(onSave).not.toHaveBeenCalled();
+    expect(manager.getRecordings()[0].deleted).toBeUndefined();
+  });
+
+  it("imports normally when not read-only", async () => {
+    const RecordingManager = await loadManager();
+    const manager = new RecordingManager({ onSave: vi.fn() });
+    await manager.importFile(new Blob(["x"], { type: "audio/mp4" }), 5);
+    expect(saveFile).toHaveBeenCalled();
+  });
+});

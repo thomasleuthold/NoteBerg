@@ -83,3 +83,6 @@ builds/
 /js/
 /fonts/
 Google_Play/output.zip
+
+# Private release planning
+/release-planning/

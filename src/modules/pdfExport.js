@@ -25,8 +25,16 @@ import {
   popGraphicsState,
   pushGraphicsState,
   rgb,
+  setCharacterSqueeze,
+  setTextRenderingMode,
+  TextRenderingMode,
 } from "pdf-lib";
+import searchFontUrl from "../assets/fonts/Inter-Regular.ttf?url";
+import textBoxesCss from "../styles/textBoxes.css?inline";
+import lightThemeCss from "../styles/themes/light.css?inline";
+import { BACKGROUND_SPACING, isGridBackground } from "../utils/backgroundGrid.js";
 import { sanitizeNoteHtml } from "../utils/sanitizeHtml.js";
+import { hasStaticTextBoxes, renderStaticTextBoxes } from "../utils/textBoxesDom.js";
 import {
   addStrokeAnnotationsOnPage,
   buildPageContentMatrix,
@@ -44,32 +52,58 @@ const A4_HEIGHT = 841.89;
 // Content width used by the note canvas (px in content space)
 const CONTENT_WIDTH = 1200;
 
-// Text editor layout constants (must match notebookEditor.css / TextEditorLayer.js)
-const TEXT_PADDING_LEFT = 60; // px
-const TEXT_PADDING_RIGHT = 20; // px
-const TEXT_PADDING_TOP = 20; // px
-const TEXT_FONT_SIZE = 16; // px
-const TEXT_LINE_HEIGHT = 1.6;
+/** The font stack the editor's text uses (--font-family, main.css). */
+function editorFontFamily() {
+  const value = getComputedStyle(document.documentElement).getPropertyValue("--font-family").trim();
+  return value || '"Inter", -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+}
+
+/** @font-face rules of the app's document, so the export lays text out in its font (Inter). */
+function fontFaceCss() {
+  let css = "";
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try {
+      rules = sheet.cssRules;
+    } catch (_e) {
+      continue; // a cross-origin sheet (Nextcloud's) cannot be read
+    }
+    for (const rule of rules ?? []) {
+      if (typeof CSSFontFaceRule !== "undefined" && rule instanceof CSSFontFaceRule) {
+        css += `${rule.cssText}\n`;
+      }
+    }
+  }
+  return css;
+}
 
 /**
  * Render note HTML content to a canvas using html2canvas.
  * Returns a canvas element whose pixel height tells us the total text height in content space.
  * The canvas is rendered at `scale` times content resolution for sharpness.
  *
- * @param {string} html - note.content HTML string
+ * The text is laid out as the editor lays it out: the note's text boxes at
+ * their positions (renderStaticTextBoxes), by the editor's own box stylesheet
+ * and font, so exported text sits where it sits in the note, next to its ink.
+ * Task checkboxes are drawn in the same layer: text tasks in their line,
+ * stroke tasks left of their ink.
+ *
+ * @param {{content?: string, tasks?: Array, strokes?: Array}} note
  * @param {number} scale - render scale factor (2 = 2× for retina sharpness)
  * @returns {Promise<HTMLCanvasElement|null>}
  */
-async function renderTextToCanvas(html, scale = 2) {
-  if (!html) return null;
-  // Untrusted synced HTML written into a same-origin iframe via document.write —
-  // which, unlike innerHTML, even executes <script> tags. Sanitize first.
-  html = sanitizeNoteHtml(html);
+async function renderTextToCanvas(note, scale = 2) {
+  if (!hasStaticTextBoxes(note)) return null;
+  // Untrusted synced HTML, sanitized before it reaches the DOM
+  // (renderStaticTextBoxes sanitizes it again, for its other callers)
+  const html = sanitizeNoteHtml(note.content || "");
   // Strip all tags and check if there's any visible text content. This is a
   // text-only emptiness check, not a sanitization step — `textOnly` is never
   // written back into the DOM, so an imprecise tag-strip here isn't an XSS risk.
   const textOnly = html.replace(/<[^>]*>/g, "").trim(); // codeql[js/incomplete-multi-character-sanitization]
-  if (!textOnly) return null;
+  const tasks = note.tasks ?? [];
+  const strokes = (note.strokes ?? []).filter((s) => !s._deleted && !s.isDeleted);
+  if (!textOnly && !tasks.some((t) => t.type === "stroke")) return null;
 
   // Use an iframe for full rendering isolation — this prevents the page background
   // from bleeding into the html2canvas output and ensures a transparent result.
@@ -85,54 +119,168 @@ async function renderTextToCanvas(html, scale = 2) {
   });
   document.body.appendChild(iframe);
 
-  // Write content into iframe with isolated styles
+  // Write the editor's box stylesheet and font into the iframe; black on
+  // transparent, as printed
   const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
   iframeDoc.open();
-  iframeDoc.write(`<!DOCTYPE html><html><head><style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { background: transparent !important; }
-    body {
-      width: ${CONTENT_WIDTH}px;
-      font-family: Georgia, 'Times New Roman', serif;
-      font-size: ${TEXT_FONT_SIZE}px;
-      line-height: ${TEXT_LINE_HEIGHT};
-      color: #000;
-      padding: ${TEXT_PADDING_TOP}px ${TEXT_PADDING_RIGHT}px 20px ${TEXT_PADDING_LEFT}px;
-      overflow: visible;
-      word-break: break-word;
-      overflow-wrap: break-word;
-    }
-    h1 { font-size: 2em; font-weight: 700; margin: 0.5em 0; }
-    h2 { font-size: 1.5em; font-weight: 600; margin: 0.5em 0; }
-    h3 { font-size: 1.25em; font-weight: 600; margin: 0.5em 0; }
-    p  { margin: 0.5em 0; }
-    ul, ol { margin: 0.5em 0; padding-left: 2em; }
-    li { margin: 0.25em 0; }
-    strong { font-weight: 700; }
-    em { font-style: italic; }
-    table { border-collapse: collapse; width: 80%; margin: 8px 0; }
-    td, th { border: 1px solid #000; padding: 6px 10px; }
-    th { font-weight: 600; }
-    input[type="checkbox"] { display: none; }
-  </style></head><body>${html}</body></html>`);
+  iframeDoc.write(`<!DOCTYPE html><html data-theme="light"><head><style>
+    ${fontFaceCss()}
+    ${lightThemeCss}
+    ${textBoxesCss}
+    html, body { margin: 0; padding: 0; background: transparent !important; }
+    :root { --font-family: ${editorFontFamily()}; --text-primary: #000; --color-primary: #2c5282; }
+    .text-boxes { position: relative; width: ${CONTENT_WIDTH}px; }
+  </style></head><body><div class="text-boxes"></div></body></html>`);
   iframeDoc.close();
 
-  // Resize iframe to fit content
-  const bodyEl = iframeDoc.body;
-  iframe.style.height = `${bodyEl.scrollHeight}px`;
+  const root = iframeDoc.body.firstElementChild;
+  // The font must be loaded before layout is measured, or lines wrap in the fallback
+  await iframeDoc.fonts?.load?.('16px "Inter"').catch(() => {});
+  const height = Math.ceil(renderStaticTextBoxes(root, html, { tasks, strokes }));
+  if (height <= 0) return null;
+  root.style.height = `${height}px`;
+  iframe.style.height = `${height}px`;
 
   try {
-    const canvas = await html2canvas(bodyEl, {
+    // Where every line of text is, for the searchable text layer
+    const lines = measureTextLines(root);
+    const canvas = await html2canvas(root, {
       scale,
       useCORS: true,
       backgroundColor: null,
       logging: false,
       width: CONTENT_WIDTH,
+      height,
       windowWidth: CONTENT_WIDTH,
     });
-    return canvas;
+    return { canvas, lines };
   } finally {
     document.body.removeChild(iframe);
+  }
+}
+
+/**
+ * @typedef {object} TextLine
+ * @property {string} text
+ * @property {number} x - content px, left edge
+ * @property {number} y - content px, top of the text (not of the line box)
+ * @property {number} w - content px, width the text takes
+ * @property {number} h - content px, height of the text
+ * @property {number} fontSize - content px
+ */
+
+/**
+ * The laid-out text of a static text box root, as runs of words on one line
+ * (one per line of every text node), in content px relative to the root. The
+ * export draws these invisibly over the text image, so a PDF viewer can
+ * select, search and copy the text where it is seen.
+ * @param {HTMLElement} root
+ * @returns {TextLine[]}
+ */
+function measureTextLines(root) {
+  const doc = root.ownerDocument;
+  const view = doc.defaultView;
+  const origin = root.getBoundingClientRect();
+  const lines = [];
+  const range = doc.createRange();
+  const walker = doc.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const el = node.parentElement;
+    if (!el || !node.data.trim()) continue;
+    const cs = view.getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const fontSize = Number.parseFloat(cs.fontSize) || 16;
+    let run = null;
+    for (const word of node.data.matchAll(/\S+/g)) {
+      range.setStart(node, word.index);
+      range.setEnd(node, word.index + word[0].length);
+      const r = range.getBoundingClientRect?.();
+      if (!r || (!r.width && !r.height)) continue;
+      const x = r.left - origin.left;
+      const y = r.top - origin.top;
+      // Same line as the run so far: the word joins it, with the space before it
+      if (run && Math.abs(y - run.y) < fontSize / 2 && x >= run.x) {
+        run.text += ` ${word[0]}`;
+        run.w = r.right - origin.left - run.x;
+        continue;
+      }
+      run = { text: word[0], x, y, w: r.width, h: r.height, fontSize };
+      lines.push(run);
+    }
+  }
+  return lines;
+}
+
+/**
+ * The font the searchable text layer is written in: Inter (the editor's font,
+ * so the selection boxes match the text), subset to the characters used.
+ * Latin, Greek and Cyrillic; characters it lacks (CJK) are not searchable.
+ * Null when it cannot be loaded: the export then has no text layer, as before.
+ * @param {PDFDocument} pdfDoc
+ */
+async function embedSearchFont(pdfDoc) {
+  try {
+    const response = await fetch(searchFontUrl);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    // Loaded on export only: a sizable library no other path needs
+    const { default: fontkit } = await import("@pdf-lib/fontkit");
+    pdfDoc.registerFontkit(fontkit);
+    return await pdfDoc.embedFont(await response.arrayBuffer(), { subset: true });
+  } catch (err) {
+    console.warn("[PDFExport] No searchable text layer (font unavailable):", err);
+    return null;
+  }
+}
+
+/**
+ * Write the text of one page slice as invisible text over its image (the way
+ * scanned PDFs carry their OCR text): selectable, searchable, copyable, read
+ * by screen readers, and not drawn. Same mapping as drawTextSliceOnPage, each
+ * line squeezed to the width it takes in the image.
+ * @param {import('pdf-lib').PDFPage} pdfPage
+ * @param {import('pdf-lib').PDFFont|null} font
+ * @param {TextLine[]} lines
+ * @param {number} sliceContentY - top of this slice in content space (px)
+ * @param {number} sliceContentH - height of this slice in content space (px)
+ * @param {number} pdfPageW - PDF page width in pts
+ * @param {number} pdfPageH - PDF page height in pts
+ */
+function drawTextLayerSlice(
+  pdfPage,
+  font,
+  lines,
+  sliceContentY,
+  sliceContentH,
+  pdfPageW,
+  pdfPageH,
+) {
+  if (!font || lines.length === 0) return;
+  const s = pdfPageW / CONTENT_WIDTH;
+  for (const line of lines) {
+    // A line belongs to the page its baseline is on (Inter: ~0.79 of the text height)
+    const baseline = line.y + line.h * 0.79;
+    if (baseline < sliceContentY || baseline >= sliceContentY + sliceContentH) continue;
+    const size = line.fontSize * s;
+    try {
+      const natural = font.widthOfTextAtSize(line.text, size);
+      if (!natural) continue;
+      // Invisible: Tr 3 set as an operator, since pdf-lib's drawText ignores its
+      // renderMode option (1.17); text state outlives the BT/ET it draws in
+      pdfPage.pushOperators(
+        pushGraphicsState(),
+        setTextRenderingMode(TextRenderingMode.Invisible),
+        setCharacterSqueeze(((line.w * s) / natural) * 100),
+      );
+      pdfPage.drawText(line.text, {
+        x: line.x * s,
+        y: pdfPageH - (baseline - sliceContentY) * s,
+        size,
+        font,
+      });
+      pdfPage.pushOperators(popGraphicsState());
+    } catch (_err) {
+      // A line the font cannot encode stays image only
+    }
   }
 }
 
@@ -278,7 +426,7 @@ function buildSvgPath(stroke, offsetX, offsetY, scaleX, scaleY) {
 /**
  * Draw the note's background pattern (ruled lines or grid) onto a PDF page.
  *
- * Spacing values match drawBackgroundPattern() in noteRenderer.js (20/30/40 px in content space).
+ * Spacing comes from the table drawBackgroundPattern() in noteRenderer.js uses (backgroundGrid.js).
  * The pattern color defaults to #e5e7eb (same as the CSS variable fallback).
  *
  * @param {import('pdf-lib').PDFPage} pdfPage
@@ -305,18 +453,10 @@ function drawBackgroundPatternOnPage(
   const { r, g, b } = hexToRgb("#e5e7eb");
   const color = rgb(r, g, b);
 
-  const spacingMap = {
-    "ruled-narrow": 20,
-    "ruled-medium": 30,
-    "ruled-wide": 40,
-    "grid-small": 20,
-    "grid-medium": 30,
-    "grid-large": 40,
-  };
-  const spacing = spacingMap[backgroundType];
+  const spacing = BACKGROUND_SPACING[backgroundType];
   if (!spacing) return;
 
-  const isGrid = backgroundType.startsWith("grid");
+  const isGrid = isGridBackground(backgroundType);
   const spacingPtY = spacing * scaleY;
   const spacingPtX = spacing * scaleX;
 
@@ -501,8 +641,11 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
   // Render text content to an offscreen canvas (2× scale for sharpness)
   const TEXT_SCALE = 2;
   let textCanvas = null;
+  let textLines = [];
   try {
-    textCanvas = note.content ? await renderTextToCanvas(note.content, TEXT_SCALE) : null;
+    const rendered = await renderTextToCanvas(note, TEXT_SCALE);
+    textCanvas = rendered?.canvas ?? null;
+    textLines = rendered?.lines ?? [];
   } catch (textErr) {
     console.warn("[PDFExport] Text rendering failed, skipping text layer:", textErr);
   }
@@ -510,6 +653,7 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
   const textContentH = textCanvas ? textCanvas.height / TEXT_SCALE : 0;
 
   let pdfDoc;
+  let textFont = null;
 
   if (pdfPages.length > 0) {
     // ── Case A: Note has an imported PDF ──────────────────────────────────
@@ -521,6 +665,7 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
 
     const srcDoc = await PDFDocument.load(originalBytes);
     pdfDoc = await PDFDocument.create();
+    textFont = textLines.length > 0 ? await embedSearchFont(pdfDoc) : null;
 
     // Copy all original pages
     const pageCount = srcDoc.getPageCount();
@@ -598,6 +743,7 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
           pdfW,
           pdfH,
         );
+        drawTextLayerSlice(pdfPg, textFont, textLines, mediaPg.y, mediaPg.height, pdfW, pdfH);
       }
 
       // Draw images that overlap this page
@@ -668,6 +814,15 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
             extraW,
             extraH,
           );
+          drawTextLayerSlice(
+            extraPage,
+            textFont,
+            textLines,
+            pageContentY,
+            extraContentH,
+            extraW,
+            extraH,
+          );
         }
 
         for (const img of imageItems) {
@@ -703,6 +858,7 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
   } else {
     // ── Case B: Note has no imported PDF — create A4 document ────────────
     pdfDoc = await PDFDocument.create();
+    textFont = textLines.length > 0 ? await embedSearchFont(pdfDoc) : null;
 
     const scaleX = A4_WIDTH / CONTENT_WIDTH;
     const scaleY = scaleX;
@@ -745,6 +901,15 @@ export async function exportNoteToPdf(note, mediaItems, onProgress) {
           page,
           textCanvas,
           TEXT_SCALE,
+          contentPageY,
+          contentPageH,
+          A4_WIDTH,
+          A4_HEIGHT,
+        );
+        drawTextLayerSlice(
+          page,
+          textFont,
+          textLines,
           contentPageY,
           contentPageH,
           A4_WIDTH,

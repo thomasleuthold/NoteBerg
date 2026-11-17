@@ -15,11 +15,13 @@ import "./styles/layout.css";
 import "./styles/components.css";
 import "./styles/notebookEditor.css";
 import "./styles/nbLoader.css";
+if (import.meta.env.VITE_PLATFORM !== "nextcloud") {
+  await import("./styles/themes/tva.css");
+}
 
 import { initModals } from "./components/modals.js";
 import { initNoteCanvasComponent } from "./components/NoteCanvas/index.js";
 import { initOverview } from "./components/overviewMode.js";
-import { initRecycleBin } from "./components/recycleBinMode.js";
 import { initI18n } from "./i18n/index.js";
 import { initializeApp } from "./modules/appInit.js";
 import { initBreadcrumb } from "./modules/breadcrumb.js";
@@ -162,7 +164,6 @@ async function init() {
   }
   initOverview();
   initModals();
-  initRecycleBin();
   initNoteCanvasComponent();
   initBreadcrumb();
   initFooter();

@@ -5,7 +5,12 @@
 
 import { t } from "../i18n/index.js";
 import { engineDisplayName } from "../modules/recognition/recognitionService.js";
+import { canManage } from "../modules/sharing/sharePermissions.js";
+import { ShareRestrictedError } from "../modules/sharing/shareRestrictions.js";
 import { createNote, createNotebook, updateNote, updateNotebook } from "../modules/storage.js";
+import { inReadingOrder } from "../modules/textBoxes.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
+import { safeNotebookColor } from "../utils/notebookColor.js";
 import { sanitizeNoteHtml } from "../utils/sanitizeHtml.js";
 
 /**
@@ -96,7 +101,11 @@ function showModal(title, content, onConfirm, confirmLabel) {
       // window this guard exists to close.
       closeModal();
     } catch (error) {
-      showError(overlay, error.message);
+      // The storage layer refuses what a shared notebook does not allow; say so in the user's language
+      showError(
+        overlay,
+        error instanceof ShareRestrictedError ? t("sharing.restricted.message") : error.message,
+      );
       confirming = false;
       setConfirmBusy(false);
     }
@@ -593,8 +602,9 @@ export function showEditNotebookModal(notebook) {
     )
     .join("");
 
-  const escapedTitle = notebook.title.replace(/"/g, "&quot;");
-  const escapedDesc = (notebook.description || "").replace(/"/g, "&quot;");
+  // The title and description of a shared notebook were written by another user
+  const escapedTitle = escapeHtml(notebook.title);
+  const escapedDesc = escapeHtml(notebook.description || "");
 
   const content = `
     <div class="form-field">
@@ -682,7 +692,7 @@ export async function showCreateNoteModal(notebookId = null) {
     ${
       notebookId === null
         ? `<p class="form-hint">${t("modals.createNote.hintQuick")}</p>`
-        : `<p class="form-hint">${t("modals.createNote.hintNotebook", { notebook: notebookName || "notebook" })}</p>`
+        : `<p class="form-hint">${t("modals.createNote.hintNotebook", { notebook: escapeHtml(notebookName || "notebook") })}</p>`
     }
   `;
 
@@ -1048,14 +1058,14 @@ export function showConflictResolutionDialog(local, remote) {
               <div class="conflict-option">
                 <h4>${t("modals.conflict.local")}</h4>
                 <p><small>${t("modals.conflict.modified", { date: formatDate(local.modified) })}</small></p>
-                <div class="conflict-option__preview">${sanitizeNoteHtml(local.content) || t("modals.conflict.noContent")}</div>
+                <div class="conflict-option__preview">${sanitizeNoteHtml(inReadingOrder(local.content ?? "")) || t("modals.conflict.noContent")}</div>
                 <p>${t("modals.conflict.strokes", { count: local.strokes?.length || 0 })}</p>
                 <button class="btn-primary use-local conflict-option__keep-btn">${t("modals.conflict.keepLocal")}</button>
               </div>
               <div class="conflict-option">
                 <h4>${t("modals.conflict.remote")}</h4>
                 <p><small>${t("modals.conflict.modified", { date: formatDate(remote.modified) })}</small></p>
-                <div class="conflict-option__preview">${sanitizeNoteHtml(remote.content) || t("modals.conflict.noContent")}</div>
+                <div class="conflict-option__preview">${sanitizeNoteHtml(inReadingOrder(remote.content ?? "")) || t("modals.conflict.noContent")}</div>
                 <p>${t("modals.conflict.strokes", { count: remote.strokes?.length || 0 })}</p>
                 <button class="btn-primary use-remote conflict-option__keep-btn">${t("modals.conflict.keepRemote")}</button>
               </div>
@@ -1103,12 +1113,15 @@ export function showMoveCopyDialog(note, notebooks) {
       </div>
     `;
 
+    // A notebook shared with the user is never a target: moving or copying a note
+    // into it is the owner's decision, whatever the share lets the user edit
     const notebookItems = notebooks
+      .filter(canManage)
       .map((nb) => {
         const isCurrent = nb.id === currentNotebookId;
         return `
           <div class="notebook-picker-item${isCurrent ? " current" : ""}" data-notebook-id="${nb.id}">
-            <div class="notebook-picker-item__color" style="background-color: ${nb.color}"></div>
+            <div class="notebook-picker-item__color" style="background-color: ${safeNotebookColor(nb.color)}"></div>
             <span class="notebook-picker-item__title">${escapeHtml(nb.title)}</span>
             ${isCurrent ? `<span class="notebook-picker-item__badge">${t("overview.moveCopy.current")}</span>` : ""}
           </div>
@@ -1209,12 +1222,6 @@ export function showMoveCopyDialog(note, notebooks) {
     };
     document.addEventListener("keydown", handleEnter);
   });
-}
-
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 /**

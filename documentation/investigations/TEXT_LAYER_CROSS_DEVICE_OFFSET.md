@@ -231,6 +231,8 @@ Ordered by impact.
    offset of this document, only larger. Fix: reuse the editor's CSS verbatim
    (a shared constant or a shared stylesheet string) and embed the Inter
    `@font-face` in the export iframe so html2canvas lays out the same way.
+   *Fixed in 0.5.44* (text boxes, plan phase 5): the export and the thumbnail
+   use the editor's box stylesheet (`src/styles/textBoxes.css`) and font.
 
 2. **Text and ink do not move together.** Insert-space shifts strokes and
    media but not text; editing text reflows the text but not the ink below.

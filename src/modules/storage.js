@@ -8,6 +8,8 @@
  *   "notebooks"   — unchanged
  *   "files"       — binary blobs (unchanged)
  *   "settings"    — key/value (unchanged)
+ *   "noteBase"    — v6: last synced text per note, the base of the three-way merge
+ *                   (local-only, never uploaded or backed up; see getNoteBase)
  *
  * "notes" index fields (always unencrypted):
  *   id, notebookId, title, created, modified, version,
@@ -26,95 +28,16 @@
  */
 
 import { openDB } from "idb";
+import { mergeNote, splitNote } from "./noteRecord.js";
+import { versionedUpdates } from "./noteVersions.js";
+import { isSharingEnabled } from "./sharing/enabled.js";
+import { isShared } from "./sharing/sharePermissions.js";
+import { assertEditable, assertManageable } from "./sharing/shareRestrictions.js";
 
 export const DB_NAME = "NoteBerg";
-export const DB_VERSION = 5;
+export const DB_VERSION = 6;
 
 let db = null;
-
-// ─── Index field list ─────────────────────────────────────────────────────────
-// Fields stored in the "notes" index store (never encrypted).
-const INDEX_FIELDS = new Set([
-  "id",
-  "notebookId",
-  "title",
-  "created",
-  "modified",
-  "version",
-  "synced",
-  "lastSyncedEtag",
-  "deleted",
-  "purged",
-  "previousNotebookId",
-  "restoredAt", // set by a backup restore; cleared once the note is uploaded
-  "encrypted",
-  "background",
-  "formatVersion",
-  "tags",
-  "hasStrokes",
-  "hasContent",
-  "hasRecognition",
-  "media", // metadata-only snapshot — see splitNote()
-  "recordings", // metadata-only snapshot — see splitNote()
-]);
-
-// ─── Schema helpers ───────────────────────────────────────────────────────────
-
-/**
- * Split a full note object into { index, content } for storage.
- * The index entry gets a lightweight media snapshot (no blobs, no positions).
- */
-function splitNote(note) {
-  const index = {};
-  const content = { id: note.id };
-
-  for (const [key, value] of Object.entries(note)) {
-    if (key === "media") {
-      // Index: metadata only (for sync decisions)
-      index.media = Array.isArray(value)
-        ? value.map(({ id, name, type, size, deleted }) => ({ id, name, type, size, deleted }))
-        : [];
-      // Content: full objects (fileId, positions, etc.)
-      content.media = value ?? [];
-    } else if (key === "recordings") {
-      // Index: metadata only (no fileId)
-      index.recordings = Array.isArray(value)
-        ? value.map(({ id, name, duration, deleted }) => ({ id, name, duration, deleted }))
-        : [];
-      // Content: full objects (fileId, etc.)
-      content.recordings = value ?? [];
-    } else if (INDEX_FIELDS.has(key)) {
-      index[key] = value;
-    } else {
-      content[key] = value;
-    }
-  }
-
-  // Derived flags so overview never needs to load content
-  index.hasStrokes = Array.isArray(note.strokes) ? note.strokes.length > 0 : false;
-  index.hasContent = typeof note.content === "string" ? note.content.trim().length > 0 : false;
-  index.hasRecognition =
-    note.recognition != null &&
-    typeof note.recognition.fullText === "string" &&
-    note.recognition.fullText.length > 0;
-
-  return { index, content };
-}
-
-/**
- * Merge an index entry and a content record back into a single note object.
- * Content fields win when both sides have the same key.
- */
-function mergeNote(index, content) {
-  if (!index) return null;
-  // Use full recordings/media from content (have fileIds); index copies are metadata-only
-  return {
-    ...index,
-    ...(content ?? {}),
-    media: content?.media ?? index.media ?? [],
-    recordings: content?.recordings ?? index.recordings ?? [],
-  };
-}
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -174,10 +97,16 @@ export async function initStorage() {
         jobStore.createIndex("noteId", "noteId");
         jobStore.createIndex("state", "state");
       }
+
+      // v6: merge baselines. Additive — an empty store, nothing to migrate.
+      if (!database.objectStoreNames.contains("noteBase")) {
+        database.createObjectStore("noteBase", { keyPath: "id" });
+      }
     },
   });
 
   await _migrateThumbnailsToNoteContent();
+  await _sweepOrphanedNoteBases();
   console.log(`Storage initialized (v${DB_VERSION})`);
   return db;
 }
@@ -211,6 +140,23 @@ async function _migrateThumbnailsToNoteContent() {
   if (count > 0) {
     console.log(`[Storage] Migrated ${count} notes: removed stale thumbnailFileId fields`);
   }
+}
+
+// ─── Shared-notebook guards ───────────────────────────────────────────────────
+// Notebooks shared with this user are the owner's: a recipient may edit content
+// where the share grants it, and nothing more (DESIGN §4). The UI hides what is
+// not allowed; these refuse it for any caller that slips past. The sync layer
+// (saveNote, saveNotebook, permanentlyDelete*) is deliberately not guarded: it is
+// how the owner's changes and a forgotten share reach this device.
+
+/**
+ * The notebook record a note belongs to, or null for quick notes. The share
+ * guards themselves (assertEditable / assertManageable) live in
+ * sharing/shareRestrictions.js for both builds; only this lookup differs from
+ * storage.webdav.js (`sharedRecord`: the registry instead of IndexedDB).
+ */
+async function notebookOfNote(note) {
+  return note?.notebookId ? ((await db.get("notebooks", note.notebookId)) ?? null) : null;
 }
 
 // ─── ID generation ────────────────────────────────────────────────────────────
@@ -259,9 +205,22 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
   return notebook;
 }
 
+/**
+ * Notebooks shared with the user stay on the device when sharing is switched
+ * off (they are not synced), but are not shown: the lists below leave them out
+ * until sharing is switched on again.
+ */
+async function _hiddenNotebookIds() {
+  if (isSharingEnabled()) return new Set();
+  return new Set((await db.getAll("notebooks")).filter(isShared).map((nb) => nb.id));
+}
+
 export async function getAllNotebooks() {
+  const hidden = await _hiddenNotebookIds();
   const notebooks = await db.getAll("notebooks");
-  return notebooks.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
+  return notebooks
+    .filter((n) => !n.deleted && !hidden.has(n.id))
+    .sort((a, b) => b.modified - a.modified);
 }
 
 export async function getAllNotebooksForSync() {
@@ -276,6 +235,7 @@ export async function getNotebook(id) {
 export async function updateNotebook(id, updates) {
   const notebook = await db.get("notebooks", id);
   if (!notebook) throw new Error("Notebook not found");
+  assertEditable(notebook, "updateNotebook");
 
   const updated = {
     ...notebook,
@@ -297,6 +257,7 @@ export async function updateNotebook(id, updates) {
 export async function deleteNotebook(id) {
   const notebook = await db.get("notebooks", id);
   if (!notebook) throw new Error("Notebook not found");
+  assertManageable(notebook, "deleteNotebook");
 
   notebook.deleted = true;
   notebook.modified = Date.now();
@@ -324,6 +285,7 @@ export async function deleteNotebook(id) {
 export async function purgeNotebook(id) {
   const notebook = await db.get("notebooks", id);
   if (!notebook) return;
+  assertManageable(notebook, "purgeNotebook");
 
   const notes = await db.getAllFromIndex("notes", "notebookId", id);
   for (const note of notes) {
@@ -352,6 +314,7 @@ export async function permanentlyDeleteNotebook(id) {
 // ─── Note Operations ──────────────────────────────────────────────────────────
 
 export async function createNote({ title, notebookId = null }) {
+  if (notebookId) assertEditable(await db.get("notebooks", notebookId), "createNote");
   const note = {
     id: generateId(),
     notebookId,
@@ -390,8 +353,11 @@ export async function createNote({ title, notebookId = null }) {
  * Used for overview rendering — fast, no decryption needed.
  */
 export async function getAllNotes() {
+  const hidden = await _hiddenNotebookIds();
   const notes = await db.getAll("notes");
-  return notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
+  return notes
+    .filter((n) => !n.deleted && !hidden.has(n.notebookId))
+    .sort((a, b) => b.modified - a.modified);
 }
 
 /**
@@ -417,6 +383,7 @@ export async function getAllNoteMetadataForSync() {
  * Overview uses these — no content/strokes loaded.
  */
 export async function getNotesByNotebook(notebookId) {
+  if ((await _hiddenNotebookIds()).has(notebookId)) return [];
   const notes = await db.getAllFromIndex("notes", "notebookId", notebookId);
   return notes.filter((n) => !n.deleted).sort((a, b) => b.modified - a.modified);
 }
@@ -476,10 +443,11 @@ export async function getNoteIndex(id) {
 export async function updateNote(id, updates) {
   const existing = await getNote(id);
   if (!existing) throw new Error("Note not found");
+  assertEditable(await notebookOfNote(existing), "updateNote");
 
   const updated = {
     ...existing,
-    ...updates,
+    ...versionedUpdates(existing, updates),
     modified: Date.now(),
     version: (existing.version || 0) + 1,
     synced: false,
@@ -507,12 +475,67 @@ export async function updateNoteCoalesced(id, updates) {
   await updateNote(id, updates);
 }
 
+/**
+ * No-op on native: the sync checks the root itself (sharing/nativeSharing.js).
+ * The Nextcloud app checks it when sharing is switched on in Settings.
+ * @returns {Promise<{moved: boolean}>}
+ */
+export async function guardRootForSharing() {
+  return { moved: false };
+}
+
 /** No-op on native: IndexedDB writes are awaited directly by their callers. */
 export async function flushNoteWrites() {}
+
+// Live updates of the open note read the server directly only on the Nextcloud
+// build (storage.webdav.js). Native learns of remote changes through a sync
+// (autoSync.syncIfNotebookChanged), so these exist only so shared modules can
+// import the same names. Each stub keeps the parameters of its storage.webdav.js
+// counterpart (unused here), so a caller written against one build type-checks
+// against the other: change both together.
+
+/**
+ * @param {string} _id
+ * @returns {Promise<null>} never a change: native has no server look of its own
+ */
+export async function remoteNoteChange(_id) {
+  return null;
+}
+
+/**
+ * @param {string} _id
+ * @param {string|null} _etag
+ * @returns {boolean} false: there is no tracked etag to be unchanged against
+ */
+export function noteSyncUnchanged(_id, _etag) {
+  return false;
+}
+
+/**
+ * @param {string} _id
+ * @returns {Promise<null>} native reads the note through takeInStoredNote()
+ */
+export async function readNoteForLiveUpdate(_id) {
+  return null;
+}
+
+/**
+ * @param {string} _id
+ * @param {{etag: string|null, base: string}} _seen
+ */
+export function adoptRemoteNote(_id, _seen) {}
+// Native takes the stored note in through the editor's storage worker (TAKE_IN)
+export async function takeInStoredNote() {
+  return null;
+}
+export async function readStoredNoteText() {
+  return null;
+}
 
 export async function deleteNote(id) {
   const note = await db.get("notes", id);
   if (!note) throw new Error("Note not found");
+  assertManageable(await notebookOfNote(note), "deleteNote");
 
   note.deleted = true;
   note.modified = Date.now();
@@ -527,6 +550,9 @@ export async function deleteNote(id) {
 export async function moveNote(noteId, targetNotebookId) {
   const note = await db.get("notes", noteId);
   if (!note) throw new Error("Note not found");
+  // Out of a shared notebook or into one: neither is the recipient's to do
+  assertManageable(await notebookOfNote(note), "moveNote");
+  assertManageable(await notebookOfNote({ notebookId: targetNotebookId }), "moveNote");
 
   const previousNotebookId = note.notebookId ?? null;
   if (previousNotebookId === (targetNotebookId ?? null)) return;
@@ -547,20 +573,25 @@ export async function moveNote(noteId, targetNotebookId) {
 export async function copyNote(noteId, targetNotebookId) {
   const note = await getNote(noteId);
   if (!note) throw new Error("Note not found");
+  assertManageable(await notebookOfNote(note), "copyNote");
+  assertManageable(await notebookOfNote({ notebookId: targetNotebookId }), "copyNote");
 
-  // Deep-copy media blobs
+  // Deep-copy media blobs, each file once: every page of an imported PDF is a
+  // media item holding the same file as `pdfSource`
+  const copies = new Map(); // old fileId -> new fileId
+  const copyFile = async (fileId) => {
+    if (!copies.has(fileId)) {
+      const blob = await getFile(fileId);
+      copies.set(fileId, blob ? await saveFile(blob) : fileId);
+    }
+    return copies.get(fileId);
+  };
   const newMedia = [];
   for (const item of note.media || []) {
-    const blob = await getFile(item.fileId);
-    const newFileId = blob ? await saveFile(blob) : item.fileId;
-    newMedia.push({ ...item, fileId: newFileId });
+    newMedia.push({ ...item, fileId: await copyFile(item.fileId) });
   }
 
-  let newPdfSource = note.pdfSource ?? null;
-  if (note.pdfSource) {
-    const pdfBlob = await getFile(note.pdfSource);
-    newPdfSource = pdfBlob ? await saveFile(pdfBlob) : note.pdfSource;
-  }
+  const newPdfSource = note.pdfSource ? await copyFile(note.pdfSource) : (note.pdfSource ?? null);
 
   // Deep-copy recording blobs so the copy doesn't share fileIds with the original
   // (purging one note would otherwise delete the other's audio).
@@ -632,6 +663,7 @@ async function collectNoteBlobIds(id) {
 export async function purgeNote(id) {
   const index = await db.get("notes", id);
   if (!index) return;
+  assertManageable(await notebookOfNote(index), "purgeNote");
 
   // Delete all local blob files this note references (media, PDF, recordings).
   try {
@@ -642,8 +674,8 @@ export async function purgeNote(id) {
     console.warn("[Storage] Could not clean up blobs during purge:", e);
   }
 
-  // Delete content record
-  await db.delete("noteContent", id);
+  // Delete content record (and the merge baseline, which is content too)
+  await Promise.all([db.delete("noteContent", id), db.delete("noteBase", id)]);
 
   // Replace index with a minimal stub
   const stub = {
@@ -660,34 +692,54 @@ export async function purgeNote(id) {
   console.log("Note purged (stubbed):", id);
 }
 
+/** Drop every local record of the given notes in one transaction. */
+async function _deleteNoteRecords(ids) {
+  const tx = db.transaction(["notes", "noteContent", "noteBase"], "readwrite");
+  await Promise.all([
+    ...ids.flatMap((id) => [
+      tx.objectStore("notes").delete(id),
+      tx.objectStore("noteContent").delete(id),
+      tx.objectStore("noteBase").delete(id),
+    ]),
+    tx.done,
+  ]);
+}
+
 export async function permanentlyDeleteNote(id) {
-  await Promise.all([db.delete("notes", id), db.delete("noteContent", id)]);
+  await _deleteNoteRecords([id]);
   console.log("Note permanently deleted from DB:", id);
 }
 
 export async function permanentlyDeleteNotesInNotebook(notebookId) {
   const notes = await db.getAllFromIndex("notes", "notebookId", notebookId);
-  await Promise.all(
-    notes.flatMap((note) => [db.delete("notes", note.id), db.delete("noteContent", note.id)]),
-  );
+  await _deleteNoteRecords(notes.map((note) => note.id));
   console.log(`Permanently deleted ${notes.length} notes for notebook ${notebookId}`);
 }
 
 // ─── Recycle Bin ──────────────────────────────────────────────────────────────
 
+// Recipients have no recycle bin for notebooks that are not theirs: what the owner
+// deleted is the owner's to restore or purge.
+
 export async function getDeletedNotebooks() {
   const all = await db.getAll("notebooks");
-  return all.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
+  return all
+    .filter((n) => n.deleted && !n.purged && !isShared(n))
+    .sort((a, b) => b.modified - a.modified);
 }
 
 export async function getDeletedNotes() {
-  const all = await db.getAll("notes");
-  return all.filter((n) => n.deleted && !n.purged).sort((a, b) => b.modified - a.modified);
+  const [notebooks, all] = await Promise.all([db.getAll("notebooks"), db.getAll("notes")]);
+  const sharedIds = new Set(notebooks.filter(isShared).map((nb) => nb.id));
+  return all
+    .filter((n) => n.deleted && !n.purged && !sharedIds.has(n.notebookId))
+    .sort((a, b) => b.modified - a.modified);
 }
 
 export async function restoreNotebook(id) {
   const notebook = await db.get("notebooks", id);
   if (!notebook) throw new Error("Notebook not found");
+  assertManageable(notebook, "restoreNotebook");
 
   notebook.deleted = false;
   notebook.modified = Date.now();
@@ -702,6 +754,7 @@ export async function restoreNotebook(id) {
 export async function restoreNote(id) {
   const note = await db.get("notes", id);
   if (!note) throw new Error("Note not found");
+  assertManageable(await notebookOfNote(note), "restoreNote");
 
   note.deleted = false;
   note.modified = Date.now();
@@ -804,6 +857,79 @@ export async function clearRecognitionJobs() {
   await db.clear("recognitionJobs");
 }
 
+// ─── Merge baselines ──────────────────────────────────────────────────────────
+//
+// The text of a note as of the last state known to be on the server and
+// acknowledged by this device — the common ancestor for the three-way text
+// merge (textMerge.js). Local-only: never uploaded, never backed up, never
+// merged into note objects. Written at sync boundaries only (after an upload,
+// after a downloaded note is saved) — never by local edits, etag-only updates
+// or a backup restore. Kept while a note sits in the trash; removed together
+// with the note's content record on every path that finally drops it.
+
+/**
+ * Read a note's merge baseline.
+ * @returns {Promise<string|null>} null when there is none, or when it is encrypted
+ *   and the app is locked (the merge then falls back to the baseline-less path)
+ */
+export async function getNoteBase(noteId) {
+  const row = await db.get("noteBase", noteId);
+  if (!row) return null;
+  if (!row.encrypted) return typeof row.content === "string" ? row.content : null;
+
+  const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+  if (!isAppUnlocked()) return null;
+  const { decryptObject } = await import("./encryption.js");
+  try {
+    const text = await decryptObject(row.content, getEncryptionKey());
+    return typeof text === "string" ? text : null;
+  } catch (e) {
+    console.warn("[Storage] Could not decrypt merge baseline for", noteId, e);
+    return null;
+  }
+}
+
+/**
+ * Record the text the server now holds for a note. A baseline that cannot be
+ * stored safely (encryption on but the app locked) is removed instead: a stale
+ * one would make the next merge treat unrelated differences as edits.
+ */
+export async function setNoteBase(noteId, content) {
+  if (typeof content !== "string") return;
+  try {
+    if (!(await isLocalEncryptionEnabled())) {
+      await db.put("noteBase", { id: noteId, content, encrypted: false });
+      return;
+    }
+    const { getEncryptionKey, isAppUnlocked } = await import("./masterPassword.js");
+    if (!isAppUnlocked()) {
+      await db.delete("noteBase", noteId);
+      return;
+    }
+    const { encryptObject } = await import("./encryption.js");
+    await db.put("noteBase", {
+      id: noteId,
+      content: await encryptObject(content, getEncryptionKey()),
+      encrypted: true,
+    });
+  } catch (e) {
+    console.warn("[Storage] Could not store merge baseline for", noteId, e);
+    await db.delete("noteBase", noteId).catch(() => {});
+  }
+}
+
+export async function deleteNoteBase(noteId) {
+  await db.delete("noteBase", noteId);
+}
+
+/** Safety net: drop baselines whose note is gone or reduced to a purge stub. */
+async function _sweepOrphanedNoteBases() {
+  const ids = await db.getAllKeys("noteBase");
+  const indexes = await Promise.all(ids.map((id) => db.get("notes", id)));
+  const orphans = ids.filter((_, i) => !indexes[i] || indexes[i].purged);
+  await Promise.all(orphans.map((id) => db.delete("noteBase", id)));
+}
+
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
 export async function getSetting(key) {
@@ -862,13 +988,33 @@ export async function updateNoteEtag(noteId, etag, expectedModified) {
   await db.put("notes", note);
 }
 
+/**
+ * Give up a note's unsynced local changes: the next sync treats the note as
+ * clean but out of date, so the server's version replaces it (or, if the owner
+ * purged the note meanwhile, the local copy is dropped). Used for changes a
+ * shared notebook no longer allows to be saved.
+ */
+export async function discardLocalChanges(noteId) {
+  const note = await db.get("notes", noteId);
+  if (!note) return;
+  note.synced = true;
+  note.lastSyncedEtag = null;
+  delete note.restoredAt;
+  await db.put("notes", note);
+}
+
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
+/**
+ * Counts of what the user owns. Notebooks shared with them, and the notes in
+ * those, belong to their owners and are not counted.
+ */
 export async function getStorageStats() {
-  const notebooks = await getAllNotebooks();
-  const notes = await getAllNotes();
+  const allNotebooks = await getAllNotebooks();
+  const sharedIds = new Set(allNotebooks.filter(isShared).map((n) => n.id));
+  const notes = (await getAllNotes()).filter((n) => !sharedIds.has(n.notebookId));
   return {
-    notebookCount: notebooks.length,
+    notebookCount: allNotebooks.length - sharedIds.size,
     noteCount: notes.length,
     quickNoteCount: notes.filter((n) => !n.notebookId).length,
   };
@@ -902,6 +1048,7 @@ export async function clearAllData() {
     db.clear("notebooks"),
     db.clear("notes"),
     db.clear("noteContent"),
+    db.clear("noteBase"),
     db.clear("files"),
     db.clear("settings"),
   ]);
@@ -918,6 +1065,7 @@ export async function purgeLocalData() {
     db.clear("notebooks"),
     db.clear("notes"),
     db.clear("noteContent"),
+    db.clear("noteBase"),
     db.clear("files"),
   ]);
 

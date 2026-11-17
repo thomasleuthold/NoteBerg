@@ -15,8 +15,19 @@
  *   /NoteBerg/quickNotes/_tombstones.json
  */
 
+import { perfAsync } from "../utils/perfMonitor.js";
 import { extFromMime, mimeFromExt } from "./mime.js";
+import { getSessionUid } from "./nextcloudSession.js";
+import { createDavOps as createSharingDavOps } from "./sharing/davOps.js";
+import { isSharingEnabled, SHARING_PREF_EVENT } from "./sharing/enabled.js";
+import * as ocs from "./sharing/nextcloudShares.js";
+import { stripLocalFields } from "./sharing/notebookShareFields.js";
+import { createSharedRegistry } from "./sharing/sharedRegistry.js";
+import { guardOwnRoot } from "./sharing/sharedRoots.js";
+import { assertEditable, assertManageable } from "./sharing/shareRestrictions.js";
 import {
+  davHrefToPath,
+  encodeDavPath,
   getAllRequiredFolders,
   getGlobalNotebookTombstonePath,
   getMediaPath,
@@ -27,6 +38,7 @@ import {
   getNoteMediaFolder,
   getNotePath,
   getQuickNotesTombstonePath,
+  isSafeId,
   ROOT_FOLDER,
 } from "./storagePaths.js";
 import {
@@ -36,11 +48,12 @@ import {
   cleanupOldTombstones,
   createEmptyTombstone,
 } from "./tombstones.js";
+import { runNoteFileOp } from "./workers/noteFileClient.js";
 
 // ─── Tombstone helpers ─────────────────────────────────────────────────────────
 
 async function _readTombstoneWithEtag(path) {
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+  const res = await fetch(davUrl(path), {
     headers: {
       "OCS-APIREQUEST": "true",
       requesttoken: window.OC?.requestToken || "",
@@ -152,18 +165,41 @@ function _invalidateReadCache(path) {
 // ─── WebDAV helpers ────────────────────────────────────────────────────────────
 
 function getWebDAVBase() {
-  const uid = window.OC?.currentUser || window.OC?.getCurrentUser?.()?.uid;
+  const uid = getSessionUid();
   if (!uid) {
     // Never guess a uid — a wrong fallback would aim requests at another
     // user's DAV root. Failing loudly is the safe behavior.
     throw new Error("[WebDAV] Nextcloud user not available (window.OC missing)");
   }
   const webroot = window.OC?.webroot || "";
-  return `${webroot}/remote.php/dav/files/${uid}`;
+  return `${webroot}/remote.php/dav/files/${encodeURIComponent(uid)}`;
 }
 
-async function davGet(path) {
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+/** The WebDAV URL of a path in the user's file tree (see encodeDavPath). */
+function davUrl(path) {
+  return `${getWebDAVBase()}${encodeDavPath(path)}`;
+}
+
+/**
+ * The bare etag of a response: quotes, the weak marker and the "-gzip" / "-br"
+ * suffix web servers append to a compressed body are removed. Without that last
+ * step a GET's etag never matches the file's real one, and every If-Match
+ * built from it fails with 412.
+ */
+export function bareEtag(value) {
+  return value
+    ?.replace(/^W\//, "")
+    .replace(/"/g, "")
+    .replace(/-(gzip|br|deflate)$/, "");
+}
+
+function _responseEtag(res) {
+  return bareEtag(res.headers?.get?.("etag")) || bareEtag(res.headers?.get?.("oc-etag")) || null;
+}
+
+/** GET a JSON document with its etag; null when it does not exist (or is unreadable). */
+async function davGetEntry(path) {
+  const res = await fetch(davUrl(path), {
     headers: {
       "OCS-APIREQUEST": "true",
       requesttoken: window.OC?.requestToken || "",
@@ -174,17 +210,50 @@ async function davGet(path) {
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`DAV GET ${path} failed: ${res.status}`);
   try {
-    return await res.json();
+    return { data: await res.json(), etag: _responseEtag(res) };
   } catch (e) {
     console.error(`[WebDAV] JSON parse failed for ${path}:`, e);
     return null;
   }
 }
 
+async function davGet(path) {
+  return (await davGetEntry(path))?.data ?? null;
+}
+
+const LISTING_RETRY_MS = 300;
+
+/**
+ * Read the JSON files of a listing. A file that cannot be read right now is
+ * tried once more: Nextcloud answers 423 Locked while a file is being written,
+ * e.g. the last save of a note that was just closed, and a write into someone
+ * else's share holds the lock longer. A listing still missing a file is
+ * `complete: false` and must not be cached, or the file would stay out of view
+ * for the cache's lifetime. A file that does not exist (404) is simply absent.
+ * @returns {Promise<{items: Array<object|null>, complete: boolean}>}
+ */
+async function _readListing(paths) {
+  const read = (path) =>
+    davGet(path).then(
+      (data) => ({ data }),
+      (error) => ({ error }),
+    );
+  const results = await Promise.all(paths.map(read));
+  if (results.some((r) => r.error)) {
+    await new Promise((resolve) => setTimeout(resolve, LISTING_RETRY_MS));
+    for (const [i, result] of results.entries()) {
+      if (result.error) results[i] = await read(paths[i]);
+    }
+  }
+  const failed = results.filter((r) => r.error);
+  for (const { error } of failed) console.warn("[WebDAV] Listing left out a file:", error.message);
+  return { items: results.map((r) => r.data ?? null), complete: failed.length === 0 };
+}
+
 async function davPutWithRetry(path, options, retries = 3) {
   for (let i = 0; i < retries; i++) {
-    const res = await fetch(`${getWebDAVBase()}${path}`, options);
-    if (res.ok) return;
+    const res = await fetch(davUrl(path), options);
+    if (res.ok) return res;
     // 423 Locked — Nextcloud file lock, wait and retry
     if (res.status === 423 && i < retries - 1) {
       await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
@@ -198,19 +267,28 @@ async function davPutWithRetry(path, options, retries = 3) {
   }
 }
 
+/** PUT a JSON document. @returns {Promise<string|null>} the new etag, when the server sent one */
 async function davPut(path, data, extraHeaders = {}) {
   _invalidateReadCache(path);
-  await davPutWithRetry(path, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      "OCS-APIREQUEST": "true",
-      requesttoken: window.OC?.requestToken || "",
-      ...extraHeaders,
-    },
-    credentials: "same-origin",
-    body: JSON.stringify(data),
-  });
+  try {
+    const res = await davPutWithRetry(path, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "OCS-APIREQUEST": "true",
+        requesttoken: window.OC?.requestToken || "",
+        ...extraHeaders,
+      },
+      credentials: "same-origin",
+      body: JSON.stringify(data),
+    });
+    return _responseEtag(res);
+  } finally {
+    // Again once the write is over: a listing read while it was in flight (the
+    // notebook view renders as soon as a note closes, during its last saves)
+    // holds the file as it was, or not at all, and must not be served afterwards
+    _invalidateReadCache(path);
+  }
 }
 
 async function davPutBinary(path, blob) {
@@ -228,7 +306,7 @@ async function davPutBinary(path, blob) {
 
 async function davDelete(path) {
   _invalidateReadCache(path);
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+  const res = await fetch(davUrl(path), {
     method: "DELETE",
     headers: {
       "OCS-APIREQUEST": "true",
@@ -241,7 +319,7 @@ async function davDelete(path) {
 }
 
 async function davGetBinary(path) {
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+  const res = await fetch(davUrl(path), {
     headers: {
       "OCS-APIREQUEST": "true",
       requesttoken: window.OC?.requestToken || "",
@@ -254,7 +332,7 @@ async function davGetBinary(path) {
 }
 
 async function davExists(path) {
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+  const res = await fetch(davUrl(path), {
     method: "PROPFIND",
     headers: {
       Depth: "0",
@@ -268,7 +346,7 @@ async function davExists(path) {
 
 async function davMkcol(path) {
   if (_knownFolders.has(path)) return; // already confirmed to exist
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+  const res = await fetch(davUrl(path), {
     method: "MKCOL",
     headers: {
       "OCS-APIREQUEST": "true",
@@ -289,10 +367,10 @@ async function _davMoveOrCopy(method, from, to) {
   // Full clear: this touches two locations and may relocate a whole subtree,
   // so the affected listings are not derivable from a single path.
   _invalidateReadCache();
-  const res = await fetch(`${getWebDAVBase()}${from}`, {
+  const res = await fetch(davUrl(from), {
     method,
     headers: {
-      Destination: `${getWebDAVBase()}${to}`,
+      Destination: davUrl(to),
       Overwrite: "T",
       "OCS-APIREQUEST": "true",
       requesttoken: window.OC?.requestToken || "",
@@ -316,7 +394,7 @@ async function davCopy(from, to) {
 
 /** PROPFIND a directory, returns array of child filenames (not the dir itself) */
 async function davList(path) {
-  const res = await fetch(`${getWebDAVBase()}${path}`, {
+  const res = await fetch(davUrl(path), {
     method: "PROPFIND",
     headers: {
       Depth: "1",
@@ -332,23 +410,112 @@ async function davList(path) {
   const text = await res.text();
   const parser = new DOMParser();
   const doc = parser.parseFromString(text, "application/xml");
-  const hrefs = [...doc.querySelectorAll("response href")].map((el) => el.textContent.trim());
-  const _base = `/remote.php/dav/files/`;
-  return hrefs
-    .map((h) => {
-      // strip base + uid prefix, decode
-      const idx = h.indexOf(ROOT_FOLDER);
-      return idx >= 0 ? decodeURIComponent(h.slice(idx)) : null;
-    })
-    .filter(Boolean)
-    .filter((p) => p !== path && p !== `${path}/`); // exclude the dir itself
+  // By local name: the server's XML is prefixed (d:href), the tests' is not
+  const hrefs = [...doc.getElementsByTagNameNS("*", "href")].map((el) => el.textContent.trim());
+  return hrefs.map(davHrefToPath).filter((p) => p !== path && p !== `${path}/`); // exclude the dir itself
+}
+
+// ─── Notebooks shared with this user ──────────────────────────────────────────
+// Registrations live in memory (this build persists nothing) and are rebuilt
+// from the server; see sharing/sharedRegistry.js. Off until sharing is released.
+
+/**
+ * File operations the sharing module needs, over the session cookie. Their
+ * semantics are shared with the native build (sharing/davOps.js).
+ */
+function createDavOps() {
+  return createSharingDavOps({
+    request(method, path, { headers = {}, body, destination } = {}) {
+      // A move relocates whole subtrees: no cached listing survives it
+      if (method === "MOVE") _invalidateReadCache();
+      return fetch(davUrl(path), {
+        method,
+        headers: {
+          "OCS-APIREQUEST": "true",
+          requesttoken: window.OC?.requestToken || "",
+          "Cache-Control": "no-cache",
+          ...(destination ? { Destination: davUrl(destination) } : {}),
+          ...headers,
+        },
+        body,
+        credentials: "same-origin",
+      });
+    },
+    mkcol: (path) => davMkcol(path),
+  });
+}
+
+let _registry = null;
+let _visibilityHooked = false;
+
+// Switched on or off in Settings: the notebook list must be read again, and off,
+// the registry is forgotten or notebooks shared with the user would go on
+// resolving from it
+window.addEventListener(SHARING_PREF_EVENT, (event) => {
+  if (!event.detail?.enabled) _registry = null;
+  _invalidateReadCache();
+});
+
+/** The registry of shared notebooks, or null while sharing is switched off. */
+function getSharedRegistry() {
+  if (!isSharingEnabled()) return null;
+  if (!_registry) {
+    _registry = createSharedRegistry({
+      dav: createDavOps(),
+      ocs,
+      getOwnNotebooks: _listOwnNotebooks,
+      onChange: () => {
+        _invalidateReadCache();
+        window.dispatchEvent(new CustomEvent("datachange"));
+      },
+    });
+    // Coming back to the tab is when a share is most likely to have changed
+    if (!_visibilityHooked) {
+      _visibilityHooked = true;
+      // Reads the current registry: it is null while sharing is switched off
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible")
+          _registry?.refresh({ force: true }).catch(() => {});
+      });
+    }
+  }
+  return _registry;
+}
+
+/** Whether a notebook id is one shared with this user. */
+function isSharedNotebook(notebookId) {
+  return Boolean(notebookId && _registry?.isShared(notebookId));
+}
+
+/**
+ * The record of a notebook shared with this user (permissions as granted), or
+ * null for an own notebook, a quick note, or an id that is not registered.
+ * Notebooks shared with the user are the owner's: see shareRestrictions.js.
+ */
+function sharedRecord(notebookId) {
+  return notebookId ? (_registry?.get(notebookId) ?? null) : null;
+}
+
+/**
+ * A write into a shared notebook that the server refuses with 403/404 may mean
+ * the share ended or was moved: look again, so the registry stops resolving it
+ * (an ended share's paths throw instead of falling back to the own tree).
+ */
+async function _checkShareAfterFailedWrite(notebookId, error) {
+  // 409: the folder the write belongs in is gone
+  if ([403, 404, 409].includes(error?.status)) await _lookAgainAtShare(notebookId);
+}
+
+/** Re-check the shares if `notebookId` is one shared with this user. */
+async function _lookAgainAtShare(notebookId) {
+  if (isSharedNotebook(notebookId)) await _registry.refresh({ force: true }).catch(() => {});
 }
 
 // ─── IndexedDB stubs (referenced by StorageWorker which is disabled in NC build) ─
 // Kept in step with storage.js so the two builds cannot disagree about a schema
 // neither of them opens here — the NC build has no IndexedDB at all.
 export const DB_NAME = "NoteBerg";
-export const DB_VERSION = 5;
+export const DB_VERSION = 6;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -358,8 +525,44 @@ const _knownFolders = new Set();
 
 const _INIT_KEY = "noteberg_webdav_initialized";
 
+/**
+ * Make sure /NoteBerg is the user's own, while sharing is on: a folder shared to
+ * them would otherwise become their storage. A root that cannot be verified
+ * throws. A foreign root is moved aside and an own one created in its place.
+ * @returns {Promise<{moved: boolean, to?: string}>}
+ */
+async function _guardOwnRoot() {
+  if (!getSharedRegistry()) return { moved: false };
+  return guardOwnRoot({ dav: createDavOps(), uid: getSessionUid(), ocs });
+}
+
+/**
+ * Sharing was just switched on in Settings, mid-session: the check initStorage()
+ * makes at load, now. If the root had to be moved, the folders of the own tree
+ * are created again.
+ * @returns {Promise<{moved: boolean, to?: string}>}
+ */
+export async function guardRootForSharing() {
+  const result = await _guardOwnRoot();
+  if (result.moved) {
+    _knownFolders.clear();
+    localStorage.removeItem(_INIT_KEY);
+    for (const folder of getAllRequiredFolders()) {
+      await davMkcol(folder);
+    }
+    localStorage.setItem(_INIT_KEY, "1");
+    _invalidateReadCache();
+  }
+  return result;
+}
+
 export async function initStorage() {
   if (_initialized) return;
+  // Before anything is read from or written to /NoteBerg: it must be the user's.
+  // A folder shared to them before their first visit would otherwise become
+  // their storage. A root that cannot be verified stops the app from loading.
+  await _guardOwnRoot();
+  const registry = getSharedRegistry();
   // Always verify root folder exists before trusting the localStorage flag.
   // The flag is an optimisation to skip MKCOL on every load, but if the folder
   // was deleted (uninstall, manual cleanup) we must recreate it.
@@ -379,6 +582,7 @@ export async function initStorage() {
     }
   }
   _initialized = true;
+  if (registry) await registry.refresh({ force: true });
   console.log("Storage initialized (WebDAV)");
 }
 
@@ -491,6 +695,16 @@ export async function clearRecognitionJobs() {
 
 // ─── Notebook operations ──────────────────────────────────────────────────────
 
+/** Write a notebook file. Local-only sharing fields never leave the browser. */
+async function _putNotebook(notebook) {
+  try {
+    await davPut(getNotebookPath(notebook.id), stripLocalFields(notebook));
+  } catch (error) {
+    await _checkShareAfterFailedWrite(notebook.id, error);
+    throw error;
+  }
+}
+
 export async function createNotebook({ title, description = "", color = "#3b82f6" }) {
   const notebook = {
     id: generateId(),
@@ -504,7 +718,7 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
   };
   await davMkcol(getNotebookFolder(notebook.id));
   await davMkcol(getNotebookNotesFolder(notebook.id));
-  await davPut(getNotebookPath(notebook.id), notebook);
+  await _putNotebook(notebook);
   console.log("Notebook created:", notebook.id);
   window.dispatchEvent(
     new CustomEvent("notebook-created", { detail: { notebookId: notebook.id } }),
@@ -512,20 +726,78 @@ export async function createNotebook({ title, description = "", color = "#3b82f6
   return notebook;
 }
 
-async function _getAllNotebooksRaw() {
-  const cached = _cacheGet("notebooks");
-  if (cached) return cached;
+/** The notebooks in the user's own tree. */
+async function _listOwnNotebooks() {
+  return (await _readOwnNotebooks()).notebooks;
+}
 
+/** The own notebooks, and whether every one of them could be read. */
+async function _readOwnNotebooks() {
   const paths = await davList(`${ROOT_FOLDER}/notebooks`);
   const notebookIds = paths
     .filter((p) => !p.endsWith(".json")) // exclude _tombstones.json
     .map((p) => p.replace(/\/$/, "").split("/").pop())
     .filter(Boolean);
 
-  const notebooks = await Promise.all(
-    notebookIds.map((id) => davGet(getNotebookPath(id)).catch(() => null)),
+  const { items, complete } = await _readListing(notebookIds.map((id) => getNotebookPath(id)));
+  return { notebooks: items.filter(Boolean), complete };
+}
+
+/** The notebooks shared with this user, read from the owners' folders. */
+async function _listSharedNotebooks(registry) {
+  const records = registry.list();
+  const { items, complete } = await _readListing(
+    records.map((record) => `${record.remoteBasePath}/_notebook.json`),
   );
-  return _cacheSet("notebooks", notebooks.filter(Boolean));
+  const notebooks = items
+    .map((file, i) => _genuineSharedNotebook(file, records[i].id))
+    .filter(Boolean)
+    .map((file) => registry.annotate(file));
+  return { notebooks, complete };
+}
+
+/**
+ * A notebook file read from a share, or null unless it describes the notebook it
+ * is registered as. Another user wrote it: one claiming a different id would be
+ * listed without its sharing fields, i.e. as if it were the user's own.
+ */
+function _genuineSharedNotebook(file, notebookId) {
+  if (!file) return null;
+  if (file.id === notebookId) return file;
+  console.warn(`[WebDAV] Ignoring shared notebook file claiming id ${JSON.stringify(file.id)}`);
+  return null;
+}
+
+/**
+ * Whether a note file is the note it is stored as. Always true in the user's own
+ * tree; in a notebook shared with them another user wrote it, and one claiming a
+ * different id or notebook would stand in for one of the user's own notes (reads
+ * and saves of that note would go to the share).
+ */
+function _isGenuineNote(note, noteId, notebookId) {
+  if (!isSharedNotebook(notebookId)) return true;
+  if (isSafeId(note?.id) && note.id === noteId && (note.notebookId ?? null) === notebookId) {
+    return true;
+  }
+  console.warn(`[WebDAV] Ignoring shared note file ${noteId}.json: id or notebook mismatch`);
+  return false;
+}
+
+async function _getAllNotebooksRaw() {
+  const registry = getSharedRegistry();
+  // At most once a minute; a failure just leaves the registrations as they were
+  if (registry) await registry.refresh().catch(() => {});
+
+  const cached = _cacheGet("notebooks");
+  if (cached) return cached;
+
+  const own = await _readOwnNotebooks();
+  const shared = registry
+    ? await _listSharedNotebooks(registry)
+    : { notebooks: [], complete: true };
+  const notebooks = [...own.notebooks, ...shared.notebooks];
+  // A list missing a notebook that could not be read is not kept
+  return own.complete && shared.complete ? _cacheSet("notebooks", notebooks) : notebooks;
 }
 
 export async function getAllNotebooks() {
@@ -534,19 +806,24 @@ export async function getAllNotebooks() {
 }
 
 export async function getNotebook(id) {
-  return davGet(getNotebookPath(id));
+  const notebook = await davGet(getNotebookPath(id));
+  if (!notebook || !isSharedNotebook(id)) return notebook;
+  // A shared notebook carries this user's sharing fields (in memory only)
+  const genuine = _genuineSharedNotebook(notebook, id);
+  return genuine && _registry.annotate(genuine);
 }
 
 export async function updateNotebook(id, updates) {
   const notebook = await getNotebook(id);
   if (!notebook) throw new Error("Notebook not found");
+  assertEditable(sharedRecord(id), "updateNotebook");
   const updated = {
     ...notebook,
     ...updates,
     modified: Date.now(),
     version: (notebook.version || 0) + 1,
   };
-  await davPut(getNotebookPath(id), updated);
+  await _putNotebook(updated);
   console.log("Notebook updated:", id);
   return updated;
 }
@@ -558,8 +835,14 @@ export async function deleteNotebook(id) {
   // permanentlyDeleteNotebook().
   const notebook = await getNotebook(id);
   if (!notebook) throw new Error("Notebook not found");
-  const updated = { ...notebook, deleted: true, modified: Date.now() };
-  await davPut(getNotebookPath(id), updated);
+  assertManageable(sharedRecord(id), "deleteNotebook");
+  const updated = {
+    ...notebook,
+    deleted: true,
+    modified: Date.now(),
+    version: (notebook.version || 0) + 1,
+  };
+  await _putNotebook(updated);
 
   // Soft-delete all notes in this notebook
   const notes = await getNotesByNotebook(id);
@@ -571,19 +854,27 @@ export async function deleteNotebook(id) {
 }
 
 export async function getDeletedNotebooks() {
+  // Recipients have no trash for notebooks that are not theirs
   const notebooks = await _getAllNotebooksRaw();
-  return notebooks.filter((n) => n.deleted);
+  return notebooks.filter((n) => n.deleted && n.origin !== "shared");
 }
 
 export async function restoreNotebook(id) {
   const notebook = await getNotebook(id);
   if (!notebook) throw new Error("Notebook not found");
-  const updated = { ...notebook, deleted: false, modified: Date.now() };
-  await davPut(getNotebookPath(id), updated);
+  assertManageable(sharedRecord(id), "restoreNotebook");
+  const updated = {
+    ...notebook,
+    deleted: false,
+    modified: Date.now(),
+    version: (notebook.version || 0) + 1,
+  };
+  await _putNotebook(updated);
   return updated;
 }
 
 export async function permanentlyDeleteNotebook(id) {
+  assertManageable(sharedRecord(id), "purgeNotebook");
   // Write global notebook tombstone before deleting the folder
   await _updateTombstone(getGlobalNotebookTombstonePath(), (t) => addNotebookTombstone(t, id));
   await davDelete(getNotebookFolder(id));
@@ -592,6 +883,7 @@ export async function permanentlyDeleteNotebook(id) {
 // ─── Note operations ──────────────────────────────────────────────────────────
 
 export async function createNote({ title, notebookId = null }) {
+  assertEditable(sharedRecord(notebookId), "createNote");
   const note = {
     id: generateId(),
     notebookId,
@@ -621,7 +913,12 @@ export async function createNote({ title, notebookId = null }) {
   return note;
 }
 
-async function _putNote(note) {
+/**
+ * Write a note file. With `ifMatch` the PUT is conditional, so a concurrent
+ * writer surfaces as a 412 instead of being silently overwritten.
+ * @returns {Promise<string|null>} the new etag, when the server sent one
+ */
+async function _putNote(note, ifMatch = null) {
   const path = getNotePath(note.id, note.notebookId);
   // Ensure notes folder exists (for quick notes or new notebooks)
   if (note.notebookId) {
@@ -629,7 +926,12 @@ async function _putNote(note) {
   } else {
     await davMkcol(`${ROOT_FOLDER}/quickNotes`);
   }
-  await davPut(path, note);
+  try {
+    return await davPut(path, note, ifMatch ? { "If-Match": `"${ifMatch}"` } : {});
+  } catch (error) {
+    await _checkShareAfterFailedWrite(note.notebookId, error);
+    throw error;
+  }
 }
 
 function _normalizeNote(note) {
@@ -649,27 +951,35 @@ function _normalizeNote(note) {
   return note;
 }
 
-export async function getNote(id) {
-  // We need to find which notebook the note belongs to — try quick notes first, then scan notebooks
-  // For efficiency, accept notebookId hint via a small in-memory cache populated on getAllNotes
+/** Locate a note (cached notebook hint first, then a scan) and return its file entry. */
+async function _readNoteEntry(id) {
   const cached = _notePathCache.get(id);
-  let note;
+  let entry = null;
   if (cached !== undefined) {
-    note = await davGet(getNotePath(id, cached));
-    if (note) {
-      _normalizeNote(note);
-      await _cacheFileLocations(note);
-    }
+    entry = await davGetEntry(getNotePath(id, cached));
+    if (entry && !_isGenuineNote(entry.data, id, cached)) entry = null;
   }
-  if (!note) {
-    // Scan all notebooks
-    note = await _findNote(id);
-    if (note) {
-      _normalizeNote(note);
-      await _cacheFileLocations(note);
-    }
-  }
-  return note;
+  if (!entry) entry = await _findNoteEntry(id);
+  if (!entry) return null;
+  _normalizeNote(entry.data);
+  await _cacheFileLocations(entry.data);
+  return entry;
+}
+
+/**
+ * @param {string} id
+ * @param {{track?: boolean}} [options] - the editor is loading this note: from now on
+ *   saves are measured against what it was just given. Every other reader (recognition,
+ *   search, live updates) must not move that mark, or a save would believe nobody else
+ *   had written since and overwrite their changes instead of merging.
+ */
+export async function getNote(id, { track = false } = {}) {
+  const entry = await _readNoteEntry(id);
+  if (!entry) return null;
+  if (track) _trackLoadedNote(id, entry);
+  else if (!_noteSync.has(id))
+    _trackNote(id, { etag: entry.etag, base: entry.data.content ?? "", needsMerge: false });
+  return entry.data;
 }
 
 async function _cacheFileLocations(note) {
@@ -725,9 +1035,9 @@ export async function getRawNote(id) {
 // Cache: noteId → notebookId (null for quick notes)
 const _notePathCache = new Map();
 
-async function _findNote(id) {
+async function _findNoteEntry(id) {
   // Try quick notes
-  const qn = await davGet(getNotePath(id, null));
+  const qn = await davGetEntry(getNotePath(id, null));
   if (qn) {
     _notePathCache.set(id, null);
     return qn;
@@ -735,10 +1045,10 @@ async function _findNote(id) {
   // Try all notebooks
   const notebooks = await getAllNotebooks();
   for (const nb of notebooks) {
-    const note = await davGet(getNotePath(id, nb.id));
-    if (note) {
+    const entry = await davGetEntry(getNotePath(id, nb.id));
+    if (entry && _isGenuineNote(entry.data, id, nb.id)) {
       _notePathCache.set(id, nb.id);
-      return note;
+      return entry;
     }
   }
   return null;
@@ -771,14 +1081,19 @@ async function _getNotesInFolder(folder, notebookId) {
   if (!notes) {
     const paths = await davList(folder);
     const noteFiles = paths.filter((p) => p.endsWith(".json") && !p.includes("_tombstones"));
-    const fetched = await Promise.all(noteFiles.map((p) => davGet(p).catch(() => null)));
-    notes = _cacheSet(
-      `notes:${folder}`,
-      fetched.filter(Boolean).map((n) => {
+    const { items, complete } = await _readListing(noteFiles);
+    const read = items
+      .filter((note, i) => {
+        const fileId = noteFiles[i].slice(noteFiles[i].lastIndexOf("/") + 1, -".json".length);
+        return note && _isGenuineNote(note, fileId, notebookId);
+      })
+      .map((n) => {
         delete n.thumbnail;
         return n;
-      }),
-    );
+      });
+    // A listing missing a note that could not be read is not kept: the next
+    // look reads the folder again instead of hiding the note until it expires
+    notes = complete ? _cacheSet(`notes:${folder}`, read) : read;
   }
   for (const n of notes) {
     _notePathCache.set(n.id, notebookId);
@@ -815,6 +1130,48 @@ function _enqueueWrite(id, fn) {
   return next;
 }
 
+// ─── Concurrent writers ───────────────────────────────────────────────────────
+// A note is one JSON file and every save is read-modify-write, so two people
+// (or two tabs) editing the same note would silently replace each other's
+// strokes and text. Each save therefore remembers what this client last saw of
+// the file; if the server's copy moved on, the save is merged with it instead of
+// replacing it (noteMerge.js), and the PUT carries If-Match so a write that
+// races the merge is retried rather than lost. With a single writer nothing
+// differs from a plain overlay.
+//
+// Per-note, in memory only — the NC build persists nothing locally:
+//   etag       the file's etag as of our last read or write
+//   base       the text this client's editor last sent: the common ancestor of
+//              the next three-way text merge. It follows the editor's own
+//              lineage, not the merged file: the editor keeps showing its text
+//              until reloaded, so measuring its next save against the merged
+//              text would read the other side's additions as deletions.
+//   needsMerge set once a merge happened, until the editor has re-read the note:
+//              the editor's strokes do not yet include the other side's, so a
+//              plain overlay would drop them.
+
+const MAX_TRACKED_NOTES = 20;
+const _noteSync = new Map(); // noteId -> { etag, base, needsMerge }
+const MAX_WRITE_ATTEMPTS = 3;
+
+function _trackNote(id, patch) {
+  const next = { ..._noteSync.get(id), ...patch };
+  // Re-insert so the Map's iteration order is least- to most-recently used
+  _noteSync.delete(id);
+  _noteSync.set(id, next);
+  if (_noteSync.size > MAX_TRACKED_NOTES) _noteSync.delete(_noteSync.keys().next().value);
+}
+
+/** The editor loaded this note: everything it holds is exactly what the server had. */
+function _trackLoadedNote(id, entry) {
+  _trackNote(id, { etag: entry.etag, base: entry.data.content ?? "", needsMerge: false });
+}
+
+/** The request headers every WebDAV call of this app carries. */
+function _davHeaders() {
+  return { "OCS-APIREQUEST": "true", requesttoken: window.OC?.requestToken || "" };
+}
+
 /**
  * Read-merge-write a note and announce the change.
  *
@@ -822,25 +1179,98 @@ function _enqueueWrite(id, fn) {
  * stamped, how `version` is bumped, and the shape of the `datachange` payload.
  * Both writers below go through here so the two can never drift apart.
  *
+ * The GET, the merge with what the server holds and the PUT run in the
+ * note-file worker (noteFileOps.writeNote, review P4, 4.7): a note file is
+ * several MB once it holds thousands of strokes, and parsing, merging and
+ * serializing it here stalled writing at every save. This side keeps the
+ * bookkeeping: where the note lives, what was last read or written (_noteSync),
+ * the caches and the announcement.
+ *
  * Caller must already hold the per-note write queue (see _enqueueWrite): this
- * does an unguarded read-modify-write and would race otherwise.
+ * does a read-modify-write and would race with itself otherwise.
  *
  * @param {string} id - Note id
- * @param {Object} updates - Fields to merge into the note
- * @returns {Promise<Object>} The written note
+ * @param {Object} updates - Fields to merge into the note; `strokesPartial`
+ *   marks `strokes` as only the strokes the server has not confirmed
+ * @param {boolean} [relocated] - the note was looked for again after it moved
+ * @returns {Promise<Object>} the written note, without its strokes (they stay in
+ *   the worker: nobody who saves needs them back)
  */
-async function _applyNoteUpdate(id, updates) {
-  const existing = await getNote(id);
-  if (!existing) throw new Error("Note not found");
-  const updated = {
-    ...existing,
-    ...updates,
-    modified: Date.now(),
-    version: (existing.version || 0) + 1,
-  };
-  await _putNote(updated);
-  window.dispatchEvent(new CustomEvent("datachange", { detail: { noteId: id, source: "local" } }));
-  return updated;
+async function _applyNoteUpdate(id, updates, relocated = false) {
+  let notebookId = _notePathCache.get(id);
+  if (notebookId === undefined) {
+    // Where the note lives is not known yet: find it (one read here, once)
+    const entry = await _readNoteEntry(id);
+    if (!entry) {
+      await _lookAgainAtShare(_notePathCache.get(id));
+      throw new Error("Note not found");
+    }
+    notebookId = _notePathCache.get(id) ?? entry.data.notebookId ?? null;
+  }
+  assertEditable(sharedRecord(notebookId), "updateNote");
+  const path = getNotePath(id, notebookId);
+  const folder = notebookId ? getNotebookNotesFolder(notebookId) : `${ROOT_FOLDER}/quickNotes`;
+  const createFolder = !_knownFolders.has(folder);
+  const known = _noteSync.get(id);
+
+  _invalidateReadCache(path);
+  let result;
+  try {
+    result = await perfAsync("note write (worker)", () =>
+      runNoteFileOp("writeNote", {
+        url: davUrl(path),
+        folderUrl: createFolder ? davUrl(folder) : null,
+        headers: _davHeaders(),
+        id,
+        notebookId,
+        shared: isSharedNotebook(notebookId),
+        updates,
+        known: known ? { etag: known.etag, base: known.base, needsMerge: known.needsMerge } : null,
+        uid: getSessionUid(),
+        maxAttempts: MAX_WRITE_ATTEMPTS,
+      }),
+    );
+  } finally {
+    // Again once the write is over: a listing read while it was in flight holds
+    // the file as it was, and must not be served afterwards (see davPut)
+    _invalidateReadCache(path);
+  }
+
+  if (result.status === "notFound" || result.status === "notGenuine") {
+    // Moved meanwhile (or no longer the file it was): look for it once more
+    _notePathCache.delete(id);
+    if (!relocated && (await _readNoteEntry(id))) return _applyNoteUpdate(id, updates, true);
+    // A note of a shared notebook that cannot be found any more may mean the share ended
+    await _lookAgainAtShare(notebookId);
+    throw new Error("Note not found");
+  }
+  if (result.status === "unreadable") throw new Error(`Note ${id} could not be read`);
+  if (result.status !== "ok") {
+    const error = new Error(`DAV ${result.op ?? "GET"} ${path} failed: ${result.httpStatus}`);
+    error.status = result.httpStatus;
+    if (result.op === "PUT" || result.op === "MKCOL") {
+      await _checkShareAfterFailedWrite(notebookId, error);
+    }
+    throw error;
+  }
+
+  if (createFolder) _knownFolders.add(folder);
+  await _cacheFileLocations(result.files);
+  _trackNote(id, {
+    etag: result.etag,
+    // The editor's own text is the next ancestor; without one, what we wrote
+    base:
+      typeof updates.content === "string" ? updates.content : (known?.base ?? result.note.content),
+    needsMerge: result.merging,
+  });
+  window.dispatchEvent(
+    new CustomEvent("datachange", {
+      // A merge brought in changes the open editor has not seen: not "local",
+      // or the editor would ignore the event instead of adopting them.
+      detail: { noteId: id, source: result.someoneElseWrote ? "merge" : "local" },
+    }),
+  );
+  return result.note;
 }
 
 export function updateNote(id, updates) {
@@ -920,8 +1350,152 @@ export function flushNoteWrites(id) {
   return _pendingCoalesced.get(id)?.promise ?? _writeQueues.get(id) ?? Promise.resolve();
 }
 
+// ─── Live updates of the open note ────────────────────────────────────────────
+// The editor looks now and then whether someone else saved the note it shows
+// (NoteCanvas/liveRefresh.js). Three steps, so that the look itself is one
+// small request and the tracking above stays true:
+//   1. remoteNoteChange(): one PROPFIND of the note file, compared with the etag
+//      tracked for it. Nothing is downloaded.
+//   2. readNoteForLiveUpdate(): only when it changed, the note itself.
+//   3. adoptRemoteNote(): the editor took that version in, so it is what this
+//      client's next save builds on. Called in the same synchronous step that
+//      takes it in, after noteSyncUnchanged() said no save of ours came between:
+//      a save measured against the old etag would merge needlessly, and one that
+//      overlays a version the editor has not taken in would drop its strokes.
+
+/** A save of this note is queued or under way. */
+function _isWritePending(id) {
+  return _writeQueues.has(id) || _pendingCoalesced.has(id);
+}
+
+/**
+ * Whether the server's copy of a note moved on since this client last read or
+ * wrote it.
+ * @returns {Promise<string|null>} the tracked etag it was measured against when
+ *   the file changed; null when it did not, when that cannot be told, or while a
+ *   save of ours is under way (that save merges with whatever it finds)
+ */
+export async function remoteNoteChange(id) {
+  // Why a look found nothing, at debug level (the console's "Verbose" filter):
+  // a look runs every few seconds while a note is open
+  const nothing = (reason) => {
+    console.debug(`[WebDAV] Live check of ${id}: ${reason}`);
+    return null;
+  };
+  const known = _noteSync.get(id)?.etag;
+  const notebookId = _notePathCache.get(id);
+  if (!known) return nothing("no etag tracked for the note");
+  if (notebookId === undefined) return nothing("the note's location is not known");
+  if (_isWritePending(id)) return nothing("a save of ours is under way");
+  let path;
+  try {
+    path = getNotePath(id, notebookId);
+  } catch {
+    return nothing("its share has ended");
+  }
+  const res = await fetch(davUrl(path), {
+    method: "PROPFIND",
+    headers: {
+      Depth: "0",
+      "Content-Type": "application/xml",
+      "OCS-APIREQUEST": "true",
+      requesttoken: window.OC?.requestToken || "",
+      "Cache-Control": "no-cache",
+    },
+    credentials: "same-origin",
+    body: `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>`,
+  });
+  if (!res.ok && res.status !== 207) return nothing(`PROPFIND answered ${res.status}`);
+  const xml = await res.text();
+  const raw = xml.match(/<(?:[\w-]+:)?getetag[^>]*>([^<]*)</i)?.[1];
+  const etag = bareEtag(raw?.replace(/&quot;/g, '"').trim());
+  if (!etag) return nothing("PROPFIND sent no etag");
+  if (etag === known) return nothing(`unchanged (${etag})`);
+  if (_isWritePending(id)) return nothing("a save of ours started meanwhile");
+  console.debug(`[WebDAV] Live check of ${id}: changed (${known} -> ${etag})`);
+  return known;
+}
+
+/** True while nothing of ours was saved or queued since `etag` was tracked for the note. */
+export function noteSyncUnchanged(id, etag) {
+  return _noteSync.get(id)?.etag === etag && !_isWritePending(id);
+}
+
+/**
+ * The note as the server holds it now, with its etag, for the editor to take in.
+ * Moves no tracking: see adoptRemoteNote().
+ * @returns {Promise<{note: object, etag: string|null}|null>}
+ */
+export async function readNoteForLiveUpdate(id) {
+  const entry = await _readNoteEntry(id);
+  return entry ? { note: entry.data, etag: entry.etag } : null;
+}
+
+/**
+ * The open note as the server holds it, taken in against what the editor holds
+ * (`view`, liveTakeIn.js) in the note-file worker: the note is read, parsed and
+ * merged there, and only the delta comes back (review P4, 4.7). With `text`
+ * ({baseline, editorText}), the editor's text is merged with the server's too.
+ * Moves no tracking: see adoptRemoteNote().
+ * @returns {Promise<{delta: object, etag: string|null, text: object|null}|null>}
+ */
+export async function takeInStoredNote(id, view, text = null) {
+  const request = _noteFileRequest(id);
+  if (!request) return null;
+  const result = await perfAsync("live take-in (worker)", () =>
+    runNoteFileOp("takeInNote", { ...request, view, text }),
+  );
+  if (result?.status !== "ok") return null;
+  await _cacheFileLocations(result.files);
+  return { delta: result.delta, etag: result.etag, text: result.text };
+}
+
+/**
+ * The note's stored text, read after every write of ours issued so far, without
+ * parsing the whole note on the main thread (LiveText's read).
+ * @returns {Promise<{content: string, author?: string}|null>}
+ */
+export async function readStoredNoteText(id) {
+  await flushNoteWrites(id).catch(() => {});
+  const request = _noteFileRequest(id);
+  if (!request) return null;
+  const result = await runNoteFileOp("readNoteText", request);
+  return result?.status === "ok" ? { content: result.content, author: result.author } : null;
+}
+
+/** What a note-file operation needs to read the note; null when its place is not known. */
+function _noteFileRequest(id) {
+  const notebookId = _notePathCache.get(id);
+  if (notebookId === undefined) return null;
+  let path;
+  try {
+    path = getNotePath(id, notebookId);
+  } catch {
+    return null; // its share has ended
+  }
+  return {
+    url: davUrl(path),
+    headers: _davHeaders(),
+    id,
+    notebookId,
+    shared: isSharedNotebook(notebookId),
+  };
+}
+
+/**
+ * The open editor has taken in the version read with `etag`: this client's
+ * next save replaces that version rather than merging with it.
+ * @param {string} id
+ * @param {{etag: string|null, base: string}} seen - `base` is the text editor and
+ *   storage now agree on (in the editor's form), the ancestor of a later merge
+ */
+export function adoptRemoteNote(id, { etag, base }) {
+  _trackNote(id, { etag, base, needsMerge: false });
+}
+
 export function saveNote(note) {
   return _enqueueWrite(note.id, async () => {
+    assertEditable(sharedRecord(note.notebookId), "saveNote");
     await _putNote(note);
     window.dispatchEvent(
       new CustomEvent("datachange", { detail: { noteId: note.id, source: "local" } }),
@@ -937,7 +1511,13 @@ export function deleteNote(id) {
   return _enqueueWrite(id, async () => {
     const note = await getNote(id);
     if (!note) throw new Error("Note not found");
-    const updated = { ...note, deleted: true, modified: Date.now() };
+    assertManageable(sharedRecord(note.notebookId), "deleteNote");
+    const updated = {
+      ...note,
+      deleted: true,
+      modified: Date.now(),
+      version: (note.version || 0) + 1,
+    };
     await _putNote(updated);
     console.log("Note deleted:", id);
     return updated;
@@ -948,6 +1528,7 @@ export function permanentlyDeleteNote(id) {
   return _enqueueWrite(id, async () => {
     const note = await getNote(id);
     if (!note) return;
+    assertManageable(sharedRecord(note.notebookId), "purgeNote");
 
     // Write tombstone for the note and its media files before deleting them
     const tombstonePath = note.notebookId
@@ -964,19 +1545,31 @@ export function permanentlyDeleteNote(id) {
     await davDelete(path);
     await davDelete(getNoteMediaFolder(id, note.notebookId));
     _notePathCache.delete(id);
+    _noteSync.delete(id);
+    // A copy of this note holds the same file ids in its own folder: locations
+    // still pointing here would send it (getFileUrl) to files that are gone
+    for (const [fid, loc] of _fileLocationCache) {
+      if (loc.noteId === id) _fileLocationCache.delete(fid);
+    }
   });
 }
 
 export async function getDeletedNotes() {
   const all = await _getAllNotesIncludingDeleted();
-  return all.filter((n) => n.deleted);
+  return all.filter((n) => n.deleted && !isSharedNotebook(n.notebookId));
 }
 
 export function restoreNote(id) {
   return _enqueueWrite(id, async () => {
     const note = await getNote(id);
     if (!note) throw new Error("Note not found");
-    const updated = { ...note, deleted: false, modified: Date.now() };
+    assertManageable(sharedRecord(note.notebookId), "restoreNote");
+    const updated = {
+      ...note,
+      deleted: false,
+      modified: Date.now(),
+      version: (note.version || 0) + 1,
+    };
     await _putNote(updated);
     return updated;
   });
@@ -989,9 +1582,17 @@ export function moveNote(noteId, targetNotebookId) {
     const previousNotebookId = note.notebookId ?? null;
     const target = targetNotebookId ?? null;
     if (previousNotebookId === target) return;
+    // Out of a shared notebook or into one: neither is the recipient's to do
+    assertManageable(sharedRecord(previousNotebookId), "moveNote");
+    assertManageable(sharedRecord(target), "moveNote");
 
     // 1. Write the note at the new location first — never delete the only copy.
-    const updated = { ...note, notebookId: target, modified: Date.now() };
+    const updated = {
+      ...note,
+      notebookId: target,
+      modified: Date.now(),
+      version: (note.version || 0) + 1,
+    };
     await _putNote(updated);
     _notePathCache.set(noteId, target);
 
@@ -1024,6 +1625,8 @@ export function moveNote(noteId, targetNotebookId) {
 export async function copyNote(noteId, targetNotebookId) {
   const note = await getNote(noteId);
   if (!note) throw new Error("Note not found");
+  assertManageable(sharedRecord(note.notebookId), "copyNote");
+  assertManageable(sharedRecord(targetNotebookId), "copyNote");
   const now = Date.now();
   const newNote = {
     ...note,
@@ -1137,8 +1740,13 @@ export async function saveMediaForNote(blob, fileId, noteId, notebookId) {
   const ext = extFromMime(blob.type);
   const filename = `${fileId}${ext}`;
   const folder = getNoteMediaFolder(noteId, notebookId);
-  await davMkcol(folder);
-  await davPutBinary(getMediaPath(noteId, notebookId, filename), blob);
+  try {
+    await davMkcol(folder);
+    await davPutBinary(getMediaPath(noteId, notebookId, filename), blob);
+  } catch (error) {
+    await _checkShareAfterFailedWrite(notebookId, error);
+    throw error;
+  }
   // Record location so getFile() can fetch from WebDAV after a page reload
   _fileLocationCache.set(fileId, { noteId, notebookId, ext });
   _fileCache.set(fileId, blob);
@@ -1151,6 +1759,8 @@ export async function saveMediaForNote(blob, fileId, noteId, notebookId) {
  * @param {string[]} validFileIds - fileIds the note still references (media + pdfSource + recordings)
  */
 export async function cleanupNoteMedia(noteId, notebookId, validFileIds) {
+  // Needs DELETE, which a share never grants: the owner's client cleans up
+  if (isSharedNotebook(notebookId)) return;
   const folder = getNoteMediaFolder(noteId, notebookId);
   const files = await davList(folder).catch(() => []); // folder may not exist yet
   const valid = new Set(validFileIds);
@@ -1243,7 +1853,7 @@ export async function deleteFile(id) {
 export function getFileUrl(id) {
   const loc = _fileLocationCache.get(id);
   if (!loc?.ext) return null;
-  return `${getWebDAVBase()}${getMediaPath(loc.noteId, loc.notebookId, `${id}${loc.ext}`)}`;
+  return davUrl(getMediaPath(loc.noteId, loc.notebookId, `${id}${loc.ext}`));
 }
 
 // Pending upload promises: fileId → Promise — lets callers await upload completion
@@ -1297,6 +1907,19 @@ export async function fixCorruptedNotes() {
 export async function migrateNotesToEncrypted() {}
 export async function updateNoteEtag() {}
 
+// ─── Merge baselines ─────────────────────────────────────────────────────────
+// The NC build has no local database. Its baselines live in memory per open note
+// (see the write path); these exist so modules shared with the native build
+// import the same names.
+// Nothing is kept locally here, so there are no unsynced changes to give up.
+export async function discardLocalChanges() {}
+
+export async function getNoteBase() {
+  return null;
+}
+export async function setNoteBase() {}
+export async function deleteNoteBase() {}
+
 // ─── Sync stubs (no sync in NC build) ────────────────────────────────────────
 
 export async function getAllNotesForSync() {
@@ -1313,4 +1936,19 @@ export async function purgeNotebook(id) {
 }
 export async function saveNotebook(nb) {
   return updateNotebook(nb.id, nb);
+}
+
+// ─── Shared notebooks: UI entry points ───────────────────────────────────────
+
+/**
+ * Leave a notebook shared with this user ("Remove from my list"): the server
+ * drops only this user's access, then the notebook disappears from the list.
+ */
+export async function leaveSharedNotebook(notebookId) {
+  await getSharedRegistry()?.leave(notebookId);
+}
+
+/** Look for new, changed and ended shares now (e.g. after leaving one). */
+export async function refreshSharedNotebooks() {
+  await getSharedRegistry()?.refresh({ force: true });
 }

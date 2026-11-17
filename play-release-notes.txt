@@ -12,12 +12,13 @@ CHANGELOG.md are deliberately left out.
 Only the current release is kept here; older release notes live in git history.
 
 
-0.5.43 -- 499 characters
+0.5.44 -- 498 characters
 ------------------------
 <en-US>
-- New: backup and restore. Save all notebooks, notes, images, PDFs and recordings to one password-protected .zip file.
-- New: camera Document mode outlines the page, straightens it and evens out lighting. Crop finds corners automatically.
-- New: recording gain boost for quiet speech, and the same recording level on every device.
-- Recordings are saved when you close the note or leave the app.
-- Fixed spikes on fast strokes, transparent PNGs turning black, and two-finger pan turning into a zoom.
+- New: text boxes. Tap anywhere on the page to type there, drag to move, change the width. Works on PDF pages too.
+- New: share a notebook with another Nextcloud user (preview, off by default in Settings).
+- New: tasks get a name, status, priority and due date; filter and sort them in Markers.
+- Edits made on two devices are now merged instead of one replacing the other.
+- Exported PDFs keep your text's layout, are searchable, and show task checkboxes.
+- New: Rate this app (Settings > About).
 </en-US>

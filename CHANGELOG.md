@@ -1,6 +1,26 @@
 # Changelog
 
-## [Unreleased] - 0.5.43
+## [Unreleased] - 0.5.44
+
+### Added
+- **All platforms**: text boxes. In text mode, tap anywhere on the page (with a finger, pen or mouse) to start typing there. Drag the bar above a box to move it and its right edge to change the width; boxes line up with the page's lines or grid. A tap just below a text continues it; a tap beside it while you are typing closes the box (and the keyboard). Boxes work on PDF pages too, so forms and documents can be filled in. Insert space moves the boxes below the line along with the ink
+- **All platforms**: text written before this release stays exactly where it is, next to its handwriting, and can be moved and resized like any box
+- **All platforms**: notebook sharing (preview, off by default). Share a notebook with another Nextcloud user to read or edit, from the notebook's menu → Share; they see it under "Shared with me" and can never delete, move or copy it, and "Remove from my list" leaves the share. Turn it on in Settings → Nextcloud Sync (Windows, Android) or Settings → Notebook Sharing (Nextcloud app); turned off, nothing about sharing runs. Needs file sharing between users to be enabled on your Nextcloud. Backups contain only your own notebooks
+- **All platforms**: when you and someone else edit the same note, nothing is lost any more. Strokes, images, recordings and tasks of both are kept, and so is text: edits to different paragraphs are combined, and if you both changed the same paragraph both versions stay, the other one marked as a conflicting version, so you can delete the one you do not want
+- **All platforms**: tasks have properties. Open a task marker's properties to give it a name (useful when handwriting recognition is missing or wrong), a status (open, in progress, done), a priority (low to urgent) and a due date. The Markers tab can filter tasks (all, active, in progress, overdue, completed) and sort them by due date, priority, status or note title. Due dates and priorities can be switched off in Settings → Tasks
+- **Android**: Settings → About has a "Rate this app" button that opens NoteBerg's Google Play page. The app never asks for a rating on its own
+
+### Changed
+- **All platforms**: Export PDF lays out typed text exactly as the note shows it (same font, line spacing and position), so it stays next to its handwriting. Before, it was set in a different font and spacing and drifted away from the ink
+- **All platforms**: Export PDF and the overview thumbnails show task checkboxes, for typed and for handwritten tasks, ticked or not
+- **All platforms**: typed text in an exported PDF can be selected, copied and searched in a PDF viewer (and read by screen readers). Before, it was only a picture of the text. Latin, Greek and Cyrillic text; Chinese, Japanese and Korean text is still shown but not yet searchable
+- **Windows, Android**: a note edited on two devices no longer shows a dialog when only its text differs; both versions are merged instead
+
+### Fixed
+- **Nextcloud app**: in Firefox, overview thumbnails squeezed empty lines and line breaks in typed text together
+
+
+## [0.5.43] - 2026-10-14
 
 ### Added
 - **Windows, Android**: backup and restore. Settings → Backup saves every notebook, note, image, PDF and recording into a single `.zip` file, optionally protected with a password (AES-256), and restores it again. Notes in the recycle bin are included, so the recycle bin survives a restore too

@@ -23,6 +23,22 @@ export async function drawStroke(page, points) {
   await page.mouse.up();
 }
 
+/**
+ * In text mode, click on the page to start a text box there (or into the
+ * text already at that point) and wait for its editor to have focus.
+ * `at` is a fraction (0..1) of the viewport, as in drawStroke().
+ */
+export async function startTyping(page, at = [0.3, 0.2]) {
+  const box = await page.locator(".virtual-scroll-container__viewport").boundingBox();
+  await page.mouse.click(box.x + box.width * at[0], box.y + box.height * at[1]);
+  await page.locator(".trumbowyg-editor:focus").waitFor();
+}
+
+/** The text the note shows, in every text box (static or being edited). */
+export function shownText(page) {
+  return page.locator(".note-canvas__text-editor-layer").innerText();
+}
+
 /** Reload the page and wait until the app has booted again. */
 export async function reloadApp(page) {
   await page.reload({ waitUntil: "domcontentloaded" });

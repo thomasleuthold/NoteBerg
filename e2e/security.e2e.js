@@ -1,4 +1,11 @@
-import { closeSettings, createQuickNote, readNotes, reloadApp } from "./support/app.js";
+import {
+  closeSettings,
+  createQuickNote,
+  readNotes,
+  reloadApp,
+  shownText as shownNoteText,
+  startTyping,
+} from "./support/app.js";
 import { expect, test } from "./support/fixtures.js";
 
 // Master password + local encryption across restarts. The keychain is the
@@ -22,7 +29,7 @@ async function encryptAndWrite(page) {
 
   await createQuickNote(page, "Diary");
   await page.click("#nc-tool-text");
-  await page.locator(".trumbowyg-editor").click();
+  await startTyping(page);
   await page.keyboard.type(SECRET);
   await page.click("#nav-overview"); // closing the note saves it
 }
@@ -30,7 +37,8 @@ async function encryptAndWrite(page) {
 /** What the editor shows for the note, after opening it. */
 async function shownText(page, title) {
   await page.locator(".note-card", { hasText: title }).click();
-  return page.locator(".trumbowyg-editor").innerText();
+  await page.locator(".note-canvas__overlay").waitFor();
+  return shownNoteText(page);
 }
 
 test("notes are encrypted at rest and open without a prompt after a restart", async ({ page }) => {

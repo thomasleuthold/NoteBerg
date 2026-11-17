@@ -34,6 +34,7 @@ vi.mock("../../i18n/index.js", () => ({
       "toolbar.background.gridMedium": "Grid - Medium",
       "toolbar.background.gridLarge": "Grid - Large",
       "toolbar.deleteNote": "Delete Note",
+      "sharing.badge.readOnly": "Read-only",
     };
     return map[key] ?? key;
   },
@@ -401,5 +402,79 @@ describe("NoteToolbar — separating the paid entry", () => {
     // the confirmation dialog lives in the canvas, so this stays a plain call.
     fireEvent.click(container.querySelector("#nc-recognize-btn"));
     expect(onOptionsChange).toHaveBeenCalledWith({ type: "recognize-now" });
+  });
+});
+
+describe("NoteToolbar - what a shared notebook offers", () => {
+  let container;
+
+  const open = (options = {}) => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    const toolbar = new NoteToolbar(container, vi.fn(), {
+      penPresets: [{ width: 2, colorIndex: 0, type: "pen" }],
+      getRecognizedText: () => "words",
+      ...options,
+    });
+    fireEvent.click(screen.getByTitle("Note Options"));
+    return toolbar;
+  };
+
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.clearAllMocks();
+  });
+
+  const toolIds = () =>
+    [...container.querySelectorAll(".note-canvas-toolbar__button")].map((b) =>
+      b.id.replace("nc-tool-", ""),
+    );
+
+  it("offers the owner everything", () => {
+    open();
+    expect(toolIds()).toEqual(
+      expect.arrayContaining(["pan", "text", "draw", "eraser", "lasso", "undo", "redo", "insert"]),
+    );
+    expect(container.querySelector("#nc-delete-note-btn")).not.toBeNull();
+    expect(container.querySelector("#nc-recognize-btn")).not.toBeNull();
+    expect(container.querySelector(".background-option")).not.toBeNull();
+    expect(container.querySelector(".note-canvas-toolbar__readonly-hint")).toBeNull();
+  });
+
+  it("offers a collaborator editing but not deleting the note", () => {
+    open({ canManage: false });
+    expect(toolIds()).toEqual(expect.arrayContaining(["draw", "text", "insert"]));
+    expect(container.querySelector("#nc-delete-note-btn")).toBeNull();
+    expect(container.querySelector("#nc-recognize-btn")).not.toBeNull();
+    expect(container.querySelector(".background-option")).not.toBeNull();
+    expect(container.querySelector(".note-canvas-toolbar__readonly-hint")).toBeNull();
+  });
+
+  it("offers a read-only viewer to look, pan, export, read the recognized text, and see a read-only hint", () => {
+    open({ canEdit: false, canManage: false });
+    expect(toolIds()).toEqual(["pan", "options"]);
+    expect(container.querySelector("#nc-show-text-btn")).not.toBeNull();
+    expect(container.querySelector("#nc-export-pdf-btn")).not.toBeNull();
+    const readonlyHint = container.querySelector(".note-canvas-toolbar__readonly-hint");
+    expect(readonlyHint).not.toBeNull();
+    expect(readonlyHint.textContent).toBe("Read-only");
+  });
+
+  it("offers a read-only viewer nothing that writes", () => {
+    open({ canEdit: false, canManage: false });
+    for (const id of ["#nc-delete-note-btn", "#nc-recognize-btn", ".background-option"]) {
+      expect(container.querySelector(id)).toBeNull();
+    }
+    expect(container.querySelector("#nc-tool-insert")).toBeNull();
+    expect(container.querySelector("#nc-tool-draw")).toBeNull();
+  });
+
+  it("keeps working: the options menu still opens and closes without the hidden controls", () => {
+    const toolbar = open({ canEdit: false, canManage: false });
+    expect(() => {
+      toolbar.updateMode("pan");
+      toolbar.updateHistoryState?.({ canUndo: false, canRedo: false });
+      fireEvent.click(document.body);
+    }).not.toThrow();
   });
 });

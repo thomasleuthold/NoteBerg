@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createClock } from "../../../modules/hlc.js";
+import { NoteVersioner } from "../../../modules/noteVersions.js";
 import {
   CropImageCommand,
   DeleteMediaCommand,
@@ -447,6 +449,62 @@ describe("NoteCanvas Commands", () => {
         new ShiftContentCommand(100, [], [], 150).redo(noteCanvas);
 
         expect(noteCanvas.strokesChanged).toBe(true);
+      });
+    });
+
+    // DESIGN §10.7 D: an insert space is recorded so a merge moves what the
+    // other side drew below the line without having seen it
+    describe("recorded for the merge", () => {
+      let versions;
+      beforeEach(() => {
+        versions = new NoteVersioner({ clock: createClock({ device: "me", wall: () => 1 }) });
+        noteCanvas.versions = versions;
+        noteCanvas.noteData.strokes = [
+          { id: "below", x: [1], y: [200] },
+          { id: "drawn-into-gap", x: [1], y: [160] },
+          { id: "above", x: [1], y: [10] },
+        ];
+        noteCanvas.noteData.media = [
+          { id: "img", type: "image", y: 300 },
+          { id: "page", type: "pdf-page", y: 400 },
+        ];
+        versions.adopt(noteCanvas.noteData);
+      });
+
+      it("records an insert space with its line and distance", () => {
+        new ShiftContentCommand(100, ["below"], ["img"], 150).redo(noteCanvas);
+        expect(noteCanvas.noteData.shifts).toEqual([{ v: expect.any(String), y: 150, delta: 100 }]);
+      });
+
+      it("records its undo as the opposite shift, and stamps what the undo leaves below the line", () => {
+        const cmd = new ShiftContentCommand(100, ["below"], ["img"], 150);
+        cmd.redo(noteCanvas);
+        cmd.undo(noteCanvas);
+        expect(noteCanvas.noteData.shifts.map((s) => s.delta)).toEqual([100, -100]);
+        versions.stamp(noteCanvas.noteData);
+        const byId = Object.fromEntries(noteCanvas.noteData.strokes.map((s) => [s.id, s]));
+        // Drawn into the gap and not moved by the undo: stamped as having seen it
+        expect(byId["drawn-into-gap"].seen).toBeDefined();
+        expect(byId.above.v).toBeUndefined();
+      });
+
+      it("is saved even when nothing below the line moved", () => {
+        noteCanvas.strokeManager.forceSave.mockClear?.();
+        new ShiftContentCommand(100, [], [], 500).redo(noteCanvas);
+        expect(noteCanvas.strokeManager.forceSave).toHaveBeenCalled();
+      });
+
+      it("saves media it left below the line, stamped as having seen the shift", () => {
+        // The undo leaves an image inserted into the gap where it is: its stamp
+        // must reach storage, or a merge would move it after all
+        noteCanvas._saveMediaChanges.mockClear?.();
+        new ShiftContentCommand(100, ["below"], [], 150).redo(noteCanvas);
+        expect(noteCanvas._saveMediaChanges).toHaveBeenCalled();
+      });
+
+      it("records nothing for a shift of a selection (no insertion point)", () => {
+        new ShiftContentCommand(100, ["below"], []).redo(noteCanvas);
+        expect(noteCanvas.noteData.shifts).toBeUndefined();
       });
     });
 

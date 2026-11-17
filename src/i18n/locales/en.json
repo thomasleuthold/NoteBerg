@@ -20,7 +20,8 @@
     "justNow": "just now",
     "minutesAgo": "{{count}}m ago",
     "hoursAgo": "{{count}}h ago",
-    "daysAgo": "{{count}}d ago"
+    "daysAgo": "{{count}}d ago",
+    "preview": "Preview"
   },
   "overview": {
     "tabs": {
@@ -117,19 +118,22 @@
       "appearance": "Appearance",
       "security": "Security",
       "nextcloud": "Nextcloud Sync",
+      "sharing": "Notebook Sharing",
       "recognition": "Handwriting Recognition",
       "mcp": "MCP Server (AI Integration)",
       "logging": "Logging",
       "dangerZone": "Danger Zone",
       "about": "About",
       "aiProvider": "AI Access",
-      "backup": "Backup"
+      "backup": "Backup",
+      "tasks": "Tasks"
     },
     "appearance": {
       "theme": "Theme",
       "themeDesc": "Choose your preferred color scheme",
       "light": "Light",
       "dark": "Dark",
+      "tva": "TVA / CRT",
       "pdfInvertDark": "Invert PDF pages in dark mode",
       "pdfInvertDarkDesc": "Makes annotations easier to see on imported PDFs, but alters the PDF's original colors",
       "cardSize": "Card Size",
@@ -156,6 +160,10 @@
     "security": {
       "encryptLocal": "Encrypt Local Data",
       "encryptLocalDesc": "Encrypt notes stored locally on this device"
+    },
+    "sharing": {
+      "descApp": "Share notebooks with other Nextcloud users and work on shared notebooks together. Turning it off hides notebooks shared with you in this browser; nothing is deleted.",
+      "rootCheckFailed": "Sharing was not switched on: the notes folder could not be verified. {{message}}"
     },
     "nextcloud": {
       "connectLabel": "Connect to Nextcloud",
@@ -185,7 +193,10 @@
       "syncSkipped": "Sync skipped (already in progress)",
       "syncComplete": "✓ Sync complete! Uploaded {{uploadedNotebooks}} notebooks, {{uploadedNotes}} notes. Downloaded {{downloadedNotebooks}} notebooks, {{downloadedNotes}} notes.",
       "syncConflictsDetected": " ⚠️ Detected {{count}} conflicts.",
-      "syncFailed": "✗ Sync failed: {{message}}"
+      "syncFailed": "✗ Sync failed: {{message}}",
+      "sharingLabel": "Notebook sharing",
+      "sharingDesc": "Share notebooks with other Nextcloud users and work on shared notebooks together. Turning it off stops syncing notebooks shared with you; they stay on this device until you turn it on again.",
+      "sharingNeedsConnection": "Connect to Nextcloud first to use notebook sharing."
     },
     "recognition": {
       "statusLabel": "Status",
@@ -383,6 +394,7 @@
       "clearLogs": "Clear Logs",
       "copied": "✓ Copied!",
       "clearConfirm": "Are you sure you want to clear all debug logs?",
+      "copyFailed": "Failed to copy logs to clipboard",
       "noLogs": "No logs available in this session."
     },
     "dangerZone": {
@@ -418,7 +430,9 @@
       "version": "Version: {{version}}",
       "licenses": "License Information",
       "openSource": "NoteBerg is free and open source software.",
-      "projectLink": "View the project on GitHub"
+      "projectLink": "View the project on GitHub",
+      "rate": "Rate this app",
+      "rateDesc": "A rating on Google Play helps other people find NoteBerg."
     },
     "encryption": {
       "enabledLocalTitle": "Encryption Enabled",
@@ -462,6 +476,14 @@
     },
     "nav": {
       "back": "All settings"
+    },
+    "tasks": {
+      "enableDueDates": "Enable due dates",
+      "enableDueDatesDesc": "Allow setting due dates on task markers",
+      "enablePriorities": "Enable priorities",
+      "enablePrioritiesDesc": "Allow setting priority levels on task markers",
+      "defaultSort": "Default task sorting",
+      "defaultSortDesc": "Initial sort order in the Markers overview tab"
     }
   },
   "modals": {
@@ -654,6 +676,13 @@
     "fullscreen": "Fullscreen",
     "exitFullscreen": "Exit Fullscreen",
     "deleteNote": "Delete Note",
+    "color": {
+      "foreColor": "Text color",
+      "backColor": "Highlight",
+      "defaultText": "Default",
+      "removeHighlight": "No highlight",
+      "highlightTitle": "Highlight {{num}}"
+    },
     "penDialog": {
       "lineWidth": "Line Width: ",
       "color": "Color",
@@ -686,7 +715,8 @@
       "copy": "Copy",
       "markAsTask": "Mark as Task",
       "removeTask": "Remove Task",
-      "delete": "Delete"
+      "delete": "Delete",
+      "taskProperties": "Task Properties"
     },
     "media": {
       "select": "Select",
@@ -715,6 +745,7 @@
       "deleteConfirmTitle": "Delete PDF",
       "deleteConfirmMsg": "Are you sure you want to remove the PDF document? This will remove all pages.",
       "exportError": "PDF Export Failed",
+      "importError": "PDF Import Failed",
       "exportProgressTitle": "Exporting PDF",
       "exportProgressPage": "Exporting page {{current}} of {{total}} ...",
       "importProgressTitle": "Importing PDF",
@@ -760,6 +791,14 @@
       "optionPunctuationDesc": "Include the full stops, commas and dashes written on the page. Turn off to get the words only.",
       "optionBreaks": "Keep line breaks",
       "optionBreaksDesc": "Preserve where lines and paragraphs end. Recognition of the layout is less reliable than the text itself."
+    },
+    "mergeHint": "Conflicting version, edited by {{user}}",
+    "mergeHintUnknown": "Conflicting version",
+    "textBox": {
+      "move": "Drag to move",
+      "resize": "Drag to change the width",
+      "toolbarHint": "Tap into a text, or on the page to start one",
+      "options": "Text box options"
     }
   },
   "recycleBin": {
@@ -775,7 +814,11 @@
     "emptyTitle": "Recycle Bin is Empty",
     "emptyDesc": "Deleted notebooks and notes will appear here.",
     "notebooksCount": "Notebooks ({{count}})",
-    "notesCount": "Notes ({{count}})"
+    "notesCount": "Notes ({{count}})",
+    "purgeConfirm": "Are you sure you want to permanently delete this item? This will remove it from all synced devices and cannot be undone.",
+    "purgeConfirmNotebook": "Are you sure you want to permanently delete this notebook? This will also permanently delete {{count}} note(s) inside it. This will remove it from all synced devices and cannot be undone.",
+    "restoreFailed": "Failed to restore item: {{message}}",
+    "purgeFailed": "Failed to permanently delete: {{message}}"
   },
   "soundDialog": {
     "trigger": "Recordings",
@@ -853,6 +896,10 @@
     "markAsTask": {
       "title": "Tasks",
       "body": "The text you marked is now a checkable task. Tick it off here or from your task list."
+    },
+    "firstTextBox": {
+      "title": "Text boxes",
+      "body": "A tap on the page starts a text box there. Drag the bar above it to move it and its right edge to change the width. A tap just below a text continues it."
     }
   },
   "backup": {
@@ -973,6 +1020,134 @@
       "newerVersion": "This backup was created with NoteBerg {{version}}, which is newer than this app. Update NoteBerg to restore it.",
       "diskFull": "The backup could not be written: {{message}}. The partial file was deleted.",
       "cacheSpace": "Not enough free space to create the backup: about {{needed}} needed, {{available}} available."
+    }
+  },
+  "tasks": {
+    "properties": {
+      "title": "Task Properties",
+      "name": "Task Name / Label",
+      "namePlaceholder": "Custom title (use if recognition is missing or wrong)",
+      "status": "Status",
+      "priority": "Priority",
+      "details": "Details",
+      "dueDate": "Due Date"
+    },
+    "states": {
+      "open": "Open",
+      "doing": "In Progress",
+      "done": "Done"
+    },
+    "priorities": {
+      "none": "None",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "urgent": "Urgent"
+    },
+    "dueDate": {
+      "today": "Today",
+      "tomorrow": "Tomorrow",
+      "nextDay": "+1 Day",
+      "nextWeek": "+7 Days",
+      "clear": "Clear"
+    },
+    "filter": {
+      "label": "Filter",
+      "all": "All",
+      "active": "Active",
+      "doing": "In Progress",
+      "overdue": "Overdue",
+      "done": "Completed"
+    },
+    "sort": {
+      "label": "Sort",
+      "dueDate": "Due Date",
+      "priority": "Priority",
+      "status": "State",
+      "note": "Note Title"
+    },
+    "noMatchingTasks": "No matching tasks found.",
+    "cycleStatus": "Cycle status"
+  },
+  "sharing": {
+    "section": {
+      "title": "Shared with me"
+    },
+    "badge": {
+      "sharedBy": "Shared by {{owner}}",
+      "readOnly": "Read only",
+      "canEdit": "Can edit",
+      "shared": "Shared",
+      "sharedWith_one": "Shared with {{count}} person",
+      "sharedWith_other": "Shared with {{count}} people"
+    },
+    "notebookOptions": {
+      "leave": "Remove from my list",
+      "share": "Share..."
+    },
+    "leave": {
+      "title": "Remove shared notebook",
+      "message": "\"{{title}}\" will disappear from your list. {{owner}} and everyone else it is shared with keep it.",
+      "messageUnsynced": "Some of your changes in \"{{title}}\" have not been saved to the shared notebook yet and will be lost. Remove it anyway?",
+      "confirm": "Remove",
+      "failed": "The notebook could not be removed: {{message}}"
+    },
+    "ended": {
+      "notice_one": "This notebook is no longer shared with you. {{count}} note had changes that could not be saved.",
+      "notice_other": "This notebook is no longer shared with you. {{count}} notes had changes that could not be saved.",
+      "noticeClean": "This notebook is no longer shared with you.",
+      "dismiss": "Dismiss"
+    },
+    "stranded": {
+      "notice_one": "{{count}} note has changes that can no longer be saved to this shared notebook.",
+      "notice_other": "{{count}} notes have changes that can no longer be saved to this shared notebook.",
+      "discard": "Discard my changes",
+      "discardTitle": "Discard changes",
+      "discardMessage": "Your unsaved changes in \"{{title}}\" will be replaced by the shared version. This cannot be undone."
+    },
+    "restricted": {
+      "title": "Not allowed",
+      "message": "This is not possible in a notebook that was shared with you."
+    },
+    "purge": {
+      "warning": "This notebook is shared with other people. They lose access when it is deleted permanently."
+    },
+    "share": {
+      "title": "Share \"{{title}}\"",
+      "intro": "People you share with see this notebook under \"Shared with me\". They cannot delete, move or copy it.",
+      "searchLabel": "Add a person",
+      "searchPlaceholder": "Search by name or user ID",
+      "searching": "Searching...",
+      "noResults": "No matching users.",
+      "modeLabel": "Access",
+      "modeReadonly": "Can view",
+      "modeCollab": "Can edit",
+      "add": "Share",
+      "recipients": "People with access",
+      "noRecipients": "Not shared with anyone yet.",
+      "revoke": "Stop sharing",
+      "reduced": "The server only allowed viewing for this share.",
+      "loadFailed": "The sharing settings could not be loaded: {{message}}",
+      "failed": "Sharing failed: {{message}}",
+      "notOnServer": "This notebook has not reached Nextcloud yet. Sync, then try again.",
+      "unavailable": "Sharing needs a connection to Nextcloud.",
+      "revokeMessage": "{{name}} will lose access to \"{{title}}\". Changes they have not saved yet cannot be saved any more."
+    },
+    "reduced": {
+      "notice": "You can now only view this notebook. Your changes are kept on this device, but they cannot be saved to the shared notebook.",
+      "noticeOnline": "You can now only view this notebook. Changes that were not saved yet could not be saved."
+    },
+    "invite": {
+      "title": "Shared notebook",
+      "message": "{{owner}} wants to share a notebook with you.",
+      "accept": "Accept",
+      "decline": "Decline",
+      "declineTitle": "Decline shared notebook",
+      "declineMessage": "The notebook from {{owner}} will not be added. {{owner}} has to share it again if you change your mind.",
+      "failed": "That did not work: {{message}}"
+    },
+    "deletedByOwner": {
+      "notice": "The owner deleted this note. What you wrote is kept with it in the owner's recycle bin."
     }
   }
 }

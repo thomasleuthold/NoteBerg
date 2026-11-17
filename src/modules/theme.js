@@ -3,11 +3,11 @@
  * Handles theme switching between light, dark, and e-paper modes
  */
 
-const THEMES = ["light", "dark"];
+const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
+const THEMES = IS_NEXTCLOUD ? ["light", "dark"] : ["light", "dark", "tva"];
 const DEFAULT_THEME = "light";
 const THEME_STORAGE_KEY = "theme";
 const PDF_INVERT_DARK_STORAGE_KEY = "pdf_invert_dark_mode";
-const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
 let currentTheme = DEFAULT_THEME;
 // Default: enabled — imported PDF pages invert in dark mode so annotations stay legible.

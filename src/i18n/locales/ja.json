@@ -20,7 +20,8 @@
     "justNow": "たった今",
     "minutesAgo": "{{count}}分前",
     "hoursAgo": "{{count}}時間前",
-    "daysAgo": "{{count}}日前"
+    "daysAgo": "{{count}}日前",
+    "preview": "プレビュー"
   },
   "overview": {
     "tabs": {
@@ -117,19 +118,22 @@
       "appearance": "外観",
       "security": "セキュリティ",
       "nextcloud": "Nextcloud 同期",
+      "sharing": "ノートブックの共有",
       "recognition": "手書き認識",
       "mcp": "MCP サーバー（AI 連携）",
       "logging": "ログ",
       "dangerZone": "危険な操作",
       "about": "このアプリについて",
       "aiProvider": "AI アクセス",
-      "backup": "バックアップ"
+      "backup": "バックアップ",
+      "tasks": "タスク"
     },
     "appearance": {
       "theme": "テーマ",
       "themeDesc": "お好みの配色を選択してください",
       "light": "ライト",
       "dark": "ダーク",
+      "tva": "TVA / CRT",
       "pdfInvertDark": "ダークモードでPDFページを反転",
       "pdfInvertDarkDesc": "インポートしたPDFの注釈が見やすくなりますが、PDF本来の色が変わります",
       "cardSize": "カードサイズ",
@@ -156,6 +160,10 @@
     "security": {
       "encryptLocal": "ローカルデータを暗号化",
       "encryptLocalDesc": "この端末にローカル保存されたノートを暗号化します"
+    },
+    "sharing": {
+      "descApp": "他のNextcloudユーザーとノートブックを共有し、一緒に編集できます。オフにすると、共有されたノートブックはこのブラウザで非表示になります。何も削除されません。",
+      "rootCheckFailed": "共有はオンになりませんでした。ノートのフォルダを確認できませんでした。{{message}}"
     },
     "nextcloud": {
       "connectLabel": "Nextcloud に接続",
@@ -185,7 +193,10 @@
       "syncSkipped": "同期をスキップしました（すでに実行中です）",
       "syncComplete": "✓ 同期が完了しました！ノートブック {{uploadedNotebooks}} 件、ノート {{uploadedNotes}} 件をアップロードしました。ノートブック {{downloadedNotebooks}} 件、ノート {{downloadedNotes}} 件をダウンロードしました。",
       "syncConflictsDetected": " ⚠️ {{count}} 件の競合を検出しました。",
-      "syncFailed": "✗ 同期に失敗しました: {{message}}"
+      "syncFailed": "✗ 同期に失敗しました: {{message}}",
+      "sharingLabel": "ノートブックの共有",
+      "sharingDesc": "他のNextcloudユーザーとノートブックを共有し、一緒に編集できます。オフにすると、共有されたノートブックの同期が止まります。再びオンにするまで、それらはこのデバイスに残ります。",
+      "sharingNeedsConnection": "ノートブックの共有を使うには、先にNextcloudに接続してください。"
     },
     "recognition": {
       "statusLabel": "状態",
@@ -383,6 +394,7 @@
       "clearLogs": "ログを消去",
       "copied": "✓ コピーしました！",
       "clearConfirm": "すべてのデバッグログを消去してもよろしいですか？",
+      "copyFailed": "ログをクリップボードにコピーできませんでした",
       "noLogs": "このセッションで利用可能なログはありません。"
     },
     "dangerZone": {
@@ -418,7 +430,9 @@
       "version": "バージョン: {{version}}",
       "licenses": "ライセンス情報",
       "openSource": "NoteBerg はフリーかつオープンソースのソフトウェアです。",
-      "projectLink": "GitHub でプロジェクトを見る"
+      "projectLink": "GitHub でプロジェクトを見る",
+      "rate": "アプリを評価",
+      "rateDesc": "Google Play での評価は、他の方が NoteBerg を見つける助けになります。"
     },
     "encryption": {
       "enabledLocalTitle": "暗号化が有効になりました",
@@ -462,6 +476,14 @@
     },
     "nav": {
       "back": "すべての設定"
+    },
+    "tasks": {
+      "enableDueDates": "期日を有効にする",
+      "enableDueDatesDesc": "タスクマーカーに期日を設定できるようにします",
+      "enablePriorities": "優先度を有効にする",
+      "enablePrioritiesDesc": "タスクマーカーに優先度を設定できるようにします",
+      "defaultSort": "デフォルトのタスク並べ替え",
+      "defaultSortDesc": "マーカー概要タブでの初期並べ替え順"
     }
   },
   "modals": {
@@ -654,6 +676,13 @@
     "fullscreen": "全画面表示",
     "exitFullscreen": "全画面表示を終了",
     "deleteNote": "ノートを削除",
+    "color": {
+      "foreColor": "文字色",
+      "backColor": "ハイライト",
+      "defaultText": "デフォルト",
+      "removeHighlight": "ハイライトなし",
+      "highlightTitle": "ハイライト {{num}}"
+    },
     "penDialog": {
       "lineWidth": "線の太さ: ",
       "color": "色",
@@ -686,7 +715,8 @@
       "copy": "コピー",
       "markAsTask": "タスクとしてマーク",
       "removeTask": "タスクを解除",
-      "delete": "削除"
+      "delete": "削除",
+      "taskProperties": "タスクのプロパティ"
     },
     "media": {
       "select": "選択",
@@ -715,6 +745,7 @@
       "deleteConfirmTitle": "PDF を削除",
       "deleteConfirmMsg": "この PDF ドキュメントを削除してもよろしいですか？すべてのページが削除されます。",
       "exportError": "PDF の書き出しに失敗しました",
+      "importError": "PDFのインポートに失敗しました",
       "exportProgressTitle": "PDF を書き出し中",
       "exportProgressPage": "{{current}} / {{total}} ページを書き出し中...",
       "importProgressTitle": "PDF を読み込み中",
@@ -760,6 +791,14 @@
       "optionPunctuationDesc": "ページに書かれた句点・読点・ダッシュを含めます。オフにすると単語だけになります。",
       "optionBreaks": "改行を保持する",
       "optionBreaksDesc": "行と段落の区切りを保持します。レイアウトの認識は本文の認識ほど正確ではありません。"
+    },
+    "mergeHint": "競合したバージョン({{user}} が編集)",
+    "mergeHintUnknown": "競合したバージョン",
+    "textBox": {
+      "move": "ドラッグして移動",
+      "resize": "ドラッグして幅を変更",
+      "toolbarHint": "テキストをタップするか、ページをタップして新しく始めます",
+      "options": "テキストボックスのオプション"
     }
   },
   "recycleBin": {
@@ -775,7 +814,11 @@
     "emptyTitle": "ごみ箱は空です",
     "emptyDesc": "削除されたノートブックとノートはここに表示されます。",
     "notebooksCount": "ノートブック（{{count}}）",
-    "notesCount": "ノート（{{count}}）"
+    "notesCount": "ノート（{{count}}）",
+    "purgeConfirm": "この項目を完全に削除しますか？同期されているすべてのデバイスから削除され、元に戻せません。",
+    "purgeConfirmNotebook": "このノートブックを完全に削除しますか？中の{{count}}件のノートも完全に削除されます。同期されているすべてのデバイスから削除され、元に戻せません。",
+    "restoreFailed": "項目を復元できませんでした: {{message}}",
+    "purgeFailed": "完全な削除に失敗しました: {{message}}"
   },
   "soundDialog": {
     "trigger": "録音",
@@ -853,6 +896,10 @@
     "markAsTask": {
       "title": "タスク",
       "body": "マークしたテキストはチェック可能なタスクになりました。ここまたはタスク一覧でチェックできます。"
+    },
+    "firstTextBox": {
+      "title": "テキストボックス",
+      "body": "ページをタップすると、その位置にテキストボックスが作られます。上のバーをドラッグすると移動し、右端をドラッグすると幅が変わります。テキストのすぐ下をタップすると続きを書けます。"
     }
   },
   "backup": {
@@ -973,6 +1020,134 @@
       "newerVersion": "このバックアップはこのアプリより新しい NoteBerg {{version}} で作成されています。復元するには NoteBerg を更新してください。",
       "diskFull": "バックアップを書き込めませんでした: {{message}}。不完全なファイルは削除しました。",
       "cacheSpace": "バックアップを作成するための空き容量が不足しています: 約 {{needed}} 必要、{{available}} 利用可能。"
+    }
+  },
+  "tasks": {
+    "properties": {
+      "title": "タスクのプロパティ",
+      "name": "タスク名 / ラベル",
+      "namePlaceholder": "独自のタイトル（認識されない、または誤っている場合）",
+      "status": "ステータス",
+      "priority": "優先度",
+      "details": "詳細",
+      "dueDate": "期日"
+    },
+    "states": {
+      "open": "未完了",
+      "doing": "進行中",
+      "done": "完了"
+    },
+    "priorities": {
+      "none": "なし",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "urgent": "緊急"
+    },
+    "dueDate": {
+      "today": "今日",
+      "tomorrow": "明日",
+      "nextDay": "+1日",
+      "nextWeek": "+7日",
+      "clear": "クリア"
+    },
+    "filter": {
+      "label": "フィルター",
+      "all": "すべて",
+      "active": "アクティブ",
+      "doing": "進行中",
+      "overdue": "期限超過",
+      "done": "完了"
+    },
+    "sort": {
+      "label": "並べ替え",
+      "dueDate": "期日",
+      "priority": "優先度",
+      "status": "状態",
+      "note": "ノートのタイトル"
+    },
+    "noMatchingTasks": "一致するタスクが見つかりません。",
+    "cycleStatus": "ステータスを切り替え"
+  },
+  "sharing": {
+    "section": {
+      "title": "共有されたノートブック"
+    },
+    "badge": {
+      "sharedBy": "{{owner}} が共有",
+      "readOnly": "読み取り専用",
+      "canEdit": "編集可",
+      "shared": "共有中",
+      "sharedWith_one": "{{count}} 人と共有中",
+      "sharedWith_other": "{{count}} 人と共有中"
+    },
+    "notebookOptions": {
+      "leave": "リストから削除",
+      "share": "共有..."
+    },
+    "leave": {
+      "title": "共有ノートブックを削除",
+      "message": "「{{title}}」がリストから消えます。{{owner}} と共有先のほかの人は引き続き使えます。",
+      "messageUnsynced": "「{{title}}」の変更の一部がまだ共有ノートブックに保存されておらず、失われます。それでも削除しますか?",
+      "confirm": "削除",
+      "failed": "ノートブックを削除できませんでした: {{message}}"
+    },
+    "ended": {
+      "notice_one": "このノートブックはもう共有されていません。{{count}} 件のノートの変更を保存できませんでした。",
+      "notice_other": "このノートブックはもう共有されていません。{{count}} 件のノートの変更を保存できませんでした。",
+      "noticeClean": "このノートブックはもう共有されていません。",
+      "dismiss": "閉じる"
+    },
+    "stranded": {
+      "notice_one": "{{count}} 件のノートの変更は、この共有ノートブックに保存できなくなりました。",
+      "notice_other": "{{count}} 件のノートの変更は、この共有ノートブックに保存できなくなりました。",
+      "discard": "自分の変更を破棄",
+      "discardTitle": "変更を破棄",
+      "discardMessage": "「{{title}}」の未保存の変更は共有されているバージョンに置き換えられます。元に戻せません。"
+    },
+    "restricted": {
+      "title": "許可されていません",
+      "message": "共有されたノートブックではこの操作はできません。"
+    },
+    "purge": {
+      "warning": "このノートブックはほかの人と共有されています。完全に削除すると、その人たちはアクセスできなくなります。"
+    },
+    "share": {
+      "title": "「{{title}}」を共有",
+      "intro": "共有した相手には、このノートブックが「共有されたノートブック」に表示されます。削除、移動、コピーはできません。",
+      "searchLabel": "ユーザーを追加",
+      "searchPlaceholder": "名前またはユーザー ID で検索",
+      "searching": "検索中...",
+      "noResults": "一致するユーザーがいません。",
+      "modeLabel": "アクセス権",
+      "modeReadonly": "閲覧のみ",
+      "modeCollab": "編集可",
+      "add": "共有",
+      "recipients": "アクセスできるユーザー",
+      "noRecipients": "まだ誰とも共有していません。",
+      "revoke": "共有を停止",
+      "reduced": "サーバーはこの共有に閲覧のみを許可しました。",
+      "loadFailed": "共有設定を読み込めませんでした: {{message}}",
+      "failed": "共有に失敗しました: {{message}}",
+      "notOnServer": "このノートブックはまだ Nextcloud に届いていません。同期してから、もう一度お試しください。",
+      "unavailable": "共有には Nextcloud への接続が必要です。",
+      "revokeMessage": "{{name}} は「{{title}}」にアクセスできなくなります。まだ保存されていない変更は保存できなくなります。"
+    },
+    "reduced": {
+      "notice": "このノートブックは閲覧のみになりました。変更はこのデバイスに残りますが、共有ノートブックには保存できません。",
+      "noticeOnline": "このノートブックは閲覧のみになりました。まだ保存されていなかった変更は保存できませんでした。"
+    },
+    "invite": {
+      "title": "共有ノートブック",
+      "message": "{{owner}} さんがノートブックを共有しようとしています。",
+      "accept": "受け入れる",
+      "decline": "辞退する",
+      "declineTitle": "共有ノートブックを辞退",
+      "declineMessage": "{{owner}} さんのノートブックは追加されません。気が変わった場合は、{{owner}} さんに再度共有してもらう必要があります。",
+      "failed": "うまくいきませんでした: {{message}}"
+    },
+    "deletedByOwner": {
+      "notice": "所有者がこのノートを削除しました。あなたが書いた内容は、所有者のごみ箱にノートと一緒に保管されています。"
     }
   }
 }

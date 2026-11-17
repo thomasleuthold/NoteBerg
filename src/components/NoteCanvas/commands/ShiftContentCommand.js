@@ -1,9 +1,17 @@
 /**
  * ShiftContentCommand - Command for shifting content down to insert space
  *
- * This command stores the IDs of all affected strokes and media items,
- * and the vertical distance they were shifted.
+ * This command stores the IDs of all affected strokes, media items and text
+ * boxes, and the vertical distance they were shifted. The boxes move through
+ * the text layer, so the ink and the text are one undo step.
  */
+/** The smallest value, without spreading a long array into arguments. */
+function minOf(values) {
+  let min = Number.POSITIVE_INFINITY;
+  for (const v of values) if (v < min) min = v;
+  return min;
+}
+
 export class ShiftContentCommand {
   /**
    * @param {number} yShift - The vertical distance to shift content by
@@ -11,12 +19,14 @@ export class ShiftContentCommand {
    * @param {Array<string>} mediaIds - IDs of media items that were moved
    * @param {number} [startY] - The insertion point. Recognition bands below it
    *   move with the ink they describe; omitted, they are left alone.
+   * @param {Array<string>} [boxIds] - IDs of text boxes that were moved
    */
-  constructor(yShift, strokeIds, mediaIds, startY) {
+  constructor(yShift, strokeIds, mediaIds, startY, boxIds = []) {
     this.yShift = yShift;
     this.strokeIds = strokeIds;
     this.mediaIds = mediaIds;
     this.startY = startY;
+    this.boxIds = boxIds;
   }
 
   /**
@@ -59,40 +69,77 @@ export class ShiftContentCommand {
   }
 
   /**
+   * Record the shift in the note, so a merge moves what the other side drew
+   * below the line without having seen it (DESIGN §10.7 D). What lies below the
+   * line but is deliberately left in place (an undo moves back only what the
+   * insert moved, not what was drawn into the gap since) is stamped too: the
+   * merge would move it otherwise.
+   * @returns {{recorded: boolean, touchedMedia: boolean}} whether a shift was
+   *   recorded, and whether media left in place was stamped (it needs a save)
+   * @private
+   */
+  _recordShift(noteCanvas, yDelta) {
+    const { versions, noteData } = noteCanvas;
+    if (!versions || this.startY === undefined || !noteData) {
+      return { recorded: false, touchedMedia: false };
+    }
+    const strokeIds = new Set(this.strokeIds);
+    for (const stroke of noteData.strokes ?? []) {
+      if (stroke._deleted || strokeIds.has(stroke.id) || !stroke.y?.length) continue;
+      if (minOf(stroke.y) > this.startY) versions.touch(stroke);
+    }
+    const mediaIds = new Set(this.mediaIds);
+    let touchedMedia = false;
+    for (const item of noteData.media ?? []) {
+      if (item.type === "pdf-page" || mediaIds.has(item.id)) continue;
+      if (item.y > this.startY) {
+        versions.touch(item);
+        touchedMedia = true;
+      }
+    }
+    versions.recordShift(noteData, { y: this.startY, delta: yDelta });
+    return { recorded: true, touchedMedia };
+  }
+
+  /**
    * Helper to perform the shift
    * @private
    */
   _shift(noteCanvas, yDelta) {
+    const { recorded, touchedMedia } = this._recordShift(noteCanvas, yDelta);
     this._shiftRecognitionBands(noteCanvas, yDelta);
 
     // Shift strokes
-    for (const strokeId of this.strokeIds) {
-      const stroke = noteCanvas.noteData.strokes.find((s) => s.id === strokeId);
-      if (stroke) {
-        for (let i = 0; i < stroke.y.length; i++) {
-          stroke.y[i] += yDelta;
-        }
+    const strokeIds = new Set(this.strokeIds);
+    for (const stroke of noteCanvas.noteData.strokes) {
+      if (!strokeIds.has(stroke.id)) continue;
+      for (let i = 0; i < stroke.y.length; i++) {
+        stroke.y[i] += yDelta;
       }
     }
 
     // Shift media
-    for (const mediaId of this.mediaIds) {
-      const media = noteCanvas.noteData.media.find((m) => m.id === mediaId);
-      if (media) {
-        media.y += yDelta;
-      }
+    const mediaIds = new Set(this.mediaIds);
+    for (const media of noteCanvas.noteData.media ?? []) {
+      if (mediaIds.has(media.id)) media.y += yDelta;
     }
+
+    // Shift text boxes (their geometry is part of the text, saved with it)
+    if (this.boxIds.length > 0) noteCanvas.textEditorLayer?.moveBoxes(this.boxIds, yDelta);
 
     // Re-build spatial index and redraw
     noteCanvas.spatialIndex.build(noteCanvas.noteData.strokes);
     noteCanvas.renderer.forceRedraw();
 
-    if (this.strokeIds.length > 0) {
+    // A recorded shift is saved even when nothing here moved: the other side's
+    // strokes below the line may still have to (DESIGN §10.7 D)
+    if (this.strokeIds.length > 0 || recorded) {
       noteCanvas.strokesChanged = true;
       noteCanvas.strokeManager.markDirty();
       noteCanvas.strokeManager.forceSave();
     }
-    if (this.mediaIds.length > 0) {
+    // Media left in place was stamped as having seen the shift: saved with it
+    if (this.mediaIds.length > 0 || touchedMedia) {
       noteCanvas.mediaChanged = true;
       noteCanvas._saveMediaChanges();
     }

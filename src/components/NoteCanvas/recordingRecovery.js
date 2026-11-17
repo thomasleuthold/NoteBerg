@@ -13,14 +13,7 @@
  */
 
 import { t } from "../../i18n/index.js";
-
-function escapeHtml(text) {
-  return String(text ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 /**
  * File name offered in the save picker: `recording-YYYY-MM-DD_HH-MM{ext}`,

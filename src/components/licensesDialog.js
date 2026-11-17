@@ -97,6 +97,20 @@ const licenses = [
     licenseUrl: "https://github.com/niklasvh/html2canvas/blob/master/LICENSE",
   },
   {
+    name: "@pdf-lib/fontkit",
+    description: "Font engine for embedding fonts in PDF documents",
+    url: "https://github.com/Hopding/fontkit",
+    license: "MIT License",
+    licenseUrl: "https://github.com/Hopding/fontkit/blob/master/LICENSE",
+  },
+  {
+    name: "Inter",
+    description: "Typeface for typed text, in the app and in exported PDFs",
+    url: "https://rsms.me/inter/",
+    license: "SIL Open Font License 1.1",
+    licenseUrl: "https://github.com/rsms/inter/blob/master/LICENSE.txt",
+  },
+  {
     name: "perspective-transform",
     description: "Create a perspective transform from 4 points",
     url: "https://github.com/fhguilherme/perspective-transform",

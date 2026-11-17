@@ -45,6 +45,7 @@ import {
 } from "../modules/backup_restore/restore.js";
 import { purgeLocalData } from "../modules/storage.js";
 import { bindGuardedClick } from "../utils/asyncAction.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
 import {
   showBackupPasswordDialog,
   showReplaceAllBlockedDialog,
@@ -65,12 +66,6 @@ if (typeof window !== "undefined") {
   for (const event of ["datachange", "notes-updated"]) {
     window.addEventListener(event, invalidateBackupEstimate);
   }
-}
-
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text ?? "";
-  return div.innerHTML;
 }
 
 /** "180 MB" style, base 1024, one decimal below 10. */
@@ -457,9 +452,11 @@ async function prepareReplaceAll(ctx) {
 
 async function openRecycleBin() {
   const { closeSettingsDialog } = await import("./settingsDialog.js");
+  const { showRecycleBinTab } = await import("./overviewMode.js");
   const { navigateTo } = await import("../modules/router.js");
   closeSettingsDialog();
-  navigateTo("recyclebin");
+  showRecycleBinTab();
+  navigateTo("overview");
 }
 
 export async function runRestoreFlow(ctx) {

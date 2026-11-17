@@ -6,7 +6,7 @@
 import { fetch } from "@tauri-apps/plugin-http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MockWebDAVServer, wireMockServer } from "./__fixtures__/mockWebDAVServer.js";
-import { downloadAllData, fullSync } from "./nextcloudSync.js";
+import { downloadAllData, dropCredentialsCache, fullSync } from "./nextcloudSync.js";
 
 // --- Mocks ---
 
@@ -81,6 +81,7 @@ describe("Nextcloud Sync Module", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    dropCredentialsCache();
     mockSecureStorage.clear();
     mockServer = new MockWebDAVServer();
     wireMockServer(fetch, mockServer);
@@ -148,6 +149,41 @@ describe("Nextcloud Sync Module", () => {
       expect(result.tombstones.has("nb1")).toBe(true);
 
       fetch.mockImplementation(originalFetch);
+    });
+  });
+
+  describe("account whose user id equals the root folder name", () => {
+    // /remote.php/dav/files/NoteBerg/NoteBerg/... : searching the href for
+    // "/NoteBerg" finds the uid first and mangles every path after it.
+    beforeEach(() => {
+      mockServer = new MockWebDAVServer({ loginName: "NoteBerg" });
+      wireMockServer(fetch, mockServer);
+      mockSecureStorage.set(
+        "nextcloud_credentials",
+        JSON.stringify({
+          serverUrl: "https://cloud.example.com",
+          loginName: "NoteBerg",
+          appPassword: "app-password-123",
+        }),
+      );
+      mockServer
+        .seedNotebook("nb1", { title: "NB" })
+        .seedNote("nb1", { id: "n1", notebookId: "nb1", content: "A", modified: 1000 });
+      mockServer.files.set("/NoteBerg/notebooks", { isCollection: true, mtime: new Date() });
+      mockServer.files.set("/NoteBerg/quickNotes", { isCollection: true, mtime: new Date() });
+    });
+
+    it("reads the tree with Depth: infinity", async () => {
+      const result = await downloadAllData([], []);
+      expect(result.notebooks.map((n) => n.id)).toEqual(["nb1"]);
+      expect(result.notes.map((n) => n.id)).toEqual(["n1"]);
+    });
+
+    it("reads the tree with the per-folder fallback", async () => {
+      mockServer.rejectDepthInfinity();
+      const result = await downloadAllData([], []);
+      expect(result.notebooks.map((n) => n.id)).toEqual(["nb1"]);
+      expect(result.notes.map((n) => n.id)).toEqual(["n1"]);
     });
   });
 

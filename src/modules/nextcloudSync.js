@@ -13,15 +13,23 @@ import { logger } from "../utils/logger.js";
 import { decryptObject } from "./encryption.js";
 import { getEncryptionKey, isAppUnlocked } from "./masterPassword.js";
 import { extFromMime, mimeFromExt } from "./mime.js";
+import { attemptMerge } from "./noteMerge.js";
+import { noteForUpload } from "./noteUpload.js";
 import {
   getSecureCredential as _tauriGetSecureCredential,
   deleteSecureCredential,
   saveSecureCredential,
 } from "./secureStorage.js";
+import { createDavOps as createSharingDavOps, OWNER_PROPFIND_BODY } from "./sharing/davOps.js";
+import { isForeignGuardActive } from "./sharing/enabled.js";
+import { setNativeOcsTransport } from "./sharing/nextcloudShares.js";
+import { stripLocalFields } from "./sharing/notebookShareFields.js";
+import { canEdit } from "./sharing/sharePermissions.js";
 import {
   checkFileExists,
   clearNoteMoveFlag,
   getFile,
+  getNoteBase,
   getRawNote,
   permanentlyDeleteNote,
   permanentlyDeleteNotebook,
@@ -30,6 +38,8 @@ import {
   saveNote,
 } from "./storage.js";
 import {
+  davHrefToPath,
+  encodeDavPath,
   getAllRequiredFolders,
   getGlobalNotebookTombstonePath,
   getLegacyNotebookPath,
@@ -41,6 +51,10 @@ import {
   getNoteMediaFolder,
   getNotePath,
   getQuickNotesTombstonePath,
+  isPathWithin,
+  isSafeId,
+  isShareEnded,
+  parseNotebookRelativePath,
   parsePath,
   ROOT_FOLDER,
   STORAGE_VERSION,
@@ -51,6 +65,9 @@ import {
   cleanupOldTombstones,
   createEmptyTombstone,
 } from "./tombstones.js";
+
+// The merge itself lives in noteMerge.js so the Nextcloud app build can use it too
+export { attemptMerge };
 
 // ─── HTTP / credential providers ──────────────────────────────────────────────
 // The real Tauri implementations. (Previously these were injectable for an
@@ -374,6 +391,7 @@ export async function migrateCredentials() {
     }
 
     await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, legacyCredString);
+    dropCredentialsCache();
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     console.info("[NextcloudSync] Migrated credentials to secure storage");
   } catch (error) {
@@ -381,14 +399,33 @@ export async function migrateCredentials() {
   }
 }
 
+// The credentials as last read, so the many requests of a sync (the open note's
+// live sync makes about six in a row) do not each go to the keystore: on Android
+// that is a native plugin call with an AES-GCM decrypt, tens of ms apiece. Held
+// as the stored string and parsed per call, so a caller cannot change the cache.
+// Every write in this module drops it; the lifetime only bounds a change made
+// elsewhere. Never holds "nothing" or a failure.
+const CREDENTIALS_CACHE_MS = 60_000;
+let credentialsCache = null; // { raw: string, at: number }
+
+/** Forget the cached credentials (a write drops them itself; tests that rewrite the keystore call this). */
+export function dropCredentialsCache() {
+  credentialsCache = null;
+}
+
 /**
  * Get stored Nextcloud credentials from secure storage
  */
 export async function getStoredCredentials() {
   try {
+    if (credentialsCache && Date.now() - credentialsCache.at < CREDENTIALS_CACHE_MS) {
+      return JSON.parse(credentialsCache.raw);
+    }
     const credString = await _getSecureCredential(NEXTCLOUD_STORAGE_KEY);
     if (credString) {
-      return JSON.parse(credString);
+      const parsed = JSON.parse(credString);
+      credentialsCache = { raw: credString, at: Date.now() };
+      return parsed;
     }
     return null;
   } catch (error) {
@@ -401,9 +438,11 @@ export async function getStoredCredentials() {
  * Save Nextcloud credentials to secure storage
  */
 async function saveCredentials(credentials) {
+  dropCredentialsCache();
   try {
     const credString = JSON.stringify(credentials);
     await saveSecureCredential(NEXTCLOUD_STORAGE_KEY, credString);
+    dropCredentialsCache(); // a read during the write may have cached the old value
 
     // Verify save worked
     const verifyRead = await _getSecureCredential(NEXTCLOUD_STORAGE_KEY);
@@ -420,6 +459,7 @@ async function saveCredentials(credentials) {
  * Clear stored credentials from secure storage
  */
 export async function clearCredentials() {
+  dropCredentialsCache();
   resetUserIdLookup();
   try {
     await deleteSecureCredential(NEXTCLOUD_STORAGE_KEY);
@@ -531,6 +571,29 @@ async function resolveUserId(creds) {
 }
 
 /**
+ * The Nextcloud user ID of the signed-in account (null when signed out).
+ * Used to attribute edits (`lastModifiedBy`) and to recognise our own files.
+ */
+export async function getCurrentUserId() {
+  const creds = await getStoredCredentials();
+  return creds ? resolveUserId(creds) : null;
+}
+
+/**
+ * The user ID together with whether the server confirmed it. When the lookup
+ * fails, getCurrentUserId() falls back to the login name, which is often but not
+ * always the user ID. That guess is good enough to address WebDAV (a wrong one
+ * simply fails), but never for deciding that something belongs to another user.
+ * @returns {Promise<{uid: string|null, confirmed: boolean}>}
+ */
+export async function getCurrentUserIdentity() {
+  const uid = await getCurrentUserId();
+  // A confirmed ID is stored with the credentials; the fallback never is
+  const stored = (await getStoredCredentials())?.userId ?? null;
+  return { uid, confirmed: Boolean(uid) && stored === uid };
+}
+
+/**
  * Everything a WebDAV request needs from the stored account: the auth header
  * and URL builders rooted at the user's DAV principal.
  * @throws when not authenticated
@@ -543,10 +606,23 @@ async function getDavAccount() {
   const davRoot = `${creds.serverUrl}/remote.php/dav`;
   return {
     authHeader: basicAuth(creds.loginName, creds.appPassword),
-    fileUrl: (path) => `${davRoot}/files/${user}${path}`,
+    fileUrl: (path) => `${davRoot}/files/${user}${encodeDavPath(path)}`,
     uploadUrl: (uploadId) => `${davRoot}/uploads/${user}/${uploadId}`,
   };
 }
+
+// The sharing API (OCS) authenticates like WebDAV does: the stored app password,
+// through the Tauri client
+setNativeOcsTransport(async () => {
+  const creds = await getStoredCredentials();
+  if (!creds) throw new Error("Not authenticated");
+  return {
+    baseUrl: creds.serverUrl,
+    fetch: _fetch,
+    headers: { Authorization: basicAuth(creds.loginName, creds.appPassword) },
+    userId: await resolveUserId(creds),
+  };
+});
 
 /**
  * Check if user is authenticated
@@ -899,15 +975,22 @@ async function uploadFileChunked(path, blob, mtime = null) {
       // the payload, so only the sliced chunk is ever marshalled.
       const chunk = blob.slice(start, Math.min(start + CHUNK_SIZE, blob.size));
 
-      const chunkResponse = await _fetch(`${uploadRoot}/${index + 1}`, {
-        method: "PUT",
-        headers: {
-          Authorization: authHeader,
-          "Content-Type": "application/octet-stream",
-          "Cache-Control": "no-cache",
-        },
-        body: chunk,
+      const chunkHeaders = {
+        Authorization: authHeader,
+        "Content-Type": "application/octet-stream",
+        "Cache-Control": "no-cache",
+      };
+      // Raw bytes over IPC where the app can (putFileRaw); the HTTP plugin otherwise
+      const sent = await putFileRaw(`/${uploadId}/${index + 1}`, chunk, chunkHeaders, {
+        tree: "uploads",
       });
+      const chunkResponse = sent
+        ? { ok: sent.status >= 200 && sent.status < 300, status: sent.status, statusText: "" }
+        : await _fetch(`${uploadRoot}/${index + 1}`, {
+            method: "PUT",
+            headers: chunkHeaders,
+            body: chunk,
+          });
 
       if (!chunkResponse.ok && chunkResponse.status !== 201 && chunkResponse.status !== 204) {
         throw new Error(
@@ -1025,13 +1108,20 @@ async function uploadFile(
     headers["If-None-Match"] = "*";
   }
 
-  const response = await _fetch(webdavUrl, {
-    method: "PUT",
-    headers,
-    body: content,
-  });
+  // The body as raw bytes over IPC where the app can (putFileRaw); the HTTP
+  // plugin otherwise
+  const sent = await putFileRaw(path, content, headers);
+  const response = sent
+    ? null
+    : await _fetch(webdavUrl, {
+        method: "PUT",
+        headers,
+        body: content,
+      });
+  const status = sent ? sent.status : response.status;
+  const ok = status >= 200 && status < 300;
 
-  if (response.status === 412) {
+  if (status === 412) {
     // Remote changed since our last sync. Do NOT force-overwrite — fail this
     // upload so the item stays synced=false and the next sync cycle downloads
     // the remote version, merges, and re-uploads.
@@ -1040,16 +1130,17 @@ async function uploadFile(
     throw err;
   }
 
-  if (!response.ok && response.status !== 201 && response.status !== 204) {
-    const errorText = await response.text();
-    console.error("Upload error:", errorText);
-    throw new Error(`Failed to upload file: ${response.status} ${response.statusText}`);
+  if (!ok) {
+    if (response) console.error("Upload error:", await response.text());
+    const err = new Error(`Failed to upload file: ${status} ${response?.statusText ?? ""}`.trim());
+    err.status = status;
+    throw err;
   }
 
-  let newEtag = response.headers.get("etag")?.replace(/"/g, "");
+  let newEtag = sent ? sent.etag || undefined : response.headers.get("etag")?.replace(/"/g, "");
 
   // If ETag is missing (e.g. 204 response), try to fetch it via HEAD
-  if (!newEtag && response.ok) {
+  if (!newEtag && ok) {
     try {
       const headResponse = await _fetch(webdavUrl, {
         method: "HEAD",
@@ -1068,6 +1159,77 @@ async function uploadFile(
   }
 
   return newEtag;
+}
+
+// Set once the app turns out not to have the raw upload command (an older
+// build): every upload then goes through the HTTP plugin
+let rawUploadUnavailable = false;
+
+const IS_ANDROID = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+
+async function toBytes(content) {
+  return typeof content === "string"
+    ? new TextEncoder().encode(content)
+    : new Uint8Array(await content.arrayBuffer());
+}
+
+async function toBase64(content) {
+  const blob = content instanceof Blob ? content : new Blob([content]);
+  const url = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+  return url.slice(url.indexOf(",") + 1);
+}
+
+/**
+ * PUT a body into the user's own Nextcloud files through the app's
+ * `nc_put_file` command, which takes the body as raw bytes. The HTTP plugin
+ * sends a body over IPC as a JSON array of numbers, one per byte: uploading a
+ * 1.3 MB note blocked the main thread for about 1.5 s, while the user writes
+ * (review P4). The command reads the server and the login from the stored
+ * credentials itself; this side names only the path and the conditions.
+ * @param {string} path - in the user's file tree
+ * @param {string|Blob} content
+ * @param {object} headers - the upload's headers as built for the plugin
+ * @param {{tree?: "files"|"uploads"}} [options] - the user's files (default), or
+ *   their chunked-upload area (`path` is then `/<session>/<n>`)
+ * @returns {Promise<{status: number, etag: string|null}|null>} null when the
+ *   command cannot be used here (not the app, an older build, credentials it
+ *   cannot read): the caller uses the plugin then
+ */
+async function putFileRaw(path, content, headers, { tree = "files" } = {}) {
+  if (rawUploadUnavailable) return null;
+  if (typeof window === "undefined" || window.__TAURI_INTERNALS__ === undefined) return null;
+  // Android's IPC cannot carry raw bytes (Tauri always uses postMessage there,
+  // which JSON-encodes a typed array as one number per byte): send one base64
+  // string instead, encoded natively by FileReader rather than in a JS loop
+  const body = IS_ANDROID ? await toBase64(content) : await toBytes(content);
+  const ipcHeaders = {
+    // Encoded: IPC header values are ASCII, a shared folder's name need not be
+    "x-nb-path": encodeDavPath(path),
+    "x-nb-content-type": headers["Content-Type"],
+    "x-nb-tree": tree,
+  };
+  if (headers["If-Match"]) ipcHeaders["x-nb-if-match"] = headers["If-Match"].replace(/"/g, "");
+  if (headers["If-None-Match"]) ipcHeaders["x-nb-if-none-match"] = headers["If-None-Match"];
+  if (headers["X-OC-Mtime"]) ipcHeaders["x-nb-mtime"] = headers["X-OC-Mtime"];
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke("nc_put_file", body, { headers: ipcHeaders });
+  } catch (error) {
+    const message = String(error?.message ?? error);
+    // The command is not there, or cannot sign in: the plugin can still upload
+    if (/not found|not allowed|not signed in|unreadable|not http|raw byte body/i.test(message)) {
+      if (/not found|not allowed|raw byte body/i.test(message)) rawUploadUnavailable = true;
+      console.warn("[Sync] Raw upload unavailable, using the HTTP plugin:", message);
+      return null;
+    }
+    // The request itself failed (network): as any failed upload
+    throw new Error(message);
+  }
 }
 
 /**
@@ -1122,11 +1284,83 @@ async function downloadFile(path, asBinary = false) {
 }
 
 /**
+ * File operations on the user's own tree for the sharing module (root guard,
+ * share discovery), over Basic auth through the Tauri client. Their semantics
+ * are shared with the Nextcloud app build (sharing/davOps.js).
+ * @returns {import("./sharing/sharedRoots.js").DavOps}
+ */
+export function createDavOps() {
+  return createSharingDavOps({
+    async request(method, path, { headers = {}, body, destination } = {}) {
+      const { authHeader, fileUrl } = await getDavAccount();
+      return _fetch(fileUrl(path), {
+        method,
+        headers: {
+          Authorization: authHeader,
+          "Cache-Control": "no-cache",
+          ...(destination ? { Destination: fileUrl(destination) } : {}),
+          ...headers,
+        },
+        body,
+      });
+    },
+    mkcol: async (path) => {
+      await createFolder(path);
+    },
+  });
+}
+
+// ─── What one sync pass may do (DESIGN §5.4, §5.5) ────────────────────────────
+// The own tree is the user's. A notebook shared with this user is the sharer's
+// folder: it exists by definition, and the share grants at most READ, UPDATE and
+// CREATE, never DELETE. Every difference between the two kinds of pass is stated
+// here once; the engine asks these rules rather than "is this a share?".
+
+/**
+ * @typedef {object} PassRules
+ * @property {boolean} repairTree - create missing folders, re-upload a missing
+ *   notebook file, heal legacy media. Never in a share: its folders are the
+ *   sharer's, and the sharer's client repairs its own tree.
+ * @property {boolean} deleteRemote - purge notes and notebooks, move notes away
+ *   (deletes the old file, writes a tombstone), clean up orphaned media. All need
+ *   DELETE, which a share never grants.
+ * @property {boolean} upload - send local changes at all. Not with a read-only
+ *   share: local changes are stranded instead, and the remote copy is not
+ *   applied over them.
+ * @property {boolean} resurrectPurged - a note purged remotely but edited locally
+ *   is uploaded again. In a share the owner's purge wins and the edit is stranded.
+ */
+
+/** @type {PassRules} The user's own tree: everything is allowed. */
+const OWN_TREE_RULES = Object.freeze({
+  repairTree: true,
+  deleteRemote: true,
+  upload: true,
+  resurrectPurged: true,
+});
+
+/**
+ * @param {{canEdit: boolean}|null} shared - the notebook shared with this user, or null for the own tree
+ * @returns {PassRules}
+ */
+function passRules(shared) {
+  if (!shared) return OWN_TREE_RULES;
+  return Object.freeze({
+    repairTree: false,
+    deleteRemote: false,
+    upload: Boolean(shared.canEdit),
+    resurrectPurged: false,
+  });
+}
+
+/**
  * Sync media files for a note (Upload)
  * Ensures all binary files referenced in the note are uploaded to Nextcloud
  * Uses parallel uploads for efficiency
+ * @param {Object} note
+ * @param {{rules?: PassRules}} [options]
  */
-async function syncNoteMedia(note) {
+async function syncNoteMedia(note, { rules = OWN_TREE_RULES } = {}) {
   // When the note is locally encrypted, media is stored as an encrypted blob —
   // media files were already uploaded when the note was last synced unencrypted,
   // and the encrypted payload references them by fileId inside the blob.
@@ -1139,11 +1373,15 @@ async function syncNoteMedia(note) {
   // Ensure the full folder chain exists. createFolder(mediaFolder) gets a
   // 409 Conflict if any parent is missing, so we create parents first.
   // createFolder handles 405 (already exists) so these calls are always safe.
-  if (note.notebookId) {
-    await createFolder(getNotebookFolder(note.notebookId));
-    await createFolder(getNotebookNotesFolder(note.notebookId));
-  } else {
-    await createFolder(`${ROOT_FOLDER}/quickNotes`);
+  // A shared notebook's folders belong to its owner and already exist: creating
+  // them from here would mean writing outside what the share granted.
+  if (rules.repairTree) {
+    if (note.notebookId) {
+      await createFolder(getNotebookFolder(note.notebookId));
+      await createFolder(getNotebookNotesFolder(note.notebookId));
+    } else {
+      await createFolder(`${ROOT_FOLDER}/quickNotes`);
+    }
   }
   await createFolder(mediaFolder);
 
@@ -1393,23 +1631,46 @@ async function downloadNoteMedia(note, preloadedRemoteFiles = null) {
 }
 
 /**
- * Fetch the state of all files on the server (PROPFIND Depth: infinity)
- * Returns a flat list of all files with their ETags and modification times
+ * The shared notebook's root folder is gone or no longer readable (404/403): the
+ * share was revoked, the owner deleted the notebook, or the mount moved. Nothing
+ * may be classified, uploaded or healed when this happens.
  */
-async function fetchRemoteState() {
+export class SharedRootMissingError extends Error {
+  constructor(path, status) {
+    super(`Shared notebook root ${path} is not available (${status})`);
+    this.name = "SharedRootMissingError";
+    this.path = path;
+    this.status = status;
+  }
+}
+
+/**
+ * Fetch the state of all files below `rootPath` (PROPFIND Depth: infinity)
+ * Returns a flat list of all files with their ETags and modification times.
+ *
+ * @param {string} [rootPath] - ROOT_FOLDER for the own tree, or a shared notebook's base
+ * @param {object} [options]
+ * @param {boolean} [options.requireRoot] - a missing root throws SharedRootMissingError
+ *   instead of reading as an empty tree (shared roots must never read as "empty")
+ */
+async function fetchRemoteState(rootPath = ROOT_FOLDER, { requireRoot = false } = {}) {
   const { authHeader, fileUrl } = await getDavAccount();
 
-  const response = await _fetch(fileUrl(ROOT_FOLDER), {
+  const ownTree = rootPath === ROOT_FOLDER;
+  const response = await _fetch(fileUrl(rootPath), {
     method: "PROPFIND",
     headers: {
       Authorization: authHeader,
       Depth: "infinity", // Get everything recursively
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
+      ...ownerBody(ownTree).headers,
     },
+    body: ownerBody(ownTree).body,
   });
 
   if (response.status === 404) {
+    if (requireRoot) throw new SharedRootMissingError(rootPath, 404);
     return []; // Root folder doesn't exist
   }
 
@@ -1419,7 +1680,9 @@ async function fetchRemoteState() {
     console.warn(
       `[Sync] PROPFIND Depth: infinity rejected (${response.status}) — falling back to per-folder listing`,
     );
-    return fetchRemoteStateShallow();
+    return rootPath === ROOT_FOLDER
+      ? fetchRemoteStateShallow()
+      : walkNotebookRoot(rootPath, { requireRoot });
   }
 
   if (!response.ok) {
@@ -1429,20 +1692,51 @@ async function fetchRemoteState() {
   const text = await response.text();
   const allItems = parseWebDAVResponse(text, false); // false = don't include collections (folders)
 
-  return allItems.map((item) => {
-    // Decode URL encoded path
-    let path = decodeURIComponent(item.href);
-    // Robustly strip base path by finding ROOT_FOLDER
-    // This handles variations in how Nextcloud returns the path (e.g. username casing)
-    const rootIndex = path.indexOf(ROOT_FOLDER);
-    if (rootIndex !== -1) {
-      path = path.substring(rootIndex);
-    }
-    return {
+  // Strip the DAV files prefix (whatever case the server reports the uid in) and
+  // keep only what lies inside the root, compared by whole path segments.
+  const items = allItems
+    .map((item) => ({
       ...item,
-      path, // e.g. /NoteBerg/notebooks/...
-    };
-  });
+      path: davHrefToPath(item.href), // e.g. /NoteBerg/notebooks/...
+    }))
+    .filter((item) => isPathWithin(item.path, rootPath));
+  return ownTree ? await excludeForeign(items) : items;
+}
+
+/**
+ * Ask which user owns each item. Only needed (and only sent) for the own tree
+ * once sharing is on: anything below /NoteBerg that belongs to someone else is a
+ * share mounted there, not this user's data.
+ */
+function ownerBody(ownTree) {
+  return isForeignGuardActive() && ownTree
+    ? { headers: { "Content-Type": "application/xml" }, body: OWNER_PROPFIND_BODY }
+    : { headers: {}, body: undefined };
+}
+
+/** Items of the own tree that belong to another user (shares mounted inside it) are not ours to sync. */
+async function excludeForeign(items) {
+  if (!isForeignGuardActive()) return items;
+  // Only a confirmed ID may declare items foreign: a guessed one that is wrong
+  // would declare the whole own tree someone else's
+  const { uid: currentUid, confirmed } = await getCurrentUserIdentity();
+  const uid = confirmed ? currentUid.toLowerCase() : null;
+  return items.filter((item) => !item.ownerId || !uid || item.ownerId.toLowerCase() === uid);
+}
+
+/**
+ * List one notebook folder with Depth: 1 requests: its own files and its notes.
+ * Media folders are intentionally NOT walked (see fetchRemoteStateShallow).
+ * @param {string} base - the notebook folder, under the own tree or a shared mount
+ */
+async function walkNotebookRoot(base, { requireRoot = false } = {}) {
+  const items = [];
+  const addFiles = (folder, files) => {
+    for (const f of files) items.push({ ...f, path: `${folder}/${f.name}` });
+  };
+  addFiles(base, await listFiles(base, { requireRoot }));
+  addFiles(`${base}/notes`, await listFiles(`${base}/notes`));
+  return items;
 }
 
 /**
@@ -1469,23 +1763,22 @@ async function fetchRemoteStateShallow() {
 
   const notebookFolders = await listFolders(notebooksFolder);
   await runInBatches(notebookFolders, 5, async (nb) => {
-    const nbFolder = `${notebooksFolder}/${nb.name}`;
-    addFiles(nbFolder, await listFiles(nbFolder));
-    addFiles(`${nbFolder}/notes`, await listFiles(`${nbFolder}/notes`));
+    items.push(...(await walkNotebookRoot(`${notebooksFolder}/${nb.name}`)));
   });
 
   const quickNotesFolder = `${ROOT_FOLDER}/quickNotes`;
   addFiles(quickNotesFolder, await listFiles(quickNotesFolder));
 
-  return items;
+  return excludeForeign(items);
 }
 
 /**
  * List files in a folder using WebDAV PROPFIND
  */
-export async function listFiles(path) {
+export async function listFiles(path, { requireRoot = false } = {}) {
   const { authHeader, fileUrl } = await getDavAccount();
 
+  const owned = ownerBody(isPathWithin(path, ROOT_FOLDER));
   const response = await _fetch(fileUrl(path), {
     method: "PROPFIND",
     headers: {
@@ -1493,10 +1786,13 @@ export async function listFiles(path) {
       Depth: "1",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
+      ...owned.headers,
     },
+    body: owned.body,
   });
 
-  if (response.status === 404) {
+  if (response.status === 404 || (requireRoot && response.status === 403)) {
+    if (requireRoot) throw new SharedRootMissingError(path, response.status);
     return []; // Folder doesn't exist
   }
 
@@ -1508,6 +1804,59 @@ export async function listFiles(path) {
   return parseWebDAVResponse(text, false); // false = don't include collections (folders)
 }
 
+// ─── The open note, on its own (liveNoteSync.js) ─────────────────────────────
+// While a note is open and the user writes, it is synced by itself: these are
+// its requests. The main thread only moves strings; parsing, merging and saving
+// happen in the storage worker (review P4, 4.3).
+
+/**
+ * The etag of one file on the server (a Depth:0 PROPFIND), or null when it is not there.
+ * @param {string} path
+ * @returns {Promise<string|null>}
+ */
+export async function remoteFileEtag(path) {
+  const { authHeader, fileUrl } = await getDavAccount();
+  const response = await _fetch(fileUrl(path), {
+    method: "PROPFIND",
+    headers: {
+      Authorization: authHeader,
+      Depth: "0",
+      "Content-Type": "application/xml",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
+    body: `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>`,
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Failed to look at ${path}: ${response.status}`);
+  const xml = await response.text();
+  const raw = xml.match(/<(?:[\w-]+:)?getetag[^>]*>([^<]*)</i)?.[1];
+  if (!raw) {
+    console.warn(
+      `[LiveSync] No etag in the answer for ${path}: ${response.status} ${xml.slice(0, 300)}`,
+    );
+  }
+  return raw
+    ? raw
+        .replace(/&quot;/g, "")
+        .replace(/"/g, "")
+        .trim() || null
+    : null;
+}
+
+/** A note file's text as stored on the server, with its etag; content null when it is not there. */
+export function downloadNoteText(path) {
+  return downloadFile(path);
+}
+
+/**
+ * Upload a note file prepared elsewhere (already JSON), conditionally on `ifMatch`.
+ * @returns {Promise<string>} the new etag; throws with status 412 when the server moved on
+ */
+export function uploadNoteText(path, body, modified, ifMatch) {
+  return uploadFile(path, body, modified, ifMatch);
+}
+
 /**
  * Check whether the server has note changes that the local client hasn't seen yet.
  * Uses a single Depth:1 PROPFIND against the notebook's notes folder — cheap, no content download.
@@ -1517,6 +1866,8 @@ export async function listFiles(path) {
  */
 export async function hasRemoteChanges(notebookId, localNotes) {
   if (!(await isAuthenticated())) return false;
+  // Nothing left to look at, and asking would fail (and warn) on every live check
+  if (notebookId && isShareEnded(notebookId)) return false;
 
   try {
     const folder = notebookId ? getNotebookNotesFolder(notebookId) : `${ROOT_FOLDER}/quickNotes`;
@@ -1543,6 +1894,7 @@ export async function hasRemoteChanges(notebookId, localNotes) {
 export async function listFolders(path) {
   const { authHeader, fileUrl } = await getDavAccount();
 
+  const owned = ownerBody(isPathWithin(path, ROOT_FOLDER));
   const response = await _fetch(fileUrl(path), {
     method: "PROPFIND",
     headers: {
@@ -1550,7 +1902,9 @@ export async function listFolders(path) {
       Depth: "1",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
+      ...owned.headers,
     },
+    body: owned.body,
   });
 
   if (response.status === 404) {
@@ -1599,6 +1953,8 @@ function parseWebDAVResponse(rawXml, includeCollections = false) {
     const isCollection = /<[^:>]*:?collection[^>]*\/?>/i.test(resourceTypeBlock);
     const lastModified = xmlText(block, "getlastmodified");
     const etag = xmlText(block, "getetag");
+    // Only present when the request asked for it (see ownerBody)
+    const ownerId = xmlText(block, "owner-id");
 
     // Extract filename/foldername from href
     const name = decodeURIComponent(
@@ -1624,6 +1980,7 @@ function parseWebDAVResponse(rawXml, includeCollections = false) {
       isCollection,
       lastModified: lastModified ? new Date(lastModified).getTime() : null,
       etag: etag?.replace(/&quot;/g, "").replace(/"/g, ""),
+      ownerId,
     });
   }
 
@@ -1731,7 +2088,11 @@ async function aggregateSyncResults(batchResults) {
     if (res.action === "purge") continue;
     results.uploaded++;
     results.uploadedIds.push(res.id);
-    results.metadata[res.id] = { etag: typeof res.etag === "string" ? res.etag : null };
+    results.metadata[res.id] = {
+      etag: typeof res.etag === "string" ? res.etag : null,
+      // Text the server now holds (notes only) — becomes the next merge baseline
+      baseContent: res.baseContent,
+    };
     // Clear previousNotebookId now that the move has been synced to Nextcloud
     if (res.hadPreviousLocation) await clearNoteMoveFlag(res.id);
   }
@@ -1750,17 +2111,19 @@ async function ensureHierarchicalStructure() {
 
 /**
  * Sync notebooks to Nextcloud (hierarchical structure)
+ * @param {Array} notebooks
+ * @param {{rules?: PassRules}} [options] - what the pass may do (a share: no folders, no purges)
  */
-export async function syncNotebooks(notebooks) {
+export async function syncNotebooks(notebooks, { rules = OWN_TREE_RULES } = {}) {
   if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
   // Ensure hierarchical folder structure exists
-  await ensureHierarchicalStructure();
+  if (rules.repairTree) await ensureHierarchicalStructure();
 
   // Separate purged notebooks from active ones
-  const purgedNotebooks = notebooks.filter((n) => n.purged);
+  const purgedNotebooks = rules.deleteRemote ? notebooks.filter((n) => n.purged) : [];
   const activeNotebooks = notebooks.filter((n) => !n.purged);
   const purgedResults = [];
 
@@ -1789,18 +2152,20 @@ export async function syncNotebooks(notebooks) {
 
   const uploadResults = await runInBatches(activeNotebooks, CONCURRENCY, async (notebook) => {
     try {
-      // Create notebook folder
-      const notebookFolder = getNotebookFolder(notebook.id);
-      await createFolder(notebookFolder);
+      if (rules.repairTree) {
+        // Create notebook folder
+        await createFolder(getNotebookFolder(notebook.id));
 
-      // Create notes subfolder
-      const notesFolder = getNotebookNotesFolder(notebook.id);
-      await createFolder(notesFolder);
+        // Create notes subfolder
+        await createFolder(getNotebookNotesFolder(notebook.id));
+      }
 
       // Upload notebook metadata
       const path = getNotebookPath(notebook.id);
       const syncedNotebook = {
-        ...notebook,
+        // Sharing fields describe this user's relationship to the notebook; the
+        // file is the notebook's, shared with every collaborator
+        ...stripLocalFields(notebook),
         synced: true,
         // Keep original modified timestamp to preserve history
       };
@@ -1824,17 +2189,21 @@ export async function syncNotebooks(notebooks) {
 
 /**
  * Sync notes to Nextcloud (hierarchical structure)
+ * @param {Array} notes
+ * @param {{rules?: PassRules}} [options] - what the pass may do. In a share writes stay
+ *   inside what it grants: no folders outside the media folder are created, and
+ *   nothing is deleted (no purges, no moves, no orphaned-media cleanup).
  */
-export async function syncNotes(notes) {
+export async function syncNotes(notes, { rules = OWN_TREE_RULES } = {}) {
   if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
 
   // Ensure hierarchical folder structure exists
-  await ensureHierarchicalStructure();
+  if (rules.repairTree) await ensureHierarchicalStructure();
 
   // Separate purged notes from active notes
-  const purgedNotes = notes.filter((n) => n.purged);
+  const purgedNotes = rules.deleteRemote ? notes.filter((n) => n.purged) : [];
   const activeNotes = notes.filter((n) => !n.purged);
   const purgedResults = [];
 
@@ -1890,7 +2259,9 @@ export async function syncNotes(notes) {
   // Pre-process moves: group by old notebook so the tombstone read-modify-write
   // for each source location is done serially, preventing concurrent overwrites
   // that would drop tombstone entries and cause ghost notes on other devices.
-  const movedNotes = activeNotes.filter((n) => n.previousNotebookId !== undefined);
+  const movedNotes = rules.deleteRemote
+    ? activeNotes.filter((n) => n.previousNotebookId !== undefined)
+    : [];
   if (movedNotes.length > 0) {
     // Group by old notebook key
     const byOldNotebook = {};
@@ -1933,6 +2304,7 @@ export async function syncNotes(notes) {
     }
   }
 
+  const uploader = await getCurrentUserId();
   const uploadResults = await runInBatches(activeNotes, CONCURRENCY, async (note) => {
     try {
       // Get the correct path based on whether note is in a notebook or is a quick note
@@ -1970,27 +2342,23 @@ export async function syncNotes(notes) {
       // If any binary fails to upload, skip the note JSON so synced stays false
       // and the next sync cycle retries (prevents NC from having a note JSON that
       // references media files that don't exist on the server yet).
-      const mediaOk = await syncNoteMedia(decryptedNote);
+      const mediaOk = await syncNoteMedia(decryptedNote, { rules });
       if (!mediaOk) {
         console.warn(`[Sync] Skipping JSON upload for note ${note.id} — media upload incomplete`);
         return { success: false, id: note.id, error: "media upload incomplete" };
       }
 
-      // Clean up orphaned media files (deleted from note but still on server)
-      await cleanupOrphanedMedia(decryptedNote);
+      // Clean up orphaned media files (deleted from note but still on server).
+      // Needs DELETE, which a share never grants: the owner's client does it.
+      if (rules.deleteRemote) await cleanupOrphanedMedia(decryptedNote);
 
       // Strip internal sync tracking fields before uploading.
       // decryptedNote is already plain — Nextcloud always receives readable JSON.
-      const noteForUpload = { ...decryptedNote };
-      delete noteForUpload.lastSyncedEtag;
-      delete noteForUpload.synced;
-      delete noteForUpload.encrypted;
-      delete noteForUpload._currentFileEtag;
-      delete noteForUpload.previousNotebookId;
-      delete noteForUpload.restoredAt;
+      // Attribution for the other side's merge hint (note-level, see DESIGN §10.3 F)
+      const uploaded = noteForUpload(decryptedNote, uploader);
 
       // Prepare content
-      const content = JSON.stringify(noteForUpload, null, 2);
+      const content = JSON.stringify(uploaded, null, 2);
 
       // For moved notes, the file at the new path is new — there is no existing etag to match.
       // Passing null omits the If-Match header and avoids a guaranteed 412.
@@ -2002,6 +2370,7 @@ export async function syncNotes(notes) {
         success: true,
         id: note.id,
         etag,
+        baseContent: typeof uploaded.content === "string" ? uploaded.content : undefined,
         hadPreviousLocation: note.previousNotebookId !== undefined,
       };
     } catch (error) {
@@ -2017,7 +2386,18 @@ export async function syncNotes(notes) {
  * Download all data from Nextcloud (hierarchical structure)
  * Optimized to only download changed files based on ETags
  */
-export async function downloadAllData(localNotebooks = [], localNotes = []) {
+/**
+ * @param {Array} localNotebooks
+ * @param {Array} localNotes
+ * @param {object} [options]
+ * @param {{notebookId: string}} [options.shared] - read one notebook shared with this user
+ *   (rooted at its registered base) instead of the own tree
+ */
+export async function downloadAllData(
+  localNotebooks = [],
+  localNotes = [],
+  { shared = null } = {},
+) {
   if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
@@ -2033,13 +2413,18 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
   const tombstones = new Map(); // Map of notebookId -> tombstone data
 
   // Step 1: Fetch all remote files in one request
-  const remoteFiles = await fetchRemoteState();
+  const root = shared ? getNotebookFolder(shared.notebookId) : ROOT_FOLDER;
+  const remoteFiles = await fetchRemoteState(root, { requireRoot: Boolean(shared) });
+  // A shared root holds exactly one notebook, so its files are read relative to it
+  const parse = shared
+    ? (path) => parseNotebookRelativePath(path.slice(root.length + 1), shared.notebookId)
+    : parsePath;
 
   // Index remote media files for efficient lookup.
   // Map: noteId -> Array of { name, path }
   const remoteMediaMap = new Map();
   for (const file of remoteFiles) {
-    const parsed = parsePath(file.path);
+    const parsed = parse(file.path);
     if (parsed.type === "media" && parsed.noteId) {
       if (!remoteMediaMap.has(parsed.noteId)) {
         remoteMediaMap.set(parsed.noteId, []);
@@ -2059,12 +2444,14 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
 
   // Step 2: Identify what needs downloading
   for (const file of remoteFiles) {
-    const parsed = parsePath(file.path);
+    const parsed = parse(file.path);
 
     if (parsed.type === "notebook") {
       const local = localNotebooksMap.get(parsed.notebookId);
-      // Download if we don't have it or ETag changed
-      if (!local || local.lastSyncedEtag !== file.etag) {
+      // Download if we don't have it or ETag changed. An unsynced shared notebook
+      // also needs the owner's file: the share may no longer take the change, and
+      // then that file replaces it (fullSync)
+      if (!local || local.lastSyncedEtag !== file.etag || (shared && local.synced === false)) {
         notebooksToDownload.push({ ...parsed, path: file.path, etag: file.etag });
       } else {
         // Unchanged: Add stub to result so fullSync knows it exists
@@ -2139,6 +2526,11 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
       const { content } = await downloadFile(item.path);
       if (content) {
         const notebook = JSON.parse(content);
+        // The owner controls this file; it must describe the notebook it is registered as
+        if (shared && notebook.id !== shared.notebookId) {
+          console.warn(`[Sync] Ignoring shared notebook file claiming id ${notebook.id}`);
+          return null;
+        }
         notebook.lastSyncedEtag = item.etag;
         return notebook;
       }
@@ -2159,6 +2551,18 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
       const { content } = await downloadFile(item.path);
       if (content) {
         const note = JSON.parse(content);
+        // A note file of a shared notebook must be that note, in that notebook:
+        // otherwise saving it would overwrite one of this user's own notes. Its id
+        // also ends up in paths and markup, and another user chose it.
+        if (
+          shared &&
+          (!isSafeId(note.id) ||
+            note.id !== item.noteId ||
+            (note.notebookId ?? null) !== shared.notebookId)
+        ) {
+          console.warn(`[Sync] Ignoring shared note file ${item.path}: id or notebook mismatch`);
+          return null;
+        }
         note._currentFileEtag = item.etag;
         const decrypted = await decryptNoteFromNextcloud(note);
 
@@ -2252,57 +2656,6 @@ export async function downloadAllData(localNotebooks = [], localNotes = []) {
 }
 
 /**
- * Merge strokes while respecting deletions.
- * Strokes are stored and consumed in temporal order (the handwriting recognition
- * backend depends on it), so the merge must preserve that order: the older side's
- * strokes form the base (keeping their positions), the newer side overrides
- * same-id strokes in place and appends its new strokes at the end. When every
- * stroke carries a start timestamp (time[0]), the result is sorted by it so
- * interleaved edits from two devices also end up in true temporal order.
- * @param {Array} priorityStrokes - Strokes from the newer/priority version (wins conflicts)
- * @param {Array} secondaryStrokes - Strokes from the older/secondary version (base order)
- * @param {Array} priorityDeleted - Deleted stroke IDs from priority version
- * @param {Array} secondaryDeleted - Deleted stroke IDs from secondary version
- * @returns {Object} Object with merged strokes and deletedStrokes arrays
- */
-function mergeStrokes(
-  priorityStrokes,
-  secondaryStrokes,
-  priorityDeleted = [],
-  secondaryDeleted = [],
-) {
-  // Combine all deleted stroke IDs from both sides
-  const allDeletedIds = new Set([...priorityDeleted, ...secondaryDeleted]);
-
-  // Legacy strokes without an id are keyed by their JSON serialization
-  const keyOf = (stroke) => stroke.id ?? JSON.stringify(stroke);
-
-  // Older side first (base order), then newer side: Map.set on an existing key
-  // replaces the value but keeps the original insertion position, so same-id
-  // strokes take the newer content at the older position; new strokes append.
-  const strokesById = new Map();
-  for (const stroke of [...secondaryStrokes, ...priorityStrokes]) {
-    if (stroke.id && allDeletedIds.has(stroke.id)) continue;
-    strokesById.set(keyOf(stroke), stroke);
-  }
-
-  const merged = Array.from(strokesById.values());
-
-  // Sort by stroke start time when all strokes have one (legacy strokes may not)
-  if (merged.every((s) => typeof s.time?.[0] === "number")) {
-    merged.sort((a, b) => a.time[0] - b.time[0]);
-  }
-
-  return {
-    strokes: merged,
-    deletedStrokes: Array.from(allDeletedIds),
-  };
-}
-
-/**
- * Attempt to merge two versions of a note
- */
-/**
  * Merge a locally-encrypted note with its remote counterpart.
  *
  * `attemptMerge` refuses encrypted notes outright, because it must also be safe
@@ -2320,7 +2673,7 @@ function mergeStrokes(
  *
  * @returns {Promise<Object|null>} the merged PLAIN note, or null
  */
-async function attemptMergeEncrypted(fullLocal, remote) {
+async function attemptMergeEncrypted(fullLocal, remote, opts) {
   if (!isAppUnlocked()) {
     console.warn(
       `[Sync] Note ${fullLocal.id}: app is locked, cannot merge encrypted note — local will win and the remote's edits will be lost.`,
@@ -2343,170 +2696,34 @@ async function attemptMergeEncrypted(fullLocal, remote) {
   // decryptNoteFields clears `encrypted`, so attemptMerge no longer refuses.
   // The merged note is plain; saveNote re-encrypts it on the way back to disk,
   // and syncNotes uploads Nextcloud-side plain as it always has.
-  return attemptMerge(plainLocal, remote);
-}
-
-export function attemptMerge(local, remote) {
-  // If the local note is encrypted (worker cannot decrypt), merging is not possible.
-  // Return null so the caller treats this as a conflict to be resolved on the main thread.
-  if (local.encrypted) return null;
-
-  // Guard against encrypted content blobs (e.g. index.encrypted flag may be stale).
-  // If strokes or content are encrypted objects rather than expected types, abort merge.
-  if (local.strokes !== undefined && !Array.isArray(local.strokes)) return null;
-  if (remote.strokes !== undefined && !Array.isArray(remote.strokes)) return null;
-  if (local.tags !== undefined && !Array.isArray(local.tags)) return null;
-  if (remote.tags !== undefined && !Array.isArray(remote.tags)) return null;
-  if (local.media !== undefined && !Array.isArray(local.media)) return null;
-  if (remote.media !== undefined && !Array.isArray(remote.media)) return null;
-
-  // Guard against a stub local: index says strokes exist but the content record wasn't loaded
-  // (e.g. StorageWorker write still in-flight). Merging with strokes=undefined would treat
-  // the local as empty and silently discard its strokes into the merged result.
-  if (local.strokes === undefined && local.hasStrokes) return null;
-
-  // Determine which note is newer based on modification time
-  const localIsNewer = local.modified >= remote.modified;
-  const newerNote = localIsNewer ? local : remote;
-
-  // Merge strokes while respecting deletions from both sides
-  const mergedStrokeData = mergeStrokes(
-    localIsNewer ? local.strokes || [] : remote.strokes || [],
-    localIsNewer ? remote.strokes || [] : local.strokes || [],
-    localIsNewer ? local.deletedStrokes || [] : remote.deletedStrokes || [],
-    localIsNewer ? remote.deletedStrokes || [] : local.deletedStrokes || [],
-  );
-
-  // Attempt to merge text content.
-  const localContent = local.content || "";
-  const remoteContent = remote.content || "";
-  let mergedContent;
-  if (localContent === remoteContent) {
-    // Content is identical, no merge needed.
-    mergedContent = localContent;
-  } else if (remoteContent.includes(localContent)) {
-    // The remote content contains the local content, so it's likely an append. Use remote.
-    mergedContent = remoteContent;
-  } else if (localContent.includes(remoteContent)) {
-    // The local content contains the remote content, so it's likely an append. Use local.
-    mergedContent = localContent;
-  } else {
-    // This is a true conflict where both texts have diverged.
-    // Return null to signal that manual conflict resolution is required.
-    return null;
-  }
-
-  // Merge title using "last write wins".
-  const mergedTitle = local.title !== remote.title ? newerNote.title : local.title;
-
-  // Merge background using "last write wins".
-  const mergedBackground =
-    local.background !== remote.background ? newerNote.background : local.background;
-
-  // Merge tags by taking the union of both sets.
-  const mergedTags = [...new Set([...(local.tags || []), ...(remote.tags || [])])];
-
-  // Merge media
-  const localMedia = local.media || [];
-  const remoteMedia = remote.media || [];
-  const localDeletedMedia = local.deletedMedia || [];
-  const remoteDeletedMedia = remote.deletedMedia || [];
-
-  const allDeletedMedia = new Set([...localDeletedMedia, ...remoteDeletedMedia]);
-  const mediaMap = new Map();
-
-  // Helper to add media (newer overwrites older if same ID)
-  const addMedia = (items) => {
-    for (const item of items) {
-      if (item.id && !allDeletedMedia.has(item.id)) {
-        mediaMap.set(item.id, item);
-      }
-    }
-  };
-
-  addMedia(localIsNewer ? remoteMedia : localMedia); // Add older first
-  addMedia(localIsNewer ? localMedia : remoteMedia); // Add newer second (wins)
-
-  // Merge recordings by ID (same pattern as media)
-  const localRecordings = local.recordings || [];
-  const remoteRecordings = remote.recordings || [];
-  const localDeletedRecordings = local.deletedRecordings || [];
-  const remoteDeletedRecordings = remote.deletedRecordings || [];
-
-  const allDeletedRecordings = new Set([...localDeletedRecordings, ...remoteDeletedRecordings]);
-  const recordingsMap = new Map();
-
-  const addRecordings = (items) => {
-    for (const item of items) {
-      if (item.id && !item.deleted && !allDeletedRecordings.has(item.fileId)) {
-        recordingsMap.set(item.id, item);
-      }
-    }
-  };
-
-  addRecordings(localIsNewer ? remoteRecordings : localRecordings);
-  addRecordings(localIsNewer ? localRecordings : remoteRecordings);
-
-  // Merge tasks by ID, newer modified timestamp wins for individual tasks
-  const localTasks = Array.isArray(local.tasks) ? local.tasks : [];
-  const remoteTasks = Array.isArray(remote.tasks) ? remote.tasks : [];
-  const allDeletedTaskIds = new Set([
-    ...(Array.isArray(local.deletedTasks) ? local.deletedTasks : []),
-    ...(Array.isArray(remote.deletedTasks) ? remote.deletedTasks : []),
-  ]);
-  const taskMap = new Map();
-
-  // Add older first, then newer overwrites by ID
-  const olderTasks = localIsNewer ? remoteTasks : localTasks;
-  const newerTasks = localIsNewer ? localTasks : remoteTasks;
-  for (const task of olderTasks) {
-    taskMap.set(task.id, task);
-  }
-  for (const task of newerTasks) {
-    const existing = taskMap.get(task.id);
-    if (!existing || (task.modified || 0) >= (existing.modified || 0)) {
-      taskMap.set(task.id, task);
-    }
-  }
-  // Remove tasks that were explicitly deleted on either side
-  for (const id of allDeletedTaskIds) taskMap.delete(id);
-
-  // Construct the merged note.
-  return {
-    id: local.id, // Keep original ID
-    notebookId: local.notebookId, // Keep original notebook ID
-    created: local.created, // Keep original creation timestamp
-
-    title: mergedTitle,
-    content: mergedContent,
-    background: mergedBackground,
-    strokes: mergedStrokeData.strokes,
-    deletedStrokes: mergedStrokeData.deletedStrokes,
-    media: Array.from(mediaMap.values()),
-    deletedMedia: Array.from(allDeletedMedia),
-    recordings: Array.from(recordingsMap.values()),
-    deletedRecordings: Array.from(allDeletedRecordings),
-    tags: mergedTags,
-    tasks: Array.from(taskMap.values()),
-    deletedTasks: Array.from(allDeletedTaskIds),
-    deleted: local.deleted || remote.deleted, // If deleted on either side, it's deleted
-
-    formatVersion: newerNote.formatVersion, // Use format from newer note
-    modified: Date.now(), // Set a new modification time for the merged version
-    version: Math.max(local.version, remote.version) + 1, // Increment version
-    synced: false, // Mark as unsynced to trigger upload
-    lastSyncedEtag: remote._currentFileEtag || remote.lastSyncedEtag, // Use current file ETag for If-Match
-  };
+  return attemptMerge(plainLocal, remote, opts);
 }
 
 /**
  * Full sync: upload local changes and download remote changes
  * Uses timestamp-based conflict resolution (newer wins)
+ *
+ * With `shared`, syncs ONE notebook shared with this user, read from its
+ * registered base instead of the own tree (DESIGN §5.3-5.5). The sharer owns that
+ * folder, so the pass obeys what the share allows (see PassRules): nothing is
+ * created, repaired, purged or deleted there; with a read-only share nothing is
+ * uploaded, and local changes are reported in `strandedNoteIds` instead; a note
+ * the sharer purged stays purged.
+ * A missing root throws SharedRootMissingError before anything is classified.
+ *
+ * @param {Array} localNotebooks
+ * @param {Array} localNotes
+ * @param {object} [options]
+ * @param {{notebookId: string, canEdit: boolean}} [options.shared]
  */
-export async function fullSync(localNotebooks, localNotes) {
+export async function fullSync(localNotebooks, localNotes, { shared = null } = {}) {
   if (!(await isAuthenticated())) {
     throw new Error("Not authenticated with Nextcloud");
   }
+
+  const rules = passRules(shared);
+  // Notes whose local changes can no longer be uploaded (shared roots only)
+  const stranded = new Set();
 
   console.log("Starting full sync...");
   console.log(`Local data: ${localNotebooks.length} notebooks, ${localNotes.length} notes`);
@@ -2525,8 +2742,22 @@ export async function fullSync(localNotebooks, localNotes) {
     return full ?? stub; // fall back to stub if note was deleted between sync start and now
   }
 
+  // Merge inputs: the baseline text both sides last agreed on, and who "local"
+  // is, so a conflicting block can say whose version it is. A baseline that
+  // cannot be read only costs the three-way merge, never the sync.
+  const localAuthor = await getCurrentUserId();
+  const mergeOptionsFor = async (noteId) => {
+    let base = null;
+    try {
+      base = await getNoteBase(noteId);
+    } catch (e) {
+      console.warn(`[Sync] Note ${noteId}: merge baseline unavailable:`, e);
+    }
+    return { base, localAuthor };
+  };
+
   // Step 1: Download remote data first
-  const remoteData = await downloadAllData(localNotebooks, localNotes);
+  const remoteData = await downloadAllData(localNotebooks, localNotes, { shared });
 
   // Step 2: Merge notebooks (newer wins)
   const notebooksToUpload = [];
@@ -2534,12 +2765,15 @@ export async function fullSync(localNotebooks, localNotes) {
   const notebooksToDelete = [];
   const notesToDelete = [];
   const noteEtagsToUpdate = []; // Notes whose etag changed on server but content is not newer
+  // Notes saved locally as a merge with the server's version: what they show changed,
+  // although nothing was downloaded (an open editor must take the merge in)
+  const mergedNoteIds = [];
   const conflicts = { notebooks: [], notes: [] };
 
   // Self-heal: notes whose media files were missing on the server need re-upload
   // from whichever device holds the local binaries. Mark them synced=false so
   // the note-classification loop below will queue them for upload.
-  if (remoteData.notesWithMissingMedia.size > 0) {
+  if (remoteData.notesWithMissingMedia.size > 0 && rules.upload) {
     console.log(
       `[Sync] ${remoteData.notesWithMissingMedia.size} note(s) have missing remote media — marking for re-upload: ${[...remoteData.notesWithMissingMedia].join(", ")}`,
     );
@@ -2565,13 +2799,20 @@ export async function fullSync(localNotebooks, localNotes) {
   for (const local of localNotebooks) {
     // PRIORITY: If notebook is purged locally, queue it for processing immediately.
     if (local.purged) {
-      notebooksToUpload.push(local);
+      if (rules.deleteRemote) notebooksToUpload.push(local);
       continue;
     }
 
     const remote = remoteNotebookMap.get(local.id);
 
     if (!remote) {
+      if (!rules.repairTree) {
+        // A shared notebook's file is the sharer's: if it is missing, their
+        // folder is broken and their client heals it. Never created from here.
+        console.warn(`[Sync] Shared notebook ${local.id}: _notebook.json missing, skipping`);
+        continue;
+      }
+
       // Check global tombstone for deletion
       const globalTombstone = remoteData.tombstones.get("global_notebooks");
       const isDeletedRemotely = globalTombstone?.notebooks?.some((t) => t.id === local.id);
@@ -2601,7 +2842,16 @@ export async function fullSync(localNotebooks, localNotes) {
       continue;
     }
 
-    const isModifiedLocally = local.synced === false;
+    // A rename or recolour the share no longer accepts (the owner made it view
+    // only meanwhile): the owner's version replaces it, or it would stay unsynced
+    // for good and make leaving the share warn about changes that cannot be saved
+    if (!rules.upload && local.synced === false) {
+      notebooksToDownload.push(remote);
+      continue;
+    }
+
+    // A collaborator may rename or recolor; a read-only recipient never uploads
+    const isModifiedLocally = local.synced === false && rules.upload;
     const isModifiedRemotely = local.lastSyncedEtag !== remote.lastSyncedEtag;
 
     if (isModifiedLocally && isModifiedRemotely) {
@@ -2624,7 +2874,8 @@ export async function fullSync(localNotebooks, localNotes) {
     }
   }
 
-  // Check which remote notebooks should be downloaded
+  // Check which remote notebooks should be downloaded (a shared root holds only
+  // the one notebook it is registered as, which is always local)
   for (const remote of remoteData.notebooks) {
     if (!localNotebookMap.has(remote.id)) {
       notebooksToDownload.push(remote);
@@ -2640,9 +2891,17 @@ export async function fullSync(localNotebooks, localNotes) {
 
   // Check which local notes should be uploaded
   for (const local of localNotes) {
+    // Nothing may be uploaded: keep the change, and do not overwrite it with the remote copy
+    if (!rules.upload && local.synced === false && !local.purged) {
+      stranded.add(local.id);
+      continue;
+    }
+
     // PRIORITY: If note is purged locally, queue it for processing immediately.
     // This bypasses conflict checks because purge is a final destructive action.
     if (local.purged) {
+      // Deleting from a share is never allowed, so nothing is purged through one
+      if (!rules.deleteRemote) continue;
       // If the parent notebook is also being purged in this sync, skip processing this note.
       // The notebook purge will delete the entire folder structure, so individual note deletion is redundant and will fail.
       const parentNotebookPurged =
@@ -2664,7 +2923,10 @@ export async function fullSync(localNotebooks, localNotes) {
       const isDeletedRemotely = tombstone?.notes?.some((t) => t.id === local.id);
 
       if (isDeletedRemotely) {
-        if (local.synced === false && !local.deleted) {
+        if (local.synced === false && !local.deleted && !rules.resurrectPurged) {
+          // The sharer purged it: an unsynced edit is stranded, not resurrected
+          stranded.add(local.id);
+        } else if (local.synced === false && !local.deleted) {
           // Conflict: Deleted remotely, Modified locally. Strategy: Restore (re-upload).
           console.log(
             `[Sync] Note ${local.id} was deleted remotely but modified locally. Restoring.`,
@@ -2675,8 +2937,9 @@ export async function fullSync(localNotebooks, localNotes) {
           console.log(`[Sync] Note ${local.id} was deleted remotely. Deleting locally.`);
           notesToDelete.push(local.id);
         }
-      } else {
-        // Not in tombstone -> Missing/Corrupted -> Re-upload (Self-healing)
+      } else if (rules.upload) {
+        // Not in tombstone -> Missing/Corrupted -> Re-upload (Self-healing).
+        // In a share CREATE covers this; a read-only share cannot heal anything.
         if (local.synced === true) {
           console.log(`[Sync] Note ${local.id} missing on server. Re-uploading.`);
         }
@@ -2705,7 +2968,11 @@ export async function fullSync(localNotebooks, localNotes) {
         console.log(`[Sync:classify] note=${local.id} -> restored from backup, local-wins upload`);
         notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
       } else if (local.encrypted) {
-        const merged = await attemptMergeEncrypted(fullLocal, remote);
+        const merged = await attemptMergeEncrypted(
+          fullLocal,
+          remote,
+          await mergeOptionsFor(local.id),
+        );
         if (merged) {
           console.log(
             `[Sync:classify] note=${local.id} → encrypted merge succeeded, uploading merged`,
@@ -2715,6 +2982,7 @@ export async function fullSync(localNotebooks, localNotes) {
           // so the other device's additions are not lost if the upload fails.
           // saveNote re-applies local encryption.
           await saveNote({ ...merged, synced: false });
+          mergedNoteIds.push(local.id);
         } else {
           // Could not decrypt (locked, or a field written with another key):
           // fall back to the previous behaviour rather than merging blind.
@@ -2724,7 +2992,7 @@ export async function fullSync(localNotebooks, localNotes) {
           notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
         }
       } else {
-        const merged = attemptMerge(fullLocal, remote);
+        const merged = attemptMerge(fullLocal, remote, await mergeOptionsFor(local.id));
         if (merged) {
           console.log(`[Sync:classify] note=${local.id} → merge succeeded, will upload merged`);
           // Use the remote's current file ETag for the upload to succeed via If-Match
@@ -2735,6 +3003,7 @@ export async function fullSync(localNotebooks, localNotes) {
           // Use saveNote (not updateNote) to avoid bumping modified/version, which would
           // falsely trigger the race-condition detector in the post-sync download phase.
           await saveNote({ ...merged, synced: false });
+          mergedNoteIds.push(local.id);
         } else {
           console.log(`[Sync:classify] note=${local.id} → merge failed, adding to conflicts`);
           conflicts.notes.push({ local: fullLocal, remote });
@@ -2771,6 +3040,7 @@ export async function fullSync(localNotebooks, localNotes) {
           modified: local.modified,
         });
       } else if (
+        rules.upload &&
         remote.version !== undefined &&
         local.version !== undefined &&
         remote.version < local.version
@@ -2783,25 +3053,31 @@ export async function fullSync(localNotebooks, localNotes) {
         );
         const fullLocal = await getFullNote(local);
         if (local.encrypted) {
-          const merged = await attemptMergeEncrypted(fullLocal, remote);
+          const merged = await attemptMergeEncrypted(
+            fullLocal,
+            remote,
+            await mergeOptionsFor(local.id),
+          );
           if (merged) {
             console.log(
               `[Sync:classify] note=${local.id} → stale-fork encrypted merge succeeded, uploading merged`,
             );
             notesToUpload.push({ ...merged, lastSyncedEtag: remote._currentFileEtag });
             await saveNote({ ...merged, synced: false });
+            mergedNoteIds.push(local.id);
           } else {
             // Undecryptable: previous behaviour, local wins.
             notesToUpload.push({ ...fullLocal, lastSyncedEtag: remote._currentFileEtag });
           }
         } else {
-          const merged = attemptMerge(fullLocal, remote);
+          const merged = attemptMerge(fullLocal, remote, await mergeOptionsFor(local.id));
           if (merged) {
             console.log(
               `[Sync:classify] note=${local.id} → stale-fork merge succeeded, uploading merged`,
             );
             notesToUpload.push({ ...merged, lastSyncedEtag: remote._currentFileEtag });
             await saveNote({ ...merged, synced: false });
+            mergedNoteIds.push(local.id);
           } else {
             console.log(
               `[Sync:classify] note=${local.id} → stale-fork merge failed, adding to conflicts`,
@@ -2824,8 +3100,8 @@ export async function fullSync(localNotebooks, localNotes) {
 
   // Step 4: Upload only what needs to be uploaded
   const uploadResults = {
-    notebooks: await syncNotebooks(notebooksToUpload),
-    notes: await syncNotes(notesToUpload),
+    notebooks: await syncNotebooks(notebooksToUpload, { rules }),
+    notes: await syncNotes(notesToUpload, { rules }),
   };
 
   // Step 4b: Heal media for legacy notes that have pdf-page items but no pdfSource.
@@ -2834,7 +3110,7 @@ export async function fullSync(localNotebooks, localNotes) {
   // Note: localNotes stubs have metadata-only media (no fileId). We filter by type presence,
   // then load the full note to get fileIds before calling syncNoteMedia.
   const uploadedNoteIds = new Set(notesToUpload.map((n) => n.id));
-  const legacyPdfStubs = localNotes.filter(
+  const legacyPdfStubs = (rules.repairTree ? localNotes : []).filter(
     (n) =>
       !n.deleted &&
       !n.purged &&
@@ -2878,13 +3154,54 @@ export async function fullSync(localNotebooks, localNotes) {
       notes: notesToDownload,
     },
     noteEtagsToUpdate,
+    mergedNoteIds,
     conflicts,
     notebooksToUpload,
     notesToUpload,
     notebooksToDelete,
     notesToDelete,
+    strandedNoteIds: [...stranded],
   };
 }
+
+/**
+ * Sync one notebook shared with this user, in isolation from the own tree
+ * and from every other share.
+ *
+ * @param {Object} notebook - the local record (carries the granted permissions)
+ * @param {Array} notes - the notebook's local note metadata
+ * @returns {Promise<Object>} a fullSync result; `rootMissing: true` and nothing else
+ *   when the notebook's folder is gone, so the caller can run the share-gone check
+ */
+export async function syncSharedNotebook(notebook, notes) {
+  const shared = { notebookId: notebook.id, canEdit: canEdit(notebook) };
+  try {
+    return await fullSync([notebook], notes, { shared });
+  } catch (error) {
+    if (error instanceof SharedRootMissingError) {
+      console.warn(`[Sync] ${error.message}`);
+      return { ...EMPTY_SYNC_RESULT(), rootMissing: true };
+    }
+    throw error;
+  }
+}
+
+/** The result of a pass that did nothing, in the shape fullSync returns. */
+const EMPTY_SYNC_RESULT = () => ({
+  uploaded: {
+    notebooks: { uploaded: 0, failed: 0, errors: [], uploadedIds: [], metadata: {} },
+    notes: { uploaded: 0, failed: 0, errors: [], uploadedIds: [], metadata: {} },
+  },
+  downloaded: { notebooks: [], notes: [] },
+  noteEtagsToUpdate: [],
+  mergedNoteIds: [],
+  conflicts: { notebooks: [], notes: [] },
+  notebooksToUpload: [],
+  notesToUpload: [],
+  notebooksToDelete: [],
+  notesToDelete: [],
+  strandedNoteIds: [],
+});
 
 /**
  * Delete remote notebook (marks in tombstone, doesn't actually delete folder yet)

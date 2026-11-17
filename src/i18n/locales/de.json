@@ -20,7 +20,8 @@
     "justNow": "gerade eben",
     "minutesAgo": "vor {{count}} Min.",
     "hoursAgo": "vor {{count}} Std.",
-    "daysAgo": "vor {{count}} T."
+    "daysAgo": "vor {{count}} T.",
+    "preview": "Vorschau"
   },
   "overview": {
     "tabs": {
@@ -117,19 +118,22 @@
       "appearance": "Darstellung",
       "security": "Sicherheit",
       "nextcloud": "Nextcloud-Sync",
+      "sharing": "Notizbuch-Freigabe",
       "recognition": "Handschrifterkennung",
       "mcp": "MCP-Server (KI-Integration)",
       "logging": "Protokollierung",
       "dangerZone": "Gefahrenzone",
       "about": "Über",
       "aiProvider": "KI-Zugang",
-      "backup": "Sicherung"
+      "backup": "Sicherung",
+      "tasks": "Aufgaben"
     },
     "appearance": {
       "theme": "Design",
       "themeDesc": "Wähle dein bevorzugtes Farbschema",
       "light": "Hell",
       "dark": "Dunkel",
+      "tva": "TVA / CRT",
       "pdfInvertDark": "PDF-Seiten im Dunkelmodus invertieren",
       "pdfInvertDarkDesc": "Macht Anmerkungen auf importierten PDFs besser sichtbar, verändert aber die Originalfarben des PDFs",
       "cardSize": "Kartengröße",
@@ -156,6 +160,10 @@
     "security": {
       "encryptLocal": "Lokale Daten verschlüsseln",
       "encryptLocalDesc": "Notizen, die lokal auf diesem Gerät gespeichert sind, verschlüsseln"
+    },
+    "sharing": {
+      "descApp": "Notizbücher mit anderen Nextcloud-Nutzern teilen und gemeinsam daran arbeiten. Ausgeschaltet werden mit dir geteilte Notizbücher in diesem Browser ausgeblendet; nichts wird gelöscht.",
+      "rootCheckFailed": "Die Freigabe wurde nicht aktiviert: Der Notizen-Ordner konnte nicht überprüft werden. {{message}}"
     },
     "nextcloud": {
       "connectLabel": "Mit Nextcloud verbinden",
@@ -185,7 +193,10 @@
       "syncSkipped": "Synchronisierung übersprungen (läuft bereits)",
       "syncComplete": "✓ Synchronisierung abgeschlossen! {{uploadedNotebooks}} Notizbücher, {{uploadedNotes}} Notizen hochgeladen. {{downloadedNotebooks}} Notizbücher, {{downloadedNotes}} Notizen heruntergeladen.",
       "syncConflictsDetected": " ⚠️ {{count}} Konflikte erkannt.",
-      "syncFailed": "✗ Synchronisierung fehlgeschlagen: {{message}}"
+      "syncFailed": "✗ Synchronisierung fehlgeschlagen: {{message}}",
+      "sharingLabel": "Notizbuch-Freigabe",
+      "sharingDesc": "Notizbücher mit anderen Nextcloud-Nutzern teilen und gemeinsam daran arbeiten. Ausgeschaltet werden mit dir geteilte Notizbücher nicht mehr synchronisiert; sie bleiben auf diesem Gerät, bis du es wieder einschaltest.",
+      "sharingNeedsConnection": "Verbinde dich zuerst mit Nextcloud, um Notizbücher zu teilen."
     },
     "recognition": {
       "statusLabel": "Status",
@@ -383,6 +394,7 @@
       "clearLogs": "Protokolle löschen",
       "copied": "✓ Kopiert!",
       "clearConfirm": "Möchtest du wirklich alle Protokolle löschen?",
+      "copyFailed": "Logs konnten nicht in die Zwischenablage kopiert werden",
       "noLogs": "Keine Protokolle in dieser Sitzung verfügbar."
     },
     "dangerZone": {
@@ -418,7 +430,9 @@
       "version": "Version: {{version}}",
       "licenses": "Lizenzinformationen",
       "openSource": "NoteBerg ist freie und quelloffene Software.",
-      "projectLink": "Projekt auf GitHub ansehen"
+      "projectLink": "Projekt auf GitHub ansehen",
+      "rate": "App bewerten",
+      "rateDesc": "Eine Bewertung bei Google Play hilft anderen, NoteBerg zu finden."
     },
     "encryption": {
       "enabledLocalTitle": "Verschlüsselung aktiviert",
@@ -462,6 +476,14 @@
     },
     "nav": {
       "back": "Alle Einstellungen"
+    },
+    "tasks": {
+      "enableDueDates": "Fälligkeitsdaten aktivieren",
+      "enableDueDatesDesc": "Erlaubt das Festlegen von Fälligkeitsdaten für Aufgaben",
+      "enablePriorities": "Prioritäten aktivieren",
+      "enablePrioritiesDesc": "Erlaubt das Festlegen von Prioritätsstufen für Aufgaben",
+      "defaultSort": "Standard-Aufgabensortierung",
+      "defaultSortDesc": "Anfängliche Sortierung in der Markierungs-Übersicht"
     }
   },
   "modals": {
@@ -654,6 +676,13 @@
     "fullscreen": "Vollbild",
     "exitFullscreen": "Vollbild beenden",
     "deleteNote": "Notiz löschen",
+    "color": {
+      "foreColor": "Textfarbe",
+      "backColor": "Hervorheben",
+      "defaultText": "Standard",
+      "removeHighlight": "Keine Hervorhebung",
+      "highlightTitle": "Hervorhebung {{num}}"
+    },
     "penDialog": {
       "lineWidth": "Linienstärke: ",
       "color": "Farbe",
@@ -686,7 +715,8 @@
       "copy": "Kopieren",
       "markAsTask": "Als Aufgabe markieren",
       "removeTask": "Aufgabe entfernen",
-      "delete": "Löschen"
+      "delete": "Löschen",
+      "taskProperties": "Aufgaben-Details"
     },
     "media": {
       "select": "Auswählen",
@@ -715,6 +745,7 @@
       "deleteConfirmTitle": "PDF löschen",
       "deleteConfirmMsg": "Möchtest du das PDF-Dokument wirklich entfernen? Dabei werden alle Seiten gelöscht.",
       "exportError": "PDF-Export fehlgeschlagen",
+      "importError": "PDF-Import fehlgeschlagen",
       "exportProgressTitle": "PDF wird exportiert",
       "exportProgressPage": "Seite {{current}} von {{total}} wird exportiert ...",
       "importProgressTitle": "PDF wird importiert",
@@ -760,6 +791,14 @@
       "optionPunctuationDesc": "Übernimmt die auf der Seite geschriebenen Punkte, Kommas und Gedankenstriche. Ausschalten, um nur die Wörter zu erhalten.",
       "optionBreaks": "Zeilenumbrüche beibehalten",
       "optionBreaksDesc": "Behält bei, wo Zeilen und Absätze enden. Die Erkennung des Layouts ist weniger zuverlässig als die des Textes."
+    },
+    "mergeHint": "Widersprüchliche Version, bearbeitet von {{user}}",
+    "mergeHintUnknown": "Widersprüchliche Version",
+    "textBox": {
+      "move": "Ziehen zum Verschieben",
+      "resize": "Ziehen, um die Breite zu ändern",
+      "toolbarHint": "In einen Text tippen oder auf die Seite, um einen zu beginnen",
+      "options": "Textfeld-Optionen"
     }
   },
   "recycleBin": {
@@ -775,7 +814,11 @@
     "emptyTitle": "Papierkorb ist leer",
     "emptyDesc": "Gelöschte Notizbücher und Notizen werden hier angezeigt.",
     "notebooksCount": "Notizbücher ({{count}})",
-    "notesCount": "Notizen ({{count}})"
+    "notesCount": "Notizen ({{count}})",
+    "purgeConfirm": "Möchtest du dieses Element wirklich endgültig löschen? Es wird von allen synchronisierten Geräten entfernt und kann nicht wiederhergestellt werden.",
+    "purgeConfirmNotebook": "Möchtest du dieses Notizbuch wirklich endgültig löschen? Dabei werden auch {{count}} Notiz(en) darin endgültig gelöscht. Es wird von allen synchronisierten Geräten entfernt und kann nicht wiederhergestellt werden.",
+    "restoreFailed": "Element konnte nicht wiederhergestellt werden: {{message}}",
+    "purgeFailed": "Endgültiges Löschen fehlgeschlagen: {{message}}"
   },
   "soundDialog": {
     "trigger": "Aufnahmen",
@@ -853,6 +896,10 @@
     "markAsTask": {
       "title": "Aufgaben",
       "body": "Der markierte Text ist jetzt eine abhakbare Aufgabe. Hier oder in der Aufgabenliste abhaken."
+    },
+    "firstTextBox": {
+      "title": "Textfelder",
+      "body": "Ein Tipp auf die Seite beginnt dort ein Textfeld. Mit dem Balken darüber verschieben Sie es, mit dem rechten Rand ändern Sie die Breite. Ein Tipp knapp unter einen Text schreibt ihn weiter."
     }
   },
   "backup": {
@@ -973,6 +1020,134 @@
       "newerVersion": "Diese Sicherung wurde mit NoteBerg {{version}} erstellt, das neuer ist als diese App. Aktualisiere NoteBerg, um sie wiederherzustellen.",
       "diskFull": "Die Sicherung konnte nicht geschrieben werden: {{message}}. Die unvollständige Datei wurde gelöscht.",
       "cacheSpace": "Nicht genug freier Speicher für die Sicherung: etwa {{needed}} benötigt, {{available}} verfügbar."
+    }
+  },
+  "tasks": {
+    "properties": {
+      "title": "Aufgaben-Eigenschaften",
+      "name": "Aufgabenname / Bezeichnung",
+      "namePlaceholder": "Eigener Titel (falls die Erkennung fehlt oder falsch ist)",
+      "status": "Status",
+      "priority": "Priorität",
+      "details": "Details",
+      "dueDate": "Fälligkeitsdatum"
+    },
+    "states": {
+      "open": "Offen",
+      "doing": "In Bearbeitung",
+      "done": "Erledigt"
+    },
+    "priorities": {
+      "none": "Keine",
+      "low": "Niedrig",
+      "medium": "Mittel",
+      "high": "Hoch",
+      "urgent": "Dringend"
+    },
+    "dueDate": {
+      "today": "Heute",
+      "tomorrow": "Morgen",
+      "nextDay": "+1 Tag",
+      "nextWeek": "+7 Tage",
+      "clear": "Löschen"
+    },
+    "filter": {
+      "label": "Filter",
+      "all": "Alle",
+      "active": "Aktiv",
+      "doing": "In Bearbeitung",
+      "overdue": "Überfällig",
+      "done": "Erledigt"
+    },
+    "sort": {
+      "label": "Sortieren",
+      "dueDate": "Fälligkeitsdatum",
+      "priority": "Priorität",
+      "status": "Status",
+      "note": "Notiztitel"
+    },
+    "noMatchingTasks": "Keine passenden Aufgaben gefunden.",
+    "cycleStatus": "Status umschalten"
+  },
+  "sharing": {
+    "section": {
+      "title": "Mit mir geteilt"
+    },
+    "badge": {
+      "sharedBy": "Geteilt von {{owner}}",
+      "readOnly": "Nur lesen",
+      "canEdit": "Kann bearbeiten",
+      "shared": "Geteilt",
+      "sharedWith_one": "Mit {{count}} Person geteilt",
+      "sharedWith_other": "Mit {{count}} Personen geteilt"
+    },
+    "notebookOptions": {
+      "leave": "Aus meiner Liste entfernen",
+      "share": "Teilen..."
+    },
+    "leave": {
+      "title": "Geteiltes Notizbuch entfernen",
+      "message": "\"{{title}}\" verschwindet aus deiner Liste. {{owner}} und alle anderen, mit denen es geteilt ist, behalten es.",
+      "messageUnsynced": "Einige deiner Änderungen in \"{{title}}\" wurden noch nicht im geteilten Notizbuch gespeichert und gehen verloren. Trotzdem entfernen?",
+      "confirm": "Entfernen",
+      "failed": "Das Notizbuch konnte nicht entfernt werden: {{message}}"
+    },
+    "ended": {
+      "notice_one": "Dieses Notizbuch wird nicht mehr mit dir geteilt. {{count}} Notiz hatte Änderungen, die nicht gespeichert werden konnten.",
+      "notice_other": "Dieses Notizbuch wird nicht mehr mit dir geteilt. {{count}} Notizen hatten Änderungen, die nicht gespeichert werden konnten.",
+      "noticeClean": "Dieses Notizbuch wird nicht mehr mit dir geteilt.",
+      "dismiss": "Ausblenden"
+    },
+    "stranded": {
+      "notice_one": "{{count}} Notiz hat Änderungen, die nicht mehr in diesem geteilten Notizbuch gespeichert werden können.",
+      "notice_other": "{{count}} Notizen haben Änderungen, die nicht mehr in diesem geteilten Notizbuch gespeichert werden können.",
+      "discard": "Meine Änderungen verwerfen",
+      "discardTitle": "Änderungen verwerfen",
+      "discardMessage": "Deine ungespeicherten Änderungen in \"{{title}}\" werden durch die geteilte Version ersetzt. Das kann nicht rückgängig gemacht werden."
+    },
+    "restricted": {
+      "title": "Nicht erlaubt",
+      "message": "In einem Notizbuch, das mit dir geteilt wurde, ist das nicht möglich."
+    },
+    "purge": {
+      "warning": "Dieses Notizbuch ist mit anderen Personen geteilt. Sie verlieren den Zugriff, wenn es endgültig gelöscht wird."
+    },
+    "share": {
+      "title": "\"{{title}}\" teilen",
+      "intro": "Personen, mit denen du teilst, sehen dieses Notizbuch unter \"Mit mir geteilt\". Sie können es nicht löschen, verschieben oder kopieren.",
+      "searchLabel": "Person hinzufügen",
+      "searchPlaceholder": "Nach Name oder Benutzer-ID suchen",
+      "searching": "Suche läuft...",
+      "noResults": "Keine passenden Benutzer.",
+      "modeLabel": "Zugriff",
+      "modeReadonly": "Kann ansehen",
+      "modeCollab": "Kann bearbeiten",
+      "add": "Teilen",
+      "recipients": "Personen mit Zugriff",
+      "noRecipients": "Noch mit niemandem geteilt.",
+      "revoke": "Nicht mehr teilen",
+      "reduced": "Der Server hat für diese Freigabe nur Ansehen erlaubt.",
+      "loadFailed": "Die Freigabe-Einstellungen konnten nicht geladen werden: {{message}}",
+      "failed": "Teilen fehlgeschlagen: {{message}}",
+      "notOnServer": "Dieses Notizbuch ist noch nicht in Nextcloud angekommen. Bitte synchronisieren und erneut versuchen.",
+      "unavailable": "Zum Teilen ist eine Verbindung zu Nextcloud nötig.",
+      "revokeMessage": "{{name}} verliert den Zugriff auf \"{{title}}\". Änderungen, die noch nicht gespeichert wurden, können nicht mehr gespeichert werden."
+    },
+    "reduced": {
+      "notice": "Sie können dieses Notizbuch jetzt nur noch ansehen. Ihre Änderungen bleiben auf diesem Gerät, können aber nicht im geteilten Notizbuch gespeichert werden.",
+      "noticeOnline": "Sie können dieses Notizbuch jetzt nur noch ansehen. Noch nicht gespeicherte Änderungen konnten nicht gespeichert werden."
+    },
+    "invite": {
+      "title": "Geteiltes Notizbuch",
+      "message": "{{owner}} möchte ein Notizbuch mit Ihnen teilen.",
+      "accept": "Annehmen",
+      "decline": "Ablehnen",
+      "declineTitle": "Geteiltes Notizbuch ablehnen",
+      "declineMessage": "Das Notizbuch von {{owner}} wird nicht hinzugefügt. Falls Sie es sich anders überlegen, muss {{owner}} es erneut teilen.",
+      "failed": "Das hat nicht geklappt: {{message}}"
+    },
+    "deletedByOwner": {
+      "notice": "Die Person, der dieses Notizbuch gehört, hat diese Notiz gelöscht. Was du geschrieben hast, bleibt mit ihr in ihrem Papierkorb erhalten."
     }
   }
 }

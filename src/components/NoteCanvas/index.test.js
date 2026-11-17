@@ -65,10 +65,6 @@ vi.mock("./NoteCanvas.js", () => ({
       return Promise.resolve({});
     }
 
-    hasContentChanged() {
-      return Promise.resolve(false);
-    }
-
     flushPendingSaves() {}
   },
 }));

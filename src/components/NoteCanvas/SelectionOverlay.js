@@ -11,7 +11,7 @@ import { getIcon } from "../../utils/icons.js";
 export class SelectionOverlay {
   constructor(container, callbacks) {
     this.container = container;
-    this.callbacks = callbacks; // { onMarkAsTask, onDelete, onRemoveTask, onCopy }
+    this.callbacks = callbacks; // { onMarkAsTask, onDelete, onRemoveTask, onCopy, onTaskProperties }
     this.element = null;
     this.menu = null;
     this.optionBtn = null;
@@ -19,6 +19,7 @@ export class SelectionOverlay {
 
     this._onOptionClick = this._onOptionClick.bind(this);
     this._onMarkAsTaskClick = this._onMarkAsTaskClick.bind(this);
+    this._onTaskPropertiesClick = this._onTaskPropertiesClick.bind(this);
     this._onRemoveTaskClick = this._onRemoveTaskClick.bind(this);
     this._onDeleteClick = this._onDeleteClick.bind(this);
     this._onCopyClick = this._onCopyClick.bind(this);
@@ -53,6 +54,9 @@ export class SelectionOverlay {
           <button class="note-canvas-toolbar__option-btn" id="selection-task-btn">
             ${getIcon("checkSquare", 16)} ${t("canvas.selection.markAsTask")}
           </button>
+          <button class="note-canvas-toolbar__option-btn" id="selection-task-props-btn" style="display:none">
+            ${getIcon("sliders", 16)} ${t("canvas.selection.taskProperties", "Task Properties")}
+          </button>
           <button class="note-canvas-toolbar__option-btn" id="selection-remove-task-btn" style="display:none">
             ${getIcon("square", 16)} ${t("canvas.selection.removeTask")}
           </button>
@@ -72,6 +76,9 @@ export class SelectionOverlay {
       .querySelector("#selection-task-btn")
       .addEventListener("click", this._onMarkAsTaskClick);
     this.menu
+      .querySelector("#selection-task-props-btn")
+      .addEventListener("click", this._onTaskPropertiesClick);
+    this.menu
       .querySelector("#selection-remove-task-btn")
       .addEventListener("click", this._onRemoveTaskClick);
     this.menu.querySelector("#selection-delete-btn").addEventListener("click", this._onDeleteClick);
@@ -81,14 +88,24 @@ export class SelectionOverlay {
     document.addEventListener("pointerdown", this._handleDocumentClick);
   }
 
+  _onTaskPropertiesClick() {
+    this.hide();
+    if (this.callbacks.onTaskProperties) {
+      this.callbacks.onTaskProperties();
+    }
+  }
+
   setTaskMode(isTask) {
     const taskBtn = this.menu.querySelector("#selection-task-btn");
+    const taskPropsBtn = this.menu.querySelector("#selection-task-props-btn");
     const removeTaskBtn = this.menu.querySelector("#selection-remove-task-btn");
     if (isTask) {
       taskBtn.style.display = "none";
+      if (taskPropsBtn) taskPropsBtn.style.display = "flex";
       removeTaskBtn.style.display = "flex";
     } else {
       taskBtn.style.display = "flex";
+      if (taskPropsBtn) taskPropsBtn.style.display = "none";
       removeTaskBtn.style.display = "none";
     }
   }

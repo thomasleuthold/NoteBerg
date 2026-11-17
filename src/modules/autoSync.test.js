@@ -38,6 +38,7 @@ import {
   initAutoSync,
   resetInactivityTimer,
   stopInactivityTimer,
+  syncIfNotebookChanged,
   syncOnAppStart,
   syncOnNotebookCreate,
   syncOnNotebookOpen,
@@ -47,7 +48,7 @@ import {
 } from "./autoSync.js";
 import { hasRemoteChanges, isAuthenticated } from "./nextcloudSync.js";
 import { getAllNotesForSync, getNoteIndex } from "./storage.js";
-import { performSync } from "./sync.js";
+import { getIsSyncing, performSync } from "./sync.js";
 
 // Each test needs a time that is well past the SYNC_COOLDOWN (5s) relative to
 // when the previous test recorded lastSyncTime. We advance the fake clock by 60s
@@ -430,5 +431,111 @@ describe("initAutoSync", () => {
     window.dispatchEvent(new CustomEvent("note-created", { detail: {} }));
     await Promise.resolve();
     expect(performSync).not.toHaveBeenCalled();
+  });
+});
+
+describe("syncIfNotebookChanged (the open note's periodic look)", () => {
+  it("syncs nothing when the notebook did not change", async () => {
+    vi.mocked(hasRemoteChanges).mockResolvedValueOnce(false);
+    await expect(syncIfNotebookChanged("nb1")).resolves.toBe("unchanged");
+    expect(hasRemoteChanges).toHaveBeenCalledWith("nb1", expect.any(Array));
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("runs exactly one silent sync when the notebook changed", async () => {
+    vi.mocked(hasRemoteChanges).mockResolvedValueOnce(true);
+    await expect(syncIfNotebookChanged("nb1")).resolves.toBe("synced");
+    expect(performSync).toHaveBeenCalledTimes(1);
+    expect(performSync).toHaveBeenCalledWith({ silent: true, skipConflictResolution: true });
+  });
+
+  it("compares soft-deleted notes too, so their files do not read as changes", async () => {
+    vi.mocked(getAllNotesForSync).mockResolvedValueOnce([
+      { id: "a", notebookId: "nb1", lastSyncedEtag: "e1" },
+      { id: "b", notebookId: "nb1", deleted: true, lastSyncedEtag: "e2" },
+      { id: "c", notebookId: "other", lastSyncedEtag: "e3" },
+    ]);
+    await syncIfNotebookChanged("nb1");
+    expect(vi.mocked(hasRemoteChanges).mock.calls[0][1].map((n) => n.id)).toEqual(["a", "b"]);
+  });
+
+  it("defers the sync when the user started writing while it looked", async () => {
+    vi.mocked(hasRemoteChanges).mockResolvedValueOnce(true);
+    await expect(syncIfNotebookChanged("nb1", { isIdle: () => false })).resolves.toBe("deferred");
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("defers within the cooldown after another sync, to look again at the next pause", async () => {
+    vi.mocked(hasRemoteChanges).mockResolvedValue(true);
+    await syncIfNotebookChanged("nb1");
+    await expect(syncIfNotebookChanged("nb1")).resolves.toBe("deferred");
+    expect(performSync).toHaveBeenCalledTimes(1);
+    vi.mocked(hasRemoteChanges).mockResolvedValue(false);
+  });
+
+  // The open note's own changes must reach collaborators while it stays open
+  // (DESIGN §10.4b), not only when it closes or someone else changes something
+  it("uploads the open note's changes at the pause, though nobody else changed anything", async () => {
+    vi.mocked(getAllNotesForSync).mockResolvedValueOnce([
+      { id: "open-1", notebookId: "nb1", synced: false, lastSyncedEtag: "e1" },
+    ]);
+    vi.mocked(getNoteIndex).mockResolvedValueOnce({ id: "open-1", synced: true });
+
+    await expect(syncIfNotebookChanged("nb1", { noteId: "open-1" })).resolves.toBe("synced");
+
+    expect(performSync).toHaveBeenCalledTimes(1);
+    expect(hasRemoteChanges).not.toHaveBeenCalled(); // no need to ask the server first
+  });
+
+  it("does not sync for an open note that holds nothing unsynced", async () => {
+    vi.mocked(getAllNotesForSync).mockResolvedValueOnce([
+      { id: "open-2", notebookId: "nb1", synced: true, lastSyncedEtag: "e1" },
+    ]);
+    vi.mocked(hasRemoteChanges).mockResolvedValueOnce(false);
+
+    await expect(syncIfNotebookChanged("nb1", { noteId: "open-2" })).resolves.toBe("unchanged");
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("pushes nothing for a note it was not asked to (a viewer's, or none)", async () => {
+    vi.mocked(getAllNotesForSync).mockResolvedValueOnce([
+      { id: "open-3", notebookId: "nb1", synced: false, lastSyncedEtag: "e1" },
+    ]);
+    vi.mocked(hasRemoteChanges).mockResolvedValueOnce(false);
+
+    await expect(syncIfNotebookChanged("nb1")).resolves.toBe("unchanged");
+    expect(performSync).not.toHaveBeenCalled();
+  });
+
+  it("backs off from a note the sync could not upload, instead of syncing at every look", async () => {
+    const unsynced = [{ id: "open-4", notebookId: "nb1", synced: false, lastSyncedEtag: "e1" }];
+    vi.mocked(getAllNotesForSync).mockResolvedValue(unsynced);
+    vi.mocked(getNoteIndex).mockResolvedValue({ id: "open-4", synced: false });
+    vi.mocked(hasRemoteChanges).mockResolvedValue(false);
+    try {
+      await syncIfNotebookChanged("nb1", { noteId: "open-4" });
+      expect(performSync).toHaveBeenCalledTimes(1);
+
+      // The next looks, past the sync cooldown: still unsynced, not pushed again yet
+      vi.setSystemTime(Date.now() + 30_000);
+      await expect(syncIfNotebookChanged("nb1", { noteId: "open-4" })).resolves.toBe("unchanged");
+      expect(performSync).toHaveBeenCalledTimes(1);
+
+      // Two minutes on, it is tried again
+      vi.setSystemTime(Date.now() + 120_000);
+      await syncIfNotebookChanged("nb1", { noteId: "open-4" });
+      expect(performSync).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.mocked(getAllNotesForSync).mockResolvedValue([]);
+      vi.mocked(hasRemoteChanges).mockResolvedValue(false);
+    }
+  });
+
+  it("does not even look while a sync runs or when signed out", async () => {
+    vi.mocked(getIsSyncing).mockReturnValueOnce(true);
+    await expect(syncIfNotebookChanged("nb1")).resolves.toBe("skipped");
+    vi.mocked(isAuthenticated).mockResolvedValueOnce(false);
+    await expect(syncIfNotebookChanged("nb1")).resolves.toBe("skipped");
+    expect(hasRemoteChanges).not.toHaveBeenCalled();
   });
 });

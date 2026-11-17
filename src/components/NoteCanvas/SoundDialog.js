@@ -271,6 +271,11 @@ export class SoundDialog {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  /** Redraw after the recording manager's permissions changed (a share ended). */
+  refresh() {
+    if (this._open) this._fullRender();
+  }
+
   _fullRender() {
     this._stopMeter();
 
@@ -396,7 +401,7 @@ export class SoundDialog {
       }
     } else {
       // New recording button (native only)
-      if (_IS_NATIVE) {
+      if (_IS_NATIVE && !this.rm.readOnly) {
         const newBtn = document.createElement("button");
         newBtn.className = "sound-dialog__new-btn";
         // Static i18n key with no interpolation options — not attacker-controlled.
@@ -422,7 +427,7 @@ export class SoundDialog {
         this._dialogEl.appendChild(newBtn);
       }
 
-      // Import audio file button (works everywhere)
+      // Import audio file button (works everywhere, but adds to the note)
       const importBtn = document.createElement("button");
       importBtn.className = "sound-dialog__new-btn";
       // Static i18n key with no interpolation options — not attacker-controlled.
@@ -431,7 +436,7 @@ export class SoundDialog {
         e.stopPropagation();
         this._importAudioFile();
       });
-      this._dialogEl.appendChild(importBtn);
+      if (!this.rm.readOnly) this._dialogEl.appendChild(importBtn);
 
       // Shared audio player (hidden until a recording is selected)
       const playerWrap = document.createElement("div");
@@ -513,7 +518,7 @@ export class SoundDialog {
         this.rm.deleteRecording(rec.id);
       }
     });
-    row.appendChild(delBtn);
+    if (!this.rm.readOnly) row.appendChild(delBtn);
 
     // Select on click (anywhere on row except delete button)
     row.addEventListener("click", (e) => {

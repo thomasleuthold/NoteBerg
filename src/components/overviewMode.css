@@ -64,3 +64,186 @@
 :is(body, #app) .recycle-bin-tab:hover {
   color: var(--text-primary);
 }
+
+/* ==========================================================================
+   Notebooks shared with the user
+   ========================================================================== */
+
+.share-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.share-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+}
+
+.share-badge--owner {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background-color: transparent;
+}
+
+.share-badge--readonly {
+  color: var(--nb-status-warning);
+  border-color: var(--nb-status-warning);
+  background-color: transparent;
+}
+
+.notebook-card--shared {
+  border-left: 3px solid var(--color-primary);
+}
+
+.notebook-back-group .share-badges {
+  margin: 0 0 0 var(--spacing-sm);
+}
+
+/* Something the user has to decide about: the share ended, or changes cannot be saved */
+.share-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--nb-status-warning);
+  background-color: var(--bg-tertiary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.share-notice__text {
+  margin: 0;
+}
+
+.overview-tab-content > .share-notice {
+  margin: 0 0 var(--spacing-md);
+}
+
+/* Notebooks offered to the user, above the ones they have */
+.share-invitation {
+  border-color: var(--color-primary);
+}
+
+.share-invitation__actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ==========================================================================
+   Share dialog
+   ========================================================================== */
+
+.share-dialog__add-row {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.share-dialog__mode {
+  flex: 1;
+  min-width: 0;
+}
+
+.share-dialog__suggestions {
+  display: flex;
+  flex-direction: column;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+:is(body, #app) .share-dialog__suggestion {
+  text-align: left;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+:is(body, #app) .share-dialog__suggestion:hover {
+  background-color: var(--bg-hover);
+}
+
+.share-dialog__status {
+  min-height: 1.2em;
+  margin: var(--spacing-sm) 0;
+  font-size: 0.85rem;
+  color: var(--nb-status-warning);
+}
+
+.share-dialog__empty {
+  margin: 4px 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.share-dialog__list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.share-dialog__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--spacing-xs) var(--spacing-sm);
+  align-items: center;
+  padding: var(--spacing-sm) 0;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+/* The name gets a line of its own so it is never squeezed out by the controls */
+.share-dialog__who {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.share-dialog__row .share-dialog__mode {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Inputs sized to 100% plus their padding and border would overflow the dialog
+   by a few pixels and bring up a horizontal scrollbar */
+.share-dialog,
+.share-dialog *,
+.share-dialog *::before,
+.share-dialog *::after {
+  box-sizing: border-box;
+}
+
+.share-dialog .modal-body {
+  overflow-x: hidden;
+}
+
+/* In a notebook's header the title, back arrow and badges sit on one centre line */
+.notebook-back-group {
+  align-items: center;
+}
+
+.notebook-back-group .notebook-back-title {
+  margin: 0;
+}
+
+.notebook-back-group .share-badges {
+  align-items: center;
+  margin: 0 0 0 var(--spacing-sm);
+}

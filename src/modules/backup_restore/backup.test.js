@@ -13,7 +13,7 @@ vi.mock("../storage.js", async () => {
   return createStorageMock();
 });
 
-import { getFileStats, __store as store } from "../storage.js";
+import { getFileStats, getNote, __store as store } from "../storage.js";
 import {
   BACKUP_SCHEMA,
   BackupCancelledError,
@@ -79,6 +79,72 @@ beforeEach(() => {
   store.reset();
   invalidateBackupEstimate();
   vi.clearAllMocks();
+});
+
+describe("sharing fields in archives", () => {
+  it("are stripped from notebooks on the way out", async () => {
+    const { notebookForArchive } = await import("./backup.js");
+    const archived = notebookForArchive({
+      id: "nb",
+      title: "T",
+      origin: "shared",
+      shareId: "1",
+      sharePermissions: 7,
+      ownerUid: "alice",
+      synced: true,
+    });
+    expect(archived).toEqual({ id: "nb", title: "T" });
+  });
+});
+
+describe("notebooks shared with this user", () => {
+  const sharedNotebook = () =>
+    makeNotebook({ id: "nb-shared", title: "Recipes", origin: "shared", ownerUid: "alice" });
+
+  it("are left out of the archive together with their notes and media", async () => {
+    store.seedNotebook(makeNotebook());
+    store.seedNote(makeNote());
+    store.seedNotebook(sharedNotebook());
+    store.seedFile("shared-img", png());
+    store.seedNote(
+      makeNote({
+        id: "shared-note",
+        notebookId: "nb-shared",
+        media: [{ id: "m", fileId: "shared-img" }],
+      }),
+    );
+
+    const { names, manifest } = await backupToMemory();
+
+    expect(names.some((n) => n.includes("nb-shared") || n.includes("shared-note"))).toBe(false);
+    expect(names.some((n) => n.includes("shared-img"))).toBe(false);
+    expect(manifest.counts).toMatchObject({ notebooks: 1, notes: 1, files: 0 });
+  });
+
+  it("still back up the user's own quick notes and notebooks", async () => {
+    store.seedNotebook(sharedNotebook());
+    store.seedNote(makeNote({ id: "q", notebookId: null }));
+
+    const { manifest } = await backupToMemory();
+
+    expect(manifest.counts).toMatchObject({ notebooks: 0, notes: 1 });
+  });
+});
+
+describe("the manifest's note count", () => {
+  it("counts the notes written, not the notes listed", async () => {
+    store.seedNotebook(makeNotebook());
+    store.seedNote(makeNote({ id: "kept" }));
+    store.seedNote(makeNote({ id: "vanished" }));
+    // Gone between the listing and the read (purged by a sync meanwhile)
+    getNote.mockImplementationOnce(async () => null);
+
+    const { names, manifest } = await backupToMemory();
+
+    const written = names.filter((n) => n.endsWith("kept.json") || n.endsWith("vanished.json"));
+    expect(written).toHaveLength(1);
+    expect(manifest.counts.notes).toBe(1);
+  });
 });
 
 describe("archive layout", () => {
@@ -231,7 +297,7 @@ describe("manifest", () => {
     expect(manifest).toMatchObject({
       schema: BACKUP_SCHEMA,
       appVersion: "1.2.3",
-      dbVersion: 5,
+      dbVersion: 6,
       encrypted: true,
       counts: { notebooks: 1, notes: 2, files: 1 },
     });

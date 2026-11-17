@@ -26,6 +26,7 @@ export const HELP_IDS = Object.freeze({
   MODE_LASSO: "mode_lasso",
   FIRST_IMAGE: "first_image",
   MARK_AS_TASK: "mark_as_task",
+  FIRST_TEXT_BOX: "first_text_box",
 });
 
 export function hasSeenHelp(id) {

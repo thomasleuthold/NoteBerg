@@ -11,6 +11,9 @@ export default defineConfig({
     // storage.webdav.js, matching vite.config.js's real NC build. Running
     // them here would silently pass with IS_NEXTCLOUD permanently false.
     exclude: ['**/node_modules/**', '**/*.nextcloud.test.js'],
+    // CSS is not processed in tests, except the text box stylesheet: the PDF
+    // export inlines it into its iframe (?inline), which tests check
+    css: { include: [/src[\/]styles[\/]textBoxes\.css/] },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

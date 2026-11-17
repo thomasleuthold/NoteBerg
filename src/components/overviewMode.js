@@ -7,6 +7,20 @@ import { t } from "../i18n/index.js";
 import { getCardSize } from "../modules/displayPrefs.js";
 import { extractPdfText } from "../modules/pdfManager.js";
 import { navigateTo } from "../modules/router.js";
+import { isSharingAvailable } from "../modules/sharing/availability.js";
+import { getInvitations } from "../modules/sharing/invitations.js";
+import { getNotebookPermissions } from "../modules/sharing/notePermissions.js";
+import { ensureOwnerShares, getRecipientCount } from "../modules/sharing/ownerShares.js";
+import {
+  acceptInvitation,
+  declineInvitation,
+  discardStrandedChanges,
+  dismissEndedShare,
+  hasUnsyncedChanges,
+  leaveSharedNotebook,
+} from "../modules/sharing/shareActions.js";
+import { canEdit, isShared } from "../modules/sharing/sharePermissions.js";
+import { ShareRestrictedError } from "../modules/sharing/shareRestrictions.js";
 import {
   copyNote,
   deleteNote,
@@ -24,10 +38,29 @@ import {
   purgeNotebook,
   restoreNote,
   restoreNotebook,
+  updateNote,
 } from "../modules/storage.js";
+import {
+  deriveSuggestedTitle,
+  deriveTaskDetails,
+  deriveTaskLabel,
+} from "../modules/taskDetails.js";
+import {
+  filterTasks,
+  getDueDateStatus,
+  getNextTaskStatus,
+  getTaskSettings,
+  isTaskCompleted,
+  normalizeTaskPriority,
+  normalizeTaskStatus,
+  sortTasks,
+  TASK_STATUS,
+} from "../modules/taskManager.js";
+import { searchableText } from "../modules/textBoxes.js";
 // getAllNotes / getNotesByNotebook / getQuickNotes now return lightweight index entries
 // (no strokes, no content, no recognition). Use getNote(id) when full content is needed.
 import { bindGuardedClick } from "../utils/asyncAction.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
 import { getIcon } from "../utils/icons.js";
 import {
   drawStroke,
@@ -38,12 +71,22 @@ import {
 } from "../utils/noteRenderer.js";
 import { showLoadingIndicator } from "./loadingIndicator.js";
 import {
+  showAlertDialog,
   showConfirmDialog,
   showEditNotebookModal,
   showEditNoteModal,
   showMoveCopyDialog,
 } from "./modals.js";
 import { renderNotebookCard } from "./notebookCard.js";
+import { showShareDialog } from "./shareDialog.js";
+import {
+  attachInvitationActions,
+  attachShareNoticeActions,
+  ownerLabel,
+  renderInvitations,
+  renderShareBadges,
+  renderShareNotices,
+} from "./shareIndicators.js";
 import "./overviewMode.css";
 
 /** Debug toggle: force stroke rendering even when recognition text is available */
@@ -61,6 +104,11 @@ const searchState = {
 // Module state for active tab
 let currentActiveTab = "notes";
 
+/** The next overview render opens on the recycle bin tab (e.g. from the restore summary). */
+export function showRecycleBinTab() {
+  currentActiveTab = "recyclebin";
+}
+
 // Incremented on every renderActiveTab (and direct re-render) call. Sub-renderers capture
 // their own token and check it against the current value before writing to the DOM, so a
 // slow render for a tab the user has since navigated away from can't clobber the active tab.
@@ -71,6 +119,13 @@ let renderToken = 0;
 // let the active render trigger it when done, rather than starting a second concurrent render.
 let isRendering = false;
 let pendingRender = false;
+
+// Data changes arrive in bursts (a sync announces every note it saves): the overview
+// redraws once the burst has quieted down, but never later than the max wait after the first
+const DATACHANGE_DEBOUNCE_MS = 500;
+const DATACHANGE_MAX_WAIT_MS = 3000;
+let dataChangeTimer = null;
+let dataChangeFirstAt = 0;
 
 /**
  * Render overview UI
@@ -144,6 +199,11 @@ async function renderNotesList(container, myToken) {
   // Fetch data (notebooks and quick notes are independent — fetch concurrently)
   const [notebooks, quickNotes] = await Promise.all([getAllNotebooks(), getQuickNotes()]);
 
+  // Who the own notebooks are shared with comes from the server. It is read once
+  // per session without holding up the render; if it changes anything the
+  // overview is redrawn (datachange) with the badges.
+  ensureOwnerShares().catch(() => {});
+
   // Get note counts for each notebook
   const notebookData = await Promise.all(
     notebooks.map(async (notebook) => {
@@ -159,11 +219,35 @@ async function renderNotesList(container, myToken) {
   // Sort by effectiveUpdatedAt descending
   notebookData.sort((a, b) => b.effectiveUpdatedAt - a.effectiveUpdatedAt);
 
+  // Notebooks other people shared with the user get a section of their own
+  const ownData = notebookData.filter(({ notebook }) => !isShared(notebook));
+  const sharedData = notebookData.filter(({ notebook }) => isShared(notebook));
+
   // Build HTML
   const notebooksHtml =
-    notebookData.length > 0
-      ? notebookData.map(({ notebook, count }) => renderNotebookCard(notebook, count)).join("")
+    ownData.length > 0
+      ? ownData
+          .map(({ notebook, count }) =>
+            renderNotebookCard(notebook, count, { recipients: getRecipientCount(notebook.id) }),
+          )
+          .join("")
       : `<p class="empty-state">${t("overview.empty.noNotebooks")}</p>`;
+
+  // Notebooks offered to the user and not answered yet come first
+  const invitations = getInvitations();
+  const sharedHtml =
+    sharedData.length > 0 || invitations.length > 0
+      ? `
+      <div class="notebooks-section shared-notebooks-section">
+        <div class="section-header">
+          <h3>${t("sharing.section.title")}</h3>
+        </div>
+        ${renderInvitations(invitations)}
+        <div class="notebooks-grid">
+          ${sharedData.map(({ notebook, count }) => renderNotebookCard(notebook, count)).join("")}
+        </div>
+      </div>`
+      : "";
 
   const quickNotesHtml =
     quickNotes.length > 0
@@ -180,6 +264,7 @@ async function renderNotesList(container, myToken) {
           ${notebooksHtml}
         </div>
       </div>
+      ${sharedHtml}
 
       <div class="quick-notes-section">
         <div class="section-header">
@@ -204,15 +289,25 @@ async function renderNotesList(container, myToken) {
 
 async function renderNotebookContents(container, notebookId, myToken) {
   const notebook = await getNotebook(notebookId);
-  if (!notebook) throw new Error("Notebook not found");
+  if (!notebook) {
+    // Gone while the user was looking at it (a share that ended and was dropped):
+    // back to the list rather than an error page
+    navigateTo("overview");
+    return;
+  }
 
   const notes = await getNotesByNotebook(notebookId);
 
   if (myToken !== renderToken) return;
 
+  // What the user may do here: a notebook shared with them can be view-only,
+  // and none lets them delete, move or copy its notes
+  const editable = canEdit(notebook);
+  const shared = isShared(notebook);
+
   const notesHtml =
     notes.length > 0
-      ? notes.map((note) => renderPreviewNoteCard(note)).join("")
+      ? notes.map((note) => renderPreviewNoteCard(note, { showOptions: editable })).join("")
       : `<p class="empty-state">${t("overview.empty.noNotesInNotebook")}</p>`;
 
   container.innerHTML = `
@@ -221,10 +316,12 @@ async function renderNotebookContents(container, notebookId, myToken) {
         <button class="notebook-back-btn" id="notebook-back-btn" title="${t("overview.tabs.backToNotebooks")}" aria-label="${t("overview.tabs.backToNotebooks")}">
           ${getIcon("arrowLeft", 20)}
         </button>
-        <h3 class="notebook-back-title">${notebook.title}</h3>
+        <h3 class="notebook-back-title">${escapeHtml(notebook.title)}</h3>
+        ${shared ? renderShareBadges(notebook) : ""}
       </div>
-      <button class="btn-primary" id="new-note-btn">${t("overview.actions.newNote")}</button>
+      ${editable ? `<button class="btn-primary" id="new-note-btn">${t("overview.actions.newNote")}</button>` : ""}
     </div>
+    ${renderShareNotices(notebook)}
     <div class="notes-grid">
       ${notesHtml}
     </div>
@@ -235,6 +332,7 @@ async function renderNotebookContents(container, notebookId, myToken) {
   if (backBtn) {
     backBtn.addEventListener("click", () => navigateTo("overview"));
   }
+  attachShareNoticeActions(container, shareNoticeActions);
 
   const newNoteBtn = container.querySelector("#new-note-btn");
   if (newNoteBtn) {
@@ -321,8 +419,16 @@ export function extractTasksFromNote(note) {
         (s) => taskStrokeIds.has(s.id) && !s._deleted && !s.isDeleted,
       );
       if (task.type === "stroke" && taskStrokes.length === 0) continue;
+      const status = normalizeTaskStatus(task);
+      const priority = normalizeTaskPriority(task.priority);
+      const dueDate = task.dueDate || "";
       tasks.push({
         ...task,
+        type: task.type || (task.strokeIds?.length ? "stroke" : "text"),
+        status,
+        priority,
+        dueDate,
+        checked: isTaskCompleted(status),
         noteId: note.id,
         noteTitle: note.title || t("common.untitled"),
         noteContent: note.content || "",
@@ -330,45 +436,105 @@ export function extractTasksFromNote(note) {
         strokes: taskStrokes,
       });
     }
+
+    // Also extract text tasks embedded in HTML content if not yet in noteTasks
+    if (note.content && typeof note.content === "string") {
+      const existingIds = new Set(tasks.map((t) => t.id));
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(note.content, "text/html");
+      const textTaskSpans = doc.querySelectorAll(".task-text[data-task-id]");
+      for (const span of textTaskSpans) {
+        const id = span.dataset.taskId;
+        if (!id || existingIds.has(id) || deletedTaskIds.has(id)) continue;
+        const cb = doc.querySelector(`.task-checkbox[data-task-id="${id}"]`);
+        const status =
+          span.dataset.status ||
+          cb?.dataset.status ||
+          (span.classList.contains("is-checked") || cb?.classList.contains("is-checked")
+            ? TASK_STATUS.DONE
+            : TASK_STATUS.OPEN);
+        const priority = span.dataset.priority || cb?.dataset.priority || "none";
+        const dueDate = span.dataset.dueDate || "";
+        const customTitle = span.dataset.title || "";
+        existingIds.add(id);
+        tasks.push({
+          id,
+          type: "text",
+          status: normalizeTaskStatus(status),
+          priority: normalizeTaskPriority(priority),
+          dueDate,
+          customTitle,
+          text: span.textContent || "",
+          checked: isTaskCompleted(status),
+          noteId: note.id,
+          noteTitle: note.title || t("common.untitled"),
+          noteContent: note.content,
+          strokes: [],
+        });
+      }
+    }
   } catch (noteError) {
     console.warn(`[markers] Skipping note ${note.id} due to error:`, noteError);
   }
   return tasks;
 }
 
+let currentTaskFilter = "active";
+let currentTaskSort = "dueDate";
+let userChangedOverviewSort = false;
+
 // Note: renderTaskItem() (called from within the returned HTML template) populates
 // taskStrokesMap as a side effect, so callers must reset the map before invoking this.
 function buildTasksHtml(allTasks) {
-  const openTasks = allTasks.filter((t) => !t.checked);
-  const doneTasks = allTasks.filter((t) => t.checked);
+  if (allTasks.length === 0) {
+    return `<p class="empty-state">${t("overview.empty.noTasks")}</p>`;
+  }
 
-  return allTasks.length > 0
-    ? `
-      <div class="tasks-section">
-        <div class="section-header tasks-section__header">
-          <h3>${getIcon("checkSquare", 20)} ${t("overview.sections.tasks")}</h3>
-          <button class="tasks-display-toggle btn-icon" id="toggle-task-display" title="${forceStrokeRender ? t("overview.tasks.showAsText") : t("overview.tasks.showAsStrokes")}">
-            ${forceStrokeRender ? getIcon("fileText", 16) : getIcon("pen", 16)}
-          </button>
-          <span class="tasks-count">${t("overview.tasks.openCount_other", { count: openTasks.length })}</span>
+  const activeCount = allTasks.filter((t) => !isTaskCompleted(t)).length;
+  const filtered = filterTasks(allTasks, currentTaskFilter);
+  const sorted = sortTasks(filtered, currentTaskSort);
+
+  return `
+    <div class="tasks-section">
+      <div class="section-header tasks-section__header">
+        <h3>${getIcon("checkSquare", 20)} ${t("overview.sections.tasks")}</h3>
+        <button class="tasks-display-toggle btn-icon" id="toggle-task-display" title="${forceStrokeRender ? t("overview.tasks.showAsText") : t("overview.tasks.showAsStrokes")}">
+          ${forceStrokeRender ? getIcon("fileText", 16) : getIcon("pen", 16)}
+        </button>
+        <span class="tasks-count">${t("overview.tasks.openCount_other", { count: activeCount })}</span>
+      </div>
+
+      <div class="tasks-controls">
+        <div class="tasks-control-group">
+          <label for="tasks-filter-select" class="tasks-control-label" title="${t("tasks.filter.label", "Filter")}">
+            ${getIcon("list", 14)}
+          </label>
+          <select id="tasks-filter-select" class="tasks-select" aria-label="${t("tasks.filter.label", "Filter")}">
+            <option value="active" ${currentTaskFilter === "active" ? "selected" : ""}>${t("tasks.filter.active", "Active")}</option>
+            <option value="all" ${currentTaskFilter === "all" ? "selected" : ""}>${t("tasks.filter.all", "All")}</option>
+            <option value="doing" ${currentTaskFilter === "doing" ? "selected" : ""}>${t("tasks.filter.doing", "In Progress")}</option>
+            <option value="overdue" ${currentTaskFilter === "overdue" ? "selected" : ""}>${t("tasks.filter.overdue", "Overdue")}</option>
+            <option value="done" ${currentTaskFilter === "done" ? "selected" : ""}>${t("tasks.filter.done", "Completed")}</option>
+          </select>
         </div>
-        <div class="tasks-list">
-          ${openTasks.map((t) => renderTaskItem(t)).join("")}
+        <div class="tasks-control-group">
+          <label for="tasks-sort-select" class="tasks-control-label" title="${t("tasks.sort.label", "Sort")}">
+            ${getIcon("sliders", 14)}
+          </label>
+          <select id="tasks-sort-select" class="tasks-select" aria-label="${t("tasks.sort.label", "Sort")}">
+            <option value="dueDate" ${currentTaskSort === "dueDate" ? "selected" : ""}>${t("tasks.sort.dueDate", "Due Date")}</option>
+            <option value="priority" ${currentTaskSort === "priority" ? "selected" : ""}>${t("tasks.sort.priority", "Priority")}</option>
+            <option value="status" ${currentTaskSort === "status" ? "selected" : ""}>${t("tasks.sort.status", "State")}</option>
+            <option value="note" ${currentTaskSort === "note" ? "selected" : ""}>${t("tasks.sort.note", "Note Title")}</option>
+          </select>
         </div>
-        ${
-          doneTasks.length > 0
-            ? `
-          <button class="tasks-done-toggle" id="toggle-done-tasks">
-            ${t("overview.tasks.showCompleted_other", { count: doneTasks.length })}
-          </button>
-          <div class="tasks-done-list" id="done-tasks-list" style="display: none;">
-            ${doneTasks.map((t) => renderTaskItem(t)).join("")}
-          </div>
-        `
-            : ""
-        }
-      </div>`
-    : `<p class="empty-state">${t("overview.empty.noTasks")}</p>`;
+      </div>
+
+      <div class="tasks-list">
+        ${sorted.length > 0 ? sorted.map((t) => renderTaskItem(t)).join("") : `<p class="empty-state" style="padding: 12px 0;">${t("tasks.noMatchingTasks", "No matching tasks found.")}</p>`}
+      </div>
+    </div>
+  `;
 }
 
 async function renderMarkersTab(container, myToken) {
@@ -376,6 +542,11 @@ async function renderMarkersTab(container, myToken) {
   // below re-enters here directly rather than via renderActiveTab, so show the
   // indicator here instead of relying on the caller's.
   showLoadingIndicator(container, { label: t("overview.loading"), block: true });
+
+  const taskSettings = await getTaskSettings();
+  if (taskSettings?.defaultSort && !userChangedOverviewSort) {
+    currentTaskSort = taskSettings.defaultSort;
+  }
 
   // Collect tasks from all notes — need full content (tasks, strokes, recognition)
   const noteIndexes = await getAllNotes();
@@ -400,7 +571,9 @@ async function renderMarkersTab(container, myToken) {
     taskStrokesMap = new Map();
     container.innerHTML = buildTasksHtml(allTasks);
     drawTaskStrokeCanvases(container);
-    attachTaskListeners(container);
+    attachTaskListeners(container, allTasks, () => {
+      renderProgress(true);
+    });
     if (isFinal) {
       const toggleBtn = container.querySelector("#toggle-task-display");
       if (toggleBtn) {
@@ -448,12 +621,6 @@ async function renderRecycleBinTab(container, myToken) {
   const restoreIcon = getIcon("restore", 16);
   const trashIcon = getIcon("trash", 16);
 
-  const escHtml = (text) => {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
-  };
-
   const fmtDate = (ts) => {
     const date = new Date(ts);
     const now = new Date();
@@ -471,7 +638,7 @@ async function renderRecycleBinTab(container, myToken) {
     <div class="recycle-item" data-type="${type}" data-id="${item.id}">
       <div class="recycle-item-icon">${icon}</div>
       <div class="recycle-item-content">
-        <div class="recycle-item-title">${escHtml(item.title || t("common.untitled"))}</div>
+        <div class="recycle-item-title">${escapeHtml(item.title || t("common.untitled"))}</div>
         <div class="recycle-item-meta">
           <span class="recycle-item-type">${type === "notebook" ? t("recycleBin.notebook") : t("recycleBin.note")}</span>
           <span class="recycle-item-date">${t("recycleBin.deletedOn", { date: fmtDate(item.modified) })}</span>
@@ -535,6 +702,10 @@ async function renderRecycleBinTab(container, myToken) {
         window.dispatchEvent(new CustomEvent("datachange"));
       } catch (error) {
         console.error("Error restoring item:", error);
+        await showAlertDialog(
+          t("common.error"),
+          t("recycleBin.restoreFailed", { message: error.message }),
+        );
       }
     });
   });
@@ -543,19 +714,20 @@ async function renderRecycleBinTab(container, myToken) {
   // second run would also stack a second confirmation dialog on top of the first.
   container.querySelectorAll(".btn-purge").forEach((btn) => {
     bindGuardedClick(btn, async () => {
-      let message =
-        "Are you sure you want to permanently delete this item? This will remove it from all synced devices and cannot be undone.";
+      let message = t("recycleBin.purgeConfirm");
       if (btn.dataset.type === "notebook") {
         const notes = await getDeletedNotes();
         const count = notes.filter((n) => n.notebookId === btn.dataset.id).length;
-        if (count > 0) {
-          message = `Are you sure you want to permanently delete this notebook? This will also permanently delete ${count} note(s) inside it. This will remove it from all synced devices and cannot be undone.`;
+        if (count > 0) message = t("recycleBin.purgeConfirmNotebook", { count });
+        // Purging removes the folder, which ends every share of it
+        if (getRecipientCount(btn.dataset.id) > 0) {
+          message = `${message} ${t("sharing.purge.warning")}`;
         }
       }
       const confirmed = await showConfirmDialog(
-        "Delete Permanently",
+        t("recycleBin.purgeTitle"),
         message,
-        "Delete",
+        t("common.delete"),
         "btn-danger",
       );
       if (confirmed) {
@@ -568,6 +740,10 @@ async function renderRecycleBinTab(container, myToken) {
           window.dispatchEvent(new CustomEvent("datachange"));
         } catch (error) {
           console.error("Error purging item:", error);
+          await showAlertDialog(
+            t("common.error"),
+            t("recycleBin.purgeFailed", { message: error.message }),
+          );
         }
       }
     });
@@ -595,12 +771,12 @@ async function renderActiveTab(container, notebookId) {
   } catch (error) {
     if (myToken !== renderToken) return;
     console.error("Error rendering tab:", error);
-    container.innerHTML = `<div class="error-state"><p>${t("overview.errorTab", { message: error.message })}</p></div>`;
+    container.innerHTML = `<div class="error-state"><p>${t("overview.errorTab", { message: escapeHtml(error.message) })}</p></div>`;
   }
 }
 
 function renderError(container, error) {
-  container.innerHTML = `<div class="error-state"><p>${t("overview.errorRender", { message: error.message })}</p></div>`;
+  container.innerHTML = `<div class="error-state"><p>${t("overview.errorRender", { message: escapeHtml(error.message) })}</p></div>`;
 }
 
 function attachShellListeners(container, notebookId) {
@@ -617,7 +793,75 @@ function attachShellListeners(container, notebookId) {
   });
 }
 
+/** What the buttons of a share notice do. */
+/** What the buttons of a notebook invitation do. */
+const invitationActions = {
+  async accept(shareId) {
+    const invitation = getInvitations().find((i) => i.shareId === shareId);
+    if (!invitation) return;
+    try {
+      await acceptInvitation(invitation);
+    } catch (error) {
+      console.error("Error accepting a shared notebook:", error);
+      await showAlertDialog(
+        t("sharing.invite.title"),
+        t("sharing.invite.failed", { message: escapeHtml(error.message) }),
+      );
+    }
+    window.dispatchEvent(new CustomEvent("datachange"));
+  },
+
+  async decline(shareId) {
+    const invitation = getInvitations().find((i) => i.shareId === shareId);
+    if (!invitation) return;
+    const confirmed = await showConfirmDialog(
+      t("sharing.invite.declineTitle"),
+      t("sharing.invite.declineMessage", {
+        owner: escapeHtml(invitation.ownerDisplayName || invitation.ownerUid || ""),
+      }),
+      t("sharing.invite.decline"),
+      "btn-danger",
+    );
+    if (!confirmed) return;
+    try {
+      await declineInvitation(invitation);
+    } catch (error) {
+      console.error("Error declining a shared notebook:", error);
+      await showAlertDialog(
+        t("sharing.invite.title"),
+        t("sharing.invite.failed", { message: escapeHtml(error.message) }),
+      );
+    }
+    window.dispatchEvent(new CustomEvent("datachange"));
+  },
+};
+
+const shareNoticeActions = {
+  async dismiss(notebookId) {
+    await dismissEndedShare(await getNotebook(notebookId));
+    window.dispatchEvent(new CustomEvent("datachange"));
+    // A dismissed notebook is gone: leave its (now empty) view
+    if (currentNotebookId === notebookId) navigateTo("overview");
+  },
+
+  async discard(notebookId) {
+    const notebook = await getNotebook(notebookId);
+    const confirmed = await showConfirmDialog(
+      t("sharing.stranded.discardTitle"),
+      t("sharing.stranded.discardMessage", { title: escapeHtml(notebook.title) }),
+      t("sharing.stranded.discard"),
+      "btn-danger",
+    );
+    if (!confirmed) return;
+    await discardStrandedChanges(notebook);
+    window.dispatchEvent(new CustomEvent("datachange"));
+  },
+};
+
 function attachNotesListListeners(container) {
+  attachShareNoticeActions(container, shareNoticeActions);
+  attachInvitationActions(container, invitationActions);
+
   // Notebook card clicks
   const notebookCards = container.querySelectorAll(".notebook-card");
   notebookCards.forEach((card) => {
@@ -644,7 +888,7 @@ function attachNotesListListeners(container) {
       e.stopPropagation();
       const notebookId = btn.dataset.notebookId;
       const notebook = await getNotebook(notebookId);
-      showNotebookOptionsMenu(btn, notebook);
+      showNotebookOptionsMenu(btn, notebook, { canShare: await isSharingAvailable() });
     });
   });
 
@@ -720,7 +964,8 @@ export async function searchAllNotes(rawQuery) {
 
   const results = [];
   for (const note of allNotes) {
-    const contentMatch = globQueryMatches(rawQuery, note.content || "");
+    // The text, not the markup: a box's position or a class name is no match
+    const contentMatch = globQueryMatches(rawQuery, searchableText(note.content || ""));
     const recognitionMatch = globQueryMatches(rawQuery, note.recognition?.fullText || "");
     const pdfMatch = globQueryMatches(rawQuery, pdfTextByNote.get(note.id) || "");
     if (contentMatch || recognitionMatch || pdfMatch) {
@@ -904,7 +1149,7 @@ async function handleDeleteNote(noteId) {
   const note = await getNote(noteId);
   const confirmed = await showConfirmDialog(
     t("overview.delete.noteTitle"),
-    t("overview.delete.noteMessage", { title: note.title }),
+    t("overview.delete.noteMessage", { title: escapeHtml(note.title) }),
     t("common.delete"),
     "btn-danger",
   );
@@ -916,23 +1161,40 @@ async function handleDeleteNote(noteId) {
 
 async function handleNoteOptions(btn, noteId) {
   const note = await getNote(noteId);
-  showNoteOptionsMenu(btn, note);
+  const permissions = await getNotebookPermissions(note.notebookId);
+  showNoteOptionsMenu(btn, note, permissions);
 }
 
-function showNoteOptionsMenu(anchor, note) {
+/**
+ * Show a user the consequence of an action the storage layer refused. The menus
+ * hide such actions, so this is the net under a missed one.
+ */
+async function reportRestriction(error) {
+  if (!(error instanceof ShareRestrictedError)) throw error;
+  await showAlertDialog(t("sharing.restricted.title"), t("sharing.restricted.message"));
+}
+
+function showNoteOptionsMenu(anchor, note, { canEdit: editable, canManage: manageable }) {
   // Remove any existing menu
   const existing = document.getElementById("note-options-menu");
   if (existing) existing.remove();
 
+  // Moving, copying and deleting are the owner's; renaming needs the right to edit
+  const items = [
+    editable &&
+      `<button class="note-options-menu__item" data-action="edit">${t("overview.noteOptions.edit")}</button>`,
+    manageable &&
+      `<button class="note-options-menu__item" data-action="movecopy">${t("overview.noteOptions.moveCopy")}</button>`,
+    manageable && '<hr class="note-options-menu__separator">',
+    manageable &&
+      `<button class="note-options-menu__item note-options-menu__item--danger" data-action="delete">${t("overview.noteOptions.delete")}</button>`,
+  ].filter(Boolean);
+  if (items.length === 0) return;
+
   const menu = document.createElement("div");
   menu.id = "note-options-menu";
   menu.className = "note-options-menu";
-  menu.innerHTML = `
-    <button class="note-options-menu__item" data-action="edit">${t("overview.noteOptions.edit")}</button>
-    <button class="note-options-menu__item" data-action="movecopy">${t("overview.noteOptions.moveCopy")}</button>
-    <hr class="note-options-menu__separator">
-    <button class="note-options-menu__item note-options-menu__item--danger" data-action="delete">${t("overview.noteOptions.delete")}</button>
-  `;
+  menu.innerHTML = items.join("");
 
   // Position below the anchor button
   document.body.appendChild(menu);
@@ -948,27 +1210,31 @@ function showNoteOptionsMenu(anchor, note) {
 
   const closeMenu = () => menu.remove();
 
-  menu.querySelector("[data-action='edit']").addEventListener("click", () => {
+  menu.querySelector("[data-action='edit']")?.addEventListener("click", () => {
     closeMenu();
     showEditNoteModal(note);
   });
 
-  menu.querySelector("[data-action='movecopy']").addEventListener("click", async () => {
+  menu.querySelector("[data-action='movecopy']")?.addEventListener("click", async () => {
     closeMenu();
     const notebooks = await getAllNotebooks();
     const result = await showMoveCopyDialog(note, notebooks);
     if (!result) return;
-    if (result.action === "move") {
-      await moveNote(note.id, result.targetNotebookId);
-    } else {
-      await copyNote(note.id, result.targetNotebookId);
+    try {
+      if (result.action === "move") {
+        await moveNote(note.id, result.targetNotebookId);
+      } else {
+        await copyNote(note.id, result.targetNotebookId);
+      }
+    } catch (error) {
+      return reportRestriction(error);
     }
     window.dispatchEvent(new CustomEvent("datachange"));
   });
 
-  menu.querySelector("[data-action='delete']").addEventListener("click", async () => {
+  menu.querySelector("[data-action='delete']")?.addEventListener("click", async () => {
     closeMenu();
-    await handleDeleteNote(note.id);
+    await handleDeleteNote(note.id).catch(reportRestriction);
   });
 
   // Close on outside click or Escape
@@ -993,18 +1259,63 @@ function showNoteOptionsMenu(anchor, note) {
   }, 0);
 }
 
-function showNotebookOptionsMenu(anchor, notebook) {
+/**
+ * "Remove from my list" for a notebook shared with the user. Leaving ends only
+ * their own access; the owner and the other people it is shared with keep it.
+ */
+async function handleLeaveSharedNotebook(notebook) {
+  const unsynced = await hasUnsyncedChanges(notebook);
+  const confirmed = await showConfirmDialog(
+    t("sharing.leave.title"),
+    unsynced
+      ? t("sharing.leave.messageUnsynced", { title: escapeHtml(notebook.title) })
+      : t("sharing.leave.message", {
+          title: escapeHtml(notebook.title),
+          owner: escapeHtml(ownerLabel(notebook)),
+        }),
+    t("sharing.leave.confirm"),
+    unsynced ? "btn-danger" : "btn-primary",
+  );
+  if (!confirmed) return;
+  try {
+    await leaveSharedNotebook(notebook);
+  } catch (error) {
+    console.error("Error leaving shared notebook:", error);
+    await showAlertDialog(
+      t("sharing.leave.title"),
+      t("sharing.leave.failed", { message: escapeHtml(error.message) }),
+    );
+    return;
+  }
+  window.dispatchEvent(new CustomEvent("datachange"));
+}
+
+function showNotebookOptionsMenu(anchor, notebook, { canShare = false } = {}) {
   const existing = document.getElementById("note-options-menu");
   if (existing) existing.remove();
+
+  // A notebook shared with the user can be renamed where the share allows it and
+  // removed from the list; it can never be deleted
+  const shared = isShared(notebook);
+  const items = shared
+    ? [
+        canEdit(notebook) &&
+          `<button class="note-options-menu__item" data-action="edit">${t("overview.notebookOptions.edit")}</button>`,
+        canEdit(notebook) && '<hr class="note-options-menu__separator">',
+        `<button class="note-options-menu__item note-options-menu__item--danger" data-action="leave">${t("sharing.notebookOptions.leave")}</button>`,
+      ]
+    : [
+        `<button class="note-options-menu__item" data-action="edit">${t("overview.notebookOptions.edit")}</button>`,
+        canShare &&
+          `<button class="note-options-menu__item" data-action="share">${t("sharing.notebookOptions.share")}</button>`,
+        '<hr class="note-options-menu__separator">',
+        `<button class="note-options-menu__item note-options-menu__item--danger" data-action="delete">${t("overview.notebookOptions.delete")}</button>`,
+      ];
 
   const menu = document.createElement("div");
   menu.id = "note-options-menu";
   menu.className = "note-options-menu";
-  menu.innerHTML = `
-    <button class="note-options-menu__item" data-action="edit">${t("overview.notebookOptions.edit")}</button>
-    <hr class="note-options-menu__separator">
-    <button class="note-options-menu__item note-options-menu__item--danger" data-action="delete">${t("overview.notebookOptions.delete")}</button>
-  `;
+  menu.innerHTML = items.filter(Boolean).join("");
 
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
@@ -1018,21 +1329,34 @@ function showNotebookOptionsMenu(anchor, notebook) {
 
   const closeMenu = () => menu.remove();
 
-  menu.querySelector("[data-action='edit']").addEventListener("click", () => {
+  menu.querySelector("[data-action='edit']")?.addEventListener("click", () => {
     closeMenu();
     showEditNotebookModal(notebook);
   });
 
-  menu.querySelector("[data-action='delete']").addEventListener("click", async () => {
+  menu.querySelector("[data-action='share']")?.addEventListener("click", async () => {
     closeMenu();
+    await showShareDialog(notebook);
+  });
+
+  menu.querySelector("[data-action='leave']")?.addEventListener("click", async () => {
+    closeMenu();
+    await handleLeaveSharedNotebook(notebook);
+  });
+
+  menu.querySelector("[data-action='delete']")?.addEventListener("click", async () => {
+    closeMenu();
+    const recipients = getRecipientCount(notebook.id);
     const confirmed = await showConfirmDialog(
       t("overview.delete.notebookTitle"),
-      t("overview.delete.notebookMessage", { title: notebook.title }),
+      recipients > 0
+        ? `${t("overview.delete.notebookMessage", { title: escapeHtml(notebook.title) })} ${t("sharing.purge.warning")}`
+        : t("overview.delete.notebookMessage", { title: escapeHtml(notebook.title) }),
       t("common.delete"),
       "btn-danger",
     );
     if (confirmed) {
-      await deleteNotebook(notebook.id);
+      await deleteNotebook(notebook.id).catch(reportRestriction);
       window.dispatchEvent(new CustomEvent("datachange"));
     }
   });
@@ -1094,7 +1418,7 @@ function renderSearchResultsList(container, results) {
   });
 }
 
-function renderPreviewNoteCard(note) {
+function renderPreviewNoteCard(note, { showOptions = true } = {}) {
   // Index entries carry hasStrokes/hasContent flags — no need to load content for layout.
   const hasDrawings = note.hasStrokes ?? (note.strokes && note.strokes.length > 0);
   const hasText =
@@ -1120,9 +1444,13 @@ function renderPreviewNoteCard(note) {
 
   return `
     <div class="note-card preview-card" data-note-id="${note.id}">
-      <button class="card-options-btn btn-icon" data-note-id="${note.id}" title="${t("overview.noteOptions.title")}">
+      ${
+        showOptions
+          ? `<button class="card-options-btn btn-icon" data-note-id="${note.id}" title="${t("overview.noteOptions.title")}">
         ${getIcon("moreVertical", 16)}
-      </button>
+      </button>`
+          : ""
+      }
       <div class="note-card-header">
         <div class="note-card-title">${escapeHtml(note.title || t("common.untitled"))}</div>
         <div class="note-card-date">${formatDate(note.modified)}</div>
@@ -1195,41 +1523,23 @@ function drawTaskStrokeCanvases(container) {
 /**
  * Render a single task item for the overview tasks section
  */
-/**
- * Derive a human-readable label for a task (from extractTasksFromNote's output):
- * for a "text" task, the plain text of the matching <span data-task-id> in the
- * note's HTML content; for a "stroke" task, the recognized words whose
- * strokeIds overlap the task's strokeIds, joined. Returns "" if no label could
- * be derived (caller decides the fallback — see renderTaskItem below).
- * Exported so the MCP bridge (get_task_markers) can reuse the same derivation
- * instead of duplicating it.
- * @param {object} task
- * @returns {string}
- */
-export function deriveTaskLabel(task) {
-  if (task.type === "text" && task.noteContent) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(task.noteContent, "text/html");
-    const span = doc.querySelector(`[data-task-id="${task.id}"]`);
-    return span?.textContent || "";
-  }
-  if (task.type === "stroke" && task.recognition?.words && task.strokeIds?.length > 0) {
-    const taskStrokeIds = new Set(task.strokeIds);
-    const matchedWords = task.recognition.words.filter((word) =>
-      word.strokeIds?.some((id) => taskStrokeIds.has(id)),
-    );
-    if (matchedWords.length > 0) {
-      return matchedWords.map((w) => w.text).join(" ");
-    }
-  }
-  return "";
-}
+// deriveTaskLabel lives in taskDetails.js so the note editor can use it without
+// importing this module; re-exported because the MCP bridge imports it from here.
+export { deriveTaskLabel };
 
 function renderTaskItem(task) {
-  const isDone = task.checked;
-  const checkIcon = isDone ? getIcon("checkSquare", 16) : getIcon("square", 16);
+  const status = normalizeTaskStatus(task);
+  const priority = normalizeTaskPriority(task.priority);
+  const isDone = isTaskCompleted(status);
+  const dueStatus = getDueDateStatus(task.dueDate);
 
-  let label = deriveTaskLabel(task);
+  let iconName = "square";
+  if (status === TASK_STATUS.DONE) iconName = "checkSquare";
+  else if (status === TASK_STATUS.DOING) iconName = "circleDot";
+
+  const checkIcon = getIcon(iconName, 16);
+
+  let label = task.title || task.label || deriveTaskLabel(task);
   if (!label) {
     label = task.type === "text" ? t("overview.tasks.textTask") : "";
   }
@@ -1246,11 +1556,22 @@ function renderTaskItem(task) {
     labelHtml = `<span class="task-item__label">${escapeHtml(label || t("overview.tasks.strokeTask"))}</span>`;
   }
 
+  const dueClass = dueStatus ? `task-item--${dueStatus}` : "";
+  const prioClass = priority !== "none" ? `task-item--prio-${priority}` : "";
+
   return `
-    <div class="task-item ${isDone ? "task-item--done" : ""}" data-note-id="${task.noteId}" data-task-id="${task.id}">
-      <span class="task-item__checkbox">${checkIcon}</span>
+    <div class="task-item ${isDone ? "task-item--done" : ""} ${dueClass} ${prioClass}" data-note-id="${task.noteId}" data-task-id="${task.id}">
+      <button type="button" class="task-item__checkbox" data-status="${status}" data-priority="${priority}" title="${t("tasks.cycleStatus", "Cycle status")}">
+        ${checkIcon}
+      </button>
       ${labelHtml}
-      <span class="task-item__note">${escapeHtml(task.noteTitle)}</span>
+      <div class="task-item__meta">
+        ${task.dueDate ? `<span class="task-item__due-badge task-item__due-badge--${dueStatus || "upcoming"}">${escapeHtml(task.dueDate)}</span>` : ""}
+        <span class="task-item__note">${escapeHtml(task.noteTitle)}</span>
+      </div>
+      <button type="button" class="task-item__options btn-icon" data-note-id="${task.noteId}" data-task-id="${task.id}" title="${t("tasks.properties.title", "Task Properties")}">
+        ${getIcon("moreVertical", 16)}
+      </button>
     </div>
   `;
 }
@@ -1258,38 +1579,117 @@ function renderTaskItem(task) {
 /**
  * Attach event listeners for the tasks section
  */
-function attachTaskListeners(container) {
+function attachTaskListeners(container, allTasks = [], onRefresh = null) {
+  // Sort and Filter controls
+  const filterSelect = container.querySelector("#tasks-filter-select");
+  if (filterSelect) {
+    filterSelect.addEventListener("change", (e) => {
+      currentTaskFilter = e.target.value;
+      onRefresh?.();
+    });
+  }
+
+  const sortSelect = container.querySelector("#tasks-sort-select");
+  if (sortSelect) {
+    sortSelect.addEventListener("change", (e) => {
+      userChangedOverviewSort = true;
+      currentTaskSort = e.target.value;
+      onRefresh?.();
+    });
+  }
+
+  // Checkboxes: cycle state
+  container.querySelectorAll(".task-item__checkbox").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const item = btn.closest(".task-item");
+      if (!item) return;
+      const noteId = item.dataset.noteId;
+      const taskId = item.dataset.taskId;
+      if (!noteId || !taskId) return;
+
+      const note = await getNote(noteId);
+      if (!note || !Array.isArray(note.tasks)) return;
+      const task = note.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+
+      const currentStatus = normalizeTaskStatus(task);
+      const nextStatus = getNextTaskStatus(currentStatus);
+      task.status = nextStatus;
+      task.checked = isTaskCompleted(nextStatus);
+      task.modified = Date.now();
+      await updateNote(noteId, { tasks: note.tasks, modified: Date.now() });
+
+      // Update in-memory allTasks item
+      const cached = allTasks.find((t) => t.id === taskId && t.noteId === noteId);
+      if (cached) {
+        cached.status = nextStatus;
+        cached.checked = task.checked;
+        cached.modified = task.modified;
+      }
+
+      onRefresh?.();
+    });
+  });
+
+  // Options button: open Task Properties dialog
+  container.querySelectorAll(".task-item__options").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const noteId = btn.dataset.noteId;
+      const taskId = btn.dataset.taskId;
+      if (!noteId || !taskId) return;
+
+      const note = await getNote(noteId);
+      if (!note || !Array.isArray(note.tasks)) return;
+      const task = note.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+
+      const { showTaskPropertiesDialog } = await import("./TaskPropertiesDialog.js");
+      const updated = await showTaskPropertiesDialog(task, {
+        details: deriveTaskDetails(note, task),
+        suggestedTitle: deriveSuggestedTitle(note, task),
+      });
+      if (!updated) return;
+
+      task.status = updated.status;
+      task.checked = isTaskCompleted(updated.status);
+      task.priority = updated.priority;
+      task.dueDate = updated.dueDate;
+      if (updated.title !== undefined) {
+        task.title = updated.title;
+        task.label = updated.title;
+      }
+      task.modified = Date.now();
+      await updateNote(noteId, { tasks: note.tasks, modified: Date.now() });
+
+      // Update in-memory allTasks item
+      const cached = allTasks.find((t) => t.id === taskId && t.noteId === noteId);
+      if (cached) {
+        cached.status = task.status;
+        cached.checked = task.checked;
+        cached.priority = task.priority;
+        cached.dueDate = task.dueDate;
+        cached.title = task.title;
+        cached.label = task.label;
+        cached.modified = task.modified;
+      }
+
+      onRefresh?.();
+    });
+  });
+
   // Task items: navigate to note on click
   container.querySelectorAll(".task-item").forEach((item) => {
-    item.addEventListener("click", () => {
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".task-item__checkbox") || e.target.closest(".task-item__options")) {
+        return;
+      }
       const noteId = item.dataset.noteId;
       const taskId = item.dataset.taskId;
       if (noteId) navigateTo("notebook", { noteId, taskId });
     });
   });
-
-  // Toggle done tasks visibility
-  const toggleBtn = container.querySelector("#toggle-done-tasks");
-  const doneList = container.querySelector("#done-tasks-list");
-  if (toggleBtn && doneList) {
-    toggleBtn.addEventListener("click", () => {
-      const isHidden = doneList.style.display === "none";
-      doneList.style.display = isHidden ? "" : "none";
-      if (isHidden) {
-        drawTaskStrokeCanvases(doneList);
-      }
-      const count = doneList.querySelectorAll(".task-item").length;
-      toggleBtn.textContent = isHidden
-        ? t("overview.tasks.hideCompleted_other", { count })
-        : t("overview.tasks.showCompleted_other", { count });
-    });
-  }
-}
-
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 /**
@@ -1308,6 +1708,8 @@ export function initOverview() {
     // Navigation always does a fresh render (no scroll preserve). Cancel any pending
     // datachange render — the fresh render supersedes it.
     pendingRender = false;
+    if (dataChangeTimer !== null) clearTimeout(dataChangeTimer);
+    dataChangeTimer = null;
     isRendering = true;
     try {
       await renderOverview(container, notebookId);
@@ -1317,10 +1719,13 @@ export function initOverview() {
   });
 
   // Listen for data changes to refresh overview (skip search tab to avoid clearing input).
+  // A sync saves its notes one by one, each announcing itself, so events come in bursts:
+  // they are gathered and one render follows the last of them (at the latest
+  // DATACHANGE_MAX_WAIT_MS after the first, so a long sync still shows progress).
   // The guard prevents a second concurrent renderOverview from starting while one is already
   // running (e.g. the initial renderoverview and a sync-triggered datachange overlapping).
   // If a render is in progress we set a flag; the active render will re-run when it finishes.
-  window.addEventListener("datachange", async () => {
+  const refreshForDataChange = async () => {
     if (currentActiveTab === "search") return;
     const container = document.getElementById("overview-content");
     if (!container || container.offsetParent === null) return;
@@ -1341,6 +1746,19 @@ export function initOverview() {
     } finally {
       isRendering = false;
     }
+  };
+  window.addEventListener("datachange", () => {
+    const now = Date.now();
+    if (dataChangeTimer === null) dataChangeFirstAt = now;
+    else clearTimeout(dataChangeTimer);
+    const wait = Math.min(DATACHANGE_DEBOUNCE_MS, dataChangeFirstAt + DATACHANGE_MAX_WAIT_MS - now);
+    dataChangeTimer = setTimeout(
+      () => {
+        dataChangeTimer = null;
+        refreshForDataChange();
+      },
+      Math.max(0, wait),
+    );
   });
 
   console.log("Overview component initialized");

@@ -309,3 +309,149 @@ describe("MockWebDAVServer fixture", () => {
     });
   });
 });
+
+describe("MockWebDAVServer shares (mounts)", () => {
+  const auth = (server) => ({ Authorization: server._basicAuthFor() });
+  const url = (server, path) => `${server.baseUrl}${server.rootPath}${path}`;
+
+  function setup(permissions) {
+    const alice = new MockWebDAVServer({ loginName: "alice" });
+    const bob = new MockWebDAVServer({ loginName: "bob" });
+    alice.seedNotebook("nb1", { title: "Recipes" });
+    alice.seedNote("nb1", { id: "n1", content: "hello" });
+    bob.addMount({
+      shareId: 1,
+      path: "/nb1",
+      source: alice,
+      sourcePath: "/NoteBerg/notebooks/nb1",
+      permissions,
+    });
+    return { alice, bob };
+  }
+  const request = (server, method, path, extra = {}) =>
+    server.handleRequest(url(server, path), { method, headers: auth(server), ...extra });
+
+  it("serves reads from the owner's tree under the recipient's path", async () => {
+    const { bob } = setup(1);
+    const res = await request(bob, "GET", "/nb1/notes/n1.json");
+    expect(res.status).toBe(200);
+    expect(JSON.parse(await res.text()).content).toBe("hello");
+  });
+
+  it("rewrites PROPFIND hrefs into the recipient's namespace and names the owner", async () => {
+    const { bob } = setup(1);
+    const res = await request(bob, "PROPFIND", "/nb1/notes", {
+      headers: { ...auth(bob), Depth: "1" },
+    });
+    const xml = await res.text();
+    expect(xml).toContain(`${bob.rootPath}/nb1/notes/n1.json`);
+    expect(xml).not.toContain("/remote.php/dav/files/alice");
+    expect(xml).toContain("<oc:owner-id>alice</oc:owner-id>");
+  });
+
+  it("lists a mount among the children of the folder it sits in", async () => {
+    const { bob } = setup(1);
+    bob.files.set("/Docs", { isCollection: true, mtime: new Date() });
+    bob.mounts.get("1").path = "/Docs/nb1";
+    const xml = await (
+      await request(bob, "PROPFIND", "/Docs", { headers: { ...auth(bob), Depth: "1" } })
+    ).text();
+    expect(xml).toContain(`${bob.rootPath}/Docs/nb1`);
+    expect(xml).toContain("<oc:owner-id>alice</oc:owner-id>");
+  });
+
+  it("names the user as owner of their own files", async () => {
+    const bob = new MockWebDAVServer({ loginName: "bob" });
+    const xml = await (
+      await request(bob, "PROPFIND", "/NoteBerg", { headers: { ...auth(bob), Depth: "0" } })
+    ).text();
+    expect(xml).toContain("<oc:owner-id>bob</oc:owner-id>");
+  });
+
+  it.each([
+    ["read-only cannot PUT a new file", 1, "PUT", "/nb1/notes/new.json", 403],
+    ["read-only cannot overwrite", 1, "PUT", "/nb1/notes/n1.json", 403],
+    ["read-only cannot MKCOL", 1, "MKCOL", "/nb1/notes/n9_media", 403],
+    ["UPDATE alone cannot create", 2, "PUT", "/nb1/notes/new.json", 403],
+    ["CREATE alone cannot overwrite", 4, "PUT", "/nb1/notes/n1.json", 403],
+    ["collab can create", 7, "PUT", "/nb1/notes/new.json", 201],
+    ["collab can overwrite", 7, "PUT", "/nb1/notes/n1.json", 204],
+    ["collab can MKCOL", 7, "MKCOL", "/nb1/notes/n9_media", 201],
+    ["collab cannot DELETE", 7, "DELETE", "/nb1/notes/n1.json", 403],
+    ["DELETE bit allows DELETE", 15, "DELETE", "/nb1/notes/n1.json", 204],
+  ])("%s", async (_label, permissions, method, path, status) => {
+    const { alice, bob } = setup(permissions);
+    const res = await request(bob, method, path, { body: "{}" });
+    expect(res.status).toBe(status);
+    if (status === 403) {
+      expect(alice.files.get(path.replace("/nb1", "/NoteBerg/notebooks/nb1"))?.content).not.toBe(
+        "{}",
+      );
+    }
+  });
+
+  it("writes through a permitted request land in the owner's tree", async () => {
+    const { alice, bob } = setup(7);
+    await request(bob, "PUT", "/nb1/notes/new.json", { body: '{"id":"new"}' });
+    expect(alice.files.get("/NoteBerg/notebooks/nb1/notes/new.json").content).toBe('{"id":"new"}');
+    expect(bob.files.has("/nb1/notes/new.json")).toBe(false);
+  });
+
+  it("moving the mount root changes where the share appears, not the owner's tree", async () => {
+    const { alice, bob } = setup(7);
+    bob.files.set("/Shared_NoteBerg", { isCollection: true, mtime: new Date() });
+    const res = await request(bob, "MOVE", "/nb1", {
+      headers: { ...auth(bob), Destination: url(bob, "/Shared_NoteBerg/alice_nb1") },
+    });
+    expect(res.status).toBe(201);
+    expect((await request(bob, "GET", "/Shared_NoteBerg/alice_nb1/notes/n1.json")).status).toBe(
+      200,
+    );
+    expect((await request(bob, "GET", "/nb1/notes/n1.json")).status).toBe(404);
+    expect(alice.files.has("/NoteBerg/notebooks/nb1/notes/n1.json")).toBe(true);
+  });
+
+  it("refuses to move the mount into a folder that does not exist", async () => {
+    const { bob } = setup(7);
+    const res = await request(bob, "MOVE", "/nb1", {
+      headers: { ...auth(bob), Destination: url(bob, "/Nowhere/nb1") },
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it("will not move a file out of the share", async () => {
+    const { bob } = setup(15);
+    const res = await request(bob, "MOVE", "/nb1/notes/n1.json", {
+      headers: { ...auth(bob), Destination: url(bob, "/stolen.json") },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("answers 404 for the mount path once the share is removed", async () => {
+    const { bob } = setup(7);
+    bob.removeMount(1);
+    expect(
+      (await request(bob, "PROPFIND", "/nb1", { headers: { ...auth(bob), Depth: "0" } })).status,
+    ).toBe(404);
+  });
+
+  it("checks chunked-upload assembly into a share against its permissions", async () => {
+    const { alice, bob } = setup(1);
+    bob.files.set("/__uploads__/s1", { isCollection: true, mtime: new Date() });
+    bob.files.set("/__uploads__/s1/1", { content: "AB", etag: "c1", mtime: new Date() });
+    const res = await bob.handleRequest(`${bob.baseUrl}/remote.php/dav/uploads/bob/s1/.file`, {
+      method: "MOVE",
+      headers: { ...auth(bob), Destination: url(bob, "/nb1/notes/big.bin") },
+    });
+    expect(res.status).toBe(403);
+    expect(alice.files.has("/NoteBerg/notebooks/nb1/notes/big.bin")).toBe(false);
+
+    bob.setMountPermissions(1, 7);
+    const ok = await bob.handleRequest(`${bob.baseUrl}/remote.php/dav/uploads/bob/s1/.file`, {
+      method: "MOVE",
+      headers: { ...auth(bob), Destination: url(bob, "/nb1/notes/big.bin") },
+    });
+    expect(ok.status).toBe(201);
+    expect(alice.files.get("/NoteBerg/notebooks/nb1/notes/big.bin").content).toBe("AB");
+  });
+});

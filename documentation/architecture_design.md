@@ -23,6 +23,10 @@ NoteBerg is a cross-platform note-taking app built with **Tauri v2** (Rust backe
 │  │ OS Keyring│  │  Native  │  │  Recognition       │  │
 │  │ (keychain)│  │  Audio   │  │  Sidecar (Windows) │  │
 │  └───────────┘  └──────────┘  └────────────────────┘  │
+│  ┌───────────┐  ┌──────────┐  ┌────────────────────┐  │
+│  │  Backup   │  │ NC raw   │  │  MCP server        │  │
+│  │  (.zip)   │  │ uploads  │  │  (desktop, opt-in) │  │
+│  └───────────┘  └──────────┘  └────────────────────┘  │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -42,7 +46,7 @@ The build target is controlled by the `VITE_PLATFORM` environment variable:
 
 ## Data Layer
 
-### IndexedDB Schema (Tauri builds, v4)
+### IndexedDB Schema (Tauri builds, v6)
 
 The schema is split into two stores for performance — the index is small and fast to scan; heavy content is only loaded when a note is opened.
 
@@ -50,7 +54,7 @@ The schema is split into two stores for performance — the index is small and f
 ```
 id, notebookId, title, created, modified, version,
 synced, lastSyncedEtag, deleted, purged, previousNotebookId,
-encrypted, background, formatVersion, tags,
+restoredAt, encrypted, background, formatVersion, tags,
 hasStrokes, hasContent, hasRecognition,
 media[]  (snapshot: id, name, type, size, deleted — no fileIds),
 recordings[]  (snapshot: id, name, duration, deleted — no fileIds)
@@ -58,10 +62,11 @@ recordings[]  (snapshot: id, name, duration, deleted — no fileIds)
 
 **`noteContent` store** — full payload, encrypted when `note.encrypted = true`:
 ```
-id, content (HTML), strokes[], deletedStrokes[],
+id, content (HTML, text boxes inside — see Text below), strokes[], deletedStrokes[],
 media[] (full: id, fileId, name, type, size, x, y, width, height,
          rotation, cropData, pdfPage, deleted),
-deletedMedia[], tasks[], recognition,
+deletedMedia[], tasks[] (text, status, priority, due date, ...),
+deletedTasks[], recognition,
 penPresets[], pdfSource (fileId),
 recordings[] (full: id, fileId, name, duration, created, deleted),
 deletedRecordings[]
@@ -72,7 +77,8 @@ Note: there is no stored/persisted thumbnail. A `thumbnailFileId`/`hasThumbnail`
 **`notebooks` store:**
 ```
 id, title, description, color, created, modified,
-version, synced, lastSyncedEtag, deleted, purged
+version, synced, lastSyncedEtag, deleted, purged,
++ local-only sharing fields (origin, remoteBasePath, shareIds, ... — see Notebook Sharing)
 ```
 
 **`files` store** — binary blobs for images, audio, PDFs:
@@ -82,11 +88,17 @@ id (fileId), data (ArrayBuffer), type (MIME), created
 
 **`settings` store** — key/value app configuration.
 
+**`recognitionJobs` store** (v5) — the AI recognition queue. Local bookkeeping only: never synced, never written onto a note, so a half-recognized note does not look recognized.
+
+**`noteBase` store** (v6) — per note, the text as of the last state known to be on the server. It is the common ancestor of the three-way text merge (see [Merging and live updates](#merging-and-live-updates)). Written only at sync boundaries, never uploaded, never in backups.
+
 ### Web Worker (StorageWorker.js)
 
 All IndexedDB writes from the canvas go through a dedicated Web Worker to keep the drawing loop on the main thread smooth, processing a sequential message queue to avoid read-modify-write races. It also encrypts content in-place before writing, when encryption is enabled.
 
-**Disabled in the Nextcloud build** — replaced by the WebDAV storage layer.
+**Disabled in the Nextcloud build** — replaced by the WebDAV storage layer. There, `workers/noteFileWorker.js` runs the note-file operations (parse, merge, take-in) off the main thread, with linkedom as its HTML parser.
+
+Besides saves, the native worker runs the heavy work of an open note — merging stored and edited versions (`TAKE_IN`, `MERGE_TEXT`) and the open note's own sync (`LIVE_SYNC`) — so that writing never waits on a whole-note parse or merge.
 
 Full message-type list and per-message trigger/behavior breakdown: see **[note_editor_architecture.md § Storage Handoff](note_editor_architecture.md#storage-handoff)**.
 
@@ -118,9 +130,42 @@ Authentication uses Login Flow v2 (OAuth-like browser redirect); the resulting c
 
 `loginName` is what the user typed and is only used for Basic auth. WebDAV paths (`/remote.php/dav/files/{userId}/`, `/remote.php/dav/uploads/{userId}/`) need Nextcloud's internal user ID, which differs on LDAP/AD backends (UUIDs) and for email/alias logins. `userId` is read from `GET /ocs/v2.php/cloud/user` at login; credentials stored before it existed are backfilled on first use. While the lookup fails, the login name is used (the pre-`userId` behavior) and the lookup is retried after 5 minutes. All URL building goes through `getDavAccount()` in `nextcloudSync.js`. The NC app build is unaffected: it takes the user ID from `OC.currentUser`.
 
-Sync itself is ETag-based (PROPFIND → compare ETags → download/upload deltas → update `lastSyncedEtag`), with per-field conflict merging, an ETag-oscillation workaround for a Nextcloud server-side versioning quirk, and `synced`/`version`/`deleted`/`purged` flags driving the whole state machine.
+Sync itself is ETag-based (PROPFIND → compare ETags → download/upload deltas → update `lastSyncedEtag`), with field-by-field conflict merging (see [Merging and live updates](#merging-and-live-updates)), an ETag-oscillation workaround for a Nextcloud server-side versioning quirk, and `synced`/`version`/`deleted`/`purged` flags driving the whole state machine.
+
+Uploads on native builds go through the app's own `nc_put_file` command (`nc_upload.rs`), which takes the body as raw bytes; the HTTP plugin would send it over IPC as a JSON array of numbers, about 1.5 s for a 1.3 MB note.
 
 Full step-by-step engine behavior, conflict resolution rules, concurrency limits, and known edge cases: see **[sync_architecture.md](sync_architecture.md)**.
+
+### Merging and live updates
+
+Two versions of a note are combined by one pure module, `noteMerge.js`, used by the native sync, the Nextcloud app's write path, the open editor and the storage worker. It never gives up on a whole note because of text:
+
+- **Elements** (strokes, media, tasks, recordings) merge one by one. Every change is stamped by a hybrid logical clock (`hlc.js`), so the copy with the larger stamp wins regardless of device wall clocks; a deletion wins over a concurrent change unless the other side explicitly restores the element.
+- **Text** (`textMerge.js`) is merged three-way against the `noteBase` baseline: blocks and table rows are aligned, edits to different blocks are combined, text boxes are matched by id. When both sides changed the same block, both versions are kept and the non-primary one carries a visible conflict hint. The merge is convergent and idempotent (property tests), so two devices merging independently agree.
+- **Open notes** take in other devices' changes while they stay open (`NoteCanvas/liveRefresh.js`, `liveTakeIn.js`, `liveNoteSync.js`): a periodic look while the user is not writing, an immediate sync of the open note on native builds, and strokes painted in without losing undo history.
+
+Design, rules and measurements: see **[notebook_sharing_design.md § 10](notebook_sharing_design.md)** (merging and live updates were built for shared notebooks and serve every note).
+
+---
+
+## Notebook Sharing
+
+Share a whole notebook (a Nextcloud folder share) with another Nextcloud user, read-only or can-edit. Off by default, behind a setting; turned off, nothing about sharing runs. The recipient sees shared notebooks in a "Shared with me" section.
+
+- A notebook record gains **local-only** fields (`origin: "own" | "shared"`, `remoteBasePath`, `ownerUid`, `sharePermissions`, `shareIds`, ...). They describe this user's relationship to the notebook, are stripped from uploads, never adopted from a downloaded `_notebook.json` and never part of a backup.
+- Native sync runs **once per root**: the user's own `/NoteBerg/` plus each shared notebook's mount point, resolved through a notebook-base resolver (`storagePaths.js`, `sharing/sharedBases.js`). A root guard refuses anything that is not a registered share.
+- The Nextcloud app build uses the same OCS calls, same-origin, and keeps the sharing state in memory only.
+- Recipients can never delete, move or copy a shared notebook; "Remove from my list" leaves the share.
+
+Modules: `src/modules/sharing/`. Design, permission bits, share lifecycle and open items: see **[notebook_sharing_design.md](notebook_sharing_design.md)**.
+
+---
+
+## MCP Server
+
+Desktop only, off by default. The Tauri process (`src-tauri/src/mcp.rs`) listens on `127.0.0.1` behind a bearer token and lets MCP clients (Claude Desktop, Cursor, ...) read notebooks and notes. It owns no data: each request is forwarded to the webview, where `mcpBridge.js` answers it with the existing storage functions, so encryption, text boxes and search behave as in the app. Requests are recorded in an audit log (`mcpAuditLog.js`). The server accepts connections only after storage is initialised and auto-unlock is done. Read-only for now.
+
+See **[mcp_design.md](mcp_design.md)**.
 
 ---
 
@@ -129,6 +174,18 @@ Full step-by-step engine behavior, conflict resolution rules, concurrency limits
 Native builds only (Windows, Android): Settings → Backup writes the whole local corpus into one `.zip` (optionally WinZip AES-256) and restores it non-destructively. Rust (`src-tauri/src/backup.rs`) owns the archive, and JS streams one entry, or one chunk of an entry, per IPC call, so neither side ever holds the whole archive in memory. On Android, `BackupFilePlugin.kt` hands the archive to the Storage Access Framework through the app cache dir. Restored notes re-enter sync as fresh edits, with a `restoredAt` marker that makes the next sync upload them as-is instead of merging the server copy back in.
 
 Archive layout, conflict modes, the sync interaction, and security guards: see **[backup_restore_design.md](backup_restore_design.md)**.
+
+---
+
+## Text
+
+Typed text lives in **text boxes**: `.text-box` wrappers inside the one HTML string `note.content`, each with `data-box-id`, `data-x`, `data-y`, `data-w` (content pixels; the height follows the text). Text written before boxes existed is the implicit "main box" — the unwrapped nodes before the first box — and is wrapped into an ordinary box only when the user first moves or resizes it, so no note is rewritten on open.
+
+Keeping boxes inside `content` rather than in a new field means the three-way merge, live merge, search, tasks, MCP and older app versions (which show a box's text as ordinary paragraphs) all keep working. Boxes are merged by id, and insert-space moves the boxes below the split like strokes and media.
+
+In the editor one Trumbowyg instance exists at a time, mounted on the active box; every other box is static HTML, which is also how thumbnails and PDF export draw them (`styles/textBoxes.css` is shared by all three). A tap on an empty page in text mode creates a box.
+
+See **[text_boxes_design.md](text_boxes_design.md)** and, for the editor internals, **[note_editor_architecture.md](note_editor_architecture.md)**.
 
 ---
 
@@ -166,7 +223,7 @@ For the full stroke-recording pipeline, canvas/rendering architecture (2 canvase
 | `text` | Text editing via WYSIWYG overlay |
 | `insert-space` | Shift content downward to create blank space |
 
-Auto-switching: stylus detected → switch to `draw`; text area clicked → switch to `text`.
+Auto-switching: stylus detected → switch to `draw`. In `text` mode a tap on an empty page starts a new text box there.
 
 ### Pen Presets
 
@@ -388,7 +445,7 @@ Media items in notes carry positioning metadata (content coordinates):
 
 ### Overview Thumbnails
 
-Overview cards are **not** backed by a stored thumbnail blob. `renderNoteSnapshot(canvas, note)` (`src/utils/noteRenderer.js`) renders a 360×500px preview on demand at overview-render time: it mounts a detached `CanvasRenderer` to draw the background/pattern, then layers in media (images and the first PDF page) and strokes directly from the note's live content. A one-time migration (`_migrateThumbnailsToNoteContent()` in `storage.js`) removed the old `thumbnailFileId`/`thumbnailTimestamp` index fields and their blobs — thumbnails used to be persisted and synced, but this was replaced because it caused ETag churn on Nextcloud (see the etag-oscillation history in [sync_architecture.md](sync_architecture.md)).
+Overview cards are **not** backed by a stored thumbnail blob. `renderNoteSnapshot(canvas, note)` (`src/utils/noteRenderer.js`) renders a 360×500px preview on demand at overview-render time: it mounts a detached `CanvasRenderer` to draw the background/pattern, then layers in media (images and the first PDF page), text boxes (static, same stylesheet as the editor, no frames), task checkboxes and strokes directly from the note's live content. A one-time migration (`_migrateThumbnailsToNoteContent()` in `storage.js`) removed the old `thumbnailFileId`/`thumbnailTimestamp` index fields and their blobs — thumbnails used to be persisted and synced, but this was replaced because it caused ETag churn on Nextcloud (see the etag-oscillation history in [sync_architecture.md](sync_architecture.md)).
 
 ---
 
@@ -424,7 +481,7 @@ Optionally encrypts note JSON before upload to Nextcloud, using the same PBKDF2 
 ### Windows
 
 - **WebView2** (Chromium-based) as the app webview
-- **Microphone permissions:** Pre-granted via WebView2 profile `SetPermissionState` + `PermissionRequested` handler; consent registry entries written on startup
+- **Microphone permissions:** Pre-granted via WebView2 profile `SetPermissionState` + `PermissionRequested` handler (no registry entries are written any more: recording does not go through the browser engine)
 - **Recognition sidecar:** Auto-started, polled for readiness, URL passed to frontend via `get_recognition_url` command
 - **Native audio:** WASAPI capture via `cpal` crate
 - **PDF save:** Native save dialog via `rfd` crate
@@ -459,8 +516,8 @@ The Nextcloud app shares the same `src/` frontend as the Tauri desktop/Android a
 |---|---|---|---|
 | Authentication | App password stored in OS keychain | None — Nextcloud session cookie | User is already logged in to Nextcloud; `@nextcloud/axios` sends session headers automatically |
 | Local encryption / master password | Active | Always off | Nextcloud already controls server-side access; no separate local secret to protect |
-| Sync engine (`nextcloudSync.js`, `autoSync.js`) | Active — etag tracking, conflict resolution, three-way merge | None — `storage.webdav.js` reads/writes WebDAV directly | There is nothing to reconcile: the NC app **is** the server, so every read/write is already the source of truth |
-| Settings panel | Full (theme, language, sync, encryption, AI access, recognition, purge) | AI access + recognition only | Theme/language come from Nextcloud itself and the dropped subsystems have no settings to expose, but AI recognition needs a provider, model and key configured per user |
+| Sync engine (`nextcloudSync.js`, `autoSync.js`) | Active — etag tracking, conflict resolution, three-way merge | None — `storage.webdav.js` reads/writes WebDAV directly. Writes still merge against the server's current version (`noteFileOps.js`, in a worker), and an open note takes in other users' changes | There is no second copy to reconcile: the NC app **is** the server, so every read/write is already the source of truth. Only concurrent editors need merging |
+| Settings panel | Full (theme, language, sync, encryption, AI access, recognition, purge) | AI access, recognition and Notebook Sharing only | Theme/language come from Nextcloud itself and the dropped subsystems have no settings to expose, but AI recognition needs a provider, model and key configured per user |
 | Handwriting recognition | Sidecar (Windows) or AI vision model | AI vision model only, via a PHP passthrough proxy | The `InkAnalyzer` sidecar is Windows-native and cannot run here. The AI path works, but the browser cannot call an endpoint directly (CORS / mixed content), so requests go through the server — which also keeps the API key out of the browser |
 | Audio recording | Native (Windows/Android) or browser `MediaRecorder` | Import + playback only — no recording UI at all | `SoundDialog.js` gates the "New recording" button behind a native-only (`__TAURI_INTERNALS__`) check; the button isn't rendered in the NC build, so even the browser `getUserMedia` path is never reached there |
 | Tombstones | Written to IndexedDB + WebDAV | Written to WebDAV only | Still required so Tauri fat clients sharing the same `/NoteBerg/` folder see deletions from the NC app |
@@ -477,11 +534,18 @@ The Nextcloud app shares the same `src/` frontend as the Tauri desktop/Android a
 | Web Worker for IndexedDB writes | Keeps drawing loop smooth; avoids jank during saves |
 | ETag-based sync | Avoids re-downloading unchanged files; works with standard WebDAV |
 | Stroke arrays `x[], y[], pressure[]` | Compact storage; faster serialisation than array-of-objects |
-| WAV for Windows recording | WAV header stores duration; playback time display works correctly (WebM does not) |
+| AAC (`.m4a`) for Windows recording, WAV only as fallback | About 16x smaller than the old 48 kHz stereo WAV, and the duration is in the container; WAV remains where Media Foundation is missing |
 | Native audio on Windows/Android | Browser `getUserMedia` + WebM has no duration metadata and unreliable quality |
 | Local recognition sidecar as the Windows default | Offline, no API costs, exact word positions, uses Windows Ink Analysis (high quality) |
 | AI recognition manual-only and queued | A page costs money and takes minutes; an automatic trigger would stall note closing and bill the user for the whole startup backlog unprompted |
 | AI words localized to a colour band, not a box | Vision models' reported coordinates drift by more than a line height — asking which band a word sits on is perception, not measurement, and cannot overstate what is known |
 | NC recognition via a PHP passthrough proxy | The browser cannot reach an AI endpoint (CORS / mixed content), and it keeps the API key server-side where an XSS on the NC origin cannot read it |
+| Text boxes inside `note.content` | Older app versions keep and show them as paragraphs; merge, search, tasks, MCP and export already read `content`; no migration (see [text_boxes_design.md](text_boxes_design.md)) |
+| One editor instance, on the active text box | Memory and DOM do not grow with the number of boxes; the editor workarounds run once per activation instead of once per box |
+| Three-way text merge against a stored baseline, not block ids in the HTML | Keeps the merge in the sync/storage layer; no coupling to editor behaviour, no ids to assign to legacy notes |
+| Element version stamps from a hybrid logical clock | Merge results do not depend on device wall clocks or on which side merges |
+| Heavy work of an open note in workers | Writing must never wait on a whole-note parse, merge or upload |
+| Sharing by Nextcloud folder share, one sync pass per root | Works on both builds with no server component of our own; sharing state stays local-only |
+| MCP server in the Rust process, data via the webview | The webview owns IndexedDB and the encryption key; the server never holds a second copy |
 | OS keychain for credentials | No plaintext secrets on disk; leverages hardware-backed storage on Android |
 | Nextcloud Login Flow v2 | User never enters main NC password into the app; app password can be revoked independently |

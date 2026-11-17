@@ -237,6 +237,66 @@ export async function syncOnNoteOpen(noteId) {
   }
 }
 
+/** After a sync that left the open note unsynced, how long before its changes are pushed again. */
+const PUSH_RETRY_MS = 120_000;
+// noteId -> time before which a push of its local changes is not retried
+const pushBackoff = new Map();
+
+/**
+ * The periodic look of an open note (NoteCanvas/liveRefresh.js): sync when the
+ * note's notebook changed on the server, or when the open note holds changes not
+ * uploaded yet. The look is one listing of the notebook's notes, compared by
+ * etag, and downloads nothing; the sync that follows a change announces it as a
+ * `datachange`, which the editor takes in.
+ *
+ * The second reason is what makes this device's edits reach a collaborator while
+ * the note stays open. Without it they were uploaded only when the note closed,
+ * or as a side effect of a sync for someone else's change (DESIGN §10.4b).
+ *
+ * @param {string|null} notebookId - the open note's notebook (null = quick notes)
+ * @param {object} [options]
+ * @param {() => boolean} [options.isIdle] - asked again before syncing: the user
+ *   may have started writing while the listing was on its way
+ * @param {string|null} [options.noteId] - the open note, when the user may edit it:
+ *   its unsynced changes are pushed
+ * @returns {Promise<"synced"|"deferred"|"unchanged"|"skipped">}
+ */
+export async function syncIfNotebookChanged(
+  notebookId,
+  { isIdle = () => true, noteId = null } = {},
+) {
+  if (isAutoSyncSuspended() || getIsSyncing()) return "skipped";
+  if (!(await isAuthenticated())) return "skipped";
+
+  const localNotes = await getLocalNotesForChangeCheck(notebookId);
+  const toPush =
+    noteId !== null &&
+    localNotes.some((n) => n.id === noteId && n.synced === false) &&
+    Date.now() >= (pushBackoff.get(noteId) ?? 0);
+  if (!toPush && !(await hasRemoteChanges(notebookId, localNotes))) return "unchanged";
+  // Found while the user writes, or within the cooldown after another sync:
+  // the editor looks again at the next pause
+  if (!isIdle() || !(await shouldSync())) return "deferred";
+
+  console.log(
+    `Auto-sync: ${toPush ? "Local" : "Remote"} changes in the open note's notebook (${notebookId}), syncing...`,
+  );
+  lastSyncTime = Date.now();
+  try {
+    await performSync({ silent: true, skipConflictResolution: true });
+  } catch (e) {
+    console.warn("Auto-sync: live sync failed:", e);
+  }
+  if (toPush) {
+    // A note the sync could not upload (an unmergeable conflict, a refused
+    // write) is not pushed again at every look
+    const index = await getNoteIndex(noteId).catch(() => null);
+    if (index?.synced === false) pushBackoff.set(noteId, Date.now() + PUSH_RETRY_MS);
+    else pushBackoff.delete(noteId);
+  }
+  return "synced";
+}
+
 /**
  * Sync on app startup
  * Uses smart conflict resolution - prefers the version with newer timestamp.
