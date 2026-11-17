@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MockWebDAVServer, wireMockServer } from "./__fixtures__/mockWebDAVServer.js";
 import {
   clearCredentials,
+  dropCredentialsCache,
   getStoredCredentials,
   isAuthenticated,
   migrateCredentials,
@@ -88,6 +89,7 @@ describe("Nextcloud Sync Module", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    dropCredentialsCache();
     mockSecureStorage.clear();
     localStorage.clear();
     mockServer = new MockWebDAVServer();
@@ -107,7 +109,7 @@ describe("Nextcloud Sync Module", () => {
   describe("Authentication", () => {
     it("should detect authentication status", async () => {
       expect(await isAuthenticated()).toBe(true);
-      mockSecureStorage.clear();
+      await clearCredentials();
       expect(await isAuthenticated()).toBe(false);
     });
 
@@ -185,6 +187,48 @@ describe("Nextcloud Sync Module", () => {
   });
 
   describe("Credential lifecycle", () => {
+    describe("cached reads (each request of a sync asks for them)", () => {
+      it("asks the keystore once for repeated reads", async () => {
+        const { getSecureCredential } = await import("./secureStorage.js");
+        await getStoredCredentials();
+        await getStoredCredentials();
+        await getStoredCredentials();
+        expect(getSecureCredential).toHaveBeenCalledTimes(1);
+      });
+
+      it("hands out a copy, so a caller changing it does not change the next read", async () => {
+        const first = await getStoredCredentials();
+        first.appPassword = "changed";
+        expect((await getStoredCredentials()).appPassword).toBe("app-password-123");
+      });
+
+      it("does not cache a missing credential", async () => {
+        mockSecureStorage.clear();
+        expect(await getStoredCredentials()).toBeNull();
+        mockSecureStorage.set("nextcloud_credentials", JSON.stringify({ serverUrl: "https://x" }));
+        expect(await getStoredCredentials()).toEqual({ serverUrl: "https://x" });
+      });
+
+      it("forgets them when they are cleared", async () => {
+        await getStoredCredentials();
+        await clearCredentials();
+        expect(await getStoredCredentials()).toBeNull();
+      });
+
+      it("reads them again once the cache has expired", async () => {
+        vi.useFakeTimers();
+        try {
+          const { getSecureCredential } = await import("./secureStorage.js");
+          await getStoredCredentials();
+          vi.advanceTimersByTime(61_000);
+          await getStoredCredentials();
+          expect(getSecureCredential).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    });
+
     it("getStoredCredentials returns null when nothing is stored", async () => {
       mockSecureStorage.clear();
       expect(await getStoredCredentials()).toBeNull();

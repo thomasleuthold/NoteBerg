@@ -60,6 +60,8 @@ export class RecordingManager {
    */
   constructor(options = {}) {
     this.onChange = options.onChange || (() => {});
+    // A viewer of a read-only shared notebook may play recordings, never add or remove them
+    this.readOnly = options.readOnly ?? false;
     this.onSave = options.onSave || (() => {});
     this.onSaveFailed =
       options.onSaveFailed ||
@@ -166,7 +168,7 @@ export class RecordingManager {
    * @returns {Promise<void>}
    */
   async startRecording() {
-    if (this.isRecording()) return;
+    if (this.readOnly || this.isRecording()) return;
 
     this._recordingId = generateId();
     this._recordingStartTime = Date.now();
@@ -255,6 +257,21 @@ export class RecordingManager {
   }
 
   /**
+   * Stop a running recording and resolve once it is saved (at once when none
+   * runs; bounded like destroy()). For the editor turning read-only: a recording
+   * saved after that would lose its place in the note.
+   * @returns {Promise<void>}
+   */
+  finishRecording() {
+    if (this.isRecording()) this.stopRecording();
+    if (!this._stopInFlight) return Promise.resolve();
+    return Promise.race([
+      this._stopInFlight,
+      new Promise((resolve) => setTimeout(resolve, DESTROY_SAVE_TIMEOUT_MS)),
+    ]);
+  }
+
+  /**
    * Stop because the app is no longer in the foreground, flagging why.
    *
    * Android silences the microphone for a backgrounded process, so continuing
@@ -275,12 +292,14 @@ export class RecordingManager {
 
   /** Import an external audio file as a new recording. */
   async importFile(file, duration) {
+    if (this.readOnly) return;
     const id = generateId();
     await this._saveCompletedRecording(id, file, Math.round(duration ?? 0));
   }
 
   /** Soft-delete a finished recording. */
   deleteRecording(id) {
+    if (this.readOnly) return;
     const rec = this.recordings.find((r) => r.id === id);
     if (!rec) return;
     rec.deleted = true;

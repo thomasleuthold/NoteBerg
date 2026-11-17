@@ -1,0 +1,184 @@
+/* ==========================================================================
+   Text boxes: how a note's text is laid out (text boxes DESIGN §4.3)
+
+   One stylesheet for every place that shows a note's text at its position on
+   the page: the editor's text layer, the overview thumbnail and the PDF export
+   (which inlines it into its iframe). So the three lay text out alike, and the
+   thumbnail and the export match what the note shows. Scoped to .text-boxes,
+   the root those places give the boxes; frames, handles and editor details
+   are in TextLayer.css (app only).
+   ========================================================================== */
+
+/* The .text-boxes root itself is positioned by its owner (the editor layer
+   is absolute, a thumbnail or export root relative): no rule here, so the
+   order this sheet loads in cannot change it */
+
+.text-boxes .text-box {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+/* The implicit main box: legacy text, in flow at the top, full width */
+.text-boxes .text-box.text-box--main {
+  position: relative;
+}
+
+/* The text area of a box, static or with the editor mounted on it */
+.text-boxes .text-box .text-box__content {
+  box-sizing: border-box;
+  background: transparent;
+  padding: 4px 8px; /* BOX_PADDING in textBoxes.js */
+  min-height: 32px; /* one line plus padding */
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: 16px;
+  /* 1.5 × 16px = exactly 24px — integer line height prevents sub-pixel rounding
+     differences between Chromium versions accumulating across blank lines */
+  line-height: 1.5;
+  color: var(--text-primary);
+  outline: none;
+  border: none;
+  overflow: visible;
+  overflow-wrap: break-word;
+  box-shadow: none;
+}
+
+/* The main box keeps the single editor's padding. 16px on top: its 15px
+   padding below the 1px Trumbowyg's hidden textarea took (MAIN_PADDING in
+   textBoxes.js), so legacy text stays aligned with its ink */
+.text-boxes .text-box.text-box--main .text-box__content {
+  padding: 16px 20px 20px 46px;
+  min-height: 100px;
+}
+
+/* Normalize paragraph spacing — browser default margins (1em top+bottom) vary between
+   Chromium versions and accumulate across blank lines, shifting text positions. */
+.text-boxes .text-box__content p {
+  margin: 0;
+  padding: 0;
+  min-height: 1.5em;
+}
+
+/* Heading styles — explicit overrides needed because NC resets all heading sizes */
+.text-boxes .text-box__content h1 {
+  font-size: 2em;
+  font-weight: 700;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.text-boxes .text-box__content h2 {
+  font-size: 1.5em;
+  font-weight: 600;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.text-boxes .text-box__content h3 {
+  font-size: 1.25em;
+  font-weight: 600;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+.text-boxes .text-box__content h4 {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 0.5em 0;
+  color: var(--text-primary);
+}
+
+/* List styles — NC resets list-style to none; restore bullets/numbers explicitly */
+.text-boxes .text-box__content ul {
+  list-style-type: disc;
+  margin: 0.5em 0;
+  padding-left: 2em;
+}
+
+.text-boxes .text-box__content ol {
+  list-style-type: decimal;
+  margin: 0.5em 0;
+  padding-left: 2em;
+}
+
+.text-boxes .text-box__content li {
+  display: list-item;
+  margin: 0.25em 0;
+}
+
+/* Images pasted into the text before pasted images became page images.
+   Capped at the box width without changing the stored HTML (DESIGN §12.4) */
+.text-boxes .text-box__content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Tables in the text */
+.text-boxes .text-box__content table {
+  width: 80%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.text-boxes .text-box__content table th,
+.text-boxes .text-box__content table td {
+  border: 1px solid var(--text-primary);
+  padding: 6px 10px;
+}
+
+.text-boxes .text-box__content table th {
+  font-weight: 600;
+}
+
+/* --- Task checkboxes in pictures of the page (thumbnail, PDF export) ------
+   The editor draws them itself (TextTaskManager, TaskCheckboxLayer); a static
+   rendering (.text-boxes--static) gets the same look from here. The check is
+   drawn with borders, not an icon, so html2canvas renders it too. */
+
+.text-boxes--static .task-text-checkbox {
+  position: relative;
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  vertical-align: middle;
+  box-sizing: content-box;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
+
+.text-boxes--static .task-text-checkbox--checked {
+  background: var(--color-primary, #2c5282);
+  border-color: var(--color-primary, #2c5282);
+}
+
+.text-boxes--static .task-text-checkbox--checked::after,
+.text-boxes--static .text-boxes__stroke-task[aria-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 34%;
+  top: 12%;
+  width: 27%;
+  height: 50%;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.text-boxes--static .task-text--done {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.text-boxes--static .text-boxes__stroke-task {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--color-primary, #3b82f6);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.text-boxes--static .text-boxes__stroke-task[aria-checked="true"] {
+  background: var(--color-primary, #3b82f6);
+}

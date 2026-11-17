@@ -14,6 +14,15 @@
   --color-warning: #d69e2e;
   --nb-status-warning: #d69e2e;
 
+  /* Task markers */
+  --nb-priority-low: #2b6cb0;
+  --nb-priority-medium: #b7791f;
+  --nb-priority-high: #dd6b20;
+  --nb-priority-urgent: #c53030;
+  --nb-due-overdue: #c53030;
+  --nb-due-today: #dd6b20;
+  --nb-task-doing: #2c5282;
+
   /* Background colors */
   --bg-primary: #ffffff;
   --bg-secondary: #f7fafc;
@@ -39,4 +48,38 @@
   /* Background patterns */
   --pattern-rule-color: #e2e8f0;
   --pattern-grid-color: #e2e8f0;
+
+  /* Text boxes: faint frame always, stronger on the box being edited */
+  --text-box-frame: rgb(15 23 42 / 0.1);
+  --text-box-frame-active: #2c5282;
+  --text-box-handle-bg: rgb(44 82 130 / 0.85);
+  --text-box-handle-fg: #ffffff;
+
+  /* Pen & text colors (indices 1..14, matching getThemePalette) */
+  --nb-pen-color-1: #ef4444;
+  --nb-pen-color-2: #3b82f6;
+  --nb-pen-color-3: #10b981;
+  --nb-pen-color-4: #f59e0b;
+  --nb-pen-color-5: #8b5cf6;
+  --nb-pen-color-6: #f97316;
+  --nb-pen-color-7: #ec4899;
+  --nb-pen-color-8: #14b8a6;
+  --nb-pen-color-9: #84cc16;
+  --nb-pen-color-10: #d946ef;
+  --nb-pen-color-11: #0ea5e9;
+  --nb-pen-color-12: #eab308;
+  --nb-pen-color-13: #6b7280;
+  --nb-pen-color-14: #78350f;
+
+  /* Marker & text highlight colors (indices 0..9, matching getMarkerPalette with translucent alpha) */
+  --nb-marker-color-0: rgba(250, 235, 121, 0.45);
+  --nb-marker-color-1: rgba(157, 250, 189, 0.45);
+  --nb-marker-color-2: rgba(248, 202, 148, 0.45);
+  --nb-marker-color-3: rgba(165, 202, 247, 0.45);
+  --nb-marker-color-4: rgba(253, 163, 214, 0.45);
+  --nb-marker-color-5: rgba(208, 169, 250, 0.45);
+  --nb-marker-color-6: rgba(255, 123, 123, 0.45);
+  --nb-marker-color-7: rgba(230, 175, 58, 0.45);
+  --nb-marker-color-8: rgba(175, 252, 221, 0.45);
+  --nb-marker-color-9: rgba(110, 110, 110, 0.35);
 }

@@ -148,6 +148,98 @@ describe("exportNoteToPdf", () => {
     expect(bytes.length).toBeGreaterThan(0);
   });
 
+  // Text boxes DESIGN §8: the export lays text out as the editor does, boxes
+  // at their positions, in the editor's stylesheet and font (not Georgia)
+  it("renders text boxes at their positions with the editor's box stylesheet", async () => {
+    const html2canvas = (await import("html2canvas")).default;
+    html2canvas.mockClear();
+    let rendered = null;
+    html2canvas.mockImplementationOnce(async (element, options) => {
+      rendered = {
+        className: element.className,
+        boxes: [...element.querySelectorAll(".text-box")].map((b) => ({
+          main: b.classList.contains("text-box--main"),
+          left: b.style.left,
+          top: b.style.top,
+          width: b.style.width,
+          text: b.textContent,
+        })),
+        css: element.ownerDocument.querySelector("style").textContent,
+        height: options.height,
+      };
+      return makeFakeCanvas(2400, 1400);
+    });
+    try {
+      const note = makeNote({
+        content:
+          '<p>Main</p><div class="text-box" data-box-id="tb_1" data-x="600" data-y="300" data-w="400"><p>Beside</p></div>',
+      });
+      await exportNoteToPdf(note, []);
+    } finally {
+      html2canvas.mockReset();
+      html2canvas.mockImplementation(async () => makeFakeCanvas());
+    }
+
+    expect(rendered.className.split(" ")).toContain("text-boxes");
+    expect(rendered.boxes).toEqual([
+      { main: true, left: "", top: "", width: "", text: "Main" },
+      { main: false, left: "600px", top: "300px", width: "400px", text: "Beside" },
+    ]);
+    // Down to the lowest box (its own height is 0 here: jsdom lays out nothing,
+    // and the boxes live in the iframe's document, out of the stub's reach)
+    expect(rendered.height).toBeGreaterThanOrEqual(300);
+    expect(rendered.css).toContain(".text-boxes .text-box.text-box--main .text-box__content");
+    expect(rendered.css).not.toContain("Georgia");
+  });
+
+  it("draws task checkboxes: text tasks in their line, stroke tasks beside their ink", async () => {
+    const html2canvas = (await import("html2canvas")).default;
+    let rendered = null;
+    html2canvas.mockImplementationOnce(async (element) => {
+      rendered = {
+        text: [...element.querySelectorAll(".task-text-checkbox")].map((c) => c.className),
+        done: [...element.querySelectorAll(".task-text--done")].map((s) => s.textContent),
+        strokes: [...element.querySelectorAll(".text-boxes__stroke-task")].map((c) => ({
+          checked: c.getAttribute("aria-checked"),
+          left: c.style.left,
+          top: c.style.top,
+        })),
+      };
+      return makeFakeCanvas(2400, 1400);
+    });
+    const note = makeNote({
+      content:
+        '<p><span class="task-text" data-task-id="t1">open</span></p><p><span class="task-text" data-task-id="t2">done</span></p>',
+      strokes: [{ id: "s1", x: [300, 400], y: [500, 540], pressure: [0.5, 0.5], width: 2 }],
+      tasks: [
+        { id: "t1", type: "text", checked: false },
+        { id: "t2", type: "text", checked: true },
+        { id: "t3", type: "stroke", strokeIds: ["s1"], checked: true },
+      ],
+    });
+    await exportNoteToPdf(note, []);
+
+    expect(rendered.text).toEqual([
+      "task-text-checkbox",
+      "task-text-checkbox task-text-checkbox--checked",
+    ]);
+    expect(rendered.done).toEqual(["done"]);
+    // Left of the ink (minX 300 − 22 − 8), centred on it ((500 + 540) / 2 − 11)
+    expect(rendered.strokes).toEqual([{ checked: "true", left: "270px", top: "509px" }]);
+  });
+
+  it("draws stroke task checkboxes on a note without text", async () => {
+    const html2canvas = (await import("html2canvas")).default;
+    html2canvas.mockClear();
+    const note = makeNote({
+      content: "",
+      strokes: [{ id: "s1", x: [300, 400], y: [500, 540], pressure: [0.5, 0.5], width: 2 }],
+      tasks: [{ id: "t3", type: "stroke", strokeIds: ["s1"], checked: false }],
+    });
+    await exportNoteToPdf(note, []);
+    expect(html2canvas).toHaveBeenCalledTimes(1);
+  });
+
   it("handles note with pdf-page media items (Case A)", async () => {
     const { getFile } = await import("./storage.js");
 

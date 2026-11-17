@@ -5,16 +5,20 @@
 
 import { APP_NAME, APP_VERSION_WITH_BUILD, PROJECT_URL } from "../config.js";
 import { changeLanguage, getCurrentLanguage, t } from "../i18n/index.js";
+import { isRatingSupported, openStoreListing } from "../modules/appRating.js";
 import { getAutoGainAggressiveness, setAutoGainAggressiveness } from "../modules/audioSettings.js";
 import { getCardSize, setCardSize } from "../modules/displayPrefs.js";
 import { resetAllHelp } from "../modules/helpGuidance.js";
+import { isSharingEnabled, setSharingEnabled } from "../modules/sharing/enabled.js";
 import { getSetting, purgeLocalData, setSetting } from "../modules/storage.js";
+import { getTaskSettings, saveTaskSettings } from "../modules/taskManager.js";
 import {
   getPdfInvertDarkMode,
   getTheme,
   setPdfInvertDarkMode,
   setTheme,
 } from "../modules/theme.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
 import { getIcon } from "../utils/icons.js";
 import { showLicensesDialog } from "./licensesDialog.js";
 import { createLoadingIndicator } from "./loadingIndicator.js";
@@ -50,44 +54,6 @@ const IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
  * as a user-entered key.
  */
 const STORED_KEY_MASK = "•".repeat(36);
-
-/**
- * Escape a value for interpolation into element text content.
- *
- * Separate from escapeAttr(): inside a <textarea> the danger is a literal
- * "</textarea>" closing the element early, so only the markup-significant
- * characters need escaping — quotes are safe here and escaping them would show
- * entities to the user.
- *
- * @param {string} value
- * @returns {string}
- */
-function escapeHtmlText(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-/**
- * Escape a value for interpolation into a double-quoted HTML attribute.
- *
- * Deliberately not the textContent/innerHTML trick used elsewhere in the
- * codebase: that escapes `<` and `&` but leaves quotes intact, so a stored
- * value containing `"` would close the attribute and allow markup injection.
- * These values (endpoint, model) are user-supplied and round-trip through
- * settings, so they are escaped properly here.
- *
- * @param {string} value
- * @returns {string}
- */
-export function escapeAttr(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
 
 /**
  * Test the Windows sidecar by posting an empty stroke list.
@@ -511,10 +477,40 @@ export async function renderSettings(container) {
   const biometricCapability = { available: false };
   const biometricEnabled = false;
 
+  // Notebook sharing (preview). Native: part of the Nextcloud section, and only
+  // possible with a connected account. Nextcloud app: a section of its own, since
+  // there is no connection to set up.
+  const sharingNeedsAccount = !IS_NEXTCLOUD && !authenticated;
+  const sharingDescKey = IS_NEXTCLOUD
+    ? "settings.sharing.descApp"
+    : authenticated
+      ? "settings.nextcloud.sharingDesc"
+      : "settings.nextcloud.sharingNeedsConnection";
+  const sharingSettingRow = `
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">
+              ${t("settings.nextcloud.sharingLabel")}
+              <span class="preview-badge">${t("common.preview")}</span>
+            </span>
+            <span class="setting-description">${t(sharingDescKey)}</span>
+          </div>
+          <label class="toggle-switch" ${sharingNeedsAccount ? 'style="opacity: 0.5;"' : ""}>
+            <input
+              type="checkbox"
+              id="sharing-enabled-toggle"
+              ${isSharingEnabled() ? "checked" : ""}
+              ${sharingNeedsAccount ? "disabled" : ""}
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>`;
+
   const cardSize = getCardSize();
   const pdfInvertDarkMode = getPdfInvertDarkMode();
   // Native-only: recording does not exist on the Nextcloud build.
   const autoGainAggressiveness = IS_NEXTCLOUD ? 0 : getAutoGainAggressiveness();
+  const taskSettings = await getTaskSettings();
 
   // Get encryption settings
   const encryptLocalData = (await getSetting("encrypt_local_data")) ?? false; // Default: disabled
@@ -687,6 +683,29 @@ export async function renderSettings(container) {
         <h3>${t("settings.sections.appearance")}</h3>
 
         ${
+          // The interface language is the browser's business on Nextcloud,
+          // so the app does not offer a picker of its own there.
+          IS_NEXTCLOUD
+            ? ""
+            : `
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">${t("settings.language.label")}</span>
+            <span class="setting-description">${t("settings.language.desc")}</span>
+          </div>
+          <select id="language-select" class="setting-control">
+            ${uiLanguageOptions
+              .map(
+                ({ code, flag }) =>
+                  `<option value="${code}" ${currentLanguage === code ? "selected" : ""}>${flag} ${t(`settings.language.${code}`)}</option>`,
+              )
+              .join("")}
+          </select>
+        </div>
+        `
+        }
+
+        ${
           IS_NEXTCLOUD
             ? ""
             : `
@@ -703,6 +722,10 @@ export async function renderSettings(container) {
             <button class="theme-toggle ${currentTheme === "dark" ? "active" : ""}" data-theme="dark">
               <div class="theme-toggle-swatch dark"></div>
               <span class="theme-toggle-label">${t("settings.appearance.dark")}</span>
+            </button>
+            <button class="theme-toggle ${currentTheme === "tva" ? "active" : ""}" data-theme="tva">
+              <div class="theme-toggle-swatch tva"></div>
+              <span class="theme-toggle-label">${t("settings.appearance.tva")}</span>
             </button>
           </div>
         </div>
@@ -773,28 +796,60 @@ export async function renderSettings(container) {
           <button id="reset-help-guidance-btn" class="btn-secondary">${t("settings.help.resetBtn")}</button>
         </div>
 
-        ${
-          // The interface language is the browser's business on Nextcloud,
-          // so the app does not offer a picker of its own there.
-          IS_NEXTCLOUD
-            ? ""
-            : `
+      </div>
+      <div class="settings-section" data-section="tasks">
+        <h3>${t("settings.sections.tasks")}</h3>
+
         <div class="setting-item">
           <div class="setting-label">
-            <span class="setting-name">${t("settings.language.label")}</span>
-            <span class="setting-description">${t("settings.language.desc")}</span>
+            <span class="setting-name">${t("settings.tasks.enableDueDates")}</span>
+            <span class="setting-description">${t("settings.tasks.enableDueDatesDesc")}</span>
           </div>
-          <select id="language-select" class="setting-control">
-            ${uiLanguageOptions
-              .map(
-                ({ code, flag }) =>
-                  `<option value="${code}" ${currentLanguage === code ? "selected" : ""}>${flag} ${t(`settings.language.${code}`)}</option>`,
-              )
-              .join("")}
+          <label class="toggle-switch">
+            <input
+              type="checkbox"
+              id="task-enable-due-dates-toggle"
+              ${taskSettings.enableDueDates ? "checked" : ""}
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">${t("settings.tasks.enablePriorities")}</span>
+            <span class="setting-description">${t("settings.tasks.enablePrioritiesDesc")}</span>
+          </div>
+          <label class="toggle-switch">
+            <input
+              type="checkbox"
+              id="task-enable-priorities-toggle"
+              ${taskSettings.enablePriorities ? "checked" : ""}
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-label">
+            <span class="setting-name">${t("settings.tasks.defaultSort")}</span>
+            <span class="setting-description">${t("settings.tasks.defaultSortDesc")}</span>
+          </div>
+          <select id="task-default-sort-select" class="setting-control">
+            <option value="dueDate" ${taskSettings.defaultSort === "dueDate" ? "selected" : ""}>
+              ${t("tasks.sort.dueDate")}
+            </option>
+            <option value="priority" ${taskSettings.defaultSort === "priority" ? "selected" : ""}>
+              ${t("tasks.sort.priority")}
+            </option>
+            <option value="status" ${taskSettings.defaultSort === "status" ? "selected" : ""}>
+              ${t("tasks.sort.status")}
+            </option>
+            <option value="note" ${taskSettings.defaultSort === "note" ? "selected" : ""}>
+              ${t("tasks.sort.note")}
+            </option>
           </select>
         </div>
-        `
-        }
       </div>
 
       ${
@@ -938,8 +993,21 @@ export async function renderSettings(container) {
         </div>
         `
         }
+
+        ${sharingSettingRow}
       </div>
       `
+      }
+
+      ${
+        IS_NEXTCLOUD
+          ? `
+      <div class="settings-section" data-section="sharing">
+        <h3>${t("settings.sections.sharing")}</h3>
+        ${sharingSettingRow}
+      </div>
+      `
+          : ""
       }
 
       <div class="settings-section" id="ai-provider-section" data-section="aiProvider">
@@ -1039,9 +1107,9 @@ export async function renderSettings(container) {
                        ${allowedEndpoints
                          .map(
                            (url) =>
-                             `<option value="${escapeAttr(url)}" ${
+                             `<option value="${escapeHtml(url)}" ${
                                url === recognitionConfig.endpoint ? "selected" : ""
-                             }>${escapeAttr(url)}</option>`,
+                             }>${escapeHtml(url)}</option>`,
                          )
                          .join("")}
                        ${
@@ -1053,8 +1121,8 @@ export async function renderSettings(container) {
                          // label says so.
                          recognitionConfig.endpoint &&
                          !allowedEndpoints.includes(recognitionConfig.endpoint)
-                           ? `<option value="${escapeAttr(recognitionConfig.endpoint)}" selected>
-                                ${escapeAttr(recognitionConfig.endpoint)} — ${t("settings.recognition.endpointNoLongerAllowed")}
+                           ? `<option value="${escapeHtml(recognitionConfig.endpoint)}" selected>
+                                ${escapeHtml(recognitionConfig.endpoint)} — ${t("settings.recognition.endpointNoLongerAllowed")}
                               </option>`
                            : ""
                        }
@@ -1072,7 +1140,7 @@ export async function renderSettings(container) {
                      data-bwignore
                      class="setting-control"
                      placeholder="${t("settings.recognition.endpointPlaceholder")}"
-                     value="${escapeAttr(recognitionConfig.endpoint)}"
+                     value="${escapeHtml(recognitionConfig.endpoint)}"
                    />`
             }
           </div>
@@ -1241,7 +1309,7 @@ export async function renderSettings(container) {
                 data-bwignore
                 class="setting-control"
                 placeholder="${t("settings.recognition.modelPlaceholder")}"
-                value="${escapeAttr(recognitionConfig.model)}"
+                value="${escapeHtml(recognitionConfig.model)}"
               />
               <button
                 type="button"
@@ -1273,7 +1341,7 @@ export async function renderSettings(container) {
               data-bwignore
               class="setting-control"
               placeholder="${t("settings.recognition.versionPlaceholder")}"
-              value="${escapeAttr(recognitionConfig.replicateVersion)}"
+              value="${escapeHtml(recognitionConfig.replicateVersion)}"
             />
           </div>
 
@@ -1345,7 +1413,7 @@ export async function renderSettings(container) {
               rows="10"
               spellcheck="false"
               placeholder="${t("settings.recognition.promptPlaceholder")}"
-            >${escapeHtmlText(recognitionConfig.systemPrompt)}</textarea>
+            >${escapeHtml(recognitionConfig.systemPrompt)}</textarea>
             <div class="setting-item__actions">
               <button id="recognition-prompt-reset" class="btn-secondary">
                 ${t("settings.recognition.promptReset")}
@@ -1574,11 +1642,17 @@ export async function renderSettings(container) {
                 rel="noopener noreferrer"
               >${t("settings.about.projectLink")}</a>
             </p>
+            ${isRatingSupported() ? `<p>${t("settings.about.rateDesc")}</p>` : ""}
           </div>
         </div>
 
         <div class="setting-item setting-item--actions">
           <button id="show-licenses-btn" class="btn-secondary">${t("settings.about.licenses")}</button>
+          ${
+            isRatingSupported()
+              ? `<button id="rate-app-btn" class="btn-secondary">${t("settings.about.rate")}</button>`
+              : ""
+          }
         </div>
       </div>
     </div>
@@ -1660,6 +1734,62 @@ export async function renderSettings(container) {
     // progress reads its own value from RecordingManager, set at start and
     // adjustable live via the slider next to its level meter, not from here.
     setAutoGainAggressiveness(value);
+  });
+
+  // Tasks settings listeners
+  const taskDueDatesToggle = container.querySelector("#task-enable-due-dates-toggle");
+  taskDueDatesToggle?.addEventListener("change", async () => {
+    await saveTaskSettings({ enableDueDates: taskDueDatesToggle.checked });
+  });
+
+  const taskPrioritiesToggle = container.querySelector("#task-enable-priorities-toggle");
+  taskPrioritiesToggle?.addEventListener("change", async () => {
+    await saveTaskSettings({ enablePriorities: taskPrioritiesToggle.checked });
+  });
+
+  const taskDefaultSortSelect = container.querySelector("#task-default-sort-select");
+  taskDefaultSortSelect?.addEventListener("change", async () => {
+    await saveTaskSettings({ defaultSort: taskDefaultSortSelect.value });
+  });
+
+  // Notebook sharing (preview): off until chosen, and only with a Nextcloud account
+  const sharingToggle = container.querySelector("#sharing-enabled-toggle");
+  sharingToggle?.addEventListener("change", async () => {
+    const enabled = sharingToggle.checked;
+    setSharingEnabled(enabled);
+    if (enabled && IS_NEXTCLOUD) {
+      // The app checks that /NoteBerg is the user's own when it loads; sharing
+      // only now being on, check it now rather than at the next load
+      try {
+        const storage = await import("../modules/storage.js");
+        await storage.guardRootForSharing();
+      } catch (error) {
+        console.error("[Settings] Could not verify the notes folder for sharing:", error);
+        setSharingEnabled(false);
+        sharingToggle.checked = false;
+        await showAlertDialog(
+          t("common.error"),
+          t("settings.sharing.rootCheckFailed", { message: error.message }),
+        );
+        return;
+      }
+    }
+    if (!enabled) {
+      // Forget who the notebooks are shared with, so the "shared" marks go
+      const { resetOwnerShares } = await import("../modules/sharing/ownerShares.js");
+      resetOwnerShares();
+    }
+    window.dispatchEvent(new CustomEvent("datachange"));
+    if (enabled && !IS_NEXTCLOUD) {
+      // Like the "Sync now" button: a manual sync looks for shares at once
+      import("../modules/sync.js")
+        .then(({ performSync }) => performSync({ silent: false }))
+        .catch((error) => console.warn("[Settings] Sync after enabling sharing failed:", error));
+    } else if (enabled) {
+      // The Nextcloud app has no sync: look for who the notebooks are shared with
+      const { refreshOwnerShares } = await import("../modules/sharing/ownerShares.js");
+      refreshOwnerShares().catch(() => {});
+    }
   });
 
   // Encryption toggles event listeners
@@ -2595,12 +2725,18 @@ export async function renderSettings(container) {
         }, 2000);
       } catch (error) {
         console.error("Failed to copy logs:", error);
-        alert("Failed to copy logs to clipboard");
+        await showAlertDialog(t("common.error"), t("settings.logging.copyFailed"));
       }
     });
 
-    clearBtn.addEventListener("click", () => {
-      if (confirm(t("settings.logging.clearConfirm"))) {
+    clearBtn.addEventListener("click", async () => {
+      if (
+        await showConfirmDialog(
+          t("settings.logging.clearLogs"),
+          t("settings.logging.clearConfirm"),
+          t("settings.logging.clearLogs"),
+        )
+      ) {
         clearLogs();
         logsContent.value = "";
         closeModal();
@@ -2827,7 +2963,13 @@ export async function renderSettings(container) {
     });
 
     disconnectBtn?.addEventListener("click", async () => {
-      if (confirm(t("settings.nextcloud.disconnectConfirm"))) {
+      if (
+        await showConfirmDialog(
+          t("settings.nextcloud.disconnect"),
+          t("settings.nextcloud.disconnectConfirm"),
+          t("settings.nextcloud.disconnect"),
+        )
+      ) {
         const { clearCredentials } = await loadNextcloudSync();
         await clearCredentials();
 
@@ -2973,14 +3115,16 @@ export async function renderSettings(container) {
   showLicensesBtn?.addEventListener("click", () => {
     showLicensesDialog();
   });
-}
 
-/** Minimal HTML-escaping for interpolating audit log field values (tool names,
- * arguments, error messages) that may contain arbitrary/untrusted text. */
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text ?? "";
-  return div.innerHTML;
+  // Rate this app (Android only; the button is not rendered elsewhere). The only
+  // rating entry point: the app never asks for a rating on its own.
+  container.querySelector("#rate-app-btn")?.addEventListener("click", async () => {
+    try {
+      await openStoreListing();
+    } catch (error) {
+      console.error("Failed to open store listing:", error);
+    }
+  });
 }
 
 const MCP_AUDIT_LOG_PAGE_SIZE = 50;

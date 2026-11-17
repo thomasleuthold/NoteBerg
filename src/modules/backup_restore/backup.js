@@ -30,6 +30,8 @@
  */
 
 import { extFromMime } from "../mime.js";
+import { NOTEBOOK_LOCAL_FIELDS } from "../sharing/notebookShareFields.js";
+import { isShared } from "../sharing/sharePermissions.js";
 import {
   DB_VERSION,
   getAllNotebooksForSync,
@@ -59,6 +61,8 @@ export const SYNC_ONLY_FIELDS = [
   "_currentFileEtag",
   "previousNotebookId",
   "restoredAt",
+  // How this user relates to a shared notebook is local state, not content
+  ...NOTEBOOK_LOCAL_FIELDS,
 ];
 
 /** Thrown when the caller's cancellation flag is raised mid-run. */
@@ -131,6 +135,25 @@ export function suggestedBackupFilename(date = new Date()) {
   return `noteberg-backup-${stamp}.zip`;
 }
 
+// ─── What goes in ─────────────────────────────────────────────────────────────
+
+/**
+ * The notebooks and note indexes a backup covers: everything the user owns.
+ * Notebooks other users shared with this one belong to their owners, who back
+ * them up; including them would also copy a collaborator's notes into an archive
+ * that restore could later write back over the owner's.
+ */
+async function getBackupCorpus() {
+  const allNotebooks = (await getAllNotebooksForSync()).filter((nb) => !nb.purged);
+  const sharedIds = new Set(allNotebooks.filter(isShared).map((nb) => nb.id));
+  return {
+    notebooks: allNotebooks.filter((nb) => !sharedIds.has(nb.id)),
+    noteIndexes: (await getAllNotesForSync()).filter(
+      (n) => !n.purged && !sharedIds.has(n.notebookId),
+    ),
+  };
+}
+
 // ─── The run ──────────────────────────────────────────────────────────────────
 
 /**
@@ -162,12 +185,12 @@ export async function runBackup(archive, options = {}) {
     if (isCancelled()) throw new BackupCancelledError();
   };
 
-  const notebooks = (await getAllNotebooksForSync()).filter((nb) => !nb.purged);
-  const noteIndexes = (await getAllNotesForSync()).filter((n) => !n.purged);
+  const { notebooks, noteIndexes } = await getBackupCorpus();
   const total = notebooks.length + noteIndexes.length;
   let current = 0;
   let totalBytes = 0;
   let fileCount = 0;
+  let noteCount = 0;
 
   for (const notebook of notebooks) {
     checkCancelled();
@@ -208,6 +231,7 @@ export async function runBackup(archive, options = {}) {
 
     const text = JSON.stringify(noteForArchive(note), null, 2);
     totalBytes += await archive.addText(noteEntryName(note.id, note.notebookId), text);
+    noteCount++;
     current++;
   }
 
@@ -220,7 +244,7 @@ export async function runBackup(archive, options = {}) {
     dbVersion: DB_VERSION,
     createdAt: Date.now(),
     encrypted,
-    counts: { notebooks: notebooks.length, notes: noteIndexes.length, files: fileCount },
+    counts: { notebooks: notebooks.length, notes: noteCount, files: fileCount },
     totalBytes,
   };
   await archive.addText(MANIFEST_NAME, JSON.stringify(manifest, null, 2));

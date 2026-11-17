@@ -12,6 +12,7 @@
 
 import { countWords } from "./recognition/breaks.js";
 import { invalidateBackends, recognize } from "./recognition/recognitionService.js";
+import { canEditNote } from "./sharing/notePermissions.js";
 import { getAllNotes, getNote, updateNote } from "./storage.js";
 
 // Configuration
@@ -89,6 +90,9 @@ export async function recognizeUnprocessedNotes(opts = {}) {
 
     const index = candidates[i];
     try {
+      // A note in a notebook shared read-only cannot take a result: not loaded,
+      // and not counted (a count makes startup run a second sync)
+      if (!(await canEditNote(index.id))) continue;
       const note = await getNote(index.id);
       if (!note) continue;
 
@@ -226,6 +230,11 @@ function recognitionChanged(stored, fresh) {
  */
 async function performRecognition(noteId, strokes, opts = {}) {
   if (!strokes || strokes.length === 0) return null;
+
+  // A note in a notebook shared read-only is not ours to write to: recognizing it
+  // would send its ink to a backend (possibly a paid one) for a result that
+  // cannot be stored.
+  if (!(await canEditNote(noteId))) return null;
 
   const existing = inFlight.get(noteId);
   if (existing) {

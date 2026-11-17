@@ -1,55 +1,10 @@
 /**
- * Covers attribute escaping for settings values that round-trip through the
- * rendered form.
- *
- * The recognition endpoint and model are user-supplied strings interpolated
- * into `value="..."` attributes. The escapeHtml() helper used elsewhere in the
- * codebase builds on textContent/innerHTML, which does not escape quotes — so
- * these values need their own escaping, and it needs to actually hold.
+ * The settings form: which sections each build renders, and how settings values
+ * round-trip through it. (The escaping of values interpolated into the form is
+ * covered with the shared helper, src/utils/escapeHtml.test.js.)
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { escapeAttr } from "./settingsMode.js";
-
-describe("escapeAttr", () => {
-  it("escapes double quotes, which would otherwise close the attribute", () => {
-    expect(escapeAttr('a"b')).toBe("a&quot;b");
-  });
-
-  it("escapes angle brackets", () => {
-    expect(escapeAttr("<script>")).toBe("&lt;script&gt;");
-  });
-
-  it("escapes ampersands before other entities, so escaping is not double-applied", () => {
-    expect(escapeAttr("&quot;")).toBe("&amp;quot;");
-  });
-
-  it("neutralizes an attribute-breakout payload", () => {
-    // The concrete attack this guards: a stored endpoint that closes the value
-    // attribute and injects an event handler.
-    const payload = '" onfocus="alert(1)" x="';
-    const escaped = escapeAttr(payload);
-    expect(escaped).not.toContain('"');
-
-    // Parsed back, the whole payload must remain the attribute's value rather
-    // than becoming markup.
-    const el = document.createElement("div");
-    el.innerHTML = `<input value="${escaped}" />`;
-    const input = el.querySelector("input");
-    expect(input.getAttribute("value")).toBe(payload);
-    expect(input.hasAttribute("onfocus")).toBe(false);
-  });
-
-  it("leaves ordinary endpoint and model values unchanged", () => {
-    expect(escapeAttr("http://localhost:1234/v1")).toBe("http://localhost:1234/v1");
-    expect(escapeAttr("qwen2.5-vl-7b-instruct")).toBe("qwen2.5-vl-7b-instruct");
-  });
-
-  it("renders null and undefined as an empty string rather than the literal words", () => {
-    expect(escapeAttr(null)).toBe("");
-    expect(escapeAttr(undefined)).toBe("");
-  });
-});
 
 /**
  * Which sections a build actually renders.
@@ -57,8 +12,8 @@ describe("escapeAttr", () => {
  * The recognition section was inside the Nextcloud exclusion block that also
  * covers sync, language and the danger zone — so the NC build offered no way to
  * configure AI recognition at all, even though the feature exists there. The
- * escaping tests above all passed while the section was invisible, because
- * nothing rendered the form.
+ * escaping tests all passed while the section was invisible, because nothing
+ * rendered the form.
  */
 describe("section visibility per build", () => {
   /** Render the settings form as one of the two builds. */
@@ -241,6 +196,51 @@ describe("section visibility per build", () => {
 
   it("keeps the MCP section on the native builds", async () => {
     expect(headings(await render({ nextcloud: false }))).toContain("settings.sections.mcp");
+  });
+
+  it("saves each task setting as soon as it is changed", async () => {
+    const saveTaskSettings = vi.fn(async () => {});
+    vi.doMock("../modules/taskManager.js", async () => ({
+      ...(await vi.importActual("../modules/taskManager.js")),
+      saveTaskSettings,
+    }));
+    try {
+      const container = await render({ nextcloud: false });
+      const dueDates = container.querySelector("#task-enable-due-dates-toggle");
+      const priorities = container.querySelector("#task-enable-priorities-toggle");
+      const sort = container.querySelector("#task-default-sort-select");
+
+      // Defaults: both features on, sorted by due date.
+      expect(dueDates.checked).toBe(true);
+      expect(priorities.checked).toBe(true);
+      expect(sort.value).toBe("dueDate");
+
+      dueDates.checked = false;
+      dueDates.dispatchEvent(new Event("change"));
+      priorities.checked = false;
+      priorities.dispatchEvent(new Event("change"));
+      sort.value = "priority";
+      sort.dispatchEvent(new Event("change"));
+
+      await vi.waitFor(() => expect(saveTaskSettings).toHaveBeenCalledTimes(3));
+      expect(saveTaskSettings.mock.calls.map(([arg]) => arg)).toEqual([
+        { enableDueDates: false },
+        { enablePriorities: false },
+        { defaultSort: "priority" },
+      ]);
+    } finally {
+      vi.doUnmock("../modules/taskManager.js");
+    }
+  });
+
+  it("offers tasks settings on both native and Nextcloud builds", async () => {
+    for (const nextcloud of [false, true]) {
+      const container = await render({ nextcloud });
+      expect(headings(container)).toContain("settings.sections.tasks");
+      expect(container.querySelector("#task-enable-due-dates-toggle")).not.toBeNull();
+      expect(container.querySelector("#task-enable-priorities-toggle")).not.toBeNull();
+      expect(container.querySelector("#task-default-sort-select")).not.toBeNull();
+    }
   });
 
   it("shows the about section on both builds", async () => {
@@ -473,6 +473,12 @@ describe("settings navigation", () => {
 
     expect(appearance.querySelector("#reset-help-guidance-btn")).not.toBeNull();
     expect(appearance.querySelector("#language-select")).not.toBeNull();
+  });
+
+  it("offers the language first in Appearance", async () => {
+    const container = await render();
+    const first = container.querySelector('[data-section="appearance"] .setting-item');
+    expect(first.querySelector("#language-select")).not.toBeNull();
   });
 
   it("opens the provider section from the recognition notice", async () => {
@@ -1540,5 +1546,209 @@ describe("central administration hides what the user cannot change", () => {
     expect(container.querySelector("#recognition-central-notice").className).toContain(
       "setting-item--hidden",
     );
+  });
+});
+
+/**
+ * Notebook sharing is a preview: off until the user turns it on, and only
+ * possible with a Nextcloud account (the Nextcloud app build has no such
+ * setting; there the release gate decides).
+ */
+describe("the notebook sharing setting", () => {
+  // What the check of the notes folder does when sharing is switched on in the
+  // Nextcloud app, and the alert shown when it fails
+  let guardRoot;
+  let alertDialog;
+
+  async function render({ nextcloud = false, authenticated = false } = {}) {
+    vi.resetModules();
+    vi.stubEnv("VITE_PLATFORM", nextcloud ? "nextcloud" : "tauri");
+
+    vi.doMock("../i18n/index.js", () => ({
+      t: (key) => key,
+      changeLanguage: async () => {},
+      getCurrentLanguage: () => "en",
+    }));
+    vi.doMock("../modules/storage.js", () => ({
+      getSetting: async () => null,
+      setSetting: async () => {},
+      purgeLocalData: async () => {},
+      // Read by the backup section's freshness line and size estimate.
+      getStorageStats: async () => ({ notebookCount: 1, noteCount: 3, quickNoteCount: 1 }),
+      getFileStats: async () => ({ count: 2, bytes: 4096 }),
+      guardRootForSharing: () => guardRoot(),
+    }));
+    vi.doMock("./modals.js", async (importOriginal) => ({
+      ...(await importOriginal()),
+      showAlertDialog: (...args) => alertDialog(...args),
+    }));
+    vi.doMock("../modules/displayPrefs.js", () => ({
+      getCardSize: () => "medium",
+      setCardSize: () => {},
+      getAvailableCardSizes: () => ["small", "medium", "large"],
+    }));
+    vi.doMock("../modules/masterPassword.js", () => ({ isMasterPasswordSet: async () => false }));
+    vi.doMock("../modules/recognition/recognitionSettings.js", () => ({
+      METHOD_WINDOWS_INK: "windowsInk",
+      METHOD_AI: "ai",
+      LANGUAGE_AUTO: "auto",
+      getRecognitionConfig: async () => ({
+        method: "windowsInk",
+        provider: "",
+        endpoint: "",
+        model: "",
+        apiKey: "",
+        hasApiKey: false,
+        language: "auto",
+        maxImageEdge: 1600,
+        maxTokens: 8000,
+        replicateVersion: "",
+        systemPrompt: "",
+      }),
+      setRecognitionConfig: async () => {},
+      isAiMethod: () => false,
+      isRecognitionReady: () => false,
+    }));
+    vi.doMock("../modules/recognition/aiProvider.js", () => ({
+      PROVIDER_OPENAI: "openai",
+      PROVIDER_REPLICATE: "replicate",
+      getApiKey: async () => "",
+      // True off Nextcloud, which is what these render tests model: the native
+      // builds call the provider directly and have no proxy to be limited by.
+      supportsAsyncRecognition: async () => true,
+      // Empty off Nextcloud, where there is no administrator to keep a list —
+      // the same answer the real module gives, so these render tests exercise
+      // the native text field rather than the Nextcloud dropdown.
+      getAllowedEndpoints: async () => [],
+      // True off Nextcloud, where there is no administrator to ask.
+      isReplicateAllowed: async () => true,
+      invalidateProviderCache: () => {},
+      isProviderConfigured: () => false,
+    }));
+
+    vi.doMock("../modules/nextcloudSync.js", () => ({
+      isAuthenticated: async () => authenticated,
+      getStoredCredentials: async () =>
+        authenticated ? { serverUrl: "https://cloud.example.com", loginName: "thomas" } : null,
+    }));
+
+    const mod = await import("./settingsMode.js");
+    const container = document.createElement("div");
+    await mod.renderSettings(container);
+    return container;
+  }
+
+  const toggle = (c) => c.querySelector("#sharing-enabled-toggle");
+
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    localStorage.removeItem("sharing_enabled");
+    guardRoot = vi.fn(async () => ({ moved: false }));
+    alertDialog = vi.fn(async () => {});
+  });
+
+  it("is marked as a preview", async () => {
+    const container = await render({ authenticated: true });
+    const row = toggle(container).closest(".setting-item");
+    expect(row.querySelector(".preview-badge").textContent).toBe("common.preview");
+  });
+
+  it("is off by default", async () => {
+    const container = await render({ authenticated: true });
+    expect(toggle(container).checked).toBe(false);
+    expect(toggle(container).disabled).toBe(false);
+  });
+
+  it("cannot be switched on without a Nextcloud account", async () => {
+    const container = await render({ authenticated: false });
+    expect(toggle(container).disabled).toBe(true);
+    expect(container.textContent).toContain("settings.nextcloud.sharingNeedsConnection");
+  });
+
+  it("turns sharing on and off for this device", async () => {
+    const { isSharingEnabled } = await import("../modules/sharing/enabled.js");
+    const container = await render({ authenticated: true });
+    // Keep the sync it starts out of this test
+    vi.doMock("../modules/sync.js", () => ({ performSync: async () => null }));
+
+    toggle(container).checked = true;
+    toggle(container).dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(localStorage.getItem("sharing_enabled")).toBe("true"));
+    expect(isSharingEnabled()).toBe(true);
+
+    toggle(container).checked = false;
+    toggle(container).dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(localStorage.getItem("sharing_enabled")).toBe("false"));
+    expect(isSharingEnabled()).toBe(false);
+  });
+
+  it("shows the choice made earlier", async () => {
+    localStorage.setItem("sharing_enabled", "true");
+    const container = await render({ authenticated: true });
+    expect(toggle(container).checked).toBe(true);
+  });
+
+  // The app has no sync section, so the setting is a section of its own there,
+  // and needs no connection (the app is the connection)
+  it("is a section of its own in the Nextcloud app, switchable without a connection", async () => {
+    const container = await render({ nextcloud: true });
+    const section = toggle(container).closest(".settings-section");
+    expect(section.dataset.section).toBe("sharing");
+    expect(section.querySelector("h3").textContent).toBe("settings.sections.sharing");
+    expect(toggle(container).disabled).toBe(false);
+    expect(toggle(container).checked).toBe(false);
+    expect(container.querySelector(".preview-badge")).not.toBeNull();
+  });
+
+  it("turns sharing on and off in the Nextcloud app", async () => {
+    const { isSharingEnabled } = await import("../modules/sharing/enabled.js");
+    const container = await render({ nextcloud: true });
+
+    toggle(container).checked = true;
+    toggle(container).dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(isSharingEnabled()).toBe(true));
+  });
+
+  it("checks the notes folder at once when sharing is switched on in the Nextcloud app", async () => {
+    const container = await render({ nextcloud: true });
+
+    toggle(container).checked = true;
+    toggle(container).dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() => expect(guardRoot).toHaveBeenCalledTimes(1));
+    expect(localStorage.getItem("sharing_enabled")).toBe("true");
+  });
+
+  it("does not switch sharing on when the notes folder cannot be verified", async () => {
+    guardRoot = vi.fn(async () => {
+      throw new Error("PROPFIND failed");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const container = await render({ nextcloud: true });
+
+    toggle(container).checked = true;
+    toggle(container).dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() => expect(alertDialog).toHaveBeenCalled());
+    error.mockRestore();
+    expect(localStorage.getItem("sharing_enabled")).toBe("false");
+    expect(toggle(container).checked).toBe(false);
+    expect(alertDialog.mock.calls[0][1]).toContain("settings.sharing.rootCheckFailed");
+  });
+
+  it("does not check the notes folder when switching sharing off", async () => {
+    localStorage.setItem("sharing_enabled", "true");
+    const container = await render({ nextcloud: true });
+
+    toggle(container).checked = false;
+    toggle(container).dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() => expect(localStorage.getItem("sharing_enabled")).toBe("false"));
+    expect(guardRoot).not.toHaveBeenCalled();
+  });
+
+  it("sits in the Nextcloud sync section on the native clients", async () => {
+    const container = await render({ authenticated: true });
+    expect(toggle(container).closest(".settings-section").dataset.section).toBe("nextcloud");
   });
 });

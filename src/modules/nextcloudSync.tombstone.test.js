@@ -11,6 +11,7 @@ import {
   deleteRemoteNote,
   deleteRemoteNotebook,
   downloadTombstone,
+  dropCredentialsCache,
   uploadTombstone,
 } from "./nextcloudSync.js";
 
@@ -87,6 +88,7 @@ describe("Nextcloud Sync Module", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    dropCredentialsCache();
     mockSecureStorage.clear();
     mockServer = new MockWebDAVServer();
     wireMockServer(fetch, mockServer);

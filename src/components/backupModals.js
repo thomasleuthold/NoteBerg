@@ -29,6 +29,7 @@ import {
   getPasswordStrengthColor,
   getPasswordStrengthLabel,
 } from "../modules/encryption.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
 
 const MIN_PASSWORD_LENGTH = 8;
 /**
@@ -38,12 +39,6 @@ const MIN_PASSWORD_LENGTH = 8;
  * available.
  */
 const MIN_PASSWORD_STRENGTH = 50;
-
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text ?? "";
-  return div.innerHTML;
-}
 
 const formatDate = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
 

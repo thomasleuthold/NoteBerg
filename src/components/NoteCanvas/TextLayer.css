@@ -1,0 +1,777 @@
+/* ==========================================================================
+   TextLayer - text boxes over the page (text boxes DESIGN §4.3)
+   ========================================================================== */
+
+/* Text layer container - sits above canvas so text is visible,
+   but below PDF text layer and overlay. Uses top/left positioning
+   (not CSS transform translate) so the browser's auto-scroll-to-caret
+   calculation uses the correct layout position. */
+.note-canvas__text-editor-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3; /* Above canvas (2), below PDF text (5), below overlay (10) */
+  pointer-events: none; /* Default: not interactive */
+  transform-origin: top left;
+  overflow: visible;
+  --text-box-inv-zoom: 1;
+}
+
+/* Enable interaction only in text mode */
+.note-canvas--text-mode .note-canvas__text-editor-layer {
+  pointer-events: auto;
+}
+
+/* --- Boxes ---------------------------------------------------------------
+   Layout and typography of boxes are in src/styles/textBoxes.css, shared with
+   the thumbnail and the PDF export. Static and active rendering share every
+   rule: the editor's wrappers add no padding, margin or height, so a box's
+   lines stay where they are when the editor is mounted on it or taken off
+   (DESIGN §4.2). Below: what only the app shows. */
+
+/* Faint frame in every mode (theme token); never exported. A border on an
+   overlay, not an outline: an outline on the focused box was repainted only
+   in part (left and bottom edges missing) as the box grew while typing */
+.note-canvas__text-editor-layer .text-box::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--text-box-frame, rgb(15 23 42 / 0.1));
+  pointer-events: none;
+}
+
+/* The implicit main box's frame is a separate element that hugs its text */
+.note-canvas__text-editor-layer .text-box.text-box--main::after {
+  display: none;
+}
+
+.note-canvas__text-editor-layer .text-box.text-box--active {
+  z-index: 1; /* raised while active */
+}
+
+.note-canvas__text-editor-layer .text-box.text-box--active::after {
+  border-color: var(--text-box-frame-active, #2c5282);
+}
+
+/* Trumbowyg's wrappers inside a box: no size or decoration of their own */
+.note-canvas__text-editor-layer .text-box .trumbowyg-box,
+.note-canvas__text-editor-layer .text-box .trumbowyg-editor-box {
+  display: block;
+  border: none;
+  background: transparent;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+  overflow: visible;
+  width: 100%;
+}
+
+/* Nextcloud zeroes the margin of lists in a contenteditable (the active box),
+   so its lists sat closer to the text around them than the static ones.
+   Values of textBoxes.css */
+:is(body, #app)
+  .note-canvas__text-editor-layer
+  .text-box
+  .text-box__content.trumbowyg-editor
+  :is(ul, ol) {
+  margin: 0.5em 0 !important;
+  padding: 0 0 0 2em !important;
+}
+
+/* Out of flow, so it moves no line (it took 1px above the old single editor) */
+.note-canvas__text-editor-layer .text-box .trumbowyg-textarea {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+/* The table size grid is marked by dragging over it with any input (a
+   finger too): no panning or scrolling from it */
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown-table table {
+  touch-action: none;
+}
+
+/* Hide Trumbowyg's toolbar inside the editor (we move it to sidebar) */
+.note-canvas__text-editor-layer .trumbowyg-button-pane {
+  display: none;
+}
+
+/* Search highlights */
+.note-canvas__text-editor-layer mark.search-highlight {
+  background: rgba(255, 255, 0, 0.4);
+  outline: 2px solid rgba(255, 200, 0, 0.8);
+  border-radius: 2px;
+  color: inherit;
+}
+
+/* Slight dimming in non-text modes to indicate text isn't active */
+.note-canvas--draw-mode .note-canvas__text-editor-layer,
+.note-canvas--eraser-mode .note-canvas__text-editor-layer,
+.note-canvas--lasso-mode .note-canvas__text-editor-layer {
+  opacity: 0.6;
+}
+
+.note-canvas--text-mode .note-canvas__text-editor-layer {
+  opacity: 1;
+}
+
+/* --- Frames and handles --------------------------------------------------- */
+
+/* The implicit main box's frame hugs its text (widest line + margin) */
+.note-canvas__text-editor-layer .text-box__frame {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--text-box-frame, rgb(15 23 42 / 0.1));
+  pointer-events: none;
+}
+
+.note-canvas__text-editor-layer .text-box__frame.text-box__frame--active {
+  border-color: var(--text-box-frame-active, #2c5282);
+}
+
+.note-canvas__text-editor-layer .text-box__frame[hidden],
+.note-canvas__text-editor-layer .text-box__chrome[hidden] {
+  display: none;
+}
+
+/* Handles of the active (or hovered) box. Sized in screen pixels: the layer
+   is scaled by zoom, so sizes are multiplied by 1/zoom (DESIGN §5) */
+.note-canvas__text-editor-layer .text-box__chrome {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.note-canvas__text-editor-layer .text-box__handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: calc(24px * var(--text-box-inv-zoom));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--text-box-handle-bg, rgb(44 82 130 / 0.85));
+  color: var(--text-box-handle-fg, #fff);
+  border-radius: calc(4px * var(--text-box-inv-zoom)) calc(4px * var(--text-box-inv-zoom)) 0 0;
+  cursor: move;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.note-canvas__text-editor-layer .text-box__chrome--handle-below .text-box__handle {
+  bottom: auto;
+  top: 100%;
+  border-radius: 0 0 calc(4px * var(--text-box-inv-zoom)) calc(4px * var(--text-box-inv-zoom));
+}
+
+.note-canvas__text-editor-layer .text-box__handle svg {
+  width: calc(14px * var(--text-box-inv-zoom));
+  height: calc(14px * var(--text-box-inv-zoom));
+}
+
+:is(body, #app) .note-canvas__text-editor-layer .text-box__options {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: calc(32px * var(--text-box-inv-zoom));
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* The right edge: a grab area wider than the bar it shows, centred on the
+   box's edge (half of it over the box's right padding), and wider still for
+   a finger */
+.note-canvas__text-editor-layer .text-box__resize {
+  --text-box-resize-grab: 24px;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(100% - var(--text-box-resize-grab) / 2 * var(--text-box-inv-zoom));
+  width: calc(var(--text-box-resize-grab) * var(--text-box-inv-zoom));
+  min-height: calc(24px * var(--text-box-inv-zoom));
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+@media (pointer: coarse) {
+  .note-canvas__text-editor-layer .text-box__resize {
+    --text-box-resize-grab: 40px;
+  }
+}
+
+.note-canvas__text-editor-layer .text-box__resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: calc(10px * var(--text-box-inv-zoom));
+  background: var(--text-box-handle-bg, rgb(44 82 130 / 0.85));
+  opacity: 0.6;
+  border-radius: 0 calc(4px * var(--text-box-inv-zoom)) calc(4px * var(--text-box-inv-zoom)) 0;
+}
+
+/* A finger: the move bar keeps its look but is grabbed from a taller area
+   (reaching out away from the box), and the resize area is wider still */
+@media (pointer: coarse) {
+  .note-canvas__text-editor-layer .text-box__handle::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: calc(32px * var(--text-box-inv-zoom)); /* not over the options button */
+    bottom: 100%;
+    height: calc(20px * var(--text-box-inv-zoom));
+  }
+
+  .note-canvas__text-editor-layer .text-box__chrome--handle-below .text-box__handle::before {
+    bottom: auto;
+    top: 100%;
+  }
+
+  .note-canvas__text-editor-layer .text-box__resize {
+    --text-box-resize-grab: 56px;
+    min-height: calc(56px * var(--text-box-inv-zoom));
+  }
+}
+
+/* Follows a finger that moves or resizes a box, centred on it and see-through,
+   so the box stays visible beneath */
+.note-canvas__text-editor-layer .text-box__drag-badge {
+  position: absolute;
+  z-index: 3;
+  width: calc(112px * var(--text-box-inv-zoom));
+  height: calc(112px * var(--text-box-inv-zoom));
+  margin: calc(-56px * var(--text-box-inv-zoom)) 0 0 calc(-56px * var(--text-box-inv-zoom));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--text-box-handle-bg, rgb(44 82 130 / 0.85));
+  color: var(--text-box-handle-fg, #fff);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.note-canvas__text-editor-layer .text-box__drag-badge[hidden] {
+  display: none;
+}
+
+.note-canvas__text-editor-layer .text-box__drag-badge svg {
+  width: 70%;
+  height: 70%;
+}
+
+/* No handles outside text mode (read-only included) */
+.note-canvas:not(.note-canvas--text-mode) .note-canvas__text-editor-layer .text-box__chrome {
+  display: none;
+}
+
+/* ==========================================================================
+   Vertical Toolbar (Left Sidebar)
+   ========================================================================== */
+
+.note-canvas__trumbowyg-toolbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 42px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border-primary);
+  overflow: visible; /* Must be visible so dropdowns can extend beyond the toolbar */
+  z-index: 15;
+}
+
+/* Override Trumbowyg's horizontal toolbar to vertical layout */
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: transparent;
+  border: none;
+  min-height: auto;
+  position: static;
+  padding: 4px 0;
+  width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  /* Reset horizontal layout */
+  flex-wrap: nowrap;
+}
+
+/* Without an active box: the pane, disabled, with a hint as its tooltip */
+.note-canvas__trumbowyg-toolbar .note-canvas__toolbar-pane--disabled button {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.note-canvas__trumbowyg-toolbar .note-canvas__toolbar-pane--disabled button:hover {
+  background: transparent;
+}
+
+/* Remove Trumbowyg's ::after pseudo-element that adds a border */
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane::after {
+  display: none;
+}
+
+/* Vertical button group separators */
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-group::after {
+  content: "";
+  display: block;
+  height: 1px;
+  background: var(--border-primary);
+  margin: 2px 6px;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-group:last-child::after {
+  display: none;
+}
+
+/* Individual buttons in vertical layout */
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button {
+  width: 100%;
+  height: 32px;
+  min-width: unset;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button:hover {
+  background: var(--bg-hover);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button.trumbowyg-active {
+  background: var(--bg-hover);
+  color: var(--color-primary);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button.trumbowyg-active svg {
+  fill: var(--color-primary);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Dropdown menus - positioned via JS with position:fixed. A finger drag
+   scrolls a long one (the table actions), whatever the canvas does with touch */
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown,
+.note-canvas__text-editor-layer .trumbowyg-dropdown {
+  right: auto;
+  min-width: 140px;
+  max-height: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  z-index: 10000;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button,
+.note-canvas__text-editor-layer .trumbowyg-dropdown button {
+  touch-action: pan-y;
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  font-size: 13px;
+  height: auto;
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button:hover,
+.note-canvas__text-editor-layer .trumbowyg-dropdown button:hover {
+  background: var(--bg-hover);
+}
+
+.note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg,
+.note-canvas__text-editor-layer .trumbowyg-dropdown button svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* --- Color & Highlight Dropdown Grids ------------------------------------- */
+
+/* Inline display:none from jQuery's hide() still wins over these grids. */
+:is(.note-canvas__trumbowyg-toolbar, .note-canvas__text-editor-layer)
+  :is(.trumbowyg-dropdown-foreColor, .trumbowyg-dropdown-backColor) {
+  display: grid;
+  grid-template-columns: repeat(5, 28px);
+  gap: 6px;
+  justify-content: center;
+  align-content: start;
+  padding: 8px;
+  min-width: unset;
+  max-width: 180px;
+}
+
+:is(.note-canvas__trumbowyg-toolbar, .note-canvas__text-editor-layer)
+  .trumbowyg-dropdown
+  button.note-color-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+:is(.note-canvas__trumbowyg-toolbar, .note-canvas__text-editor-layer)
+  .trumbowyg-dropdown
+  button.note-color-btn:hover {
+  background: transparent;
+  transform: scale(1.15);
+}
+
+/* "Default" / "No highlight" spans the full row */
+:is(.note-canvas__trumbowyg-toolbar, .note-canvas__text-editor-layer)
+  .trumbowyg-dropdown
+  button.note-color-btn.note-color-btn--header {
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  transform: none;
+}
+
+:is(.note-canvas__trumbowyg-toolbar, .note-canvas__text-editor-layer)
+  .trumbowyg-dropdown
+  button.note-color-btn.note-color-btn--header:hover {
+  background: var(--border-primary);
+}
+
+.note-color-swatch {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  border: 1.5px solid rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.note-color-btn--header .note-color-swatch {
+  width: 18px;
+  height: 18px;
+}
+
+[data-theme="dark"] .note-color-swatch {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Ring around the swatch matching the caret's current color */
+:is(.note-canvas__trumbowyg-toolbar, .note-canvas__text-editor-layer)
+  .trumbowyg-dropdown
+  button.note-color-btn.trumbowyg-active
+  .note-color-swatch {
+  box-shadow:
+    0 0 0 2px var(--bg-primary, #ffffff),
+    0 0 0 4px var(--color-primary, #3b82f6);
+}
+
+[data-theme="dark"]
+  :is(.note-canvas__trumbowyg-toolbar, .note-canvas__text-editor-layer)
+  .trumbowyg-dropdown
+  button.note-color-btn.trumbowyg-active
+  .note-color-swatch {
+  box-shadow:
+    0 0 0 2px var(--bg-secondary, #0f172a),
+    0 0 0 4px var(--color-primary, #60a5fa);
+}
+
+.note-color-swatch--auto {
+  background: var(--text-primary);
+  border-color: var(--border-secondary, #a0aec0);
+}
+
+.note-color-swatch--none {
+  background: transparent;
+  border: 1.5px solid var(--border-secondary, #a0aec0);
+  position: relative;
+}
+
+.note-color-swatch--none::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-danger, #ef4444);
+  transform: rotate(-45deg);
+}
+
+/* ==========================================================================
+   Trumbowyg Modal Overrides (color picker, etc.)
+   ========================================================================== */
+
+.trumbowyg-modal-box {
+  z-index: 10001;
+}
+
+/* ==========================================================================
+   Dark Mode
+   ========================================================================== */
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar {
+  background: var(--bg-secondary);
+  border-right-color: var(--border-primary);
+}
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar svg {
+  fill: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown,
+[data-theme="dark"] .note-canvas__text-editor-layer .trumbowyg-dropdown {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button,
+[data-theme="dark"] .note-canvas__text-editor-layer .trumbowyg-dropdown button {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg,
+[data-theme="dark"] .note-canvas__text-editor-layer .trumbowyg-dropdown button svg {
+  fill: var(--text-primary);
+}
+
+[data-theme="dark"] .note-canvas__text-editor-layer .text-box__content {
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   Task Text Markers
+   ========================================================================== */
+
+.task-text {
+  display: inline;
+  position: relative;
+}
+
+.note-canvas__text-editor-layer .task-text-checkbox {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  line-height: 1 !important;
+  margin-right: 4px;
+  vertical-align: middle;
+  cursor: pointer;
+  box-sizing: content-box !important;
+  flex-shrink: 0 !important;
+}
+
+.note-canvas__text-editor-layer .task-text-checkbox--doing {
+  background-color: var(--nb-task-doing, var(--color-primary));
+  border-color: var(--nb-task-doing, var(--color-primary)) !important;
+}
+
+.note-canvas__text-editor-layer .task-text-checkbox[data-priority="low"] {
+  border-color: var(--nb-priority-low) !important;
+}
+.note-canvas__text-editor-layer .task-text-checkbox[data-priority="medium"] {
+  border-color: var(--nb-priority-medium) !important;
+}
+.note-canvas__text-editor-layer .task-text-checkbox[data-priority="high"] {
+  border-color: var(--nb-priority-high) !important;
+}
+.note-canvas__text-editor-layer .task-text-checkbox[data-priority="urgent"] {
+  border-color: var(--nb-priority-urgent) !important;
+}
+
+.task-text--done {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+/* ==========================================================================
+   Task Context Menu
+   ========================================================================== */
+
+.text-editor-task-context-menu {
+  position: fixed;
+  background: var(--bg-primary, white);
+  border: 1px solid var(--border-primary, #e0e0e0);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  z-index: 10000;
+  min-width: 160px;
+}
+
+.text-editor-task-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  color: var(--text-primary, #333);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.text-editor-task-context-menu__item:hover {
+  background: var(--bg-hover, #f0f0f0);
+}
+
+.text-editor-task-context-menu__item svg {
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .text-editor-task-context-menu {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .text-editor-task-context-menu__item {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .text-editor-task-context-menu__item:hover {
+  background: var(--bg-hover);
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .note-canvas__trumbowyg-toolbar {
+    width: 36px;
+  }
+
+  .note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button {
+    height: 28px;
+  }
+
+  .note-canvas__trumbowyg-toolbar .trumbowyg-button-pane button svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+/* ==========================================================================
+   Merge conflict hint
+   Marks the duplicate of a block that two people edited at once. Renders as a
+   warning triangle (mergeHints.js) whose message appears on hover or touch;
+   uses --nb-status-warning so Nextcloud's paler --color-warning cannot shadow it.
+   ========================================================================== */
+
+.note-canvas__text-editor-layer .merge-hint {
+  position: relative;
+  float: right;
+  margin-left: 8px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #b45309;
+  background-color: rgba(245, 158, 11, 0.18);
+  border: 1px solid var(--nb-status-warning, #d97706);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .note-canvas__text-editor-layer .merge-hint {
+  color: var(--nb-status-warning, #fbbf24);
+  background-color: rgba(251, 191, 36, 0.18);
+  border-color: var(--nb-status-warning, #fbbf24);
+}
+
+.note-canvas__text-editor-layer .merge-hint[data-hint]:hover::after,
+.note-canvas__text-editor-layer .merge-hint[data-hint]:focus-visible::after,
+.note-canvas__text-editor-layer .merge-hint.merge-hint--open[data-hint]::after {
+  content: attr(data-hint);
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background-color: var(--bg-secondary, #f8fafc);
+  color: var(--text-primary, #0f172a);
+  border: 1px solid var(--nb-status-warning, #d97706);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  font-weight: 500;
+  font-style: normal;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* First table column sits near the editor's left edge: open rightward so the
+   message is not clipped on the left when the column is narrow. */
+.note-canvas__text-editor-layer td:first-child .merge-hint[data-hint]::after,
+.note-canvas__text-editor-layer th:first-child .merge-hint[data-hint]::after {
+  left: 0;
+  right: auto;
+}

@@ -14,7 +14,7 @@ Covers the internals of `src/components/NoteCanvas/` — stroke recording, canva
 2. `MediaManager`, `MediaOverlay`, `SelectionOverlay`, `TaskCheckboxLayer`, `PdfTextLayerManager`, `CanvasRenderer` — wired together via setters (`setSpatialIndex`, `setMediaManager`).
 3. `StrokeManager` (owns the `StorageWorker`).
 4. `HistoryManager` (`setNoteCanvas(this)` gives commands a back-reference to the orchestrator).
-5. `TextEditorLayer` (Trumbowyg), with callbacks into `NoteCanvas` (`onContentChange`, `onHeightChange`, `onTaskCreate`, `onTaskToggle`) and the shared `historyManager`.
+5. `TextLayer` (text boxes, one Trumbowyg instance on the active box), with callbacks into `NoteCanvas` (`onContentChange`, `onHeightChange`, `onTaskCreate`, `onTaskToggle`, `onImageInsert`, `getBackground`, `isTapCancelled`, `isCanvasBusy`) and the shared `historyManager`. `NoteCanvas` keeps it in the field `textEditorLayer`.
 6. `InputHandler`, given a `contextProvider` (closures for zoom/scroll/rect/offset) and stroke callbacks bound to `NoteCanvas`.
 7. `NoteToolbar`, with a callback bag for mode changes, pen presets, undo/redo, eraser settings, background/export/delete.
 8. Later: `NoteNavigator`, `SoundDialog` / `RecordingManager`.
@@ -59,7 +59,7 @@ This matches the `x[]/y[]/pressure[]/time[]` parallel-array format documented in
 
 Inside the `VirtualScroller`'s sticky `viewport` div, the stack (bottom to top) is:
 
-1. `.note-canvas__text-editor-layer` — `TextEditorLayer` container (Trumbowyg), lowest z-index so ink visually overlays typed text.
+1. `.note-canvas__text-editor-layer` — `TextLayer` container: the text boxes, the main box's frame and the handles of the active box.
 2. `<canvas class="sliding-buffer-canvas">` — the main content canvas (strokes + media).
 3. `<canvas class="note-canvas__overlay">` — ephemeral UI: eraser cursor, lasso trail, marker preview while drawing, the in-progress pen stroke's provisional tail, insert-space indicator.
 4. `.note-canvas__text-layers` — `PdfTextLayerManager`'s container, one invisible text layer per visible PDF page.
@@ -91,7 +91,7 @@ Commands share no formal base class — each is a small ES class exposing `redo(
 | `EraseStrokePartsCommand` | Partial erase: replaces a stroke with N sub-strokes covering the un-erased segments. Undo runs **newest first**: one gesture often re-splits a fragment it just created (A → S1+S2, then S1 → S3), and oldest-first undo restored S1 next to A, duplicating ink |
 | `TransformStrokesCommand` | Move/resize/rotate a lasso selection; stores per-stroke initial/final coordinate arrays |
 | `PasteStrokesCommand` | Undo/redo for a batch of pasted strokes already appended to `noteData.strokes` |
-| `ShiftContentCommand` | "Insert space" tool — shifts strokes/media below a Y threshold by a delta |
+| `ShiftContentCommand` | "Insert space" tool — shifts strokes, media and text boxes below a Y threshold by a delta (boxes via `TextLayer.moveBoxes`) |
 | `InsertMediaCommand` | Inserting image(s) or a batch of PDF pages; undo soft-deletes via `deletedMedia` |
 | `DeleteMediaCommand` | Deleting media (including whole-PDF deletes); undo restores from stored copies |
 | `TransformMediaCommand` | Move/resize/rotate one media item; has a `hasChanges()` guard to skip no-ops |
@@ -124,15 +124,25 @@ Move/resize/rotate itself happens in `NoteCanvas` pointer handlers using the rot
 
 ## Text Editing
 
-**`TextEditorLayer.js`** wraps a Trumbowyg WYSIWYG editor in a `contenteditable` div, absolutely positioned via `top`/`left` (not `transform: translate`, so native scroll-to-caret works) with a separate `transform: scale(zoom)` for zoom. Toolbar: formatting, font size, bold/italic/underline/strikethrough, colors, line height, indent/outdent, lists, mark-as-task, table, remove format. Two custom Trumbowyg plugins:
+Typed text lives in **text boxes** (design: [text_boxes_design.md](text_boxes_design.md)). `note.content` stays one HTML string: every top-level node before the first box is the **implicit main box** (text written before boxes existed, unwrapped, so such a note is stored byte for byte as before); each other box is a wrapper `<div class="text-box" data-box-id data-x data-y data-w>` with its geometry in content px. `src/modules/textBoxes.js` is the pure model: parse (with the normalization of what old clients leave: nested boxes unwrapped, text after a box joined to it, duplicate ids renamed, broken geometry placed below the content), serialize, wrap the main box, reading order, paste clean-up.
+
+**`TextLayer.js`** is the container in the viewport, absolutely positioned via `top`/`left` (not `transform: translate`, so native scroll-to-caret works) with a separate `transform: scale(zoom)` for zoom. It owns the boxes (**`TextBox.js`**: element, geometry, stored HTML string, static rendering), and **at most one** Trumbowyg instance, mounted on the active box: activating a box mounts the editor on a fresh element in it (synchronously, so a tap focuses within the gesture and Android opens the keyboard), leaving destroys the editor and renders the stored string again. Mounting is no edit: a box keeps its stored string unless its editor HTML really changed. Without an active box the toolbar shows a disabled copy of the button pane.
+
+Pointer routing in text mode: mouse and pen activate a box on press (so a drag selects text at once); touch on the tap, since a finger that moves pans (`NoteCanvas` tells the layer whether the touch stayed a tap: `isTapCancelled`). A tap on empty page leaves the active box, else continues the box above it (continue zone, 48 px), else creates a box there, snapped to the background's grid (`utils/backgroundGrid.js`). The implicit main box's frame and hit area hug its text (widest line + 48 px), so the page beside legacy text is empty page. Handles (move bar, right-edge resize, delete) are sized in screen px; a move or resize is one `TextChangeCommand` on release, and the first one of the main box wraps it at the geometry that keeps its text in place. A new box is left out of the content until it holds text.
+
+Toolbar: formatting, font size, bold/italic/underline/strikethrough, colors, line height, indent/outdent, lists, mark-as-task, table, remove format. Two custom Trumbowyg plugins:
 - **`indentCustom`** — replaces the deprecated `execCommand('indent')` with manual 8px `margin-left` steps across block elements intersecting the selection.
 - **`markAsTask`** — delegates to `TextTaskManager.toggleTaskOnSelection()`.
 
-Content changes drive two independent debounces: `_debounceSave()` (500ms) calls `onContentChange(html)` → `NoteCanvas._onTextContentChange()` → `SAVE_CONTENT`; `_debounceHistoryPush()` (300ms) snapshots before/after HTML into a `TextChangeCommand`. Text edits are grouped into ~300ms-idle undo chunks independently of the 500ms save debounce. `forceSave()` (called from `NoteCanvas.destroy()`) flushes both immediately. Untrusted/synced HTML is run through `sanitizeNoteHtml()` before being set into the live editor DOM.
+Content changes drive two independent debounces: `_debounceSave()` (500ms) calls `onContentChange(html)` → `NoteCanvas._onTextContentChange()` → `SAVE_CONTENT`; `_debounceHistoryPush()` (300ms) snapshots before/after HTML into a `TextChangeCommand`. Text edits are grouped into ~300ms-idle undo chunks independently of the 500ms save debounce. `forceSave()` (called from `NoteCanvas.destroy()`) flushes both immediately. `getContent()` reads only the active box from its editor; every other box contributes its stored string. `setContentSilently()` / `replaceContent()` (undo, live take-in) update boxes by id and touch only those that changed; the caret is mapped within its own box. Untrusted/synced HTML is run through `sanitizeNoteHtml()` before it enters the DOM.
 
-**`TaskCheckboxLayer.js`** handles **stroke-type tasks** only: one DOM checkbox + an invisible clickable bounding box per task, positioned from the live (non-deleted) strokes' computed bounding box — geometry is re-derived from strokes on every `update()`, not stored. Checkbox clicks call `onToggle(taskId, checked)`; clicking the box calls `onTaskClick(taskId)` (re-selects/highlights the task's strokes).
+Pasting an image in text mode places it on the page at the caret via `NoteCanvas.insertImageFiles()` (the insert button's path); `<img>` and box wrappers are removed from pasted HTML.
 
-**`TextTaskManager.js`** handles **text-type tasks** — `<span class="task-text" data-task-id="...">`-wrapped segments in the Trumbowyg HTML, plus injected `.task-text-checkbox` elements (stripped from persisted HTML before save). `toggleTaskOnSelection()` operates per `<br>`-delimited line within a block: it expands list containers into leaf `<li>` blocks first (so a whole list is never wrapped in one span), plans add/remove operations per block *before* mutating any DOM (DOM mutation would skew subsequent Range checks), and toggles by convention: if every selected line already has a task, remove from all; otherwise add to lines lacking one. `normalizeBareLines()` (shared with `TextEditorLayer`) wraps bare inline text directly under the editor root into `<div>`s first, since contenteditable doesn't guarantee every line has a block wrapper.
+Layout and typography of boxes are in `src/styles/textBoxes.css` (scoped to `.text-boxes`), shared with the overview thumbnail (`noteRenderer.js`) and the PDF export's iframe (`pdfExport.js`), which build the same static boxes with `utils/textBoxesDom.js`; `TextLayer.css` holds only what the app shows (frames, handles, toolbar). The merge of `content` (`textMerge.js`) merges the main text by blocks and the boxes by id.
+
+**`TaskCheckboxLayer.js`** handles **stroke-type tasks** only: one DOM checkbox + an invisible clickable bounding box per task, positioned from the live (non-deleted) strokes' computed bounding box — geometry is re-derived from strokes on every `update()`, not stored. The position rule is in `utils/taskCheckboxes.js`, shared with the thumbnail and the PDF export. Checkbox clicks call `onToggle(taskId, checked)`; clicking the box calls `onTaskClick(taskId)` (re-selects/highlights the task's strokes).
+
+**`TextTaskManager.js`** handles **text-type tasks** — `<span class="task-text" data-task-id="...">`-wrapped segments in the Trumbowyg HTML, plus injected `.task-text-checkbox` elements (stripped from persisted HTML before save). It renders and cleans up over the whole layer (`rootElement`, every box, static or active) and toggles in the active box's editor (`editorElement`). `toggleTaskOnSelection()` operates per `<br>`-delimited line within a block: it expands list containers into leaf `<li>` blocks first (so a whole list is never wrapped in one span), plans add/remove operations per block *before* mutating any DOM (DOM mutation would skew subsequent Range checks), and toggles by convention: if every selected line already has a task, remove from all; otherwise add to lines lacking one. `normalizeBareLines()` (shared with `TextLayer`) wraps bare inline text directly under the editor root into `<div>`s first, since contenteditable doesn't guarantee every line has a block wrapper.
 
 ---
 
@@ -176,7 +186,7 @@ Both are instantiated late in `NoteCanvas.load()` and destroyed in `NoteCanvas.d
 | `SAVE_MEDIA` | `StrokeManager.saveMedia()`, called from `NoteCanvas`'s coalescing `_saveMediaChanges()`/`_runMediaSave()` | See coalescing note below |
 | `SAVE_PRESETS` | `StrokeManager.savePresets()`, from the toolbar's preset callback | Does not bump `modified`/`version`/`synced` — rides along with the next real save |
 | `SAVE_TASKS` | `NoteCanvas._saveTasks()`, posting directly via `strokeManager.worker` | Encrypts both `tasks` and `deletedTasks` |
-| `SAVE_CONTENT` | `NoteCanvas._onTextContentChange()`, posting directly | Fires after `TextEditorLayer`'s own 500ms debounce already collapsed keystrokes |
+| `SAVE_CONTENT` | `NoteCanvas._onTextContentChange()`, posting directly | Fires after `TextLayer`'s own 500ms debounce already collapsed keystrokes |
 | `SAVE_RECORDINGS` | `RecordingManager`'s `onSave` callback via `StrokeManager.saveRecordings()` | Handles notes with no `noteContent` row yet (audio-only notes) |
 | `CLOSE` | `StrokeManager.destroy()`, last in `NoteCanvas.destroy()`'s cleanup order | Queues `self.close()` behind pending writes rather than closing immediately |
 

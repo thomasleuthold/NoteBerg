@@ -1,6 +1,13 @@
 import { generateId } from "../../modules/storage.js";
+import {
+  isTaskCompleted,
+  normalizeTaskPriority,
+  normalizeTaskStatus,
+  TASK_STATUS,
+} from "../../modules/taskManager.js";
 
 const CHECKMARK_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin:1px auto;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+const DOING_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin:1px auto;"><circle cx="12" cy="12" r="5" fill="white"></circle></svg>`;
 
 const BLOCK_TAGS = /^(p|div|li|blockquote|h[1-6]|ul|ol|table|pre|hr)$/i;
 
@@ -110,8 +117,20 @@ export class TextTaskManager {
    * @param {Function} callbacks.triggerChange - () => void (Trigger editor change event)
    */
   constructor(editorElement, callbacks) {
+    /** The editor tasks are toggled in (the active text box's editor). */
     this.editorElement = editorElement;
+    /**
+     * Where task markup is rendered and looked for: every text box, static or
+     * active (TextLayer sets the layer root). Defaults to the editor.
+     * @type {HTMLElement|null}
+     */
+    this.rootElement = null;
     this.callbacks = callbacks;
+  }
+
+  /** @private */
+  get _root() {
+    return this.rootElement ?? this.editorElement;
   }
 
   /**
@@ -158,6 +177,17 @@ export class TextTaskManager {
     const range = selection.getRangeAt(0);
 
     if (!this.editorElement?.contains(range.commonAncestorContainer)) return;
+
+    if (range.collapsed) {
+      const taskSpan =
+        range.startContainer.nodeType === Node.ELEMENT_NODE
+          ? range.startContainer.closest(".task-text")
+          : range.startContainer.parentElement?.closest(".task-text");
+      if (taskSpan?.dataset?.taskId && this.callbacks.onTaskProperties) {
+        this.callbacks.onTaskProperties(taskSpan.dataset.taskId);
+        return;
+      }
+    }
 
     // Collect all blocks that intersect the selection
     const blocks = this._getBlocksInRange(range);
@@ -538,7 +568,8 @@ export class TextTaskManager {
    * @param {Array} tasks - All tasks (will filter to text type)
    */
   renderCheckboxes(tasks) {
-    if (!this.editorElement) return;
+    const root = this._root;
+    if (!root) return;
 
     this._dedupeTaskMarkup();
 
@@ -547,10 +578,8 @@ export class TextTaskManager {
 
     // 1. Sync state and attach listeners for active tasks
     for (const task of textTasks) {
-      let checkbox = this.editorElement.querySelector(
-        `.task-text-checkbox[data-task-id="${task.id}"]`,
-      );
-      const span = this.editorElement.querySelector(`.task-text[data-task-id="${task.id}"]`);
+      let checkbox = root.querySelector(`.task-text-checkbox[data-task-id="${task.id}"]`);
+      const span = root.querySelector(`.task-text[data-task-id="${task.id}"]`);
 
       // If checkbox is missing but span exists, restore it
       if (!checkbox && span) {
@@ -562,18 +591,31 @@ export class TextTaskManager {
       }
 
       if (checkbox) {
-        // Render checked state
-        if (task.checked) {
+        const status = normalizeTaskStatus(task);
+        const priority = normalizeTaskPriority(task.priority);
+        const isDone = isTaskCompleted(status);
+
+        checkbox.setAttribute("data-status", status);
+        checkbox.setAttribute("data-priority", priority);
+
+        // Render checked/doing/open state
+        if (status === TASK_STATUS.DONE) {
           checkbox.classList.add("task-text-checkbox--checked");
+          checkbox.classList.remove("task-text-checkbox--doing");
           checkbox.innerHTML = CHECKMARK_SVG;
+        } else if (status === TASK_STATUS.DOING) {
+          checkbox.classList.remove("task-text-checkbox--checked");
+          checkbox.classList.add("task-text-checkbox--doing");
+          checkbox.innerHTML = DOING_SVG;
         } else {
           checkbox.classList.remove("task-text-checkbox--checked");
+          checkbox.classList.remove("task-text-checkbox--doing");
           checkbox.innerHTML = "";
         }
 
         // Update styling on text span
         if (span) {
-          if (task.checked) span.classList.add("task-text--done");
+          if (isDone) span.classList.add("task-text--done");
           else span.classList.remove("task-text--done");
         }
 
@@ -581,7 +623,9 @@ export class TextTaskManager {
         const newCheckbox = checkbox.cloneNode(true);
         newCheckbox.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (this.callbacks.onTaskToggle) {
+          if (this.callbacks.onTaskCycleStatus) {
+            this.callbacks.onTaskCycleStatus(task.id);
+          } else if (this.callbacks.onTaskToggle) {
             this.callbacks.onTaskToggle(task.id, !task.checked);
           }
         });
@@ -592,7 +636,7 @@ export class TextTaskManager {
     }
 
     // 2. Cleanup orphaned checkboxes
-    const allCheckboxes = this.editorElement.querySelectorAll(".task-text-checkbox");
+    const allCheckboxes = root.querySelectorAll(".task-text-checkbox");
     for (const cb of allCheckboxes) {
       if (!activeTaskIds.has(cb.dataset.taskId)) {
         cb.remove();
@@ -610,7 +654,7 @@ export class TextTaskManager {
    */
   _dedupeTaskMarkup() {
     const seenSpans = new Set();
-    for (const span of this.editorElement.querySelectorAll(".task-text[data-task-id]")) {
+    for (const span of this._root.querySelectorAll(".task-text[data-task-id]")) {
       if (seenSpans.has(span.dataset.taskId)) {
         while (span.firstChild) span.parentNode.insertBefore(span.firstChild, span);
         span.remove();
@@ -620,7 +664,7 @@ export class TextTaskManager {
     }
 
     const seenCheckboxes = new Set();
-    for (const cb of this.editorElement.querySelectorAll(".task-text-checkbox[data-task-id]")) {
+    for (const cb of this._root.querySelectorAll(".task-text-checkbox[data-task-id]")) {
       if (seenCheckboxes.has(cb.dataset.taskId)) {
         cb.remove();
       } else {
@@ -630,17 +674,17 @@ export class TextTaskManager {
   }
 
   /**
-   * Remove tasks whose spans no longer exist in the editor DOM
+   * Remove tasks whose spans no longer exist anywhere in the text (every box,
+   * not only the one being edited: tasks in other boxes are not orphans)
    * @param {Array} tasks - Current tasks array (will be modified in place)
    * @returns {boolean} Whether any orphans were removed
    */
   cleanupOrphans(tasks) {
-    if (!this.editorElement || !tasks) return false;
+    const root = this._root;
+    if (!root || !tasks) return false;
 
     const existingTaskIds = new Set(
-      Array.from(this.editorElement.querySelectorAll(".task-text[data-task-id]")).map(
-        (el) => el.dataset.taskId,
-      ),
+      Array.from(root.querySelectorAll(".task-text[data-task-id]")).map((el) => el.dataset.taskId),
     );
 
     const before = tasks.length;

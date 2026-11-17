@@ -117,12 +117,12 @@ describe("parseManifest", () => {
 
   it("accepts the manifest backup.js writes", async () => {
     const archive = await snapshot();
-    expect(parseManifest(archive.reader().manifestText)).toMatchObject({ schema: 1, dbVersion: 5 });
+    expect(parseManifest(archive.reader().manifestText)).toMatchObject({ schema: 1, dbVersion: 6 });
   });
 });
 
 describe("checkCompatibility", () => {
-  const base = { schema: 1, dbVersion: 5, appVersion: "9.9.9" };
+  const base = { schema: 1, dbVersion: 6, appVersion: "9.9.9" };
 
   it("refuses a newer schema, naming the app version that wrote it", () => {
     expect(() => checkCompatibility({ ...base, schema: 2 })).toThrow(RestoreError);
@@ -137,7 +137,7 @@ describe("checkCompatibility", () => {
   it("refuses a newer DB version", () => {
     let err;
     try {
-      checkCompatibility({ ...base, dbVersion: 6 });
+      checkCompatibility({ ...base, dbVersion: 7 });
     } catch (e) {
       err = e;
     }
@@ -146,7 +146,7 @@ describe("checkCompatibility", () => {
 
   it("accepts equal and older versions", () => {
     expect(() => checkCompatibility(base)).not.toThrow();
-    expect(() => checkCompatibility({ ...base, schema: 0, dbVersion: 4 })).not.toThrow();
+    expect(() => checkCompatibility({ ...base, schema: 0, dbVersion: 5 })).not.toThrow();
   });
 });
 
@@ -793,6 +793,64 @@ describe("archive field hygiene", () => {
       id: "a",
       title: "t",
     });
+  });
+
+  it("never lets a hand-made archive turn a notebook into a shared one", () => {
+    expect(
+      stripArchiveFields({
+        id: "nb",
+        title: "t",
+        origin: "shared",
+        sharePermissions: 31,
+        shareId: "1",
+      }),
+    ).toEqual({ id: "nb", title: "t" });
+  });
+});
+
+describe("notebooks shared with this user", () => {
+  async function archiveOfOwnNotebook() {
+    store.seedNotebook(makeNotebook({ id: "nb-1" }));
+    store.seedNote(makeNote({ id: "n-own", notebookId: "nb-1" }));
+    const archive = await snapshot();
+    store.reset();
+    return archive;
+  }
+
+  it("are never written into: entries for a notebook that is shared here are skipped", async () => {
+    const archive = await archiveOfOwnNotebook();
+    // Meanwhile somebody shared a notebook with the same id with this user
+    store.seedNotebook(makeNotebook({ id: "nb-1", title: "Theirs", origin: "shared" }));
+
+    const { scan, summary } = await restoreWith(archive, { mode: MODE_PREFER_BACKUP });
+
+    expect(scan.skippedShared).toBe(2);
+    expect(scan.notebooks).toEqual([]);
+    expect(scan.notes).toEqual([]);
+    expect(summary).toMatchObject({ restored: 0, notebooksCreated: 0 });
+    expect(store.notebooks.get("nb-1").title).toBe("Theirs");
+    expect(store.notes.has("n-own")).toBe(false);
+  });
+
+  it("also protects a shared note whose id the archive claims for another notebook", async () => {
+    const archive = await archiveOfOwnNotebook();
+    store.seedNotebook(makeNotebook({ id: "nb-shared", origin: "shared" }));
+    store.seedNote(makeNote({ id: "n-own", notebookId: "nb-shared", content: "<p>collab</p>" }));
+
+    const { summary } = await restoreWith(archive, { mode: MODE_REPLACE_ALL });
+
+    expect(summary.restored).toBe(0);
+    expect(store.notes.get("n-own").content).toBe("<p>collab</p>");
+  });
+
+  it("do not disturb the restore of everything else", async () => {
+    const archive = await archiveOfOwnNotebook();
+    store.seedNotebook(makeNotebook({ id: "nb-shared", origin: "shared" }));
+
+    const { scan, summary } = await restoreWith(archive, { mode: MODE_MISSING });
+
+    expect(scan.skippedShared).toBe(0);
+    expect(summary).toMatchObject({ restored: 1, notebooksCreated: 1 });
   });
 });
 

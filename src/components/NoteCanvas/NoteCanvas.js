@@ -15,36 +15,68 @@ import {
   onFullscreenChange,
   toggleFullscreen,
 } from "../../modules/ncFullscreen.js";
+import { NoteVersioner } from "../../modules/noteVersions.js";
 import { downloadPdfBytes, exportNoteToPdf } from "../../modules/pdfExport.js";
 import { getPdfOutline, importPdf, loadPdfPage } from "../../modules/pdfManager.js";
 import { navigateTo } from "../../modules/router.js";
 import {
+  adoptRemoteNote,
   cleanupNoteMedia,
   deleteFile,
   deleteNote,
   generateId,
   getFile,
   getNote,
+  noteSyncUnchanged,
+  readStoredNoteText,
   registerPendingUpload,
+  remoteNoteChange,
   saveFile,
   saveMediaForNote,
+  takeInStoredNote,
   updateNote,
   updateNoteCoalesced,
 } from "../../modules/storage.js";
 
 const _IS_NEXTCLOUD = import.meta.env.VITE_PLATFORM === "nextcloud";
 
+// What each save writes, and so what it stamps (NoteCanvas._versionFields)
+const _SAVE_STAMPS = {
+  strokes: { kinds: ["strokes"] },
+  media: { kinds: ["media"], fields: ["pdfSource"] },
+  tasks: { kinds: ["tasks"] },
+  recordings: { kinds: ["recordings"] },
+  penPresets: { fields: ["penPresets"] },
+  background: { fields: ["background"] },
+};
+
 function _isAndroid() {
   return typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
 }
 
 import { HELP_IDS } from "../../modules/helpGuidance.js";
+import { computeTakeIn, editorView } from "../../modules/liveTakeIn.js";
+import { isSharingEnabled, SHARING_PREF_EVENT } from "../../modules/sharing/enabled.js";
+import { getNotebookPermissions } from "../../modules/sharing/notePermissions.js";
+import {
+  SHARE_ACCESS_REDUCED_EVENT,
+  SHARE_ENDED_EVENT,
+} from "../../modules/sharing/shareEvents.js";
+import { deriveSuggestedTitle, deriveTaskDetails } from "../../modules/taskDetails.js";
+import {
+  getNextTaskStatus,
+  isTaskCompleted,
+  normalizeTaskStatus,
+  TASK_PRIORITY,
+  TASK_STATUS,
+} from "../../modules/taskManager.js";
 import { getIcon } from "../../utils/icons.js";
 import { captureFromCamera, pickImages, processImageFile } from "../../utils/imageUtils.js";
 import {
   drawStroke as sharedDrawStroke,
   getThemePalette as sharedGetThemePalette,
 } from "../../utils/noteRenderer.js";
+import { notePenDown, notePenUp, perfAsync, perfStep, perfSync } from "../../utils/perfMonitor.js";
 import { startHelpTour } from "../HelpOverlay.js";
 import { getHelpContent, getHelpLabels } from "../helpContent.js";
 import {
@@ -84,15 +116,18 @@ import {
   TransformStrokesCommand,
 } from "./commands/index.js";
 import { HistoryManager } from "./HistoryManager.js";
+import { LiveRefresh } from "./liveRefresh.js";
+import { LiveText } from "./liveText.js";
 import { NoteNavigator } from "./NoteNavigator.js";
 import { NoteToolbar } from "./NoteToolbar.js";
 import { PdfTextLayerManager } from "./PdfTextLayerManager.js";
+import { normalizePenPresets } from "./penPresets.js";
 import { RecordingManager } from "./RecordingManager.js";
 import { SoundDialog } from "./SoundDialog.js";
 import { SpatialIndex } from "./SpatialIndex.js";
 import { StrokeManager } from "./StrokeManager.js";
 import { detectLineIndentation, detectStrokeLines } from "./strokeLineDetection.js";
-import { TextEditorLayer } from "./TextEditorLayer.js";
+import { TextLayer } from "./TextLayer.js";
 import { VirtualScroller } from "./VirtualScroller.js";
 
 // Selection handle constants (exported for use by CanvasRenderer)
@@ -126,6 +161,20 @@ const PLACEHOLDER_HEIGHT = 600;
 // Shared empty result for the stroke-task lookup, so the common "no tasks" case
 // allocates nothing on the per-frame path. Never mutated.
 const EMPTY_TASKS = Object.freeze([]);
+// Room below the lowest ink or media, to keep writing
+const CONTENT_PADDING_BELOW = 500;
+// The notebook's full sync from the live look (what the open note's own sync
+// leaves to it) at most this often
+const FULL_LIVE_SYNC_INTERVAL_MS = 15_000;
+// Storage-worker messages that answer one of the editor's requests (_askWorker)
+const WORKER_ANSWERS = new Set([
+  "CONTENT",
+  "CONTENT_SAVED",
+  "TAKEN",
+  "TEXT_MERGED",
+  "LIVE_SYNCED",
+  "LIVE_SYNC_COMMITTED",
+]);
 
 /**
  * Compute selection handle positions for a given bounds
@@ -242,6 +291,7 @@ export class NoteCanvas {
     this._isZooming = false; // Flag to suppress scroll events during zoom
     this._pinchFromTouch = false; // Current pinch is driven by touch events (see _onTouchMoveNav)
     this._textModePanState = null; // Touch-pan state for text mode (threshold detection)
+    this._textTapCancelled = false; // The text-mode touch that ended was no tap (TextLayer)
     this.lastTouchX = null;
     this.lastTouchY = null;
 
@@ -256,6 +306,10 @@ export class NoteCanvas {
     this._pendingScroll = null;
 
     // Drawing state
+    // What the user may do with this note: a notebook shared with them can be
+    // view-only, and none lets them delete, move or copy its notes
+    this.permissions = { canEdit: true, canManage: true };
+    this.readOnly = false;
     this.mode = "pan"; // 'pan' | 'draw' | 'eraser' | 'lasso'
     this.currentPenColorIndex = 0;
     this.currentPenWidth = 2;
@@ -320,45 +374,21 @@ export class NoteCanvas {
     this._onStrokeMove = this._onStrokeMove.bind(this);
     this._onStrokeEnd = this._onStrokeEnd.bind(this);
     this._onKeyDown = this._onKeyDown.bind(this);
+    this._onShareEnded = this._onShareEnded.bind(this);
+    this._onAccessReduced = this._onAccessReduced.bind(this);
+    this._onWorkerMessage = this._onWorkerMessage.bind(this);
+    // Text requests to the storage worker awaiting an answer: requestId -> resolve
+    this._contentRequests = new Map();
+    this._nextContentRequest = 0;
     this._onDataChange = this._onDataChange.bind(this);
     this._onRecognitionJobComplete = this._onRecognitionJobComplete.bind(this);
-  }
-
-  /**
-   * Check if the note content has changed in storage compared to loaded data
-   * Used to determine if a reload is necessary
-   * @param {string} noteId
-   * @returns {Promise<boolean>}
-   */
-  async hasContentChanged(noteId) {
-    if (noteId !== this.noteId) return true;
-
-    const freshData = await getNote(noteId);
-    if (!freshData) return true; // Note deleted?
-
-    // Count only live strokes on both sides. Soft-deleted strokes stay in the
-    // in-memory array (undo needs them) but are filtered out on save, so a raw
-    // length comparison reports a difference after every erase — forever.
-    const isLive = (s) => !s._deleted && !s.isDeleted;
-    const currentStrokesCount = (this.noteData.strokes ?? []).filter(isLive).length;
-    const freshStrokesCount = (freshData.strokes ?? []).filter(isLive).length;
-
-    // If local has MORE strokes than DB AND local is dirty (unsaved changes in progress),
-    // do not reload — we are ahead because the user is actively drawing.
-    // If freshData.synced === true, the DB reflects a downloaded server version and we must
-    // reload even if the count decreased (e.g. another device erased strokes).
-    // `synced` is undefined in the Nextcloud build (no local sync state there),
-    // so treat "not explicitly synced" as local-is-ahead rather than falling
-    // through to a reload that would discard in-progress work.
-    if (currentStrokesCount > freshStrokesCount && freshData.synced !== true) {
-      return false;
-    }
-
-    // Simple check: if stroke count or background changed, we need reload
-    // We ignore metadata changes like 'synced' or 'lastSyncedEtag'
-    return (
-      currentStrokesCount !== freshStrokesCount || this.noteData.background !== freshData.background
-    );
+    // Looks now and then for someone else's changes to the open note (liveRefresh.js)
+    this.liveRefresh = null;
+    this._lastFullLiveSync = Number.NEGATIVE_INFINITY;
+    this._onUserInput = this._onUserInput.bind(this);
+    this._onPenHover = this._onPenHover.bind(this);
+    this._onConnectivityChange = this._onConnectivityChange.bind(this);
+    this._onSharingPreference = () => this.liveRefresh?.refresh();
   }
 
   /**
@@ -367,111 +397,278 @@ export class NoteCanvas {
    * especially for strokes drawn while the sync was in progress.
    */
   async applyLiveUpdate() {
-    if (!this.noteId || !this.isInitialized) return;
+    if (!this.noteId || !this.isInitialized) return false;
 
-    console.log(`[NoteCanvas] Applying live update for note ${this.noteId}`);
-
-    const freshDataFromDB = await getNote(this.noteId);
-    if (!freshDataFromDB) {
-      console.warn("[NoteCanvas] Note not found during live update. Cannot apply changes.");
-      return;
+    const openNoteId = this.noteId;
+    const end = perfStep("live take-in");
+    try {
+      // The merge runs where the stored note is read (the storage worker, or the
+      // Nextcloud app's note-file worker); only the delta comes back here
+      const delta = await this._takeInOffThread();
+      // destroy() may have run during the await; the user may have started drawing
+      if (this.noteId !== openNoteId || !this.isInitialized) return false;
+      if (delta === null) {
+        console.warn("[NoteCanvas] Note not found during live update. Cannot apply changes.");
+        return false;
+      }
+      if (this._deferWhileWriting()) return false;
+      if (delta !== undefined) return perfSync("take-in apply", () => this._applyTakeIn(delta));
+    } finally {
+      end();
     }
 
-    const inMemoryData = this.noteData;
+    // No worker to do it (tests): read and merge here, as before
+    const freshDataFromDB = await getNote(openNoteId);
+    if (!freshDataFromDB) {
+      console.warn("[NoteCanvas] Note not found during live update. Cannot apply changes.");
+      return false;
+    }
+    if (this.noteId !== openNoteId || !this.isInitialized) return false;
+    if (this._deferWhileWriting()) return false;
+    return this._takeInNote(freshDataFromDB);
+  }
 
-    // --- MERGE STROKES ---
-    // Use Array.isArray so that encrypted blobs ({data,iv,version}) from notes that
-    // were uploaded by a native client with local encryption are treated as empty
-    // rather than thrown as "not iterable".
-    const dbStrokes = Array.isArray(freshDataFromDB.strokes) ? freshDataFromDB.strokes : [];
-    const memStrokes = Array.isArray(inMemoryData.strokes) ? inMemoryData.strokes : [];
-    const dbDeleted = new Set(
-      Array.isArray(freshDataFromDB.deletedStrokes) ? freshDataFromDB.deletedStrokes : [],
-    );
-    const memDeleted = new Set(
-      Array.isArray(inMemoryData.deletedStrokes) ? inMemoryData.deletedStrokes : [],
-    );
-
-    const allDeletedIds = new Set([...dbDeleted, ...memDeleted]);
-    const mergedStrokesMap = new Map();
-
-    // Add all strokes from memory first, then overwrite with DB data.
-    // This ensures the just-finished stroke from memory is included,
-    // and any strokes updated by the sync take precedence.
-    [...memStrokes, ...dbStrokes].forEach((stroke) => {
-      if (stroke.id) mergedStrokesMap.set(stroke.id, stroke);
+  /**
+   * The stored note taken in against what the editor holds, computed off the main
+   * thread.
+   * @returns {Promise<object|null|undefined>} the delta; null when the note is not
+   *   there (or cannot be read now); undefined when no worker can do it
+   * @private
+   */
+  async _takeInOffThread() {
+    if (_IS_NEXTCLOUD) {
+      const read = await takeInStoredNote(this.noteId, this._editorView());
+      return read ? read.delta : null;
+    }
+    if (!this.strokeManager?.worker) return undefined;
+    const answer = await this._askWorker({
+      type: "TAKE_IN",
+      noteId: this.noteId,
+      view: this._editorView(),
+      key: this._encryptionKey(),
     });
+    return answer?.delta ?? null;
+  }
 
-    const finalStrokes = Array.from(mergedStrokesMap.values()).filter(
-      (stroke) => !allDeletedIds.has(stroke.id),
-    );
+  /**
+   * Merge a stored version of the open note into what the editor holds, with
+   * the same merge every other path uses (noteMerge.js, DESIGN §10.7): elements
+   * by version, deletions win unless undone, recorded insert spaces replayed,
+   * fields by their stamps. The user's edits not saved yet are stamped first, so
+   * they count as the newer ones they are. Text is LiveText's (liveText.js).
+   *
+   * Synchronous, so a caller can move its own bookkeeping in the same step (the
+   * Nextcloud build's live update, see _liveCheckNextcloud).
+   *
+   * Strokes that only arrived are appended and painted on their own, keeping
+   * the undo history (its commands address strokes by index, and appending moves
+   * none). Anything else (a stroke removed or moved, media or background
+   * changed) rebuilds the canvas and clears the history.
+   *
+   * Only what the editor holds beyond the stored version is written back.
+   * Writing the merge unconditionally made every live update a save, and two
+   * editors open on the same note would then hand uploads back and forth forever.
+   *
+   * @param {object} fresh - the note as stored
+   * @returns {boolean} whether anything the editor shows changed
+   * @private
+   */
+  _takeInNote(fresh) {
+    // Encrypted blobs ({data,iv,version}) from a native client with local
+    // encryption are treated as empty rather than iterated
+    const list = (value) => (Array.isArray(value) ? value : []);
+    const stored = {
+      ...fresh,
+      strokes: list(fresh.strokes),
+      media: list(fresh.media),
+      tasks: list(fresh.tasks),
+    };
+    const view = this._editorView();
+    return this._applyTakeIn(perfSync("take-in merge", () => computeTakeIn(view, stored)));
+  }
+
+  /**
+   * What the editor holds, compactly, for a take-in computed elsewhere
+   * (liveTakeIn.js): its edits are stamped first, so they count as the newer
+   * ones they are.
+   * @private
+   */
+  _editorView() {
+    this.versions?.stamp(this.noteData);
+    // Strokes changed since storage last confirmed a save go whole; a stroke
+    // manager that does not track that (tests) sends every stroke whole
+    const unconfirmed = this.strokeManager?.unconfirmedStrokes
+      ? this.strokeManager.unconfirmedStrokes()
+      : (this.noteData.strokes ?? []);
+    return editorView(this.noteData, unconfirmed);
+  }
+
+  /**
+   * Apply what a take-in found (computeTakeIn, liveTakeIn.js): only what changed
+   * is touched. Strokes that only arrived are appended and painted on their own,
+   * keeping the undo history (its commands address strokes by index, and
+   * appending moves none). Anything else rebuilds the canvas and clears the history.
+   * @param {object} delta
+   * @returns {boolean} whether anything the editor shows changed
+   * @private
+   */
+  _applyTakeIn(delta) {
+    const data = this.noteData;
+    const list = (value) => (Array.isArray(value) ? value : []);
+    const keyOf = (s) => s.id ?? JSON.stringify(s);
+    const { parts, stored } = delta;
+    const { added, changed, order } = delta.strokes;
+    const incremental = !delta.strokesChanged && !delta.mediaChanged && !delta.backgroundChanged;
 
     // --- UPDATE IN-MEMORY DATA IN-PLACE ---
-    // This is important so modules that hold a reference see the changes.
-    inMemoryData.strokes.length = 0;
-    Array.prototype.push.apply(inMemoryData.strokes, finalStrokes);
-
-    inMemoryData.deletedStrokes.length = 0;
-    Array.prototype.push.apply(inMemoryData.deletedStrokes, Array.from(allDeletedIds));
-
-    // For now, we assume media and other properties are less likely to have
-    // in-memory vs. DB conflicts during a drawing session. We prioritize
-    // the DB version for these.
-    inMemoryData.media = Array.isArray(freshDataFromDB.media) ? freshDataFromDB.media : [];
-    inMemoryData.deletedMedia = Array.isArray(freshDataFromDB.deletedMedia)
-      ? freshDataFromDB.deletedMedia
-      : [];
-    // Merge tasks like strokes: union of local+remote, deletedTasks wins
-    const localDeletedTaskIds = new Set([
-      ...(Array.isArray(inMemoryData.deletedTasks) ? inMemoryData.deletedTasks : []),
-      ...(Array.isArray(freshDataFromDB.deletedTasks) ? freshDataFromDB.deletedTasks : []),
-    ]);
-    const mergedTasksMap = new Map();
-    [
-      ...(Array.isArray(inMemoryData.tasks) ? inMemoryData.tasks : []),
-      ...(Array.isArray(freshDataFromDB.tasks) ? freshDataFromDB.tasks : []),
-    ].forEach((t) => {
-      if (t.id) mergedTasksMap.set(t.id, t);
-    });
-    // Filter out deleted tasks and orphaned stroke tasks (strokes gone after merge)
-    const mergedActiveStrokeIds = new Set(finalStrokes.map((s) => s.id));
-    const mergedTasks = Array.from(mergedTasksMap.values()).filter((t) => {
-      if (localDeletedTaskIds.has(t.id)) return false;
-      if (t.type === "stroke") {
-        const alive = t.strokeIds.some((id) => mergedActiveStrokeIds.has(id));
-        if (!alive) localDeletedTaskIds.add(t.id);
-        return alive;
+    // Modules (stroke manager, renderer) hold references to these arrays
+    if (order) {
+      // Removed or restored strokes: the list as merged, in its order
+      const byId = new Map(data.strokes.map((s) => [keyOf(s), s]));
+      for (const s of [...added, ...changed]) byId.set(keyOf(s), s);
+      const next = order.map((id) => byId.get(id)).filter(Boolean);
+      data.strokes.length = 0;
+      Array.prototype.push.apply(data.strokes, next);
+    } else {
+      if (changed.length > 0) {
+        const at = new Map(data.strokes.map((s, i) => [keyOf(s), i]));
+        for (const stroke of changed) {
+          const index = at.get(keyOf(stroke));
+          if (index !== undefined) data.strokes[index] = stroke;
+        }
       }
-      return true;
-    });
-    inMemoryData.tasks = mergedTasks;
-    inMemoryData.deletedTasks = Array.from(localDeletedTaskIds);
-    inMemoryData.penPresets = freshDataFromDB.penPresets || inMemoryData.penPresets;
-    inMemoryData.pdfSource = freshDataFromDB.pdfSource;
-    inMemoryData.background = freshDataFromDB.background;
-    inMemoryData.modified = freshDataFromDB.modified;
-    inMemoryData.lastSyncedEtag = freshDataFromDB.lastSyncedEtag;
-    inMemoryData.synced = freshDataFromDB.synced;
+      for (const stroke of added) {
+        data.strokes.push(stroke);
+        if (incremental) this.spatialIndex.insert(stroke, data.strokes.length - 1);
+      }
+    }
+    if (!incremental) data.media = parts.media;
+    data.deletedStrokes.length = 0;
+    Array.prototype.push.apply(data.deletedStrokes, parts.deletedStrokes);
+    data.deletedMedia = parts.deletedMedia;
+    data.tasks = parts.tasks;
+    data.deletedTasks = parts.deletedTasks;
+    data.tombstones = parts.tombstones;
+    data.shifts = parts.shifts;
+    data.fieldVersions = parts.fieldVersions;
+    data.penPresets = parts.penPresets ? normalizePenPresets(parts.penPresets) : data.penPresets;
+    const presetsChanged =
+      parts.penPresets != null &&
+      JSON.stringify(data.penPresets) !== JSON.stringify(this.penPresets);
+    data.recordings = parts.recordings;
+    data.deletedRecordings = parts.deletedRecordings;
+    data.title = parts.title;
+    data.pdfSource = parts.pdfSource;
+    data.background = parts.background;
+    data.recognition = parts.recognition;
+    data.modified = stored.modified;
+    data.lastSyncedEtag = stored.lastSyncedEtag;
+    data.synced = stored.synced;
+    // The editor shows this now: none of it is the user's doing
+    this.versions?.adopt(data);
+    // What came from storage is stored: it need not be sent again
+    this.strokeManager?.markStored?.([...added, ...changed]);
 
     // --- UPDATE MODULES ---
-    this.strokeManager.markDirty(); // The merged state needs to be saved back.
-    this.spatialIndex.build(inMemoryData.strokes);
-    this.mediaManager.setItems(inMemoryData.media);
-    this.renderer.setData(inMemoryData.strokes, inMemoryData.background);
-    this.renderer.showA4PageBreaks =
-      !inMemoryData.pdfSource && !this.mediaManager.getItems().some((i) => i.type === "pdf-page");
+    if (delta.strokesAhead && !this.readOnly) {
+      // The merged state needs to be saved back: strokes storage lacks go again
+      this.strokeManager.markDirty();
+      this.strokeManager.markUnstored?.(delta.strokes.missing);
+      // The Nextcloud app writes strokes only when asked: at the user's next pause
+      if (_IS_NEXTCLOUD) this.liveRefresh?.whenIdle(() => this.strokeManager?.forceSave());
+    }
+    if (incremental) {
+      // Nothing is repainted: only what arrived is drawn
+      this.renderer.drawAddedStrokes(added);
+    } else {
+      // Selections address strokes by index and overlays sit where items were
+      this._clearSelections();
+      this.spatialIndex.build(data.strokes);
+      this.mediaManager.setItems(data.media);
+      this.renderer.setData(data.strokes, data.background);
+      this.renderer.showA4PageBreaks =
+        !data.pdfSource && !this.mediaManager.getItems().some((i) => i.type === "pdf-page");
+      // Force redraw immediately to show updated state (we know we aren't drawing)
+      this.renderer.forceRedraw();
+      this._renderPdfControls();
+      // External changes moved strokes that undo commands address by index
+      this.historyManager?.clear();
+    }
+    // Someone else's ink or media below the end of the page: room to scroll to it
+    const needed = this._contentBottom() + CONTENT_PADDING_BELOW;
+    if (needed > this.contentHeight) this._expandCanvas(needed - this.contentHeight);
+    if (presetsChanged) {
+      this.penPresets = data.penPresets;
+      this.toolbar?.setPresets(this.penPresets);
+    }
+    // A recording someone else added or deleted: shown, and kept by the next
+    // save of this editor's own (on the Nextcloud app that save also removes
+    // every file it does not list)
+    if (delta.recordingsChanged && this.recordingManager) {
+      this.recordingManager.setRecordings(data.recordings);
+      this.soundDialog?.refresh?.();
+    }
+    if (delta.tasksAhead) this._saveTasks();
+    if (delta.tasksChanged) this._updateTaskCheckboxes();
+    if (!incremental || delta.tasksChanged || added.some((s) => s.type === "marker")) {
+      this._updateNavigatorSubjects();
+    }
 
-    // Force redraw immediately to show updated state (we know we aren't drawing)
-    this.renderer.forceRedraw();
-    this._renderPdfControls();
-    this._saveTasks();
-    this._updateTaskCheckboxes();
-    this._updateNavigatorSubjects();
+    // The owner deleted the note while it is open here: the merge kept what this
+    // user wrote (in the owner's recycle bin), but nothing more can be added, and
+    // this user cannot restore it (DESIGN §10.3 G)
+    if (stored.deleted && !this.readOnly && this.permissions && !this.permissions.canManage) {
+      this._becomeReadOnly(t("sharing.deletedByOwner.notice"));
+    }
 
-    // Clear history after sync (external changes invalidate undo commands)
-    this.historyManager?.clear();
+    const shown = !incremental || added.length > 0 || delta.tasksChanged || delta.recordingsChanged;
+    if (shown) {
+      console.log(
+        `[NoteCanvas] Live update applied (${incremental ? `${added.length} stroke(s) added` : "rebuilt"}). Stroke count: ${list(data.strokes).length}`,
+      );
+    }
+    return shown;
+  }
 
-    console.log(`[NoteCanvas] Live update applied. Stroke count: ${inMemoryData.strokes.length}`);
+  /** The lowest point of the note's ink and media, in content coordinates. @private */
+  _contentBottom() {
+    let bottom = this.spatialIndex.getContentBounds()?.maxY ?? 0;
+    for (const item of this.noteData.media ?? []) {
+      bottom = Math.max(bottom, (item.y || 0) + (item.height || 0));
+    }
+    return bottom;
+  }
+
+  /** Drop the lasso, task and media selections and their overlays. @private */
+  _clearSelections() {
+    this.renderer.setSelectedStrokes(new Set(), null);
+    this.selectedTaskId = null;
+    this.taskSelectionBounds = null;
+    this.selectionOverlay?.hide();
+    if (this.selectedMediaId) {
+      this.selectedMediaId = null;
+      this.renderer.setSelectedMedia(null);
+      this.mediaOverlay?.hide();
+    }
+  }
+
+  /**
+   * Stamp the user's edits of what a save is about to write, and return the
+   * note's version bookkeeping to send with it (DESIGN §10.7).
+   * @param {"strokes"|"media"|"tasks"|"recordings"|"penPresets"|"background"} what
+   * @returns {{tombstones?: object, shifts?: Array, fieldVersions?: object}|undefined}
+   * @private
+   */
+  _versionFields(what) {
+    if (!this.versions || !this.noteData || this.readOnly) return undefined;
+    const { kinds = [], fields = [] } = _SAVE_STAMPS[what] ?? {};
+    this.versions.stamp(this.noteData, { kinds, fields });
+    const { tombstones, shifts, fieldVersions } = this.noteData;
+    const out = {};
+    if (tombstones) out.tombstones = tombstones;
+    if (shifts?.length) out.shifts = shifts;
+    if (fieldVersions) out.fieldVersions = fieldVersions;
+    return out;
   }
 
   /**
@@ -488,9 +685,10 @@ export class NoteCanvas {
     this.activeSearchQuery = searchQuery;
 
     // Fetch note data
-    this.noteData = await getNote(noteId);
+    this.noteData = await getNote(noteId, { track: true });
     if (!this.noteData) {
       console.error("[NoteCanvas] Note not found:", noteId);
+      this.containerElement.innerHTML = ""; // drop the loading indicator
       return;
     }
 
@@ -503,26 +701,15 @@ export class NoteCanvas {
     if (!Array.isArray(this.noteData.deletedMedia)) this.noteData.deletedMedia = [];
     if (!Array.isArray(this.noteData.deletedTasks)) this.noteData.deletedTasks = [];
 
-    // Initialize pen presets
-    this.penPresets = this.noteData.penPresets || [
-      { width: 1.5, colorIndex: 0, type: "pen" },
-      { width: 2, colorIndex: 1, type: "pen" },
-      { width: 2, colorIndex: 2, type: "pen" },
-      { width: 2, colorIndex: 3, type: "pen" },
-      { width: 25, colorIndex: 0, type: "marker" }, // Yellow
-      { width: 25, colorIndex: 1, type: "marker" }, // Green
-      { width: 25, colorIndex: 2, type: "marker" }, // Orange
-    ];
+    // Decided once per load: the editor is built for what the user may do
+    const { canEdit, canManage } = await getNotebookPermissions(this.noteData.notebookId);
+    this.permissions = { canEdit, canManage };
+    this.readOnly = !canEdit;
 
-    // Migration: Ensure markers exist in presets for old notes
-    if (!this.penPresets.some((p) => p.type === "marker")) {
-      this.penPresets.push(
-        { width: 25, colorIndex: 0, type: "marker" },
-        { width: 25, colorIndex: 1, type: "marker" },
-        { width: 25, colorIndex: 2, type: "marker" },
-      );
-      this.noteData.penPresets = this.penPresets;
-    }
+    // Initialize pen presets: well-formed only (a shared note's presets were
+    // written by another user), markers added for notes from before them
+    this.penPresets = normalizePenPresets(this.noteData.penPresets);
+    if (this.noteData.penPresets != null) this.noteData.penPresets = this.penPresets;
 
     // Set initial pen settings to match first preset
     this.currentPenWidth = this.penPresets[0].width;
@@ -564,21 +751,7 @@ export class NoteCanvas {
     this.spatialIndex = new SpatialIndex(height || 800);
     this.spatialIndex.build(this.noteData.strokes);
 
-    // Calculate content dimensions from strokes
-    const contentBounds = this.spatialIndex.getContentBounds();
-    let maxContentY = contentBounds ? contentBounds.maxY : 0;
-
-    // Include media items (images, PDF pages) in content height calculation
-    if (this.noteData.media && this.noteData.media.length > 0) {
-      for (const item of this.noteData.media) {
-        const itemBottom = (item.y || 0) + (item.height || 0);
-        if (itemBottom > maxContentY) {
-          maxContentY = itemBottom;
-        }
-      }
-    }
-
-    this.contentHeight = Math.max(maxContentY + 500, height); // Add padding below content
+    this.contentHeight = Math.max(this._contentBottom() + CONTENT_PADDING_BELOW, height);
     const contentWidth = this.maxContentWidth;
 
     // Initialize MediaManager
@@ -598,6 +771,7 @@ export class NoteCanvas {
     this.selectionOverlay = new SelectionOverlay(this.scroller.getViewportElement(), {
       onCopy: () => this._copySelectedStrokes(),
       onMarkAsTask: () => this._markSelectedStrokesAsTask(),
+      onTaskProperties: () => this._openTaskPropertiesDialog(this.selectedTaskId),
       onRemoveTask: () => this._removeTaskFromSelectedStrokes(),
       onDelete: () => this._deleteSelectedStrokes(),
     });
@@ -606,8 +780,10 @@ export class NoteCanvas {
     this.noteData.tasks = this.noteData.tasks || [];
     this.taskCheckboxLayer = new TaskCheckboxLayer(this.scroller.getViewportElement(), {
       onToggle: (taskId, checked) => this._toggleTask(taskId, checked),
+      onCycleStatus: (taskId) => this._cycleTaskStatus(taskId),
       onTaskClick: (taskId) => this._selectTaskStrokes(taskId),
     });
+    this.taskCheckboxLayer.setReadOnly(this.readOnly);
 
     // Initialize PDF Text Layer Manager (for text selection in PDFs)
     this.pdfTextLayerManager = new PdfTextLayerManager(
@@ -633,6 +809,17 @@ export class NoteCanvas {
       this.noteData.strokes,
       this.noteData.deletedStrokes,
     );
+    this.strokeManager.readOnly = this.readOnly;
+    // Every save stamps the user's edits with versions (noteVersions.js): what
+    // the note holds now is the starting point
+    this.versions = new NoteVersioner();
+    this.versions.adopt(this.noteData);
+    this.strokeManager.beforeSave = (what) => this._versionFields(what);
+    // Tells the storage worker this editor may edit the note; it then keeps the
+    // user's last changes even if the share turns view only meanwhile
+    if (!this.readOnly) {
+      this.strokeManager.worker?.postMessage({ type: "OPEN_FOR_EDITING", noteId });
+    }
 
     // Initialize history manager for undo/redo
     this.historyManager = new HistoryManager({
@@ -643,20 +830,40 @@ export class NoteCanvas {
     });
     this.historyManager.setNoteCanvas(this);
 
-    // Initialize Text Editor Layer (WYSIWYG text editing)
-    this.textEditorLayer = new TextEditorLayer(
-      this.scroller.getViewportElement(),
-      scrollerContainer,
-      {
-        maxContentWidth: this.maxContentWidth,
-        onContentChange: (html) => this._onTextContentChange(html),
-        onHeightChange: (height) => this._onTextHeightChange(height),
-        historyManager: this.historyManager,
-        onTaskCreate: (taskId) => this._createTextTask(taskId),
-        onTaskToggle: (taskId, checked) => this._toggleTask(taskId, checked),
-      },
-    );
+    // Initialize the text layer (text boxes, WYSIWYG text editing)
+    this.textEditorLayer = new TextLayer(this.scroller.getViewportElement(), scrollerContainer, {
+      maxContentWidth: this.maxContentWidth,
+      onContentChange: (html) => this._onTextContentChange(html),
+      onHeightChange: (height) => this._onTextHeightChange(height),
+      historyManager: this.historyManager,
+      onTaskCreate: (taskId) => this._createTextTask(taskId),
+      onTaskToggle: (taskId, checked) => this._toggleTask(taskId, checked),
+      onTaskCycleStatus: (taskId) => this._cycleTaskStatus(taskId),
+      onTaskProperties: (taskId) => this._openTaskPropertiesDialog(taskId),
+      // Pasted or dropped images become page images (text boxes DESIGN §12)
+      onImageInsert: (files, at) => this.insertImageFiles(files, at, { select: true }),
+      getBackground: () => this.noteData?.background ?? "none",
+      isTapCancelled: () => this._textTapCancelled,
+      // While an image is selected a press is for it: drag it, or deselect it
+      isCanvasBusy: () => Boolean(this.selectedMediaId),
+    });
     this.textEditorLayer.init(this.noteData.content || "");
+    if (this.readOnly) this.textEditorLayer.setReadOnly(true);
+
+    // While the note is open a sync or a collaborator can change its text: every
+    // save names the stored text it replaces, and text stored by someone else is
+    // merged into the editor rather than overwritten (liveText.js)
+    this.liveText = new LiveText({
+      initial: this.noteData.content || "",
+      write: (html, expected) => this._writeText(html, expected),
+      read: () => this._readStoredText(),
+      getEditorText: () => this.textEditorLayer.getContent(),
+      setEditorText: (html) => this._adoptText(html),
+      mergeText: (texts) => this._mergeTextOffThread(texts),
+    });
+    // Answers to text requests (saves, reads) come back from the storage worker
+    this._textWorker = this.strokeManager.worker ?? null;
+    this._textWorker?.addEventListener("message", this._onWorkerMessage);
     this.textEditorLayer.setContentHeight(this.contentHeight);
 
     // Render text task checkboxes if any exist. Deferred to allow editor to initialize.
@@ -703,13 +910,38 @@ export class NoteCanvas {
     );
 
     // Create Toolbar
+    this.toolbarContainer = toolbarContainer;
+    this._createToolbar();
+
+    // Highlight search terms if provided
+    if (this.activeSearchQuery) {
+      this._highlightSearchTerms(this.activeSearchQuery);
+    }
+
+    this.isInitialized = true;
+    this._startLiveRefresh();
+    this._renderPdfControls();
+    await this._initNavigator(taskId);
+    this._initSoundDialog();
+
+    // Expose for debugging
+    window.__noteCanvas = this;
+  }
+
+  /**
+   * Build the toolbar for what the user may currently do with this note.
+   * @private
+   */
+  _createToolbar() {
     this.toolbar = new NoteToolbar(
-      toolbarContainer,
+      this.toolbarContainer,
       (mode) => {
         this._setMode(mode);
       },
       {
         penPresets: this.penPresets,
+        canEdit: this.permissions.canEdit,
+        canManage: this.permissions.canManage,
         onPresetChange: async (updatedPresets) => {
           this.penPresets = updatedPresets;
           this.noteData.penPresets = updatedPresets;
@@ -729,7 +961,11 @@ export class NoteCanvas {
             this.noteData.background = action.value;
             this.renderer.background = action.value;
             this.renderer.forceRedraw();
-            await updateNote(this.noteId, { background: action.value, modified: Date.now() });
+            await updateNote(this.noteId, {
+              background: action.value,
+              modified: Date.now(),
+              ...this._versionFields("background"),
+            });
           } else if (action.type === "export-pdf") {
             await this._exportPdf();
           } else if (action.type === "recognize-now") {
@@ -776,19 +1012,99 @@ export class NoteCanvas {
       colorIndex: this.currentPenColorIndex,
       type: this.currentPenType,
     });
+  }
 
-    // Highlight search terms if provided
-    if (this.activeSearchQuery) {
-      this._highlightSearchTerms(this.activeSearchQuery);
+  /**
+   * The share this note belongs to ended while it is open: stop accepting
+   * changes and say why. What was typed since the last save is lost (nothing can
+   * be saved into a share that is gone).
+   * @private
+   */
+  async _onShareEnded(event) {
+    if (!this._concernsOpenEditableNote(event)) return;
+    if (this.recordingManager?.isRecording()) {
+      const noteId = this.noteId;
+      await this._finishRecording();
+      if (this.noteId !== noteId || this.readOnly) return;
     }
+    this._becomeReadOnly(t("sharing.ended.noticeClean"));
+  }
 
-    this.isInitialized = true;
-    this._renderPdfControls();
-    await this._initNavigator(taskId);
-    this._initSoundDialog();
+  /** A running recording stopped and saved, before the editor turns read-only. @private */
+  _finishRecording() {
+    return (this.recordingManager?.finishRecording() ?? Promise.resolve()).catch((e) =>
+      console.error("[NoteCanvas] Saving the recording before turning read-only failed:", e),
+    );
+  }
 
-    // Expose for debugging
-    window.__noteCanvas = this;
+  /**
+   * The owner made the share this note belongs to view only while it is open.
+   * What the user typed is stored first: on this device it is kept (the editor
+   * opened the note with the right to edit, see StorageWorker), and the next sync
+   * lists it as changes the share no longer accepts, with the choice to discard
+   * them. On the Nextcloud app build there is no local copy to keep it in.
+   * @private
+   */
+  async _onAccessReduced(event) {
+    if (!this._concernsOpenEditableNote(event)) return;
+    const noteId = this.noteId;
+    await this._finishRecording();
+    await this.flushPendingSaves().catch((e) =>
+      console.error("[NoteCanvas] Saving before turning read-only failed:", e),
+    );
+    if (this.noteId !== noteId || this.readOnly) return;
+    this._becomeReadOnly(
+      t(_IS_NEXTCLOUD ? "sharing.reduced.noticeOnline" : "sharing.reduced.notice"),
+    );
+  }
+
+  /** Whether a share event is about the note open here, and it is still editable. @private */
+  _concernsOpenEditableNote(event) {
+    const notebookId = event?.detail?.notebookId;
+    return Boolean(this.noteData && !this.readOnly && notebookId === this.noteData.notebookId);
+  }
+
+  /**
+   * Stop accepting changes and say why.
+   * @param {string} message
+   * @private
+   */
+  _becomeReadOnly(message) {
+    // A stroke, erase or drag under way would otherwise finish on screen only
+    this._cancelActiveGesture();
+    this._cancelMediaDrag();
+    this.permissions = { canEdit: false, canManage: false };
+    this.readOnly = true;
+    this._setMode("pan");
+    this.strokeManager.readOnly = true;
+    this.taskCheckboxLayer?.setReadOnly(true);
+    this.textEditorLayer?.setReadOnly(true);
+    if (this.recordingManager) {
+      this.recordingManager.readOnly = true;
+      this.soundDialog?.refresh?.();
+    }
+    this._renderPdfControls(); // removes the PDF button
+    this.toolbar?.destroy();
+    this._createToolbar();
+    this._showReadOnlyBanner(message);
+  }
+
+  /** @private */
+  _showReadOnlyBanner(message) {
+    const scrollerContainer = this.containerElement.querySelector(
+      ".note-canvas__scroller-container",
+    );
+    if (!scrollerContainer) return;
+    const banner = document.createElement("div");
+    banner.className = "note-canvas__share-ended";
+    banner.setAttribute("role", "status");
+    banner.textContent = message;
+    const dismiss = document.createElement("button");
+    dismiss.className = "btn-secondary";
+    dismiss.textContent = t("sharing.ended.dismiss");
+    dismiss.addEventListener("click", () => banner.remove());
+    banner.appendChild(dismiss);
+    scrollerContainer.appendChild(banner);
   }
 
   /**
@@ -796,6 +1112,7 @@ export class NoteCanvas {
    * @param {string} source - 'picker' or 'camera'
    */
   async insertImage(source = "picker") {
+    if (this.readOnly) return;
     // Registered so destroy() can await it. Tracked as a set because several
     // inserts can legitimately overlap (the user picks again while the first is
     // still encoding), and each must be awaited independently.
@@ -814,24 +1131,12 @@ export class NoteCanvas {
    * @private
    */
   async _insertImage(source = "picker") {
-    // Declared outside the try so the catch can clean up exactly the
-    // placeholders this call created, and nothing a concurrent insert owns.
-    const placeholderIds = [];
-    try {
-      // Capture viewport position BEFORE opening the file dialog.
-      // The browser can reset scroll position while the OS dialog is open,
-      // and the centering offset must be accounted for (canvas is centered when
-      // narrower than the viewport — scrollLeft alone gives the wrong content X).
-      const scrollLeft = this.scroller.getScrollLeft();
-      const scrollTop = this.scroller.getScrollTop();
-      const { width: viewportWidth, height: viewportHeight } = this.scroller.getViewportSize();
-      const scaledContentWidth = this.maxContentWidth * this.zoomScale;
-      const offsetX =
-        scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
-      const centerX = (scrollLeft + viewportWidth / 2 - offsetX) / this.zoomScale;
-      const centerY = (scrollTop + viewportHeight / 2) / this.zoomScale;
+    // Capture viewport position BEFORE opening the file dialog.
+    // The browser can reset scroll position while the OS dialog is open.
+    const center = this._getImageInsertCenter();
 
-      let files = [];
+    let files = [];
+    try {
       if (source === "camera") {
         let file = null;
         try {
@@ -848,10 +1153,73 @@ export class NoteCanvas {
       } else {
         files = await pickImages(true);
       }
+    } catch (error) {
+      console.error("[NoteCanvas] Failed to insert image:", error);
+      return;
+    }
 
+    await this._insertImageFiles(files, { center });
+  }
+
+  /**
+   * The viewport centre in content coordinates, where an inserted image goes.
+   * The centering offset must be accounted for (canvas is centered when
+   * narrower than the viewport — scrollLeft alone gives the wrong content X).
+   * @private
+   */
+  _getImageInsertCenter() {
+    const scrollLeft = this.scroller.getScrollLeft();
+    const scrollTop = this.scroller.getScrollTop();
+    const { width: viewportWidth, height: viewportHeight } = this.scroller.getViewportSize();
+    const scaledContentWidth = this.maxContentWidth * this.zoomScale;
+    const offsetX =
+      scaledContentWidth < viewportWidth ? (viewportWidth - scaledContentWidth) / 2 : 0;
+    return {
+      x: (scrollLeft + viewportWidth / 2 - offsetX) / this.zoomScale,
+      y: (scrollTop + viewportHeight / 2) / this.zoomScale,
+    };
+  }
+
+  /**
+   * Insert image files as page images, as the insert button does: the text
+   * mode's paste and drop come here too (text boxes DESIGN §12), so a pasted
+   * picture can be moved, resized and cropped instead of sitting in the text.
+   * @param {File[]} files
+   * @param {{x: number, y: number}} [at] - Top-left corner of the first image in
+   *   content coordinates; omitted, the images are centred in the viewport
+   * @param {{select?: boolean}} [options] - select: select the last inserted image
+   * @returns {Promise<void>}
+   */
+  async insertImageFiles(files, at = null, { select = false } = {}) {
+    if (this.readOnly || !files?.length) return;
+    const run = this._insertImageFiles(files, at ? { topLeft: at } : {}, { select });
+    this._pendingImageInserts.add(run);
+    try {
+      return await run;
+    } finally {
+      this._pendingImageInserts.delete(run);
+    }
+  }
+
+  /**
+   * Insert already chosen files: placeholders first, then encode and store.
+   * @param {File[]} files
+   * @param {{center?: {x: number, y: number}, topLeft?: {x: number, y: number}}} place -
+   *   where the images go: centred on `center`, or with the first image's
+   *   top-left corner at `topLeft`; neither, the viewport centre
+   * @param {{select?: boolean}} [options]
+   * @private
+   */
+  async _insertImageFiles(files, place = {}, { select = false } = {}) {
+    // Declared outside the try so the catch can clean up exactly the
+    // placeholders this call created, and nothing a concurrent insert owns.
+    const placeholderIds = [];
+    try {
       if (files.length === 0) {
         return;
       }
+      const topLeft = place.topLeft ?? null;
+      const { x: centerX, y: centerY } = place.center ?? this._getImageInsertCenter();
 
       // Show a placeholder for every file up front, before any encoding or
       // storage work. processImageFile alone is three canvas decode/re-encode
@@ -867,8 +1235,9 @@ export class NoteCanvas {
           id: generateId(),
           type: "image",
           pending: true,
-          x: centerX - PLACEHOLDER_WIDTH / 4 + i * 20, // Offset slightly
-          y: centerY - PLACEHOLDER_HEIGHT / 4 + i * 20,
+          // Offset slightly
+          x: (topLeft ? topLeft.x : centerX - PLACEHOLDER_WIDTH / 4) + i * 20,
+          y: (topLeft ? topLeft.y : centerY - PLACEHOLDER_HEIGHT / 4) + i * 20,
           width: PLACEHOLDER_WIDTH / 2, // Insert at 50% scale initially
           height: PLACEHOLDER_HEIGHT / 2,
           rotation: 0,
@@ -901,11 +1270,12 @@ export class NoteCanvas {
             // reusing them would make the placeholder jump across the canvas.
             // Keeping the centre fixed means only the aspect ratio visibly
             // changes, which is all this refinement is for.
+            // Placed at a point (paste, drop): the top-left corner stays there.
             const newWidth = width / 2;
             const newHeight = height / 2;
             this.mediaManager.updateItem(placeholderId, {
-              x: item.x + (item.width - newWidth) / 2,
-              y: item.y + (item.height - newHeight) / 2,
+              x: topLeft ? item.x : item.x + (item.width - newWidth) / 2,
+              y: topLeft ? item.y : item.y + (item.height - newHeight) / 2,
               width: newWidth,
               height: newHeight,
             });
@@ -963,6 +1333,8 @@ export class NoteCanvas {
           // The placeholder is gone (note closed, or the insert was undone) —
           // the file is already stored, and orphan cleanup will collect it.
           if (!resolved) continue;
+          if (topLeft)
+            this._anchorInsertedImage(placeholder.id, topLeft.x + i * 20, topLeft.y + i * 20);
 
           insertedItems.push(this.mediaManager.getItems().find((it) => it.id === placeholder.id));
           this.renderer?.forceRedraw();
@@ -996,6 +1368,7 @@ export class NoteCanvas {
       // Record undo command for inserted images
       if (insertedItems.length > 0) {
         this.historyManager?.push(new InsertMediaCommand(insertedItems));
+        if (select && this.mediaManager) this._selectMediaById(insertedItems.at(-1).id);
         // First-ever image insert on this device: explain how to re-select an
         // image afterward. Images are canvas-drawn (no per-image DOM node to
         // point an arrow at), so this callout is shown centered with no arrow
@@ -1020,6 +1393,21 @@ export class NoteCanvas {
       // deleting those would discard successfully inserted photos.
       this._clearPendingMedia(placeholderIds);
     }
+  }
+
+  /**
+   * Put a resolved image's top-left corner at a point, kept on the page
+   * horizontally (resolving keeps the placeholder's centre, which suits an
+   * image centred in the viewport but not one placed at the caret).
+   * @private
+   */
+  _anchorInsertedImage(id, x, y) {
+    const item = this.mediaManager?.getItems().find((it) => it.id === id);
+    if (!item) return;
+    this.mediaManager.updateItem(id, {
+      x: Math.max(0, Math.min(x, this.maxContentWidth - item.width)),
+      y: Math.max(0, y),
+    });
   }
 
   /**
@@ -1113,6 +1501,7 @@ export class NoteCanvas {
    * Insert a PDF into the note
    */
   async insertPdf() {
+    if (this.readOnly) return;
     if (!this.noteData) return;
     // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
     const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
@@ -1202,7 +1591,7 @@ export class NoteCanvas {
         }
       } catch (error) {
         console.error("[NoteCanvas] Failed to insert PDF:", error);
-        alert(`Failed to import PDF: ${error.message}`);
+        await showAlertDialog(t("canvas.pdf.importError"), error.message);
       } finally {
         progress.close();
         this._pendingPdfImport = null;
@@ -1227,6 +1616,8 @@ export class NoteCanvas {
     // Check for pdfSource OR existence of pdf-page items (fallback for data consistency)
     const hasPdfPages = this.mediaManager?.getItems().some((i) => i.type === "pdf-page");
     if (!this.noteData.pdfSource && !hasPdfPages) return;
+    // The PDF menu only edits the note (removing the PDF, its pages)
+    if (this.readOnly) return;
 
     const scrollerContainer = this.containerElement.querySelector(
       ".note-canvas__scroller-container",
@@ -1345,6 +1736,7 @@ export class NoteCanvas {
    * @private
    */
   _showPdfOptions(x, y) {
+    if (this.readOnly) return;
     const existing = document.getElementById("pdf-options-menu");
     if (existing) existing.remove();
 
@@ -1736,10 +2128,8 @@ export class NoteCanvas {
               bounds: { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
             };
           }
-          // Text tasks: approximate position from DOM if available
-          const el = this.textEditorLayer?._editorElement?.querySelector(
-            `[data-task-id="${t.id}"]`,
-          );
+          // Text tasks: approximate position from DOM if available (any text box)
+          const el = this.textEditorLayer?.findTaskElement(t.id);
           if (!el) {
             return null;
           }
@@ -1806,6 +2196,7 @@ export class NoteCanvas {
     if (!scrollerContainer) return;
 
     this.recordingManager = new RecordingManager({
+      readOnly: this.readOnly,
       onChange: () => {},
       onSave: ({ recordings, deletedRecordings }) => {
         this._saveRecordingChanges(recordings, deletedRecordings);
@@ -1822,7 +2213,7 @@ export class NoteCanvas {
    * @private
    */
   _saveRecordingChanges(recordings, deletedRecordings) {
-    if (!this.noteId) return;
+    if (!this.noteId || this.readOnly) return;
     this.noteData.recordings = recordings;
     this.noteData.deletedRecordings = deletedRecordings;
     this.mediaChanged = true;
@@ -1845,8 +2236,9 @@ export class NoteCanvas {
           return uploadPromise;
         });
       const noteId = this.noteId;
+      const versionFields = this._versionFields("recordings");
       Promise.all(uploads).then(async () => {
-        await updateNote(noteId, { recordings, deletedRecordings }).catch((e) =>
+        await updateNote(noteId, { recordings, deletedRecordings, ...versionFields }).catch((e) =>
           console.error("[NoteCanvas] WebDAV recordings save failed:", e),
         );
         // Remove server binaries for deleted recordings. Include media + pdfSource
@@ -1967,6 +2359,8 @@ export class NoteCanvas {
   _setupEventListeners() {
     // Theme changes
     window.addEventListener("datachange", this._onDataChange);
+    window.addEventListener(SHARE_ENDED_EVENT, this._onShareEnded);
+    window.addEventListener(SHARE_ACCESS_REDUCED_EVENT, this._onAccessReduced);
     window.addEventListener("themechange", this._onThemeChange);
     window.addEventListener("recognition-job-complete", this._onRecognitionJobComplete);
 
@@ -1996,6 +2390,18 @@ export class NoteCanvas {
     window.addEventListener("pointerup", this._onWindowPointerEnd, true);
     window.addEventListener("pointercancel", this._onWindowPointerEnd, true);
     document.addEventListener("visibilitychange", this._onVisibilityChange);
+
+    // Input of any kind holds off the live check (liveRefresh.js). Capture and
+    // passive: they only note the time, and nothing can stop them
+    viewport.addEventListener("pointerdown", this._onUserInput, { capture: true, passive: true });
+    viewport.addEventListener("pointerup", this._onUserInput, { capture: true, passive: true });
+    // A pen hovering over the page is about to write: nothing may start now
+    viewport.addEventListener("pointermove", this._onPenHover, { capture: true, passive: true });
+    window.addEventListener("keydown", this._onUserInput, { capture: true, passive: true });
+    window.addEventListener("input", this._onUserInput, { capture: true, passive: true });
+    window.addEventListener("online", this._onConnectivityChange);
+    window.addEventListener("offline", this._onConnectivityChange);
+    window.addEventListener(SHARING_PREF_EVENT, this._onSharingPreference);
 
     // Right-click paste menu (stopPropagation prevents the global window prevention in main.js)
     viewport.addEventListener("contextmenu", (e) => {
@@ -2066,7 +2472,7 @@ export class NoteCanvas {
 
     // A detail-less event means "something changed somewhere" (sync, overview,
     // recycle bin). It is not addressed to a note, so it still applies to ours —
-    // the hasContentChanged() check below decides whether anything really moved.
+    // _takeInNote decides whether anything really moved.
     if (noteId && noteId !== this.noteId) return false;
 
     // Local saves (our own writes) must not reload: applyLiveUpdate() rebuilds
@@ -2074,24 +2480,218 @@ export class NoteCanvas {
     // wipes undo after every stroke.
     if (source === "local") return false;
 
-    // The user is actively drawing. Defer until they finish, or the reload
-    // would yank noteData out from under the in-progress stroke.
-    if (this.inputHandler?.isDrawing) {
-      console.log("[NoteCanvas] Data change detected while drawing. Deferring update.");
-      this.pendingLiveUpdate = true;
+    // The user is writing: nothing is read, merged or redrawn until they pause
+    // (the live check picks it up then, see _liveCheck)
+    if (this._deferWhileWriting()) {
+      console.log("[NoteCanvas] Data change detected while writing. Deferring update.");
       return false;
     }
+    return this._takeInExternalChange();
+  }
 
-    // Ignore metadata-only churn (e.g. a sync stamping etags) — reloading on
-    // those is what used to make strokes vanish mid-session.
-    const openNoteId = this.noteId;
-    if (!(await this.hasContentChanged(openNoteId))) return false;
+  /**
+   * Take in what someone else stored: the text first, then strokes and the rest.
+   * @returns {Promise<boolean>} true if the strokes were updated
+   * @private
+   */
+  async _takeInExternalChange() {
+    const reconciledNoteId = this.noteId;
+    await this.liveText?.reconcile();
+    if (this.noteId !== reconciledNoteId) return false;
 
-    // destroy() may have run during the await above.
-    if (this.noteId !== openNoteId) return false;
+    // The user started drawing meanwhile. Defer until they pause, or the reload
+    // would yank noteData out from under the in-progress stroke.
+    if (this._deferWhileWriting()) return false;
 
-    await this.applyLiveUpdate();
+    // What changed is decided stroke by stroke (_takeInNote): metadata-only churn
+    // (a sync stamping etags) redraws nothing. A stroke-count check used to stand
+    // here and missed every change that keeps the count: a moved or recoloured
+    // stroke, one erased and one drawn.
+    return this.applyLiveUpdate();
+  }
+
+  /**
+   * Whether the user is writing now (a stroke under way, or input within the
+   * live check's quiet period). If so, what storage holds is taken in at their
+   * next pause instead.
+   * @private
+   */
+  _deferWhileWriting() {
+    const writing = this.liveRefresh ? !this.liveRefresh.isIdle() : this.inputHandler?.isDrawing;
+    if (!writing) return false;
+    this.pendingLiveUpdate = true;
+    this.liveRefresh?.soon();
     return true;
+  }
+
+  /**
+   * Start looking now and then for someone else's changes to this note
+   * (liveRefresh.js decides when; _liveCheck what).
+   * @private
+   */
+  _startLiveRefresh() {
+    this.liveRefresh = new LiveRefresh({
+      check: () => this._liveCheck(),
+      // Looking for others' changes belongs to notebook sharing (a preview, off by
+      // default): off, the open note is refreshed only by the periodic sync
+      isEnabled: () => isSharingEnabled(),
+      isBusy: () =>
+        Boolean(this.inputHandler?.isDrawing) ||
+        this.activePointers.size > 0 ||
+        Boolean(this.insertSpaceState || this.transformState || this.mediaDragState),
+    });
+    this.liveRefresh.start();
+  }
+
+  /**
+   * One look for someone else's changes, run only while the user pauses.
+   * Native: when the notebook changed on the server, a silent sync, whose
+   * `datachange` brings the changes in (handleExternalDataChange). Nextcloud
+   * app: the note file's etag, and the note itself only when it changed.
+   * @returns {Promise<string|undefined>} "deferred" to look again at the next pause
+   * @private
+   */
+  async _liveCheck() {
+    if (!this.isInitialized || !this.noteId) return undefined;
+    // A change announced while the user was writing comes first
+    if (this.pendingLiveUpdate) {
+      this.pendingLiveUpdate = false;
+      await this._takeInExternalChange();
+      return undefined;
+    }
+    if (!isSharingEnabled()) return undefined;
+    if (_IS_NEXTCLOUD) return this._liveCheckNextcloud();
+    // The open note synced by itself, its work in the storage worker (review P4, 4.3)
+    if (this.strokeManager?.worker) {
+      const outcome = await this._liveSyncOpenNote();
+      if (outcome !== "full") return outcome;
+      // What that does not handle takes the notebook's full sync, as before, but
+      // not at every look: a look comes every few seconds, a full sync is heavy
+      if (Date.now() - this._lastFullLiveSync < FULL_LIVE_SYNC_INTERVAL_MS) return "unchanged";
+      this._lastFullLiveSync = Date.now();
+    }
+    const { syncIfNotebookChanged } = await import("../../modules/autoSync.js");
+    return syncIfNotebookChanged(this.noteData?.notebookId ?? null, {
+      isIdle: () => this.liveRefresh?.isIdle() ?? true,
+      // What the user wrote here goes up at their pause, not only when the note closes
+      noteId: this.readOnly ? null : this.noteId,
+    });
+  }
+
+  /**
+   * Native: sync the open note alone (liveNoteSync.js) and take in what it
+   * brought. The delta is applied at once if the user still pauses; otherwise it
+   * is taken in at the next pause (from storage, where the sync put it).
+   * @returns {Promise<string>} the sync's outcome; "full" when the full sync must run
+   * @private
+   */
+  async _liveSyncOpenNote() {
+    const noteId = this.noteId;
+    const { liveSyncOpenNote } = await import("../../modules/liveNoteSync.js");
+    const { outcome, delta } = await liveSyncOpenNote({
+      noteId,
+      notebookId: this.noteData?.notebookId ?? null,
+      ask: (message) => this._askWorker({ ...message, key: this._encryptionKey() }),
+      view: () => this._editorView(),
+      isIdle: () => this.liveRefresh?.isIdle() ?? true,
+    });
+    if (delta && this.noteId === noteId && this.isInitialized && !this._deferWhileWriting()) {
+      perfSync("take-in apply", () => this._applyTakeIn(delta));
+      // The text came with it into storage: LiveText merges it (off the main thread)
+      if (this.liveText && delta.stored.content !== this.liveText.expected) {
+        this.liveText.reconcile();
+      }
+    }
+    return outcome;
+  }
+
+  /**
+   * The Nextcloud app's look: the server holds the note, so a changed etag means
+   * someone else saved it. The note is then read once, and its strokes and text
+   * are taken in, and the storage layer told so, in one synchronous step: no save
+   * can come between that would merge again with what the editor already shows,
+   * or overwrite it with an editor that does not show it yet.
+   * @private
+   */
+  async _liveCheckNextcloud() {
+    const noteId = this.noteId;
+    const seen = await remoteNoteChange(noteId);
+    if (!seen || this.noteId !== noteId) return undefined;
+    const later = (reason) => {
+      console.debug(`[NoteCanvas] Live check: change found, taken in later (${reason})`);
+      return "deferred";
+    };
+    if (!this.liveRefresh?.isIdle()) return later("the user is writing");
+    if (this.liveText && !this.liveText.canTakeIn) return later("the text is being reconciled");
+
+    // Read, parsed and merged in the note-file worker, strokes and text alike;
+    // only the delta comes back (review P4, 4.7)
+    const text = this.liveText?.snapshot() ?? null;
+    const read = await perfAsync("live take-in (worker)", () =>
+      takeInStoredNote(noteId, this._editorView(), text),
+    );
+    if (!read || this.noteId !== noteId || !this.isInitialized) return undefined;
+    // A save of ours came between: it merged with what it found and announced
+    // that ("merge" datachange), so the editor takes it in that way
+    if (!noteSyncUnchanged(noteId, seen)) {
+      console.debug("[NoteCanvas] Live check: a save of ours merged the change meanwhile");
+      return undefined;
+    }
+    if (!this.liveRefresh?.isIdle()) return later("the user is writing");
+    if (this.liveText && !this.liveText.canTakeIn) return later("the text is being reconciled");
+    // Typed since the text was sent: the merge no longer fits it
+    if (text && this.liveText.snapshot().editorText !== text.editorText) {
+      return later("the text changed meanwhile");
+    }
+
+    perfSync("take-in apply", () => {
+      this._applyTakeIn(read.delta);
+      if (read.text) {
+        this.liveText.applyMerged({
+          remote: read.text.remote,
+          merged: read.text.merged,
+          editorText: text.editorText,
+        });
+      }
+    });
+    adoptRemoteNote(noteId, {
+      etag: read.etag,
+      base: this.liveText ? this.liveText.baseline : read.delta.stored.content,
+    });
+    return "taken";
+  }
+
+  /** Pen, touch, mouse or key input: the live check waits for the user to pause. */
+  _onUserInput(event) {
+    // Typing into a field outside the note (a dialog, the search box) is not writing
+    if (event?.type === "keydown" || event?.type === "input") {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        !this.containerElement?.contains(target) &&
+        target.closest("input, textarea, select, [contenteditable]")
+      ) {
+        return;
+      }
+    }
+    this.liveRefresh?.noteInput();
+    if (event?.type === "pointerdown") notePenDown();
+    else if (event?.type === "pointerup") notePenUp();
+  }
+
+  /**
+   * A pen in the air over the canvas (no button, no contact): writing is about
+   * to resume, so it counts as input. It arrives before the pen touches down,
+   * which keeps every look and take-in away from that moment (review P4, 4.4).
+   * Touch has no hover. One assignment per event.
+   */
+  _onPenHover(event) {
+    if (event.pointerType === "pen" && event.buttons === 0) this.liveRefresh?.noteInput();
+  }
+
+  /** Online again (or offline): the live check resumes (or stops). */
+  _onConnectivityChange() {
+    this.liveRefresh?.wake();
   }
 
   /**
@@ -2203,38 +2803,139 @@ export class NoteCanvas {
    *   state (the paired MarkTaskCommand manages the records).
    */
   _onTextContentChange(html, { skipTaskCleanup = false } = {}) {
+    if (this.readOnly) return;
     this.noteData.content = html;
     this.textChanged = true;
 
-    if (import.meta.env.VITE_PLATFORM === "nextcloud") {
-      // In NC build the worker is disabled — save content directly to WebDAV.
-      // Text is debounced by TextEditorLayer before calling here, so no extra debounce needed.
-      this._pendingTextSave = updateNote(this.noteId, { content: html }).catch((e) =>
-        console.error("[NoteCanvas] WebDAV text save failed:", e),
-      );
-    } else if (this.strokeManager?.worker) {
-      // Save via worker (reuse StrokeManager's worker for sequential message processing)
-      let key = null;
-      if (isAppUnlocked()) {
-        try {
-          key = getEncryptionKey();
-        } catch (_e) {
-          // Key not available
-        }
-      }
-
-      this.strokeManager.worker.postMessage({
-        type: "SAVE_CONTENT",
-        noteId: this.noteId,
-        content: html,
-        key,
-      });
-    }
+    if (this.liveText) this.liveText.save(html);
+    else this._writeText(html);
 
     // Clean up orphaned text tasks (spans removed by editing)
     if (!skipTaskCleanup && this.textEditorLayer?.cleanupOrphanedTextTasks(this.noteData.tasks)) {
       this._saveTasks();
       this._updateNavigatorSubjects();
+    }
+  }
+
+  /**
+   * Store the note's text.
+   * @param {string} html
+   * @param {string} [expected] - the stored text this replaces; the native worker
+   *   refuses the write when storage holds something else by now
+   * @returns {Promise<"saved"|"stale"|"failed">}
+   * @private
+   */
+  _writeText(html, expected) {
+    if (_IS_NEXTCLOUD) {
+      // In NC build the worker is disabled — save content directly to WebDAV.
+      // Text is debounced by TextLayer before calling here, so no extra debounce needed.
+      // The write merges with what the server holds (storage.webdav.js), and a merge
+      // is announced as a "merge" datachange, which reconciles the editor.
+      const saved = updateNote(this.noteId, { content: html }).then(
+        () => "saved",
+        (e) => {
+          console.error("[NoteCanvas] WebDAV text save failed:", e);
+          return "failed";
+        },
+      );
+      this._pendingTextSave = saved;
+      return saved;
+    }
+    const worker = this.strokeManager?.worker;
+    if (!worker) return Promise.resolve("failed");
+    // Save via worker (reuse StrokeManager's worker for sequential message processing)
+    return this._askWorker({
+      type: "SAVE_CONTENT",
+      noteId: this.noteId,
+      content: html,
+      expected,
+      key: this._encryptionKey(),
+    });
+  }
+
+  /**
+   * Post a request to the storage worker and wait for its answer (null when the
+   * note closes first).
+   * @private
+   */
+  _askWorker(message) {
+    const requestId = ++this._nextContentRequest;
+    return new Promise((resolve) => {
+      this._contentRequests.set(requestId, resolve);
+      this.strokeManager.worker.postMessage({ ...message, requestId });
+    });
+  }
+
+  /**
+   * The note's stored text, read after every write issued so far.
+   * @returns {Promise<{content: string, author?: string}|null>} null when unreadable
+   * @private
+   */
+  async _readStoredText() {
+    if (_IS_NEXTCLOUD) {
+      // Our own pending writes first (readStoredNoteText flushes them), so the read
+      // cannot mistake them for someone else's; parsed in the note-file worker
+      return readStoredNoteText(this.noteId);
+    }
+    if (!this.strokeManager?.worker) return null;
+    // The worker answers in queue order, i.e. after every save posted before this
+    const answer = await this._askWorker({
+      type: "READ_CONTENT",
+      noteId: this.noteId,
+      key: this._encryptionKey(),
+    });
+    return typeof answer?.content === "string"
+      ? { content: answer.content, author: answer.author ?? undefined }
+      : null;
+  }
+
+  /**
+   * LiveText's three-way merge, off the main thread: the storage worker (native)
+   * or the note-file worker (Nextcloud app).
+   * @returns {Promise<string|null>}
+   * @private
+   */
+  async _mergeTextOffThread(texts) {
+    if (_IS_NEXTCLOUD) {
+      const { runNoteFileOp } = await import("../../modules/workers/noteFileClient.js");
+      return runNoteFileOp("mergeText", texts);
+    }
+    if (!this.strokeManager?.worker) return null;
+    const answer = await this._askWorker({ type: "MERGE_TEXT", noteId: this.noteId, ...texts });
+    return answer?.merged ?? null;
+  }
+
+  /** @private */
+  _onWorkerMessage(event) {
+    const message = event?.data;
+    if (!WORKER_ANSWERS.has(message?.type)) return;
+    const resolve = this._contentRequests.get(message.requestId);
+    if (!resolve) return;
+    this._contentRequests.delete(message.requestId);
+    resolve(message.type === "CONTENT_SAVED" ? message.outcome : message);
+  }
+
+  /**
+   * Show text that came from storage (merged with the user's own edits).
+   * @param {string} html
+   * @private
+   */
+  _adoptText(html) {
+    this.noteData.content = html;
+    this.textEditorLayer.replaceContent(html);
+    this.textEditorLayer.renderTaskCheckboxes(this.noteData.tasks);
+    // Undo steps were recorded against the old text; replaying one would undo the other version
+    this.historyManager?.clear();
+    if (this.activeSearchQuery) this._highlightSearchTerms(this.activeSearchQuery);
+  }
+
+  /** The local encryption key, when the app is unlocked. @private */
+  _encryptionKey() {
+    if (!isAppUnlocked()) return null;
+    try {
+      return getEncryptionKey();
+    } catch (_e) {
+      return null; // Key not available
     }
   }
 
@@ -2349,6 +3050,8 @@ export class NoteCanvas {
    * @param {string} newMode - 'pan' | 'draw' | 'eraser'
    */
   _setMode(newMode) {
+    // A viewer can only look around
+    if (this.readOnly) newMode = "pan";
     this.mode = newMode;
     this.autoSwitchedToDrawMode = false;
     this.lassoPoints = [];
@@ -2596,21 +3299,26 @@ export class NoteCanvas {
           }
         });
 
-        if (affectedStrokeIds.length > 0 || affectedMediaIds.length > 0) {
-          // Create and push command BEFORE changing data
-          // startY lets the command move recognition bands with the ink they
-          // describe; without it they would point at whatever moved into place.
-          const command = new ShiftContentCommand(
-            yShift,
-            affectedStrokeIds,
-            affectedMediaIds,
-            startY,
-          );
-          this.historyManager?.push(command);
+        // Also with nothing of this editor's below the line: the shift is
+        // recorded, so what someone else drew there moves too (DESIGN §10.7 D)
+        // Create and push command BEFORE changing data
+        // startY lets the command move recognition bands with the ink they
+        // describe; without it they would point at whatever moved into place.
+        // Text boxes below the line move too (text boxes DESIGN §7); typing
+        // still waiting to become an undo step goes first, so undo order holds
+        this.textEditorLayer?.flushHistory?.();
+        const affectedBoxIds = this.textEditorLayer?.boxIdsBelow?.(startY) ?? [];
+        const command = new ShiftContentCommand(
+          yShift,
+          affectedStrokeIds,
+          affectedMediaIds,
+          startY,
+          affectedBoxIds,
+        );
+        this.historyManager?.push(command);
 
-          // Apply the shift
-          command.redo(this);
-        }
+        // Apply the shift
+        command.redo(this);
       }
 
       this.insertSpaceState = null;
@@ -2640,6 +3348,7 @@ export class NoteCanvas {
         } else {
           this._commitPartEraserBatch();
         }
+        this._saveErasure();
       } else if (this.mode === "lasso") {
         this._handleLassoEnd();
       }
@@ -2673,18 +3382,28 @@ export class NoteCanvas {
       // Record undo command for drawing
       this.historyManager?.push(new DrawStrokeCommand(stroke, newIndex));
 
+      // The Nextcloud app writes strokes only when asked (StrokeManager._save).
+      // Ask at the user's next pause: collaborators see the stroke without
+      // writing ever waiting for a save.
+      if (_IS_NEXTCLOUD) this.liveRefresh?.whenIdle(() => this.strokeManager?.forceSave());
+
       if (stroke.type === "marker") {
         this._updateNavigatorSubjects();
       }
     }
 
-    // After stroke is finished, check if a deferred update is pending.
+    // After stroke is finished, check if a deferred update is pending. It waits
+    // for the user to pause (the next stroke usually follows at once).
     if (this.pendingLiveUpdate) {
-      this.pendingLiveUpdate = false;
-      console.log("[NoteCanvas] Applying deferred live update after stroke end.");
-      this.applyLiveUpdate().catch((err) => {
-        console.error("Failed to apply deferred live update:", err);
-      });
+      if (this.liveRefresh) {
+        this.liveRefresh.soon();
+      } else {
+        this.pendingLiveUpdate = false;
+        console.log("[NoteCanvas] Applying deferred live update after stroke end.");
+        this.applyLiveUpdate().catch((err) => {
+          console.error("Failed to apply deferred live update:", err);
+        });
+      }
     }
   }
 
@@ -2693,6 +3412,9 @@ export class NoteCanvas {
    * @private
    */
   _onKeyDown(e) {
+    // Every shortcut here changes the note
+    if (this.readOnly) return;
+
     // Undo: Ctrl+Z (or Cmd+Z on Mac)
     if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
       e.preventDefault();
@@ -2776,6 +3498,7 @@ export class NoteCanvas {
     this._canvasLongPressTimer = setTimeout(() => {
       this._canvasLongPressTimer = null;
       this._canvasLongPressStart = null;
+      this._textTapCancelled = true;
       this._showPasteMenu(clientX, clientY);
     }, 500);
   }
@@ -2827,7 +3550,7 @@ export class NoteCanvas {
    * @private
    */
   _onPointerMoveHover(e) {
-    if (e.pointerType !== "mouse") return;
+    if (e.pointerType !== "mouse" || this.readOnly) return;
     // Coalesce to one hit-test per frame.
     this._pendingHoverEvent = e;
     if (this._hoverRafId) return;
@@ -2893,6 +3616,8 @@ export class NoteCanvas {
 
   _triggerLongPress(item) {
     this.longPressTimer = null;
+    // Selecting an image is what this press did: the text layer must not take it as a tap
+    this._textTapCancelled = true;
 
     // Select the item
     this.selectedMediaId = item.id;
@@ -2919,6 +3644,8 @@ export class NoteCanvas {
    * @returns {{ consumed: boolean, startedDrag: boolean }} Result of interaction check
    */
   _handleMediaInteraction(x, y, clientX, clientY) {
+    // Selecting media is how it gets moved, cropped and deleted
+    if (this.readOnly) return { consumed: false };
     const hitItem = this.mediaManager.hitTest(x, y);
 
     // Check handles first
@@ -3220,6 +3947,9 @@ export class NoteCanvas {
       id: generateId(),
       type: "stroke",
       strokeIds: indices.map((i) => this.noteData.strokes[i].id),
+      status: TASK_STATUS.OPEN,
+      priority: TASK_PRIORITY.NONE,
+      dueDate: "",
       checked: false,
       created: now,
       modified: now,
@@ -3368,7 +4098,8 @@ export class NoteCanvas {
    * @private
    */
   _showPasteMenu(clientX, clientY) {
-    if (!AppClipboard.canPasteInMode(this.mode)) return;
+    // A viewer is always in pan mode, where strokes can be pasted otherwise
+    if (this.readOnly || !AppClipboard.canPasteInMode(this.mode)) return;
 
     const { x: contentX, y: contentY } = this.inputHandler.getContentCoordinates(clientX, clientY);
 
@@ -3394,6 +4125,7 @@ export class NoteCanvas {
    * @private
    */
   _pasteAtContentPoint(contentX, contentY) {
+    if (this.readOnly) return;
     const item = AppClipboard.paste();
     if (!item) return;
 
@@ -3461,6 +4193,7 @@ export class NoteCanvas {
    * @private
    */
   _selectTaskStrokes(taskId) {
+    if (this.readOnly) return;
     const task = this.noteData.tasks.find((t) => t.id === taskId);
     if (!task || task.type !== "stroke") return;
 
@@ -3536,8 +4269,15 @@ export class NoteCanvas {
   _toggleTask(taskId, checked) {
     const task = this.noteData.tasks.find((t) => t.id === taskId);
     if (!task) return;
+    if (this.readOnly) {
+      // The checkbox already flipped on screen: put it back
+      this._updateTaskCheckboxes();
+      this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
+      return;
+    }
 
     task.checked = checked;
+    task.status = checked ? TASK_STATUS.DONE : TASK_STATUS.OPEN;
     task.modified = Date.now();
     this._saveTasks();
 
@@ -3549,10 +4289,66 @@ export class NoteCanvas {
   }
 
   /**
+   * Cycle task through states: open -> doing -> done -> open
+   * @param {string} taskId
+   * @private
+   */
+  _cycleTaskStatus(taskId) {
+    const task = this.noteData.tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const currentStatus = normalizeTaskStatus(task);
+    const nextStatus = getNextTaskStatus(currentStatus);
+    task.status = nextStatus;
+    task.checked = isTaskCompleted(nextStatus);
+    task.modified = Date.now();
+    this._saveTasks();
+
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
+
+    this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
+  }
+
+  /**
+   * Open the Task Properties modal dialog
+   * @param {string} taskId
+   * @private
+   */
+  async _openTaskPropertiesDialog(taskId) {
+    if (!taskId) return;
+    const task = this.noteData.tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const { showTaskPropertiesDialog } = await import("../TaskPropertiesDialog.js");
+    const updated = await showTaskPropertiesDialog(task, {
+      details: deriveTaskDetails(this.noteData, task),
+      suggestedTitle: deriveSuggestedTitle(this.noteData, task),
+    });
+    if (!updated) return;
+
+    task.status = updated.status;
+    task.checked = isTaskCompleted(updated.status);
+    task.priority = updated.priority;
+    task.dueDate = updated.dueDate;
+    if (updated.title !== undefined) {
+      task.title = updated.title;
+      task.label = updated.title;
+    }
+    task.modified = Date.now();
+    this._saveTasks();
+
+    this._updateTaskCheckboxes();
+    this._updateNavigatorSubjects();
+    this.textEditorLayer?.renderTaskCheckboxes(this.noteData.tasks);
+  }
+
+  /**
    * Save tasks to storage
    * @private
    */
   _saveTasks() {
+    if (this.readOnly) return;
     if (_IS_NEXTCLOUD) {
       // Coalesced: scratch-erase calls this via _cleanupOrphanedTasks on every
       // gesture, and tasks/deletedTasks are re-sent in full each time. Using the
@@ -3561,6 +4357,7 @@ export class NoteCanvas {
       updateNoteCoalesced(this.noteId, {
         tasks: this.noteData.tasks,
         deletedTasks: this.noteData.deletedTasks,
+        ...this._versionFields("tasks"),
       }).catch((e) => console.error("[NoteCanvas] WebDAV tasks save failed:", e));
       return;
     }
@@ -3573,29 +4370,36 @@ export class NoteCanvas {
           // Key not available
         }
       }
+      const versionFields = this._versionFields("tasks");
       this.strokeManager.worker.postMessage({
         type: "SAVE_TASKS",
         noteId: this.noteId,
         tasks: this.noteData.tasks,
         deletedTasks: this.noteData.deletedTasks,
+        versionFields,
         key,
       });
     }
   }
 
   /**
-   * Create a text task (called from TextEditorLayer)
+   * Create a text task (called from TextLayer)
    * @param {string} taskId
    * @private
    */
   _createTextTask(taskId) {
+    if (this.readOnly) return;
+    const now = Date.now();
     const task = {
       id: taskId,
       type: "text",
       strokeIds: [],
+      status: TASK_STATUS.OPEN,
+      priority: TASK_PRIORITY.NONE,
+      dueDate: "",
       checked: false,
-      created: Date.now(),
-      modified: Date.now(),
+      created: now,
+      modified: now,
     };
     this.noteData.tasks.push(task);
     this._saveTasks();
@@ -3640,6 +4444,7 @@ export class NoteCanvas {
    * Delete the currently selected media item
    */
   async deleteSelectedMedia(id = null) {
+    if (this.readOnly) return;
     const targetId = id || this.selectedMediaId;
     if (!targetId) return;
 
@@ -3772,6 +4577,7 @@ export class NoteCanvas {
    *   for the run that actually executes (used by the PDF import dialog).
    */
   _saveMediaChanges(onProgress) {
+    if (this.readOnly) return Promise.resolve();
     if (!this.noteId || !this.mediaManager || !this.noteData) return Promise.resolve();
 
     if (onProgress) this._mediaSaveProgress = onProgress;
@@ -3857,6 +4663,8 @@ export class NoteCanvas {
     );
 
     if (_IS_NEXTCLOUD) {
+      // Stamped now, before the uploads: the editor may change more meanwhile
+      const versionFields = this._versionFields("media");
       const notebookId = noteData.notebookId ?? null;
       // Deduplicate by fileId — pdf-page items all share the same fileId (the PDF blob).
       // pdfSource is the same file and is uploaded separately below, so skip it here too.
@@ -3897,6 +4705,7 @@ export class NoteCanvas {
         media: serializableMedia,
         deletedMedia: noteData.deletedMedia,
         pdfSource: noteData.pdfSource,
+        ...versionFields,
       }).catch((e) => console.error("[NoteCanvas] WebDAV media save failed:", e));
 
       // Delete server binaries no longer referenced. Include recording fileIds
@@ -4288,8 +5097,8 @@ export class NoteCanvas {
         this._eraserBatch.push(...newlyErased);
 
         this.renderer.forceRedraw();
+        // Saved once when the gesture ends (_saveErasure), not on every move
         this.strokeManager.markDirty();
-        this.strokeManager.forceSave();
         this.strokesChanged = true;
       }
     } else {
@@ -4382,7 +5191,6 @@ export class NoteCanvas {
       if (anyChanged) {
         this.renderer.forceRedraw();
         this.strokeManager.markDirty();
-        this.strokeManager.forceSave();
         this.strokesChanged = true;
       }
     }
@@ -4401,6 +5209,17 @@ export class NoteCanvas {
     this._eraserBatch = null;
   }
 
+  /**
+   * Save what an eraser gesture removed, once it ends. Saving on every move
+   * stamped and merged the whole note per pointer event. The Nextcloud app
+   * writes at the user's next pause, as for a drawn stroke.
+   * @private
+   */
+  _saveErasure() {
+    if (_IS_NEXTCLOUD) this.liveRefresh?.whenIdle(() => this.strokeManager?.forceSave());
+    else this.strokeManager.forceSave();
+  }
+
   _commitPartEraserBatch() {
     if (this._partEraserOps && this._partEraserOps.length > 0) {
       const cmd = new EraseStrokePartsCommand(this._partEraserOps);
@@ -4408,6 +5227,54 @@ export class NoteCanvas {
       this._cleanupOrphanedTasks();
     }
     this._partEraserOps = null;
+  }
+
+  /**
+   * Undo whatever the gesture under way has done so far, without undo history:
+   * a stroke being drawn, an erase, a lasso or its transform, an insert space,
+   * Used when a second finger turns the gesture into a pinch, and when the
+   * editor turns read-only mid-gesture.
+   * @private
+   */
+  _cancelActiveGesture() {
+    if (!this.inputHandler?.isDrawing) return;
+    this.strokeManager.cancelCurrentStroke();
+    if (this.insertSpaceState) {
+      // Nothing has been shifted yet (that happens on release), so dropping
+      // the state and its indicator is the whole undo. Stay in insert-space
+      // mode: the user has not completed the action it was entered for.
+      this.insertSpaceState = null;
+      this.renderer.clearOverlay();
+    }
+    if (this.mode === "eraser") {
+      this._cancelEraser();
+    }
+    if (this.mode === "lasso") {
+      if (this.transformState) {
+        this._cancelTransform();
+      } else {
+        this.lassoPoints = [];
+        this.renderer.clearOverlay();
+      }
+    }
+    this.inputHandler.cancelActiveStroke();
+    this.renderer.forceRedraw();
+  }
+
+  /** Put a media item being dragged, resized or rotated back where it was. @private */
+  _cancelMediaDrag() {
+    const state = this.mediaDragState;
+    if (!state) return;
+    const { item } = state;
+    item.x = state.initialX;
+    item.y = state.initialY;
+    item.width = state.initialWidth;
+    item.height = state.initialHeight;
+    if (item.rotation !== undefined || state.initialRotation !== 0) {
+      item.rotation = state.initialRotation;
+    }
+    this.mediaDragState = null;
+    this.renderer.forceRedraw();
   }
 
   /**
@@ -4878,8 +5745,9 @@ export class NoteCanvas {
    * @private
    */
   _onPointerDownNav(e) {
-    // In text mode, let mouse events pass through to the text editor (no pan, no media hit)
-    if (this.mode === "text" && e.pointerType === "mouse") return;
+    // In text mode, let mouse events pass through to the text editor (no pan),
+    // unless an image is selected (a pasted image is): the press moves or deselects it
+    if (this.mode === "text" && e.pointerType === "mouse" && !this.selectedMediaId) return;
 
     // Deselect task if clicking outside task UI or selection overlay
     const isTaskInteraction =
@@ -4901,6 +5769,7 @@ export class NoteCanvas {
 
     if (mediaResult.consumed) {
       // Started dragging selected media - consume event to prevent pan
+      this._textTapCancelled = true;
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -4911,13 +5780,19 @@ export class NoteCanvas {
     // Allow mouse only if in Pan mode (not draw/eraser mode)
     if (e.pointerType === "mouse" && this.mode !== "pan" && this.mode !== "lasso") return;
 
+    const isTextModeTouch = this.mode === "text" && e.pointerType === "touch";
+    // A text-mode touch is a tap for the text layer (place a caret, create a
+    // box) only while it stays one: not when it stops a scroll, pans, pinches,
+    // or opens the paste menu
+    if (isTextModeTouch) {
+      this._textTapCancelled = Boolean(this.momentumReqId) || this.activePointers.size > 0;
+    }
+
     // Stop any active momentum scrolling
     if (this.momentumReqId) {
       cancelAnimationFrame(this.momentumReqId);
       this.momentumReqId = null;
     }
-
-    const isTextModeTouch = this.mode === "text" && e.pointerType === "touch";
 
     this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -4941,6 +5816,7 @@ export class NoteCanvas {
     }
 
     if (this.activePointers.size === 2) {
+      this._textTapCancelled = true;
       // A second finger landing while the first is mid-gesture means this was
       // never a single-finger draw/erase/lasso — it's a pinch. Finger 1 already
       // started on touchdown (there's no way to know it'd be a pinch until now),
@@ -4952,27 +5828,7 @@ export class NoteCanvas {
       // keep going. Cancelling it would also clear isDrawing and let the palm
       // pinch-zoom the page mid-writing.
       if (this.inputHandler?.isDrawing && this.inputHandler.activePointerType === "touch") {
-        this.strokeManager.cancelCurrentStroke();
-        if (this.insertSpaceState) {
-          // Nothing has been shifted yet (that happens on release), so dropping
-          // the state and its indicator is the whole undo. Stay in insert-space
-          // mode: the user has not completed the action it was entered for.
-          this.insertSpaceState = null;
-          this.renderer.clearOverlay();
-        }
-        if (this.mode === "eraser") {
-          this._cancelEraser();
-        }
-        if (this.mode === "lasso") {
-          if (this.transformState) {
-            this._cancelTransform();
-          } else {
-            this.lassoPoints = [];
-            this.renderer.clearOverlay();
-          }
-        }
-        this.inputHandler.cancelActiveStroke();
-        this.renderer.forceRedraw();
+        this._cancelActiveGesture();
       }
 
       // Hold both fingers on the viewport for the whole pinch. Single-finger
@@ -5087,6 +5943,7 @@ export class NoteCanvas {
         if (totalDx * totalDx + totalDy * totalDy < 64) return; // 8px threshold
         // Exceeded threshold — capture pointer and start panning
         this._textModePanState.captured = true;
+        this._textTapCancelled = true;
         try {
           this._textModePanState.target.setPointerCapture(e.pointerId);
         } catch (_err) {
@@ -5354,6 +6211,8 @@ export class NoteCanvas {
    * @private
    */
   _onVisibilityChange() {
+    // The live check stops while hidden and looks again soon after coming back
+    this.liveRefresh?.wake();
     if (document.visibilityState !== "hidden") return;
 
     // Stop and save a recording rather than let it run on in the background.
@@ -5499,6 +6358,7 @@ export class NoteCanvas {
    * Delete the imported PDF and all its pages
    */
   async deletePdf() {
+    if (this.readOnly) return;
     if (!this.noteData.pdfSource) return;
 
     const confirmed = await showConfirmDialog(
@@ -5839,6 +6699,14 @@ export class NoteCanvas {
       this.textEditorLayer.forceSave();
     }
     const pendingTextSave = this._pendingTextSave || null;
+    // Nothing more is looked for or reconciled into a note that is closing
+    this.liveRefresh?.stop();
+    this.liveRefresh = null;
+    this.liveText?.close();
+    this._textWorker?.removeEventListener("message", this._onWorkerMessage);
+    this._textWorker = null;
+    for (const resolve of this._contentRequests.values()) resolve(null);
+    this._contentRequests.clear();
     let pendingStrokeSave = null;
     if (this.strokeManager) {
       pendingStrokeSave = this.strokeManager.forceSave() || null;
@@ -5891,15 +6759,25 @@ export class NoteCanvas {
     // Remove event listeners
     window.removeEventListener("themechange", this._onThemeChange);
     window.removeEventListener("datachange", this._onDataChange);
+    window.removeEventListener(SHARE_ENDED_EVENT, this._onShareEnded);
+    window.removeEventListener(SHARE_ACCESS_REDUCED_EVENT, this._onAccessReduced);
     window.removeEventListener("recognition-job-complete", this._onRecognitionJobComplete);
     window.removeEventListener("keydown", this._onKeyDown);
     window.removeEventListener("pointerup", this._onWindowPointerEnd, true);
     window.removeEventListener("pointercancel", this._onWindowPointerEnd, true);
     document.removeEventListener("visibilitychange", this._onVisibilityChange);
+    window.removeEventListener("keydown", this._onUserInput, true);
+    window.removeEventListener("input", this._onUserInput, true);
+    window.removeEventListener("online", this._onConnectivityChange);
+    window.removeEventListener("offline", this._onConnectivityChange);
+    window.removeEventListener(SHARING_PREF_EVENT, this._onSharingPreference);
 
     if (this.scroller) {
       const viewport = this.scroller.getViewportElement();
       if (viewport) {
+        viewport.removeEventListener("pointerdown", this._onUserInput, true);
+        viewport.removeEventListener("pointerup", this._onUserInput, true);
+        viewport.removeEventListener("pointermove", this._onPenHover, true);
         viewport.removeEventListener("wheel", this._onWheel);
         viewport.removeEventListener("pointerdown", this._onPointerDownNav);
         viewport.removeEventListener("pointermove", this._onPointerMoveNav);

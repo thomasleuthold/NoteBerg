@@ -49,8 +49,8 @@ const flushNoteWrites = vi.fn();
 vi.mock("../../modules/storage.js", () => ({
   generateId: vi.fn(() => "mock-id"),
   updateNote: (...args) => updateNote(...args),
-  // Stroke saves go through the coalescing writer: they are re-sent in full on
-  // every call, so a snapshot not yet started is safely replaced by a newer one.
+  // Stroke saves go through the coalescing writer: each carries every stroke the
+  // server has not confirmed, so a snapshot not yet started is safely replaced by a newer one.
   updateNoteCoalesced: (...args) => updateNoteCoalesced(...args),
   flushNoteWrites: (...args) => flushNoteWrites(...args),
 }));
@@ -74,6 +74,18 @@ describe("StrokeManager (Nextcloud build)", () => {
     vi.clearAllMocks();
   });
 
+  it("sends the note's version bookkeeping with a stroke save (DESIGN §10.7)", async () => {
+    strokeManager.beforeSave = vi.fn(() => ({ tombstones: { b: "t1" } }));
+    strokeManager.strokes = [{ id: "a" }];
+    strokeManager.markDirty();
+    await strokeManager.forceSave();
+    expect(strokeManager.beforeSave).toHaveBeenCalledWith("strokes");
+    expect(updateNoteCoalesced).toHaveBeenCalledWith(
+      noteId,
+      expect.objectContaining({ tombstones: { b: "t1" } }),
+    );
+  });
+
   it("does not construct a Worker (NC has no worker-based storage layer)", () => {
     expect(WorkerCtorSpy).not.toHaveBeenCalled();
     expect(strokeManager.worker).toBeUndefined();
@@ -94,6 +106,30 @@ describe("StrokeManager (Nextcloud build)", () => {
     expect(strokeManager.isDirty).toBe(true); // _save() is a no-op under NC; forceSave() does the real write
   });
 
+  it("sends only the strokes the server has not confirmed (review P4, 4.9)", async () => {
+    strokeManager.strokes = [{ id: "a" }, { id: "b" }];
+    strokeManager.markDirty();
+    await strokeManager.forceSave();
+    strokeManager.strokes.push({ id: "c" });
+    strokeManager.markDirty();
+    await strokeManager.forceSave();
+
+    const second = updateNoteCoalesced.mock.calls[1][1];
+    expect(second.strokesPartial).toBe(true);
+    expect(second.strokes.map((s) => s.id)).toEqual(["c"]);
+  });
+
+  it("sends strokes again whose write failed", async () => {
+    updateNoteCoalesced.mockRejectedValueOnce(new Error("offline"));
+    strokeManager.strokes = [{ id: "a" }];
+    strokeManager.markDirty();
+    await strokeManager.forceSave();
+    strokeManager.markDirty();
+    await strokeManager.forceSave();
+
+    expect(updateNoteCoalesced.mock.calls[1][1].strokes.map((s) => s.id)).toEqual(["a"]);
+  });
+
   it("forceSave writes active strokes through the coalescing writer when dirty", async () => {
     strokeManager.strokes = [
       { id: "a", _deleted: false },
@@ -106,6 +142,7 @@ describe("StrokeManager (Nextcloud build)", () => {
 
     expect(updateNoteCoalesced).toHaveBeenCalledWith(noteId, {
       strokes: [{ id: "a", _deleted: false }],
+      strokesPartial: true,
       deletedStrokes: ["b"],
     });
     // Per-stroke writes must not use the plain writer: those queue serially and

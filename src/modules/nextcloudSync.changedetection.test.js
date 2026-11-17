@@ -9,6 +9,7 @@ import { fetch } from "@tauri-apps/plugin-http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MockWebDAVServer, wireMockServer } from "./__fixtures__/mockWebDAVServer.js";
 import { hasRemoteChanges, listFiles, listFolders } from "./nextcloudSync.js";
+import { clearSharedNotebookBases, markShareEnded } from "./storagePaths.js";
 
 // --- Mocks ---
 
@@ -156,6 +157,20 @@ describe("Nextcloud Sync Module", () => {
       mockSecureStorage.clear();
       const result = await hasRemoteChanges("nb1", []);
       expect(result).toBe(false);
+    });
+
+    it("does not look at a notebook whose share ended, nor warn about it", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      markShareEnded("nb-ended");
+      try {
+        const result = await hasRemoteChanges("nb-ended", [{ id: "n1", lastSyncedEtag: "e" }]);
+        expect(result).toBe(false);
+        expect(mockServer.requests.filter((r) => r.method === "PROPFIND")).toHaveLength(0);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        clearSharedNotebookBases();
+        warn.mockRestore();
+      }
     });
 
     it("returns false when the PROPFIND fails, instead of throwing", async () => {

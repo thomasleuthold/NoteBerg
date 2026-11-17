@@ -1,0 +1,173 @@
+{
+  "onServerBefore": {
+    "id": "n1",
+    "notebookId": "nb1",
+    "title": "Meeting",
+    "content": "<p>Agenda</p>",
+    "strokes": [
+      {
+        "id": "s1",
+        "time": [1],
+        "x": [1, 2],
+        "y": [1, 3],
+        "pressure": [0.5, 0.5],
+        "v": "0000000a0-000-devnew"
+      },
+      {
+        "id": "s2",
+        "time": [2],
+        "x": [2, 3],
+        "y": [2, 4],
+        "pressure": [0.5, 0.5],
+        "v": "0000000a1-000-devnew"
+      },
+      {
+        "id": "s4",
+        "time": [4],
+        "x": [4, 5],
+        "y": [4, 6],
+        "pressure": [0.5, 0.5],
+        "v": "0000000a2-000-devnew",
+        "seen": {
+          "devnew": "0000000a5-000-devnew"
+        }
+      }
+    ],
+    "deletedStrokes": ["s3"],
+    "tombstones": {
+      "s3": "0000000a3-000-devnew"
+    },
+    "shifts": [
+      {
+        "y": 100,
+        "delta": 50,
+        "v": "0000000a5-000-devnew"
+      }
+    ],
+    "fieldVersions": {
+      "title": "0000000a0-000-devnew",
+      "content": "0000000a4-000-devnew"
+    },
+    "media": [],
+    "tasks": [],
+    "recordings": [],
+    "deletedRecordings": [],
+    "created": 1,
+    "modified": 2000,
+    "version": 5
+  },
+  "downloadedByApp": {
+    "id": "n1",
+    "notebookId": "nb1",
+    "title": "Meeting",
+    "content": "<p>Agenda</p>",
+    "strokes": [
+      {
+        "id": "s1",
+        "time": [1],
+        "x": [1, 2],
+        "y": [1, 3],
+        "pressure": [0.5, 0.5],
+        "v": "0000000a0-000-devnew"
+      },
+      {
+        "id": "s2",
+        "time": [2],
+        "x": [2, 3],
+        "y": [2, 4],
+        "pressure": [0.5, 0.5],
+        "v": "0000000a1-000-devnew"
+      },
+      {
+        "id": "s4",
+        "time": [4],
+        "x": [4, 5],
+        "y": [4, 6],
+        "pressure": [0.5, 0.5],
+        "v": "0000000a2-000-devnew",
+        "seen": {
+          "devnew": "0000000a5-000-devnew"
+        }
+      }
+    ],
+    "deletedStrokes": ["s3"],
+    "tombstones": {
+      "s3": "0000000a3-000-devnew"
+    },
+    "shifts": [
+      {
+        "y": 100,
+        "delta": 50,
+        "v": "0000000a5-000-devnew"
+      }
+    ],
+    "fieldVersions": {
+      "title": "0000000a0-000-devnew",
+      "content": "0000000a4-000-devnew"
+    },
+    "media": [],
+    "tasks": [],
+    "recordings": [],
+    "deletedRecordings": [],
+    "created": 1,
+    "modified": 2000,
+    "version": 5,
+    "_currentFileEtag": "etag-seed-2"
+  },
+  "onServerAfter": {
+    "id": "n1",
+    "notebookId": "nb1",
+    "title": "Meeting (renamed by the older app)",
+    "content": "<p>Agenda</p><p>from the older app</p>",
+    "strokes": [
+      {
+        "id": "s2",
+        "time": [2],
+        "x": [102, 103],
+        "y": [2, 4],
+        "pressure": [0.5, 0.5],
+        "v": "0000000a1-000-devnew"
+      },
+      {
+        "id": "s4",
+        "time": [4],
+        "x": [4, 5],
+        "y": [4, 6],
+        "pressure": [0.5, 0.5],
+        "v": "0000000a2-000-devnew",
+        "seen": {
+          "devnew": "0000000a5-000-devnew"
+        }
+      },
+      {
+        "id": "old-d",
+        "time": [9],
+        "x": [9, 10],
+        "y": [9, 11],
+        "pressure": [0.5, 0.5]
+      }
+    ],
+    "deletedStrokes": ["s3", "s1"],
+    "tombstones": {
+      "s3": "0000000a3-000-devnew"
+    },
+    "shifts": [
+      {
+        "y": 100,
+        "delta": 50,
+        "v": "0000000a5-000-devnew"
+      }
+    ],
+    "fieldVersions": {
+      "title": "0000000a0-000-devnew",
+      "content": "0000000a4-000-devnew"
+    },
+    "media": [],
+    "tasks": [],
+    "recordings": [],
+    "deletedRecordings": [],
+    "created": 1,
+    "modified": 3000,
+    "version": 6
+  }
+}

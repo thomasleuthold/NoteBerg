@@ -308,7 +308,8 @@
   border-color: var(--color-primary, #3b82f6);
 }
 
-.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[aria-checked="true"]::after {
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[aria-checked="true"]::after,
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[data-status="done"]::after {
   content: "";
   display: block;
   width: 27%;
@@ -317,6 +318,29 @@
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
   margin: 10% auto 0;
+}
+
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[data-status="doing"]::after {
+  content: "";
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--nb-task-doing, var(--color-primary));
+  margin: 5px auto 0;
+}
+
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[data-priority="low"] {
+  border-color: var(--nb-priority-low);
+}
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[data-priority="medium"] {
+  border-color: var(--nb-priority-medium);
+}
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[data-priority="high"] {
+  border-color: var(--nb-priority-high);
+}
+.note-canvas__task-checkbox-layer .note-canvas__task-checkbox[data-priority="urgent"] {
+  border-color: var(--nb-priority-urgent);
 }
 
 .note-canvas__task-checkbox-layer .note-canvas__task-checkbox:hover {
@@ -392,7 +416,16 @@
   -webkit-user-select: none;
 }
 
-/* Disable text editor interaction in non-text modes (text-mode rule is in TextEditorLayer.css) */
+/* In text mode a tap on a PDF page is for the text boxes (it starts one there):
+   the page layers take pointer input themselves (pointer-events: auto above),
+   so turning it off on their container alone would not let it through */
+.note-canvas--text-mode .note-canvas__text-layer {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Disable text editor interaction in non-text modes (text-mode rule is in TextLayer.css) */
 .note-canvas--pan-mode .note-canvas__text-editor-layer,
 .note-canvas--draw-mode .note-canvas__text-editor-layer,
 .note-canvas--eraser-mode .note-canvas__text-editor-layer,
@@ -401,6 +434,12 @@
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Conflict triangles remain hoverable and touchable while panning (incl. read-only notes) */
+.note-canvas--pan-mode .note-canvas__text-editor-layer .merge-hint,
+.note-canvas--text-mode .note-canvas__text-editor-layer .merge-hint {
+  pointer-events: auto;
 }
 
 /* ==========================================================================
@@ -1364,6 +1403,28 @@
   overflow: visible;
 }
 
+.note-canvas-toolbar__readonly-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  margin-left: 4px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #b45309;
+  background-color: rgba(245, 158, 11, 0.14);
+  border: 1px solid var(--nb-status-warning, #d97706);
+  user-select: none;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .note-canvas-toolbar__readonly-hint {
+  color: var(--nb-status-warning, #fbbf24);
+  background-color: rgba(251, 191, 36, 0.14);
+  border-color: var(--nb-status-warning, #fbbf24);
+}
+
 .note-canvas-toolbar__options-container {
   margin-left: auto;
   display: flex;
@@ -1726,4 +1787,29 @@
   font-size: 0.8125rem;
   color: var(--color-danger, #e53e3e);
   margin: 0;
+}
+
+/* A viewer of a read-only shared notebook sees task state but cannot change it */
+.note-canvas__task-checkbox-layer--readonly .note-canvas__task-checkbox,
+.note-canvas__task-checkbox-layer--readonly .note-canvas__task-bounding-box {
+  cursor: default;
+}
+
+/* Shown over an open note whose share has just ended */
+.note-canvas__share-ended {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--nb-status-warning);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  box-shadow: var(--shadow-md);
 }

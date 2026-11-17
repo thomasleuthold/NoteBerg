@@ -15,6 +15,7 @@ mod audio_dsp;
 #[cfg(target_os = "windows")]
 mod audio_encoder;
 mod backup;
+mod nc_upload;
 
 // ── Windows native audio recording ───────────────────────────────────────────
 //
@@ -674,6 +675,39 @@ async fn get_safe_area_insets() -> Result<SafeAreaInsets, String> {
     Ok(SafeAreaInsets { top: 0.0, bottom: 0.0, left: 0.0, right: 0.0 })
 }
 
+// ── Google Play listing (Android) ────────────────────────────────────────────
+
+#[cfg(target_os = "android")]
+struct ReviewPlugin(tauri::plugin::PluginHandle<tauri::Wry>);
+
+#[cfg(target_os = "android")]
+fn review_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::<tauri::Wry>::new("review")
+        .setup(|app, api| {
+            use tauri::Manager;
+            let handle = api.register_android_plugin("eu.noteberg.app", "ReviewPlugin")?;
+            app.manage(ReviewPlugin(handle));
+            Ok(())
+        })
+        .build()
+}
+
+/// Open this app's Play Store page.
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn open_store_listing(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<ReviewPlugin>()
+        .0
+        .run_mobile_plugin::<()>("openStoreListing", serde_json::json!({}))
+        .map_err(|e| format!("open_store_listing: {}", e))
+}
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn open_store_listing() -> Result<(), String> {
+    Err("open_store_listing: only available on Android".into())
+}
+
 // ── Global recording state (Windows) ─────────────────────────────────────────
 #[cfg(target_os = "windows")]
 static WIN_RECORDING: OnceLock<Mutex<Option<win_audio::RecordingState>>> = OnceLock::new();
@@ -1208,6 +1242,7 @@ pub fn run() {
         .manage(backup::SharedState::default())
         .invoke_handler(tauri::generate_handler![
             get_recognition_url,
+            nc_upload::nc_put_file,
             backup::backup_choose_destination,
             backup::backup_begin,
             backup::backup_add_text,
@@ -1241,6 +1276,7 @@ pub fn run() {
             native_audio_set_aggressiveness,
             set_status_bar_appearance,
             get_safe_area_insets,
+            open_store_listing,
             #[cfg(target_os = "windows")]
             mcp::mcp_respond,
             #[cfg(target_os = "windows")]
@@ -1255,6 +1291,7 @@ pub fn run() {
         builder = builder.plugin(audio_recorder_plugin());
         builder = builder.plugin(device_key_plugin());
         builder = builder.plugin(status_bar_plugin());
+        builder = builder.plugin(review_plugin());
         builder = builder.plugin(backup::android_plugin());
     }
 

@@ -20,7 +20,8 @@
     "justNow": "proprio ora",
     "minutesAgo": "{{count}} min fa",
     "hoursAgo": "{{count}} h fa",
-    "daysAgo": "{{count}} g fa"
+    "daysAgo": "{{count}} g fa",
+    "preview": "Anteprima"
   },
   "overview": {
     "tabs": {
@@ -117,19 +118,22 @@
       "appearance": "Aspetto",
       "security": "Sicurezza",
       "nextcloud": "Sincronizzazione Nextcloud",
+      "sharing": "Condivisione dei quaderni",
       "recognition": "Riconoscimento scrittura",
       "mcp": "Server MCP (integrazione IA)",
       "logging": "Registro eventi",
       "dangerZone": "Zona pericolosa",
       "about": "Informazioni",
       "aiProvider": "Accesso IA",
-      "backup": "Copia di sicurezza"
+      "backup": "Copia di sicurezza",
+      "tasks": "Compiti"
     },
     "appearance": {
       "theme": "Tema",
       "themeDesc": "Scegli lo schema colori preferito",
       "light": "Chiaro",
       "dark": "Scuro",
+      "tva": "TVA / CRT",
       "pdfInvertDark": "Inverti le pagine PDF in modalità scura",
       "pdfInvertDarkDesc": "Rende le annotazioni più visibili sui PDF importati, ma altera i colori originali del PDF",
       "cardSize": "Dimensione schede",
@@ -156,6 +160,10 @@
     "security": {
       "encryptLocal": "Cifra dati locali",
       "encryptLocalDesc": "Cifra le note memorizzate localmente su questo dispositivo"
+    },
+    "sharing": {
+      "descApp": "Condividi i quaderni con altri utenti Nextcloud e lavorateci insieme. Se la disattivi, i quaderni condivisi con te vengono nascosti in questo browser; non viene eliminato nulla.",
+      "rootCheckFailed": "La condivisione non è stata attivata: impossibile verificare la cartella delle note. {{message}}"
     },
     "nextcloud": {
       "connectLabel": "Connetti a Nextcloud",
@@ -185,7 +193,10 @@
       "syncSkipped": "Sincronizzazione saltata (già in corso)",
       "syncComplete": "✓ Sincronizzazione completata! Caricati {{uploadedNotebooks}} quaderni, {{uploadedNotes}} note. Scaricati {{downloadedNotebooks}} quaderni, {{downloadedNotes}} note.",
       "syncConflictsDetected": " ⚠️ Rilevati {{count}} conflitti.",
-      "syncFailed": "✗ Sincronizzazione non riuscita: {{message}}"
+      "syncFailed": "✗ Sincronizzazione non riuscita: {{message}}",
+      "sharingLabel": "Condivisione dei quaderni",
+      "sharingDesc": "Condividi i quaderni con altri utenti Nextcloud e lavorateci insieme. Se la disattivi, i quaderni condivisi con te non vengono più sincronizzati; restano su questo dispositivo finché non la riattivi.",
+      "sharingNeedsConnection": "Collegati prima a Nextcloud per condividere i quaderni."
     },
     "recognition": {
       "statusLabel": "Stato",
@@ -383,6 +394,7 @@
       "clearLogs": "Cancella registri",
       "copied": "✓ Copiato!",
       "clearConfirm": "Vuoi davvero cancellare tutti i registri di debug?",
+      "copyFailed": "Impossibile copiare i log negli appunti",
       "noLogs": "Nessun registro disponibile in questa sessione."
     },
     "dangerZone": {
@@ -418,7 +430,9 @@
       "version": "Versione: {{version}}",
       "licenses": "Informazioni sulle licenze",
       "openSource": "NoteBerg è software libero e open source.",
-      "projectLink": "Vedi il progetto su GitHub"
+      "projectLink": "Vedi il progetto su GitHub",
+      "rate": "Valuta l'app",
+      "rateDesc": "Una valutazione su Google Play aiuta altre persone a trovare NoteBerg."
     },
     "encryption": {
       "enabledLocalTitle": "Cifratura attivata",
@@ -462,6 +476,14 @@
     },
     "nav": {
       "back": "Tutte le impostazioni"
+    },
+    "tasks": {
+      "enableDueDates": "Abilita scadenze",
+      "enableDueDatesDesc": "Consente di impostare scadenze per i marcatori delle attività",
+      "enablePriorities": "Abilita priorità",
+      "enablePrioritiesDesc": "Consente di impostare livelli di priorità per le attività",
+      "defaultSort": "Ordinamento predefinito attività",
+      "defaultSortDesc": "Ordine iniziale nella scheda Panoramica dei marcatori"
     }
   },
   "modals": {
@@ -654,6 +676,13 @@
     "fullscreen": "Schermo intero",
     "exitFullscreen": "Esci da schermo intero",
     "deleteNote": "Elimina",
+    "color": {
+      "foreColor": "Colore del testo",
+      "backColor": "Evidenzia",
+      "defaultText": "Predefinito",
+      "removeHighlight": "Nessuna evidenziazione",
+      "highlightTitle": "Evidenziazione {{num}}"
+    },
     "penDialog": {
       "lineWidth": "Spessore linea: ",
       "color": "Colore",
@@ -686,7 +715,8 @@
       "copy": "Copia",
       "markAsTask": "Segna come attività",
       "removeTask": "Rimuovi attività",
-      "delete": "Elimina"
+      "delete": "Elimina",
+      "taskProperties": "Proprietà compito"
     },
     "media": {
       "select": "Seleziona",
@@ -715,6 +745,7 @@
       "deleteConfirmTitle": "Elimina PDF",
       "deleteConfirmMsg": "Vuoi davvero rimuovere il documento PDF? Verranno rimosse tutte le pagine.",
       "exportError": "Esportazione PDF non riuscita",
+      "importError": "Importazione PDF non riuscita",
       "exportProgressTitle": "Esportazione PDF",
       "exportProgressPage": "Esportazione pagina {{current}} di {{total}} ...",
       "importProgressTitle": "Importazione PDF",
@@ -760,6 +791,14 @@
       "optionPunctuationDesc": "Include i punti, le virgole e i trattini scritti sulla pagina. Disattiva per ottenere solo le parole.",
       "optionBreaks": "Mantieni le interruzioni di riga",
       "optionBreaksDesc": "Conserva la fine delle righe e dei paragrafi. Il riconoscimento del layout è meno affidabile di quello del testo."
+    },
+    "mergeHint": "Versione in conflitto, modificata da {{user}}",
+    "mergeHintUnknown": "Versione in conflitto",
+    "textBox": {
+      "move": "Trascina per spostare",
+      "resize": "Trascina per cambiare la larghezza",
+      "toolbarHint": "Tocca un testo, o la pagina per iniziarne uno",
+      "options": "Opzioni della casella di testo"
     }
   },
   "recycleBin": {
@@ -775,7 +814,11 @@
     "emptyTitle": "Il cestino è vuoto",
     "emptyDesc": "I quaderni e le note eliminati appariranno qui.",
     "notebooksCount": "Quaderni ({{count}})",
-    "notesCount": "Note ({{count}})"
+    "notesCount": "Note ({{count}})",
+    "purgeConfirm": "Vuoi eliminare definitivamente questo elemento? Verrà rimosso da tutti i dispositivi sincronizzati e l'azione non può essere annullata.",
+    "purgeConfirmNotebook": "Vuoi eliminare definitivamente questo quaderno? Verranno eliminate definitivamente anche {{count}} nota/e al suo interno. Verrà rimosso da tutti i dispositivi sincronizzati e l'azione non può essere annullata.",
+    "restoreFailed": "Impossibile ripristinare l'elemento: {{message}}",
+    "purgeFailed": "Eliminazione definitiva non riuscita: {{message}}"
   },
   "soundDialog": {
     "trigger": "Registrazioni",
@@ -853,6 +896,10 @@
     "markAsTask": {
       "title": "Attività",
       "body": "Il testo che hai segnato ora è un'attività da spuntare. Spuntala qui o dalla tua lista attività."
+    },
+    "firstTextBox": {
+      "title": "Caselle di testo",
+      "body": "Un tocco sulla pagina vi inizia una casella di testo. Trascina la barra sopra per spostarla e il bordo destro per cambiarne la larghezza. Un tocco appena sotto un testo lo continua."
     }
   },
   "backup": {
@@ -973,6 +1020,134 @@
       "newerVersion": "Questa copia è stata creata con NoteBerg {{version}}, più recente di questa app. Aggiorna NoteBerg per ripristinarla.",
       "diskFull": "Impossibile scrivere la copia: {{message}}. Il file parziale è stato eliminato.",
       "cacheSpace": "Spazio libero insufficiente per creare la copia: servono circa {{needed}}, disponibili {{available}}."
+    }
+  },
+  "tasks": {
+    "properties": {
+      "title": "Proprietà dell'attività",
+      "name": "Nome / etichetta attività",
+      "namePlaceholder": "Titolo personalizzato (se il riconoscimento manca o è errato)",
+      "status": "Stato",
+      "priority": "Priorità",
+      "details": "Dettagli",
+      "dueDate": "Data di scadenza"
+    },
+    "states": {
+      "open": "Aperta",
+      "doing": "In corso",
+      "done": "Completato"
+    },
+    "priorities": {
+      "none": "Nessuna",
+      "low": "Bassa",
+      "medium": "Media",
+      "high": "Alta",
+      "urgent": "Urgente"
+    },
+    "dueDate": {
+      "today": "Oggi",
+      "tomorrow": "Domani",
+      "nextDay": "+1 giorno",
+      "nextWeek": "+7 giorni",
+      "clear": "Cancella"
+    },
+    "filter": {
+      "label": "Filtra",
+      "all": "Tutti",
+      "active": "Attive",
+      "doing": "In corso",
+      "overdue": "In ritardo",
+      "done": "Completate"
+    },
+    "sort": {
+      "label": "Ordina",
+      "dueDate": "Data di scadenza",
+      "priority": "Priorità",
+      "status": "Stato",
+      "note": "Titolo nota"
+    },
+    "noMatchingTasks": "Nessuna attività corrispondente trovata.",
+    "cycleStatus": "Cambia stato"
+  },
+  "sharing": {
+    "section": {
+      "title": "Condivisi con me"
+    },
+    "badge": {
+      "sharedBy": "Condiviso da {{owner}}",
+      "readOnly": "Sola lettura",
+      "canEdit": "Può modificare",
+      "shared": "Condiviso",
+      "sharedWith_one": "Condiviso con {{count}} persona",
+      "sharedWith_other": "Condiviso con {{count}} persone"
+    },
+    "notebookOptions": {
+      "leave": "Rimuovi dalla mia lista",
+      "share": "Condividi..."
+    },
+    "leave": {
+      "title": "Rimuovi taccuino condiviso",
+      "message": "\"{{title}}\" sparirà dalla tua lista. {{owner}} e tutti gli altri con cui è condiviso lo mantengono.",
+      "messageUnsynced": "Alcune tue modifiche in \"{{title}}\" non sono ancora state salvate nel taccuino condiviso e andranno perse. Rimuoverlo comunque?",
+      "confirm": "Rimuovi",
+      "failed": "Impossibile rimuovere il taccuino: {{message}}"
+    },
+    "ended": {
+      "notice_one": "Questo taccuino non è più condiviso con te. {{count}} nota aveva modifiche che non è stato possibile salvare.",
+      "notice_other": "Questo taccuino non è più condiviso con te. {{count}} note avevano modifiche che non è stato possibile salvare.",
+      "noticeClean": "Questo taccuino non è più condiviso con te.",
+      "dismiss": "Chiudi avviso"
+    },
+    "stranded": {
+      "notice_one": "{{count}} nota ha modifiche che non possono più essere salvate in questo taccuino condiviso.",
+      "notice_other": "{{count}} note hanno modifiche che non possono più essere salvate in questo taccuino condiviso.",
+      "discard": "Scarta le mie modifiche",
+      "discardTitle": "Scarta modifiche",
+      "discardMessage": "Le tue modifiche non salvate in \"{{title}}\" saranno sostituite dalla versione condivisa. L'operazione non può essere annullata."
+    },
+    "restricted": {
+      "title": "Non consentito",
+      "message": "Non è possibile in un taccuino condiviso con te."
+    },
+    "purge": {
+      "warning": "Questo taccuino è condiviso con altre persone. Perderanno l'accesso quando verrà eliminato definitivamente."
+    },
+    "share": {
+      "title": "Condividi \"{{title}}\"",
+      "intro": "Le persone con cui condividi vedono questo taccuino in \"Condivisi con me\". Non possono eliminarlo, spostarlo o copiarlo.",
+      "searchLabel": "Aggiungi una persona",
+      "searchPlaceholder": "Cerca per nome o ID utente",
+      "searching": "Ricerca in corso...",
+      "noResults": "Nessun utente corrispondente.",
+      "modeLabel": "Accesso",
+      "modeReadonly": "Può visualizzare",
+      "modeCollab": "Può modificare",
+      "add": "Condividi",
+      "recipients": "Persone con accesso",
+      "noRecipients": "Non ancora condiviso con nessuno.",
+      "revoke": "Interrompi condivisione",
+      "reduced": "Il server ha consentito solo la visualizzazione per questa condivisione.",
+      "loadFailed": "Impossibile caricare le impostazioni di condivisione: {{message}}",
+      "failed": "Condivisione non riuscita: {{message}}",
+      "notOnServer": "Questo taccuino non è ancora arrivato su Nextcloud. Sincronizza e riprova.",
+      "unavailable": "La condivisione richiede una connessione a Nextcloud.",
+      "revokeMessage": "{{name}} perderà l'accesso a \"{{title}}\". Le modifiche non ancora salvate non potranno più essere salvate."
+    },
+    "reduced": {
+      "notice": "Ora puoi solo visualizzare questo taccuino. Le tue modifiche restano su questo dispositivo, ma non possono essere salvate nel taccuino condiviso.",
+      "noticeOnline": "Ora puoi solo visualizzare questo taccuino. Le modifiche non ancora salvate non è stato possibile salvarle."
+    },
+    "invite": {
+      "title": "Taccuino condiviso",
+      "message": "{{owner}} vuole condividere un taccuino con te.",
+      "accept": "Accetta",
+      "decline": "Rifiuta",
+      "declineTitle": "Rifiuta taccuino condiviso",
+      "declineMessage": "Il taccuino di {{owner}} non verrà aggiunto. Se cambi idea, {{owner}} dovrà condividerlo di nuovo.",
+      "failed": "Non ha funzionato: {{message}}"
+    },
+    "deletedByOwner": {
+      "notice": "Il proprietario ha eliminato questa nota. Ciò che hai scritto resta con essa nel suo cestino."
     }
   }
 }

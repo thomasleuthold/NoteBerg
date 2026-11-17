@@ -1,0 +1,576 @@
+/* TVA / 1970s Amber CRT Theme - Cassette Futurism (Native builds only) */
+
+[data-theme="tva"] {
+  /* Amber Phosphor Palette */
+  --color-primary: #ff8c00;
+  --color-primary-hover: #ffa733;
+  --color-primary-light: #331a00;
+  --color-secondary: #b35900;
+  --color-secondary-hover: #cc6600;
+
+  /* Status colors (namespaced for Nextcloud parity test + standard) */
+  --color-success: #ffb700;
+  --nb-status-success: #ffb700;
+  --color-danger: #ff3b1f;
+  --color-error: #ff3b1f;
+  --nb-status-error: #ff3b1f;
+  --color-danger-light: #3a0d05;
+  --color-warning: #ff7700;
+  --nb-status-warning: #ff7700;
+
+  /* Task markers */
+  --nb-priority-low: #cc7a00;
+  --nb-priority-medium: #ff9e22;
+  --nb-priority-high: #ff6600;
+  --nb-priority-urgent: #ff3b1f;
+  --nb-due-overdue: #ff3b1f;
+  --nb-due-today: #ff7700;
+  --nb-task-doing: #ff9e22;
+
+  /* Cathode-ray tube backgrounds */
+  --bg-primary: #0d0800;
+  --bg-secondary: #140b01;
+  --bg-tertiary: #211203;
+  --bg-hover: #2e1905;
+
+  /* Amber phosphor text */
+  --text-primary: #ff9e22;
+  --text-secondary: #d97706;
+  --text-tertiary: #8c4d00;
+  --text-inverse: #0d0800;
+
+  /* Crisp terminal borders */
+  --border-primary: #663300;
+  --border-secondary: #b35900;
+  --border-color: #663300;
+  --border-focus: #ff9e22;
+
+  /* Phosphor glow shadows */
+  --shadow-sm: 0 0 6px rgb(255 140 0 / 0.18);
+  --shadow-md: 0 0 12px rgb(255 140 0 / 0.28), inset 0 0 4px rgb(255 140 0 / 0.08);
+  --shadow-lg: 0 0 22px rgb(255 140 0 / 0.38), inset 0 0 8px rgb(255 140 0 / 0.12);
+
+  /* Sharp 1970s terminal geometry */
+  --radius-sm: 0px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --radius-xl: 3px;
+
+  /* Monospace-only typography */
+  --font-family:
+    "JetBrains Mono", "Cascadia Mono", "Consolas", "SFMono-Regular", "Liberation Mono",
+    "Courier New", monospace;
+  --font-mono:
+    "JetBrains Mono", "Cascadia Mono", "Consolas", "SFMono-Regular", "Liberation Mono",
+    "Courier New", monospace;
+
+  /* Canvas background ruling & grid in dim amber phosphor */
+  --pattern-rule-color: #974f02;
+  --pattern-grid-color: #974f02;
+}
+
+/* ==========================================================================
+   Monospace Enforcement & CRT Phosphor Text Glow
+   ========================================================================== */
+
+[data-theme="tva"] #app,
+[data-theme="tva"] .modal-overlay,
+[data-theme="tva"] .modal-dialog,
+[data-theme="tva"] :is(#app, .modal-overlay) :is(button, input, select, textarea, table),
+[data-theme="tva"] .logs-textarea,
+[data-theme="tva"] .mcp-audit-log-table,
+[data-theme="tva"] .note-canvas__text-editor-layer .trumbowyg-editor {
+  font-family: var(--font-family) !important;
+  letter-spacing: 0.03em;
+}
+
+[data-theme="tva"] #app,
+[data-theme="tva"] .modal-overlay,
+[data-theme="tva"] .modal-dialog,
+[data-theme="tva"] :is(#app, .modal-overlay) :is(input, select, textarea, table),
+[data-theme="tva"] .logs-textarea,
+[data-theme="tva"] .mcp-audit-log-table,
+[data-theme="tva"] .note-canvas__text-editor-layer .trumbowyg-editor {
+  color: var(--text-primary);
+}
+
+[data-theme="tva"] #app,
+[data-theme="tva"] .modal-overlay {
+  text-shadow:
+    0 0 1px rgba(255, 210, 130, 0.25),
+    0 0 3px rgba(255, 130, 0, 0.22);
+}
+
+/* Inverse terminal block selection & glowing amber caret */
+[data-theme="tva"] :is(#app, .modal-overlay) ::selection {
+  background-color: #ff9e22;
+  color: #050200;
+  text-shadow: none;
+}
+
+[data-theme="tva"] :is(#app, .modal-overlay) :is(input, textarea, [contenteditable="true"]) {
+  caret-color: #ffb84d;
+}
+
+/* Dual-tone phosphor halation (warm gold core + deep orange outer bloom) & uppercase headers */
+[data-theme="tva"] :is(#app, .modal-overlay) :is(h1, h2, h3),
+[data-theme="tva"] .notebook-card-title,
+[data-theme="tva"] .breadcrumb-current,
+[data-theme="tva"] .overview-tab.active,
+[data-theme="tva"] .settings-nav__item--current,
+[data-theme="tva"] .modal-header h2,
+[data-theme="tva"] .modal-header h3 {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-shadow:
+    0 0 2px rgba(255, 220, 140, 0.55),
+    0 0 8px rgba(255, 140, 0, 0.6),
+    0 0 16px rgba(255, 90, 0, 0.35);
+}
+
+/* Iconic TVA terminal " ////" suffix on section headers */
+[data-theme="tva"] .section-header h3::after,
+[data-theme="tva"] .settings-section h3::after,
+[data-theme="tva"] .settings-dialog__title::after {
+  content: " ////";
+  color: var(--border-secondary);
+  letter-spacing: 0.08em;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+/* ==========================================================================
+   Clean SVG Glowing Icons with Dual-Tone CRT Optic
+   ========================================================================== */
+
+[data-theme="tva"] #app svg,
+[data-theme="tva"] .modal-overlay svg {
+  filter: drop-shadow(0 0 1px rgba(255, 215, 130, 0.55))
+    drop-shadow(0 0 4px rgba(255, 130, 0, 0.65));
+  transition: filter 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-theme="tva"] #app button:hover svg,
+[data-theme="tva"] #app button:focus-visible svg,
+[data-theme="tva"] .modal-overlay button:hover svg,
+[data-theme="tva"] .note-canvas-toolbar__button--active svg,
+[data-theme="tva"] .overview-tab.active svg {
+  filter: drop-shadow(0 0 2px rgba(255, 230, 160, 0.9)) drop-shadow(0 0 7px rgba(255, 140, 0, 0.95));
+  transition: filter 45ms ease-out;
+}
+
+/* ==========================================================================
+   Phosphor Afterglow Decay (Instant Excitation, Warm Trailing Decay)
+   ========================================================================== */
+
+[data-theme="tva"] .notebook-card,
+[data-theme="tva"] .note-card,
+[data-theme="tva"] #app button,
+[data-theme="tva"] .modal-overlay button,
+[data-theme="tva"] .overview-tab {
+  transition:
+    background-color 380ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 380ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 450ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 300ms ease-out,
+    transform 200ms ease-out;
+}
+
+[data-theme="tva"] .notebook-card:hover,
+[data-theme="tva"] .note-card:hover,
+[data-theme="tva"] #app button:hover,
+[data-theme="tva"] .modal-overlay button:hover,
+[data-theme="tva"] .overview-tab:hover {
+  transition:
+    background-color 45ms ease-out,
+    border-color 45ms ease-out,
+    box-shadow 60ms ease-out,
+    color 45ms ease-out,
+    transform 80ms ease-out;
+}
+
+/* ==========================================================================
+   Subtle Amber Coordinate Grid on Dashboard & Settings Background
+   ========================================================================== */
+
+[data-theme="tva"] .main-content,
+[data-theme="tva"] .settings-detail {
+  background-image:
+    linear-gradient(to right, rgba(255, 140, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 140, 0, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* ==========================================================================
+   CRT Scanlines, Refresh Sweep & Subtle Vignette Overlay (Click-Through)
+   ========================================================================== */
+
+@keyframes tva-crt-sweep {
+  0% {
+    transform: translate3d(0, -160px, 0);
+  }
+  100% {
+    transform: translate3d(0, 105vh, 0);
+  }
+}
+
+[data-theme="tva"] #app::before {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 150px;
+  pointer-events: none;
+  z-index: 99998;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(255, 140, 0, 0.015) 35%,
+    rgba(255, 165, 34, 0.055) 85%,
+    rgba(255, 140, 0, 0.08) 96%,
+    transparent 100%
+  );
+  animation: tva-crt-sweep 9s linear infinite;
+}
+
+[data-theme="tva"] #app::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 99999;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(0, 0, 0, 0.1) 1px,
+      rgba(0, 0, 0, 0.1) 4px
+    ),
+    radial-gradient(circle at center, transparent 84%, rgba(0, 0, 0, 0.16) 100%);
+  box-shadow:
+    inset 0 0 18px rgba(0, 0, 0, 0.18),
+    inset 0 0 2px rgba(255, 140, 0, 0.25);
+}
+
+/* ==========================================================================
+   High-Contrast CRT Buttons & Modal Close ("X") Button
+   ========================================================================== */
+
+[data-theme="tva"] :is(body, #app) .btn-primary,
+[data-theme="tva"] :is(body, #app) .card-new-note-btn {
+  background-color: #f58a00;
+  color: #050200;
+  border: 1px solid #ffb340;
+  font-weight: 700;
+  opacity: 1;
+  text-shadow: none;
+  box-shadow: 0 0 8px rgba(255, 140, 0, 0.3);
+}
+
+[data-theme="tva"] :is(body, #app) .card-new-note-btn {
+  background-color: #d97706;
+  border-color: #f58a00;
+}
+
+[data-theme="tva"] .notebook-card:hover .card-new-note-btn {
+  background-color: #f58a00;
+  border-color: #ffb340;
+}
+
+[data-theme="tva"] :is(body, #app) .btn-primary:hover,
+[data-theme="tva"] :is(body, #app) .card-new-note-btn:hover {
+  background-color: #ffaa2b;
+  color: #000000;
+  border-color: #ffd180;
+  text-shadow: none;
+  box-shadow: 0 0 14px rgba(255, 165, 34, 0.65);
+}
+
+[data-theme="tva"] :is(body, #app) .btn-secondary {
+  background-color: #b85d00;
+  color: #050200;
+  border: 1px solid #e67e00;
+  font-weight: 700;
+  text-shadow: none;
+}
+
+[data-theme="tva"] :is(body, #app) .btn-secondary:hover {
+  background-color: #d97706;
+  color: #000000;
+  border-color: #ff9e22;
+  text-shadow: none;
+  box-shadow: 0 0 10px rgba(255, 140, 0, 0.4);
+}
+
+[data-theme="tva"] :is(body, #app) .btn-danger,
+[data-theme="tva"] :is(body, #app) .btn-purge,
+[data-theme="tva"] :is(body, #app) .btn-delete-permanent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background-color: #e03516;
+  color: #050200;
+  border: 1px solid #ff6b52;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  text-shadow: none;
+}
+
+[data-theme="tva"] :is(body, #app) .btn-danger:hover,
+[data-theme="tva"] :is(body, #app) .btn-purge:hover,
+[data-theme="tva"] :is(body, #app) .btn-delete-permanent:hover {
+  background-color: #ff4d2e;
+  color: #000000;
+  border-color: #ff8570;
+  text-shadow: none;
+  box-shadow: 0 0 12px rgba(255, 59, 31, 0.6);
+}
+
+[data-theme="tva"] :is(body, #app) .btn-restore {
+  background-color: #f58a00;
+  color: #050200;
+  border: 1px solid #ffb340;
+  font-weight: 700;
+  text-shadow: none;
+  box-shadow: 0 0 8px rgba(255, 140, 0, 0.3);
+}
+
+[data-theme="tva"] :is(body, #app) .btn-restore:hover {
+  background-color: #ffaa2b;
+  color: #000000;
+  border-color: #ffd180;
+  text-shadow: none;
+  box-shadow: 0 0 14px rgba(255, 165, 34, 0.65);
+}
+
+[data-theme="tva"]
+  :is(body, #app)
+  :is(.btn-restore, .btn-purge, .btn-delete-permanent, .btn-primary, .btn-secondary, .btn-danger)
+  svg {
+  color: currentColor;
+  filter: none;
+}
+
+[data-theme="tva"] :is(body, #app) .modal-close,
+[data-theme="tva"] :is(body, #app) .recognition-jobs__close {
+  color: #ffb84d;
+  background-color: #211203;
+  border: 1px solid #b35900;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 140, 0, 0.6);
+  box-shadow: 0 0 6px rgba(255, 140, 0, 0.2);
+}
+
+[data-theme="tva"] :is(body, #app) .modal-close:hover,
+[data-theme="tva"] :is(body, #app) .recognition-jobs__close:hover {
+  background-color: #ff9e22;
+  color: #080400;
+  border-color: #ffc266;
+  text-shadow: none;
+  box-shadow: 0 0 12px rgba(255, 158, 34, 0.7);
+}
+
+/* ==========================================================================
+   TVA Terminal Chrome, Cards, Logs & Note Canvas Overrides
+   ========================================================================== */
+
+[data-theme="tva"] .toolbar,
+[data-theme="tva"] .note-canvas-toolbar {
+  border-bottom: 1px solid var(--border-secondary);
+  box-shadow: 0 1px 10px rgba(255, 140, 0, 0.15);
+}
+
+[data-theme="tva"] .footer {
+  border-top: 1px solid var(--border-secondary);
+  box-shadow: 0 -1px 10px rgba(255, 140, 0, 0.12);
+}
+
+[data-theme="tva"] .sidebar {
+  border-right: 1px solid var(--border-secondary);
+}
+
+/* Note Canvas Toolbar Buttons: Rectangular retro console keys instead of circles */
+[data-theme="tva"] :is(body, #app) .note-canvas-toolbar__button {
+  border-radius: 2px;
+  border: 1px solid var(--border-secondary);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow:
+    0 0 6px rgba(255, 140, 0, 0.2),
+    inset 0 0 4px rgba(255, 140, 0, 0.1);
+}
+
+[data-theme="tva"] :is(body, #app) .note-canvas-toolbar__button:hover {
+  border-color: var(--text-primary);
+  background-color: var(--bg-hover);
+  box-shadow: 0 0 10px rgba(255, 140, 0, 0.45);
+}
+
+[data-theme="tva"] :is(body, #app) .note-canvas-toolbar__button--active {
+  background-color: var(--color-primary);
+  color: var(--text-inverse);
+  border-color: var(--text-primary);
+  box-shadow: 0 0 12px rgba(255, 140, 0, 0.75);
+}
+
+[data-theme="tva"] :is(body, #app) .note-canvas-toolbar__button--active svg {
+  filter: none;
+}
+
+/* Cards & Modals: Illuminated amber vector frames */
+[data-theme="tva"] .note-card,
+[data-theme="tva"] .notebook-card,
+[data-theme="tva"] .modal-content,
+[data-theme="tva"] .modal-dialog,
+[data-theme="tva"] .settings-dialog {
+  border: 1px solid var(--border-secondary);
+  box-shadow:
+    0 0 12px rgba(255, 140, 0, 0.2),
+    inset 0 0 8px rgba(255, 140, 0, 0.06);
+}
+
+[data-theme="tva"] .logs-textarea,
+[data-theme="tva"] .logs-intro,
+[data-theme="tva"] .mcp-audit-log-table th,
+[data-theme="tva"] .mcp-audit-log-table td,
+[data-theme="tva"] .mcp-audit-log-args {
+  color: var(--text-primary);
+}
+
+[data-theme="tva"] .note-card:hover,
+[data-theme="tva"] .notebook-card:hover {
+  border-color: var(--text-primary);
+  box-shadow:
+    0 0 18px rgba(255, 140, 0, 0.4),
+    inset 0 0 10px rgba(255, 140, 0, 0.1);
+}
+
+/* Dark-mode parity rules for NoteCanvas & TextEditorLayer components */
+[data-theme="tva"] .note-canvas-toolbar__readonly-hint {
+  color: var(--nb-status-warning);
+  background-color: rgba(255, 119, 0, 0.16);
+  border-color: var(--nb-status-warning);
+  border-radius: 2px;
+}
+
+[data-theme="tva"] .note-canvas__trumbowyg-toolbar {
+  background: var(--bg-secondary);
+  border-right-color: var(--border-secondary);
+}
+
+[data-theme="tva"] .note-canvas__trumbowyg-toolbar svg {
+  fill: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
+[data-theme="tva"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown,
+[data-theme="tva"] .note-canvas__text-editor-layer .trumbowyg-dropdown {
+  background: var(--bg-secondary);
+  border-color: var(--border-secondary);
+}
+
+[data-theme="tva"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button,
+[data-theme="tva"] .note-canvas__text-editor-layer .trumbowyg-dropdown button {
+  color: var(--text-primary);
+}
+
+[data-theme="tva"] .note-canvas__trumbowyg-toolbar .trumbowyg-dropdown button svg,
+[data-theme="tva"] .note-canvas__text-editor-layer .trumbowyg-dropdown button svg {
+  fill: var(--text-primary);
+}
+
+[data-theme="tva"] .trumbowyg-editor {
+  color: var(--text-primary);
+}
+
+[data-theme="tva"] .text-editor-task-context-menu {
+  background: var(--bg-secondary);
+  border-color: var(--border-secondary);
+}
+
+[data-theme="tva"] .text-editor-task-context-menu__item {
+  color: var(--text-primary);
+}
+
+[data-theme="tva"] .text-editor-task-context-menu__item:hover {
+  background: var(--bg-hover);
+}
+
+[data-theme="tva"] .note-canvas__text-editor-layer .merge-hint {
+  color: var(--nb-status-warning);
+  background-color: rgba(255, 119, 0, 0.18);
+  border-color: var(--nb-status-warning);
+}
+
+[data-theme="tva"] .note-canvas__media-btn {
+  background: var(--bg-secondary);
+  border-color: var(--border-secondary);
+  color: var(--text-primary);
+  border-radius: 2px;
+}
+
+[data-theme="tva"] .help-overlay {
+  --help-overlay-accent: #ff9e22;
+}
+
+/* ==========================================================================
+   Small / Portrait Devices (Smartphones) — Compact Monospace & No " ////"
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  [data-theme="tva"] #app,
+  [data-theme="tva"] .modal-overlay,
+  [data-theme="tva"] .modal-dialog,
+  [data-theme="tva"] :is(#app, .modal-overlay) :is(button, input, select, textarea) {
+    letter-spacing: 0em;
+  }
+
+  [data-theme="tva"] :is(#app, .modal-overlay) :is(h1, h2, h3),
+  [data-theme="tva"] .notebook-card-title,
+  [data-theme="tva"] .breadcrumb-current,
+  [data-theme="tva"] .overview-tab.active,
+  [data-theme="tva"] .settings-nav__item--current,
+  [data-theme="tva"] .modal-header h2,
+  [data-theme="tva"] .modal-header h3 {
+    letter-spacing: 0.02em;
+  }
+
+  /* Omit the trailing " ////" on narrow screens so headers don't wrap */
+  [data-theme="tva"] .section-header h3::after,
+  [data-theme="tva"] .settings-section h3::after,
+  [data-theme="tva"] .settings-dialog__title::after {
+    content: none;
+  }
+
+  [data-theme="tva"] .settings-dialog__title,
+  [data-theme="tva"] .modal-title {
+    font-size: 1.1rem;
+  }
+
+  [data-theme="tva"] .section-header h3,
+  [data-theme="tva"] .settings-section h3,
+  [data-theme="tva"] .recycle-bin-section h3 {
+    font-size: 0.95rem;
+  }
+
+  [data-theme="tva"] .notebook-card-title,
+  [data-theme="tva"] .preview-card .note-card-title,
+  [data-theme="tva"] .recycle-item-title {
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
+  }
+
+  [data-theme="tva"] :is(body, #app) .breadcrumb-item,
+  [data-theme="tva"] .breadcrumb-current {
+    font-size: 0.8rem;
+    letter-spacing: 0em;
+  }
+
+  [data-theme="tva"] .recycle-item {
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+  }
+}

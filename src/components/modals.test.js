@@ -30,8 +30,10 @@ vi.mock("../modules/router.js", () => ({
   navigateTo: (...args) => navigateTo(...args),
 }));
 
+// Keys only, unless a test needs to see what was interpolated
+let translate = (key) => key;
 vi.mock("../i18n/index.js", () => ({
-  t: (key) => key,
+  t: (key, opts) => translate(key, opts),
 }));
 
 let modals;
@@ -66,6 +68,7 @@ function confirmButton() {
 beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
+  translate = (key) => key;
   document.body.innerHTML = "";
   vi.useRealTimers();
   modals = await import("./modals.js");
@@ -242,6 +245,79 @@ describe("create note modal — failure recovery", () => {
     expect(createNote).not.toHaveBeenCalled();
     expect(document.getElementById("modal-overlay")).not.toBeNull();
     expect(confirmButton().disabled).toBe(false);
+  });
+});
+
+describe("a notebook shared with the user", () => {
+  it("explains in plain words when the storage layer refuses a note", async () => {
+    const { ShareRestrictedError } = await import("../modules/sharing/shareRestrictions.js");
+    createNote.mockRejectedValueOnce(new ShareRestrictedError("createNote", "nb1"));
+
+    await modals.showCreateNoteModal("nb1");
+    titleInput().value = "My note";
+    pressEnter();
+    await flush();
+
+    expect(document.querySelector(".modal-error").textContent).toBe("sharing.restricted.message");
+    expect(confirmButton().disabled).toBe(false);
+  });
+
+  it("is never offered as a move or copy target", async () => {
+    const notebooks = [
+      { id: "own", title: "Mine", color: "#111" },
+      {
+        id: "shared-ro",
+        title: "Theirs (read-only)",
+        color: "#222",
+        origin: "shared",
+        sharePermissions: 1,
+      },
+      {
+        id: "shared-rw",
+        title: "Theirs (editable)",
+        color: "#333",
+        origin: "shared",
+        sharePermissions: 7,
+      },
+    ];
+
+    const pending = modals.showMoveCopyDialog({ id: "n1", notebookId: null }, notebooks);
+    const offered = [...document.querySelectorAll(".notebook-picker-item")].map(
+      (el) => el.dataset.notebookId,
+    );
+    document.querySelector(".modal-cancel").click();
+    await pending;
+
+    expect(offered).toEqual(["__quicknotes__", "own"]);
+  });
+
+  // Its title and description were written by another user
+  const hostile = {
+    id: "nb1",
+    title: '"><img src=x id="t-injected">',
+    description: '</textarea><img src=x id="d-injected">',
+    color: "#3b82f6",
+  };
+
+  it("cannot break out of the edit form, title attribute and description textarea included", async () => {
+    modals.showEditNotebookModal(hostile);
+
+    expect(document.querySelector("#t-injected, #d-injected")).toBeNull();
+    expect(document.getElementById("notebook-title").value).toBe(hostile.title);
+    expect(document.getElementById("notebook-description").value).toBe(hostile.description);
+  });
+
+  it("names it as text when a note is created in it", async () => {
+    translate = (key, opts) => (opts ? `${key}:${opts.notebook}` : key);
+    const storage = await import("../modules/storage.js");
+    storage.getNotebook.mockResolvedValueOnce(hostile);
+
+    await modals.showCreateNoteModal("nb1");
+
+    expect(document.querySelector("#t-injected")).toBeNull();
+    expect(document.querySelector(".form-hint").textContent).toContain(
+      '<img src=x id="t-injected">',
+    );
   });
 });
 

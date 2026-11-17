@@ -19,11 +19,15 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 const getAllNotes = vi.fn();
 const getNote = vi.fn();
+const getNoteIndex = vi.fn();
+const getNotebook = vi.fn();
 const getSetting = vi.fn();
 const updateNote = vi.fn();
 vi.mock("./storage.js", () => ({
   getAllNotes: (...args) => getAllNotes(...args),
   getNote: (...args) => getNote(...args),
+  getNoteIndex: (...args) => getNoteIndex(...args),
+  getNotebook: (...args) => getNotebook(...args),
   getSetting: (...args) => getSetting(...args),
   updateNote: (...args) => updateNote(...args),
 }));
@@ -50,6 +54,8 @@ beforeEach(async () => {
   vi.clearAllMocks();
   getSetting.mockResolvedValue("en-US");
   getSecureCredential.mockResolvedValue(null);
+  getNoteIndex.mockResolvedValue(null); // unknown note: the user's own
+  getNotebook.mockResolvedValue(null);
   window.dispatchEvent = vi.fn();
   autoRecognition = await import("./autoRecognition.js");
 });
@@ -144,6 +150,56 @@ describe("recognizeUnprocessedNotes", () => {
 
     const processed = await autoRecognition.recognizeUnprocessedNotes();
     expect(processed).toBe(1);
+  });
+});
+
+describe("notes of notebooks shared with the user", () => {
+  beforeEach(() => {
+    invokeMock.mockResolvedValue("http://127.0.0.1:5000");
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [{ text: "hi" }] });
+    getNote.mockResolvedValue({ id: "n1", strokes: [] });
+    getNoteIndex.mockResolvedValue({ id: "n1", notebookId: "nb-shared" });
+  });
+
+  it.each([
+    ["read-only", { id: "nb-shared", origin: "shared", sharePermissions: 1 }],
+    ["ended", { id: "nb-shared", origin: "shared", sharePermissions: 7, shareEnded: true }],
+  ])("are not recognized in a %s notebook: no backend call, nothing stored", async (_l, notebook) => {
+    getNotebook.mockResolvedValue(notebook);
+
+    const result = await autoRecognition.forceRecognition("n1", [stroke("s1", [[0, 0]])]);
+
+    expect(result).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(updateNote).not.toHaveBeenCalled();
+  });
+
+  it("are skipped by the catch-up scan too", async () => {
+    getNotebook.mockResolvedValue({ id: "nb-shared", origin: "shared", sharePermissions: 1 });
+    getAllNotes.mockResolvedValue([
+      { id: "n1", hasStrokes: true, hasRecognition: false, deleted: false },
+    ]);
+    getNote.mockResolvedValue({ id: "n1", strokes: [stroke("s1", [[0, 0]])] });
+
+    const processed = await autoRecognition.recognizeUnprocessedNotes();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(updateNote).not.toHaveBeenCalled();
+    // Not counted (a count runs a second sync at startup), and not even loaded
+    expect(processed).toBe(0);
+    expect(getNote).not.toHaveBeenCalled();
+  });
+
+  it("are recognized in a collaborative notebook", async () => {
+    getNotebook.mockResolvedValue({ id: "nb-shared", origin: "shared", sharePermissions: 7 });
+
+    await autoRecognition.forceRecognition("n1", [stroke("s1", [[0, 0]])]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(updateNote).toHaveBeenCalledWith(
+      "n1",
+      expect.objectContaining({ recognition: expect.anything() }),
+    );
   });
 });
 

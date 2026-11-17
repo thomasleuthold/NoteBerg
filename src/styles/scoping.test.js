@@ -14,6 +14,8 @@ const allCss = [
   "src/styles/main.css",
   "src/styles/components.css",
   "src/styles/notebookEditor.css",
+  "src/components/NoteCanvas/NoteCanvas.css",
+  "src/components/NoteCanvas/TextLayer.css",
 ]
   .map((file) => readFileSync(file, "utf8"))
   .join("");
@@ -49,6 +51,14 @@ describe("Nextcloud CSS scoping", () => {
     // also styles — buttons here — need it.
     expect(layoutCss).toContain(".settings-nav__list {");
   });
+
+  it("keeps tva.css free of direct body rules and unscoped bare element selectors", () => {
+    const tvaCss = readFileSync("src/styles/themes/tva.css", "utf8");
+    expect(tvaCss).not.toMatch(/\[data-theme="tva"\]\s+body\b/);
+    expect(tvaCss).not.toMatch(
+      /\[data-theme="tva"\]\s+(button|input|select|textarea|table|h1|h2|h3)\s*[,{]/,
+    );
+  });
 });
 
 describe("status colours", () => {
@@ -69,10 +79,10 @@ describe("status colours", () => {
     expect(settingsJs).not.toContain("var(--color-error)");
   });
 
-  it("themes every status colour for both light and dark", () => {
+  it("themes every status colour for light, dark, and tva", () => {
     // One defined only in the base palette would keep a single value in both
     // themes — readable in one and not in the other.
-    for (const theme of ["light", "dark"]) {
+    for (const theme of ["light", "dark", "tva"]) {
       const themeCss = readFileSync(`src/styles/themes/${theme}.css`, "utf8");
       for (const name of ["success", "warning", "error"]) {
         expect(themeCss).toContain(`--nb-status-${name}:`);

@@ -1,5 +1,5 @@
 import { bootApp } from "./support/fixtures.js";
-import { createQuickNote, drawStroke, openNote, readQuickNotes } from "./support/app.js";
+import { createQuickNote, drawStroke, openNote, readQuickNotes, startTyping } from "./support/app.js";
 import { expect, test } from "./support/fixtures.js";
 
 /** The first stroke of the only quick note, as stored. */
@@ -53,7 +53,7 @@ test("ink and text survive the app being backgrounded and then killed", async ({
     [0.5, 0.6],
   ]);
   await page.click("#nc-tool-text");
-  await page.locator(".trumbowyg-editor").click();
+  await startTyping(page);
   await page.keyboard.type("Written just before closing");
 
   // Backgrounding (Home on Android, minimising on Windows) hides the page.

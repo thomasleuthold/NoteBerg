@@ -738,7 +738,8 @@ export class CanvasRenderer {
   _getPageBackgroundColor() {
     const fromCss = getComputedStyle(this.viewportElement).getPropertyValue("--bg-primary")?.trim();
     if (fromCss) return fromCss;
-    return getTheme() === "dark" ? "#1e1e2e" : "#ffffff";
+    const theme = getTheme();
+    return theme === "tva" ? "#0d0800" : theme === "dark" ? "#1e1e2e" : "#ffffff";
   }
 
   /**
@@ -1937,7 +1938,8 @@ export class CanvasRenderer {
    */
   _getUninvertedPdfBounds() {
     if (!this.mediaManager) return [];
-    if (getTheme() === "dark" && getPdfInvertDarkMode()) return []; // pages are inverted — dark palette is fine everywhere
+    const theme = getTheme();
+    if ((theme === "dark" || theme === "tva") && getPdfInvertDarkMode()) return []; // pages are inverted — dark palette is fine everywhere
 
     // Cached: this used to rebuild an array of one object per PDF page on every
     // draw pass (and again per stroke start, and per marker preview frame). On a
@@ -1979,7 +1981,8 @@ export class CanvasRenderer {
    * @private
    */
   _strokeNeedsLightPalette(stroke, uninvertedPdfBounds) {
-    if (getTheme() !== "dark" || uninvertedPdfBounds.length === 0) return false;
+    const theme = getTheme();
+    if ((theme !== "dark" && theme !== "tva") || uninvertedPdfBounds.length === 0) return false;
     if (!stroke.x || stroke.x.length === 0) return false;
     const px = stroke.x[0];
     const py = stroke.y[0];
@@ -2449,6 +2452,49 @@ export class CanvasRenderer {
   }
 
   /**
+   * Paint strokes that were just appended to the stroke list (someone else's,
+   * arriving while the note is open) on top of what the buffer shows, instead of
+   * repainting it. Pens only: markers are drawn beneath the pens, so a new one
+   * needs the full repaint. (A quality repaint still pending after a fast one
+   * draws them anyway: they are in the spatial index.)
+   * @param {Array<object>} strokes - already in the list and the spatial index
+   */
+  drawAddedStrokes(strokes) {
+    if (!this.ctx || strokes.length === 0) return;
+    if (strokes.some((s) => s.type === "marker")) {
+      this.forceRedraw();
+      return;
+    }
+    const top = this.bufferTop;
+    const bottom = top + this.bufferHeight;
+    const uninvertedPdfBounds = this._getUninvertedPdfBounds();
+    const lightPalette = uninvertedPdfBounds.length > 0 ? sharedGetThemePalette("light") : null;
+    const palette = this.palette || sharedGetThemePalette();
+    this.ctx.save();
+    this.ctx.translate(-this.bufferLeft, -this.bufferTop);
+    try {
+      for (const stroke of strokes) {
+        if (!Array.isArray(stroke.y) || stroke.y.length === 0) continue;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        for (const y of stroke.y) {
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+        // Off the buffer: the next repaint of that region draws it from the index
+        const reach = (stroke.width || 2) * 2;
+        if (maxY + reach < top || minY - reach > bottom) continue;
+        const strokePalette = this._strokeNeedsLightPalette(stroke, uninvertedPdfBounds)
+          ? lightPalette
+          : palette;
+        sharedDrawStroke(this.ctx, stroke, strokePalette, false, false);
+      }
+    } finally {
+      this.ctx.restore();
+    }
+  }
+
+  /**
    * Release all cached PDF page renderables so they reload on next draw.
    * Needed on theme change: rendered PDF bitmaps are inverted for dark theme
    * (see mediaManager.getRenderedMedia), and that inversion is baked in at
@@ -2496,8 +2542,8 @@ export class CanvasRenderer {
     targetCtx.save();
 
     // Fill background using the current theme color (prevents black on JPEG for transparent notes)
-    const isDark = getTheme() === "dark";
-    const bgColor = isDark ? "#1e1e2e" : "#ffffff";
+    const theme = getTheme();
+    const bgColor = theme === "tva" ? "#0d0800" : theme === "dark" ? "#1e1e2e" : "#ffffff";
     targetCtx.fillStyle = bgColor;
     targetCtx.fillRect(0, 0, width, height);
 

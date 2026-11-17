@@ -12,6 +12,20 @@ const UPLOADS_PREFIX = "/__uploads__";
 
 const OCS_USER_PATH = "/ocs/v2.php/cloud/user";
 
+// Nextcloud share permission bits
+const PERM_UPDATE = 2;
+const PERM_CREATE = 4;
+const PERM_DELETE = 8;
+
+const encodePath = (p) => p.split("/").map(encodeURIComponent).join("/");
+const forbidden = () => ({
+  ok: false,
+  status: 403,
+  statusText: "Forbidden",
+  headers: { get: () => null },
+  text: async () => "",
+});
+
 export class MockWebDAVServer {
   /**
    * @param {object} [account]
@@ -25,6 +39,16 @@ export class MockWebDAVServer {
     this.loginName = loginName;
     this.userId = userId;
     this.rootPath = `/remote.php/dav/files/${encodeURIComponent(userId)}`;
+
+    // Shares mounted into this user's tree, keyed by share id:
+    //   { path, source: MockWebDAVServer, sourcePath, permissions, ownerId }
+    // Requests below `path` are served from the owner's tree, limited by the
+    // granted permission bits. A mount root is not a file of this user's own tree.
+    this.mounts = new Map();
+    /** Older servers answer PROPFIND without oc:owner-id; the client must cope. */
+    this.reportOwnerId = true;
+    /** The owner ID PROPFIND reports for this user's own files, if it differs from the account's (e.g. in case). */
+    this.reportedOwnerId = null;
 
     this._etagCounter = 0;
     this.requests = [];
@@ -40,6 +64,7 @@ export class MockWebDAVServer {
   }
 
   reset() {
+    this.mounts.clear();
     this.files.clear();
     this._etagCounter = 0;
     this.requests = [];
@@ -56,6 +81,10 @@ export class MockWebDAVServer {
   // --- Seed DSL ---
 
   seedNotebook(id, { title = id, modified = Date.now(), etag, ...rest } = {}) {
+    // A notebook cannot exist without the folder that holds all of them
+    if (!this.files.has("/NoteBerg/notebooks")) {
+      this.files.set("/NoteBerg/notebooks", { isCollection: true, mtime: new Date() });
+    }
     this.files.set(`/NoteBerg/notebooks/${id}`, { isCollection: true, mtime: new Date() });
     this.files.set(`/NoteBerg/notebooks/${id}/notes`, { isCollection: true, mtime: new Date() });
     this.files.set(`/NoteBerg/notebooks/${id}/_notebook.json`, {
@@ -110,6 +139,127 @@ export class MockWebDAVServer {
       mtime: new Date(),
     });
     return this;
+  }
+
+  // --- Shares ---
+
+  /**
+   * Mount a folder of another user's tree into this one, as accepting a share does.
+   * @param {object} mount
+   * @param {string|number} mount.shareId
+   * @param {string} mount.path - where it appears in this user's tree
+   * @param {MockWebDAVServer} mount.source - the owner's server
+   * @param {string} mount.sourcePath - the shared folder in the owner's tree
+   * @param {number} mount.permissions - granted permission bits
+   */
+  addMount({ shareId, path, source, sourcePath, permissions }) {
+    this.mounts.set(String(shareId), {
+      path,
+      source,
+      sourcePath,
+      permissions,
+      ownerId: source.userId,
+    });
+    return this;
+  }
+
+  removeMount(shareId) {
+    this.mounts.delete(String(shareId));
+    return this;
+  }
+
+  setMountPermissions(shareId, permissions) {
+    const mount = this.mounts.get(String(shareId));
+    if (mount) mount.permissions = permissions;
+    return this;
+  }
+
+  /** The mount a path lies in (or is the root of), or null. */
+  _findMount(path) {
+    let best = null;
+    for (const mount of this.mounts.values()) {
+      const within = path === mount.path || path.startsWith(`${mount.path}/`);
+      if (within && (!best || mount.path.length > best.path.length)) best = mount;
+    }
+    return best;
+  }
+
+  /** A path inside a mount, translated into the owner's tree. */
+  _toSourcePath(mount, path) {
+    return mount.sourcePath + path.slice(mount.path.length);
+  }
+
+  /** Where a path is stored: this tree, or the owner's when it lies in a mount. */
+  _resolveStore(path) {
+    const mount = this._findMount(path);
+    if (!mount) return { files: this.files, path, mount: null, server: this };
+    return {
+      files: mount.source.files,
+      path: this._toSourcePath(mount, path),
+      mount,
+      server: mount.source,
+    };
+  }
+
+  _basicAuthFor() {
+    return `Basic ${btoa(`${this.loginName}:app-password-123`)}`;
+  }
+
+  /**
+   * Serve a request that lies inside a mount from the owner's tree, enforcing
+   * the permission bits the share grants. Responses that name paths are
+   * rewritten back into this user's namespace.
+   */
+  async _handleMountRequest(mount, method, path, headers, options) {
+    const source = mount.source;
+    const sourcePath = this._toSourcePath(mount, path);
+    const granted = mount.permissions;
+    const isRoot = path === mount.path;
+
+    // The recipient renaming the mount root moves where the share appears
+    if (method === "MOVE" && isRoot) return this._moveMount(mount, headers);
+
+    if (method === "PUT") {
+      const needed = source.files.has(sourcePath) ? PERM_UPDATE : PERM_CREATE;
+      if (!(granted & needed)) return forbidden();
+    } else if (method === "MKCOL" || method === "COPY") {
+      if (!(granted & PERM_CREATE)) return forbidden();
+    } else if (method === "DELETE") {
+      if (!(granted & PERM_DELETE)) return forbidden();
+    } else if (method === "MOVE") {
+      if (!(granted & PERM_DELETE) || !(granted & PERM_CREATE)) return forbidden();
+    }
+
+    const forwardHeaders = { ...headers, Authorization: source._basicAuthFor() };
+    if (headers.Destination) {
+      const destPath = this._parseUrl(headers.Destination).path;
+      if (this._findMount(destPath) !== mount) return forbidden();
+      forwardHeaders.Destination = `${source.baseUrl}${source.rootPath}${encodePath(
+        this._toSourcePath(mount, destPath),
+      )}`;
+    }
+    const response = await source.handleRequest(
+      `${source.baseUrl}${source.rootPath}${encodePath(sourcePath)}`,
+      { ...options, headers: forwardHeaders },
+    );
+
+    if (method !== "PROPFIND" || !response.text) return response;
+    const from = `${source.rootPath}${encodePath(mount.sourcePath)}`;
+    const to = `${this.rootPath}${encodePath(mount.path)}`;
+    const xml = (await response.text()).split(from).join(to);
+    return { ...response, text: async () => xml };
+  }
+
+  /** WebDAV MOVE of a mount root: Nextcloud stores the new location as the share's target. */
+  _moveMount(mount, headers) {
+    const dest = headers.Destination ? this._parseUrl(headers.Destination).path : null;
+    if (!dest) return { ok: false, status: 400, statusText: "Bad Request" };
+    const parent = dest.substring(0, dest.lastIndexOf("/")) || "/";
+    if (!this.files.has(parent) || this.files.has(dest) || this._findMount(dest)) {
+      return { ok: false, status: 409, statusText: "Conflict", text: async () => "" };
+    }
+    mount.path = dest;
+    return { ok: true, status: 201, statusText: "Created", text: async () => "" };
   }
 
   // --- Fault injection ---
@@ -238,7 +388,7 @@ export class MockWebDAVServer {
     const { path, principal } = this._parseUrl(url);
     const headers = options.headers || {};
 
-    this.requests.push({ method, path, headers: { ...headers } });
+    this.requests.push({ method, path, headers: { ...headers }, body: options.body });
 
     if (!this._authenticates(headers.Authorization)) {
       return { ok: false, status: 401, statusText: "Unauthorized", text: async () => "" };
@@ -264,6 +414,9 @@ export class MockWebDAVServer {
         ? { ok: false, status: 409, statusText: "Conflict", text: async () => "" }
         : { ok: false, status: 404, statusText: "Not Found", text: async () => "" };
     }
+
+    const mount = this._findMount(path);
+    if (mount) return this._handleMountRequest(mount, method, path, headers, options);
 
     if (method === "MKCOL") {
       if (this.files.has(path)) return { ok: false, status: 405, statusText: "Method Not Allowed" };
@@ -383,9 +536,10 @@ export class MockWebDAVServer {
       }
 
       const file = this.files.get(path);
-      let xml = '<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:">';
+      let xml =
+        '<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">';
 
-      const addItem = (p, f) => {
+      const addItem = (p, f, ownerId = this.reportedOwnerId ?? this.userId) => {
         const href = this.rootPath + p.split("/").map(encodeURIComponent).join("/");
         const mtime = f.mtime instanceof Date ? f.mtime : new Date();
         const type = f.isCollection ? "<d:collection/>" : "";
@@ -397,6 +551,7 @@ export class MockWebDAVServer {
                 <d:getlastmodified>${mtime.toUTCString()}</d:getlastmodified>
                 <d:getetag>"${f.etag || ""}"</d:getetag>
                 <d:resourcetype>${type}</d:resourcetype>
+                ${this.reportOwnerId ? `<oc:owner-id>${ownerId}</oc:owner-id>` : ""}
               </d:prop>
               <d:status>HTTP/1.1 200 OK</d:status>
             </d:propstat>
@@ -424,6 +579,27 @@ export class MockWebDAVServer {
         }
       }
 
+      // Shares mounted below the requested folder are part of its tree: the mount
+      // root is a child, and a recursive listing continues into the owner's files
+      if (file.isCollection && depth !== "0") {
+        const prefix = path.endsWith("/") ? path : `${path}/`;
+        for (const m of this.mounts.values()) {
+          const relative = m.path.slice(prefix.length);
+          const isChild = m.path.startsWith(prefix) && !relative.includes("/");
+          if (isChild || (depth === "infinity" && m.path.startsWith(prefix))) {
+            addItem(m.path, m.source.files.get(m.sourcePath) ?? { isCollection: true }, m.ownerId);
+          }
+          if (depth === "infinity" && m.path.startsWith(prefix)) {
+            const ownerPrefix = `${m.sourcePath}/`;
+            for (const [ownerPath, ownerFile] of m.source.files) {
+              if (ownerPath.startsWith(ownerPrefix)) {
+                addItem(m.path + ownerPath.slice(m.sourcePath.length), ownerFile, m.ownerId);
+              }
+            }
+          }
+        }
+      }
+
       xml += "</d:multistatus>";
       return { ok: true, status: 207, text: async () => xml };
     }
@@ -445,9 +621,14 @@ export class MockWebDAVServer {
         return { ok: false, status: 404, statusText: "Not Found", text: async () => "" };
       }
 
-      const destParent = destPath.substring(0, destPath.lastIndexOf("/")) || "/";
-      if (!this.files.has(destParent)) {
+      const dest = this._resolveStore(destPath);
+      const destParent = dest.path.substring(0, dest.path.lastIndexOf("/")) || "/";
+      if (!dest.files.has(destParent)) {
         return { ok: false, status: 409, statusText: "Conflict", text: async () => "" };
+      }
+      const existing = dest.files.get(dest.path);
+      if (dest.mount && !(dest.mount.permissions & (existing ? PERM_UPDATE : PERM_CREATE))) {
+        return forbidden();
       }
 
       const chunkPrefix = `${sessionPath}/`;
@@ -460,9 +641,8 @@ export class MockWebDAVServer {
       }
       chunks.sort((a, b) => a.index - b.index);
 
-      const existing = this.files.get(destPath);
-      const etag = this._generateEtag();
-      this.files.set(destPath, {
+      const etag = dest.server._generateEtag();
+      dest.files.set(dest.path, {
         isCollection: false,
         content: chunks.map((c) => c.content).join(""),
         mtime: new Date(),

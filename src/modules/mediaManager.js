@@ -183,10 +183,11 @@ export function getRenderCacheKey(item, scale = 1.0, options = {}) {
  */
 function resolveRenderKey(item, scale, options = {}) {
   const { invertForDarkTheme = false } = options;
+  const theme = getTheme();
   const invert =
     invertForDarkTheme &&
     item.type === "pdf-page" &&
-    getTheme() === "dark" &&
+    (theme === "dark" || theme === "tva") &&
     getPdfInvertDarkMode();
 
   // Round scale to avoid cache fragmentation (e.g., 1.0, 1.5, 2.0)

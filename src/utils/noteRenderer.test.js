@@ -36,6 +36,14 @@ describe("getThemePalette", () => {
     expect(palette).toHaveLength(15);
   });
 
+  it("returns the TVA palette (amber phosphor #ff9e22 first) when theme is tva", () => {
+    getTheme.mockReturnValue("tva");
+    const palette = getThemePalette();
+    expect(palette[0]).toBe("#ff9e22");
+    expect(palette[5]).toBe("#fff3db");
+    expect(palette).toHaveLength(15);
+  });
+
   it("returns the light palette (black first) for any non-dark theme", () => {
     getTheme.mockReturnValue("light");
     const palette = getThemePalette();

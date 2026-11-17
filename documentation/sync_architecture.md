@@ -236,16 +236,17 @@ Returns `null` (unresolvable conflict) when:
 - Either side has encrypted content blobs.
 - Local is a metadata stub with `hasStrokes=true` but no actual strokes loaded.
 
-Otherwise merges field by field:
+Otherwise merges field by field (`noteMerge.js`, pure code; the same merge serves the native sync, the Nextcloud app's write path, the open editor and the storage worker). A text divergence never costs the other side its strokes, media or tasks, and the result does not depend on which side is "local".
 
 | Field | Strategy |
 |---|---|
-| title, background | Newer timestamp wins |
-| content (text) | If one contains the other: use longer. If diverged: conflict (null). |
-| strokes | Union: both sides keep their strokes unless explicitly deleted. Newer side's deletions win. |
+| title, background, pen presets, PDF source | The value with the larger stamp in `fieldVersions` |
+| content (text) | Three-way merge against the stored baseline (`noteBase` store, `textMerge.js`): blocks and table rows are aligned, changes to different blocks are combined, and text boxes are matched by id. When both sides changed the same block, both are kept and the non-primary one is marked with a conflict hint. Never returns `null`. Without a baseline the sides are aligned directly, and blocks found on one side only are kept |
+| strokes, media, tasks, recordings | Per element: an id on one side only is kept; an id deleted on either side stays deleted unless the surviving copy restores it; an id on both sides takes the copy with the larger version stamp (`hlc.js`). Notes without stamps fall back to the newer note |
 | tags | Union set |
-| media, recordings | Newer side's version wins per ID; deleted items stay deleted |
-| tasks | Newer `modified` timestamp wins per task ID |
+
+The baseline is written only at sync boundaries (after an upload, after a download is saved), never by local edits. See [notebook_sharing_design.md § 10](notebook_sharing_design.md) for the merge design and the live updates of an open note.
+
 
 ---
 

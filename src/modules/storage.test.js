@@ -3,7 +3,8 @@
  * Unit tests for moveNote, copyNote, and clearNoteMoveFlag.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ShareRestrictedError } from "./sharing/shareRestrictions.js";
 import {
   checkFileExists,
   clearAllData,
@@ -13,7 +14,9 @@ import {
   createNotebook,
   deleteFile,
   deleteNote,
+  deleteNoteBase,
   deleteNotebook,
+  discardLocalChanges,
   fixCorruptedNotes,
   generateId,
   getAllNotebooks,
@@ -26,7 +29,9 @@ import {
   getFile,
   getFileStats,
   getNote,
+  getNoteBase,
   getNoteIndex,
+  getNotesByNotebook,
   getQuickNotes,
   getRawNote,
   getSetting,
@@ -46,6 +51,7 @@ import {
   restoreNotebook,
   saveFile,
   saveNote,
+  setNoteBase,
   setSetting,
   setStorageVersion,
   updateNote,
@@ -60,6 +66,7 @@ import {
 const stores = {
   notes: new Map(),
   noteContent: new Map(),
+  noteBase: new Map(),
   notebooks: new Map(),
   files: new Map(),
   settings: new Map(),
@@ -98,6 +105,10 @@ vi.mock("idb", () => ({
           if (stores[name]) stores[name].set(record.id ?? record.key, cloneRecord(record));
           return Promise.resolve();
         }),
+        delete: vi.fn((id) => {
+          stores[name]?.delete(id);
+          return Promise.resolve();
+        }),
         openCursor: vi.fn(() =>
           Promise.resolve(makeCursor([...(stores[name]?.values() ?? [])], 0)),
         ),
@@ -118,6 +129,7 @@ vi.mock("idb", () => ({
         return Promise.resolve();
       }),
       getAll: vi.fn((storeName) => Promise.resolve([...(stores[storeName]?.values() ?? [])])),
+      getAllKeys: vi.fn((storeName) => Promise.resolve([...(stores[storeName]?.keys() ?? [])])),
       getAllFromIndex: vi.fn((storeName, _index, value) =>
         Promise.resolve(
           [...(stores[storeName]?.values() ?? [])].filter((r) => r.notebookId === value),
@@ -235,6 +247,10 @@ function seedNote(note) {
     recognition: note.recognition ?? null,
     penPresets: note.penPresets ?? null,
     pdfSource: note.pdfSource ?? null,
+    // Version bookkeeping (DESIGN §10.7), stored with the content
+    ...(note.tombstones ? { tombstones: note.tombstones } : {}),
+    ...(note.shifts ? { shifts: note.shifts } : {}),
+    ...(note.fieldVersions ? { fieldVersions: note.fieldVersions } : {}),
   };
   stores.notes.set(note.id, index);
   stores.noteContent.set(note.id, content);
@@ -377,6 +393,29 @@ describe("copyNote", () => {
     expect(copied.media[0].fileId).toBe("file-orig");
   });
 
+  it("copies an imported PDF once, keeping its pages on the copied file", async () => {
+    seedFile("pdf-1");
+    const pages = [0, 1, 2].map((i) => ({
+      id: `p${i}`,
+      type: "pdf-page",
+      fileId: "pdf-1",
+      pageIndex: i,
+    }));
+    seedNote(makeNote({ pdfSource: "pdf-1", media: pages }));
+
+    const copied = await copyNote("note-1", "nb-b");
+
+    // The original and one copy, not one per page
+    expect(stores.files.size).toBe(2);
+    expect(copied.pdfSource).not.toBe("pdf-1");
+    expect(stores.files.has(copied.pdfSource)).toBe(true);
+    expect(copied.media.map((m) => m.fileId)).toEqual([
+      copied.pdfSource,
+      copied.pdfSource,
+      copied.pdfSource,
+    ]);
+  });
+
   it("copies all media item metadata onto the copy", async () => {
     seedNote(
       makeNote({
@@ -438,6 +477,26 @@ describe("updateNote", () => {
 
   it("throws when note does not exist", async () => {
     await expect(updateNote("ghost", { title: "X" })).rejects.toThrow("Note not found");
+  });
+
+  // DESIGN §10.7: fields take the value with the larger stamp, so a rename made
+  // outside the editor is stamped here; the version bookkeeping is merged
+  it("stamps a renamed title above the stamp it replaces", async () => {
+    seedNote(makeNote({ fieldVersions: { title: "000000001-000-other" } }));
+    await updateNote("note-1", { title: "Renamed" });
+    const stored = stores.noteContent.get("note-1");
+    expect(stored.fieldVersions.title > "000000001-000-other").toBe(true);
+  });
+
+  it("merges deletion stamps and shifts with the stored ones instead of replacing them", async () => {
+    seedNote(makeNote({ tombstones: { a: "t2" }, shifts: [{ v: "s1", y: 0, delta: 1 }] }));
+    await updateNote("note-1", {
+      tombstones: { a: "t1", b: "t1" },
+      shifts: [{ v: "s2", y: 0, delta: 1 }],
+    });
+    const stored = stores.noteContent.get("note-1");
+    expect(stored.tombstones).toEqual({ a: "t2", b: "t1" });
+    expect(stored.shifts.map((s) => s.v)).toEqual(["s1", "s2"]);
   });
 });
 
@@ -1337,6 +1396,20 @@ describe("getStorageStats", () => {
     expect(stats.noteCount).toBe(2); // deleted note-3 excluded
     expect(stats.quickNoteCount).toBe(1); // note-2 only (note-3 filtered out earlier)
   });
+
+  it("does not count notebooks shared with the user, or the notes in them", async () => {
+    seedNotebook(makeNotebook({ id: "nb-own" }));
+    seedNotebook(makeNotebook({ id: "nb-shared", origin: "shared" }));
+    seedNote(makeNote({ id: "note-own", notebookId: "nb-own" }));
+    seedNote(makeNote({ id: "note-shared", notebookId: "nb-shared" }));
+    seedNote(makeNote({ id: "note-quick", notebookId: null }));
+
+    expect(await getStorageStats()).toEqual({
+      notebookCount: 1,
+      noteCount: 2,
+      quickNoteCount: 1,
+    });
+  });
 });
 
 // ── fixCorruptedNotes ─────────────────────────────────────────────────────────
@@ -1548,5 +1621,335 @@ describe("splitNote derived flags (via createNote + updateNote)", () => {
 
     const content = stores.noteContent.get(note.id);
     expect(content.recordings[0].fileId).toBe("file-r");
+  });
+});
+
+// ── Merge baselines (noteBase) ─────────────────────────────────────────────────
+// The text both sides last agreed on; the common ancestor of the three-way merge.
+
+describe("noteBase", () => {
+  it("stores and returns the baseline text", async () => {
+    seedNote(makeNote());
+    await setNoteBase("note-1", "<p>synced</p>");
+
+    expect(await getNoteBase("note-1")).toBe("<p>synced</p>");
+    expect(stores.noteBase.get("note-1").encrypted).toBe(false);
+  });
+
+  it("keeps an empty string as a real baseline", async () => {
+    seedNote(makeNote());
+    await setNoteBase("note-1", "");
+    expect(await getNoteBase("note-1")).toBe("");
+  });
+
+  it("returns null when there is none, and ignores non-string content", async () => {
+    expect(await getNoteBase("nope")).toBeNull();
+    await setNoteBase("note-1", { not: "a string" });
+    expect(stores.noteBase.has("note-1")).toBe(false);
+  });
+
+  it("is never written by local edits, saves or etag updates", async () => {
+    seedNote(makeNote({ synced: false, modified: 5 }));
+    await updateNote("note-1", { content: "<p>typed</p>" });
+    await saveNote({ ...makeNote(), content: "<p>saved</p>" });
+    await updateNoteEtag("note-1", "etag-new");
+
+    expect(stores.noteBase.size).toBe(0);
+  });
+
+  it("is encrypted at rest when local encryption is on and the app is unlocked", async () => {
+    seedNote(makeNote());
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+
+    await setNoteBase("note-1", "<p>secret</p>");
+
+    const row = stores.noteBase.get("note-1");
+    expect(row.encrypted).toBe(true);
+    // Stored as an encrypted {data, iv} blob, never as the plain string
+    expect(typeof row.content).toBe("object");
+    expect(row.content.iv).toBe("iv");
+    expect(await getNoteBase("note-1")).toBe("<p>secret</p>");
+  });
+
+  it("drops the baseline instead of storing plaintext when encryption is on but the app is locked", async () => {
+    seedNote(makeNote());
+    await setNoteBase("note-1", "<p>old</p>");
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+    _appUnlocked = false;
+
+    await setNoteBase("note-1", "<p>new</p>");
+
+    expect(stores.noteBase.has("note-1")).toBe(false);
+  });
+
+  it("reads as absent while an encrypted baseline cannot be decrypted (app locked)", async () => {
+    seedNote(makeNote());
+    stores.settings.set("encrypt_local_data", { key: "encrypt_local_data", value: true });
+    await setNoteBase("note-1", "<p>secret</p>");
+    _appUnlocked = false;
+
+    expect(await getNoteBase("note-1")).toBeNull();
+  });
+
+  it("survives moving the note to the trash and restoring it", async () => {
+    seedNote(makeNote());
+    await setNoteBase("note-1", "<p>keep</p>");
+
+    await deleteNote("note-1");
+    expect(await getNoteBase("note-1")).toBe("<p>keep</p>");
+    await restoreNote("note-1");
+    expect(await getNoteBase("note-1")).toBe("<p>keep</p>");
+  });
+
+  it("is removed when the note is purged", async () => {
+    seedNote(makeNote());
+    await setNoteBase("note-1", "<p>x</p>");
+    await purgeNote("note-1");
+    expect(stores.noteBase.has("note-1")).toBe(false);
+  });
+
+  it("is removed for every note when a notebook is purged", async () => {
+    seedNote(makeNote({ id: "n1", notebookId: "nb-a" }));
+    seedNote(makeNote({ id: "n2", notebookId: "nb-a" }));
+    seedNotebook(makeNotebook({ id: "nb-a" }));
+    await setNoteBase("n1", "a");
+    await setNoteBase("n2", "b");
+
+    await purgeNotebook("nb-a");
+
+    expect(stores.noteBase.size).toBe(0);
+  });
+
+  it("is removed by permanentlyDeleteNote and permanentlyDeleteNotesInNotebook", async () => {
+    seedNote(makeNote({ id: "n1", notebookId: "nb-a" }));
+    seedNote(makeNote({ id: "n2", notebookId: "nb-a" }));
+    seedNote(makeNote({ id: "n3", notebookId: "nb-b" }));
+    for (const id of ["n1", "n2", "n3"]) await setNoteBase(id, id);
+
+    await permanentlyDeleteNote("n1");
+    expect([...stores.noteBase.keys()].sort()).toEqual(["n2", "n3"]);
+
+    await permanentlyDeleteNotesInNotebook("nb-a");
+    expect([...stores.noteBase.keys()]).toEqual(["n3"]);
+  });
+
+  it("is removed by clearAllData and purgeLocalData", async () => {
+    seedNote(makeNote());
+    await setNoteBase("note-1", "x");
+    await purgeLocalData();
+    expect(stores.noteBase.size).toBe(0);
+
+    await setNoteBase("note-1", "x");
+    await clearAllData();
+    expect(stores.noteBase.size).toBe(0);
+  });
+
+  it("deleteNoteBase removes a single baseline", async () => {
+    await setNoteBase("a", "1");
+    await setNoteBase("b", "2");
+    await deleteNoteBase("a");
+    expect([...stores.noteBase.keys()]).toEqual(["b"]);
+  });
+
+  it("sweeps orphaned and purged-stub baselines on init, keeping live ones", async () => {
+    seedNote(makeNote({ id: "live" }));
+    seedNote(makeNote({ id: "stub", purged: true }));
+    await setNoteBase("live", "keep");
+    await setNoteBase("stub", "drop");
+    await setNoteBase("gone", "drop");
+
+    await initStorage();
+
+    expect([...stores.noteBase.keys()]).toEqual(["live"]);
+  });
+});
+
+// ── Notebooks shared with the user ─────────────────────────────────────────────
+// A recipient may edit content where the share grants it and do nothing else:
+// delete, purge, move, copy and restore are the owner's, whatever is granted.
+
+describe("notebooks shared with this user", () => {
+  const sharedNotebook = (sharePermissions, extra = {}) =>
+    makeNotebook({ id: "nb-shared", origin: "shared", sharePermissions, ...extra });
+
+  function seedShared(sharePermissions, extra) {
+    seedNotebook(sharedNotebook(sharePermissions, extra));
+    seedNotebook(makeNotebook({ id: "nb-own" }));
+    seedNote(makeNote({ id: "n-shared", notebookId: "nb-shared", title: "Theirs" }));
+    seedNote(makeNote({ id: "n-own", notebookId: "nb-own", title: "Mine" }));
+    seedNote(makeNote({ id: "n-quick", notebookId: null, title: "Quick" }));
+  }
+
+  const snapshotOf = () => ({
+    notebooks: structuredClone([...stores.notebooks.entries()]),
+    notes: structuredClone([...stores.notes.entries()]),
+    content: structuredClone([...stores.noteContent.entries()]),
+  });
+
+  // Switched off in Settings, notebooks shared earlier stay on the device (they
+  // are not synced) but are not shown
+  describe("with sharing switched off", () => {
+    beforeEach(() => seedShared(7));
+
+    afterEach(() => localStorage.removeItem("sharing_enabled"));
+
+    it("shows the user's own notebooks and notes only", async () => {
+      localStorage.setItem("sharing_enabled", "false");
+      expect((await getAllNotebooks()).map((n) => n.id)).toEqual(["nb-own"]);
+      expect((await getAllNotes()).map((n) => n.id).sort()).toEqual(["n-own", "n-quick"]);
+      expect(await getNotesByNotebook("nb-shared")).toEqual([]);
+      expect((await getNotesByNotebook("nb-own")).map((n) => n.id)).toEqual(["n-own"]);
+    });
+
+    it("keeps them for the sync, which leaves them alone itself", async () => {
+      localStorage.setItem("sharing_enabled", "false");
+      expect((await getAllNotebooksForSync()).map((n) => n.id).sort()).toEqual([
+        "nb-own",
+        "nb-shared",
+      ]);
+      expect((await getAllNotesForSync()).map((n) => n.id)).toContain("n-shared");
+    });
+
+    it("shows them again when sharing is switched on", async () => {
+      localStorage.setItem("sharing_enabled", "true");
+      expect((await getAllNotebooks()).map((n) => n.id).sort()).toEqual(["nb-own", "nb-shared"]);
+      expect((await getAllNotes()).map((n) => n.id)).toContain("n-shared");
+      expect((await getNotesByNotebook("nb-shared")).map((n) => n.id)).toEqual(["n-shared"]);
+    });
+  });
+
+  // Whatever the share grants, none of these may ever succeed
+  describe.each([
+    ["read-only", 1],
+    ["collab", 7],
+    ["everything granted", 31],
+  ])("a %s share", (_label, permissions) => {
+    beforeEach(() => seedShared(permissions));
+
+    it.each([
+      ["deleteNote", () => deleteNote("n-shared")],
+      ["deleteNotebook", () => deleteNotebook("nb-shared")],
+      ["purgeNote", () => purgeNote("n-shared")],
+      ["purgeNotebook", () => purgeNotebook("nb-shared")],
+      ["restoreNote", () => restoreNote("n-shared")],
+      ["restoreNotebook", () => restoreNotebook("nb-shared")],
+      ["moveNote out of it", () => moveNote("n-shared", "nb-own")],
+      ["moveNote out of it to quick notes", () => moveNote("n-shared", null)],
+      ["moveNote into it", () => moveNote("n-own", "nb-shared")],
+      ["moveNote a quick note into it", () => moveNote("n-quick", "nb-shared")],
+      ["copyNote out of it", () => copyNote("n-shared", "nb-own")],
+      ["copyNote into it", () => copyNote("n-own", "nb-shared")],
+    ])("refuses %s and leaves the data untouched", async (_name, action) => {
+      const before = snapshotOf();
+
+      await expect(action()).rejects.toBeInstanceOf(ShareRestrictedError);
+
+      expect(snapshotOf()).toEqual(before);
+    });
+
+    it("still lets the sync layer store and drop the owner's changes", async () => {
+      await saveNote({
+        ...makeNote({ id: "n-shared", notebookId: "nb-shared" }),
+        title: "Edited by owner",
+      });
+      expect(stores.notes.get("n-shared").title).toBe("Edited by owner");
+
+      await permanentlyDeleteNote("n-shared");
+      expect(stores.notes.has("n-shared")).toBe(false);
+
+      await permanentlyDeleteNotesInNotebook("nb-shared");
+      await permanentlyDeleteNotebook("nb-shared");
+      expect(stores.notebooks.has("nb-shared")).toBe(false);
+    });
+
+    it("does not stand in the way of the user's own notes", async () => {
+      await expect(deleteNote("n-own")).resolves.toBeDefined();
+      await expect(moveNote("n-quick", "nb-own")).resolves.not.toThrow();
+    });
+  });
+
+  describe("content writes", () => {
+    it("are allowed for a collaborator: edit, create, rename", async () => {
+      seedShared(7);
+      await expect(updateNote("n-shared", { title: "Edited" })).resolves.toMatchObject({
+        title: "Edited",
+      });
+      await expect(createNote({ title: "New", notebookId: "nb-shared" })).resolves.toMatchObject({
+        notebookId: "nb-shared",
+      });
+      await expect(updateNotebook("nb-shared", { title: "Renamed" })).resolves.toMatchObject({
+        title: "Renamed",
+      });
+    });
+
+    it.each([
+      ["read-only", 1],
+      ["update without create", 3],
+    ])("are refused on a %s share", async (_label, permissions) => {
+      seedShared(permissions);
+      const before = snapshotOf();
+
+      await expect(updateNote("n-shared", { title: "x" })).rejects.toBeInstanceOf(
+        ShareRestrictedError,
+      );
+      await expect(createNote({ title: "x", notebookId: "nb-shared" })).rejects.toBeInstanceOf(
+        ShareRestrictedError,
+      );
+      await expect(updateNotebook("nb-shared", { title: "x" })).rejects.toBeInstanceOf(
+        ShareRestrictedError,
+      );
+
+      expect(snapshotOf()).toEqual(before);
+    });
+
+    it("are refused once the share ended, even if it granted editing", async () => {
+      seedShared(7, { shareEnded: true });
+      await expect(updateNote("n-shared", { title: "x" })).rejects.toBeInstanceOf(
+        ShareRestrictedError,
+      );
+    });
+
+    it("never concern the user's own notebooks or quick notes", async () => {
+      seedShared(1);
+      await expect(updateNote("n-own", { title: "x" })).resolves.toBeDefined();
+      await expect(updateNote("n-quick", { title: "x" })).resolves.toBeDefined();
+      await expect(createNote({ title: "x", notebookId: "nb-own" })).resolves.toBeDefined();
+      await expect(createNote({ title: "x" })).resolves.toBeDefined();
+    });
+  });
+});
+
+describe("the recycle bin and notebooks shared with the user", () => {
+  it("never lists what the owner deleted: that is the owner's to restore", async () => {
+    seedNotebook(makeNotebook({ id: "nb-own", deleted: true }));
+    seedNotebook(makeNotebook({ id: "nb-shared", origin: "shared", deleted: true }));
+    seedNotebook(makeNotebook({ id: "nb-live", origin: "shared" }));
+    seedNote(makeNote({ id: "n-own", notebookId: "nb-own", deleted: true }));
+    seedNote(makeNote({ id: "n-shared", notebookId: "nb-live", deleted: true }));
+    seedNote(makeNote({ id: "n-quick", notebookId: null, deleted: true }));
+
+    expect((await getDeletedNotebooks()).map((n) => n.id)).toEqual(["nb-own"]);
+    expect((await getDeletedNotes()).map((n) => n.id).sort()).toEqual(["n-own", "n-quick"]);
+  });
+});
+
+describe("discardLocalChanges", () => {
+  it("turns an unsynced note into a clean, out-of-date one so the next sync takes the server's version", async () => {
+    seedNote(makeNote({ id: "n1", synced: false, lastSyncedEtag: "e1", restoredAt: 5 }));
+
+    await discardLocalChanges("n1");
+
+    expect(stores.notes.get("n1")).toMatchObject({ synced: true, lastSyncedEtag: null });
+    expect(stores.notes.get("n1")).not.toHaveProperty("restoredAt");
+  });
+
+  it("leaves the content untouched and ignores an unknown note", async () => {
+    seedNote(makeNote({ id: "n1", content: "mine", synced: false }));
+    const content = structuredClone(stores.noteContent.get("n1"));
+
+    await discardLocalChanges("n1");
+    await expect(discardLocalChanges("ghost")).resolves.toBeUndefined();
+
+    expect(stores.noteContent.get("n1")).toEqual(content);
   });
 });

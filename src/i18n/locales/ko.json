@@ -20,7 +20,8 @@
     "justNow": "방금 전",
     "minutesAgo": "{{count}}분 전",
     "hoursAgo": "{{count}}시간 전",
-    "daysAgo": "{{count}}일 전"
+    "daysAgo": "{{count}}일 전",
+    "preview": "미리보기"
   },
   "overview": {
     "tabs": {
@@ -117,19 +118,22 @@
       "appearance": "화면",
       "security": "보안",
       "nextcloud": "Nextcloud 동기화",
+      "sharing": "노트북 공유",
       "recognition": "손글씨 인식",
       "mcp": "MCP 서버(AI 통합)",
       "logging": "로그",
       "dangerZone": "위험 구역",
       "about": "정보",
       "aiProvider": "AI 액세스",
-      "backup": "백업"
+      "backup": "백업",
+      "tasks": "작업"
     },
     "appearance": {
       "theme": "테마",
       "themeDesc": "선호하는 색상 구성표를 선택하세요",
       "light": "라이트",
       "dark": "다크",
+      "tva": "TVA / CRT",
       "pdfInvertDark": "다크 모드에서 PDF 페이지 반전",
       "pdfInvertDarkDesc": "가져온 PDF의 주석을 더 잘 보이게 하지만 PDF의 원래 색상이 바뀝니다",
       "cardSize": "카드 크기",
@@ -156,6 +160,10 @@
     "security": {
       "encryptLocal": "로컬 데이터 암호화",
       "encryptLocalDesc": "이 기기에 로컬로 저장된 노트를 암호화합니다"
+    },
+    "sharing": {
+      "descApp": "다른 Nextcloud 사용자와 노트북을 공유하고 함께 작업합니다. 끄면 공유받은 노트북이 이 브라우저에서 숨겨지며, 삭제되는 것은 없습니다.",
+      "rootCheckFailed": "공유가 켜지지 않았습니다. 노트 폴더를 확인할 수 없습니다. {{message}}"
     },
     "nextcloud": {
       "connectLabel": "Nextcloud에 연결",
@@ -185,7 +193,10 @@
       "syncSkipped": "동기화를 건너뛰었습니다(이미 진행 중)",
       "syncComplete": "✓ 동기화가 완료되었습니다! 노트북 {{uploadedNotebooks}}개, 노트 {{uploadedNotes}}개를 업로드했습니다. 노트북 {{downloadedNotebooks}}개, 노트 {{downloadedNotes}}개를 다운로드했습니다.",
       "syncConflictsDetected": " ⚠️ 충돌 {{count}}건이 감지되었습니다.",
-      "syncFailed": "✗ 동기화 실패: {{message}}"
+      "syncFailed": "✗ 동기화 실패: {{message}}",
+      "sharingLabel": "노트북 공유",
+      "sharingDesc": "다른 Nextcloud 사용자와 노트북을 공유하고 함께 작업합니다. 끄면 공유받은 노트북의 동기화가 중단되며, 다시 켤 때까지 이 기기에 그대로 남아 있습니다.",
+      "sharingNeedsConnection": "노트북 공유를 사용하려면 먼저 Nextcloud에 연결하세요."
     },
     "recognition": {
       "statusLabel": "상태",
@@ -383,6 +394,7 @@
       "clearLogs": "로그 지우기",
       "copied": "✓ 복사됨!",
       "clearConfirm": "모든 디버그 로그를 지우시겠습니까?",
+      "copyFailed": "로그를 클립보드에 복사하지 못했습니다",
       "noLogs": "이 세션에서 사용 가능한 로그가 없습니다."
     },
     "dangerZone": {
@@ -418,7 +430,9 @@
       "version": "버전: {{version}}",
       "licenses": "라이선스 정보",
       "openSource": "NoteBerg는 자유 오픈 소스 소프트웨어입니다.",
-      "projectLink": "GitHub에서 프로젝트 보기"
+      "projectLink": "GitHub에서 프로젝트 보기",
+      "rate": "앱 평가하기",
+      "rateDesc": "Google Play 평가는 다른 분들이 NoteBerg를 찾는 데 도움이 됩니다."
     },
     "encryption": {
       "enabledLocalTitle": "암호화 활성화됨",
@@ -462,6 +476,14 @@
     },
     "nav": {
       "back": "모든 설정"
+    },
+    "tasks": {
+      "enableDueDates": "마감일 사용",
+      "enableDueDatesDesc": "작업 마커에 마감일을 설정할 수 있도록 허용합니다",
+      "enablePriorities": "우선순위 사용",
+      "enablePrioritiesDesc": "작업 마커에 우선순위 수준을 설정할 수 있도록 허용합니다",
+      "defaultSort": "기본 작업 정렬",
+      "defaultSortDesc": "마커 개요 탭의 초기 정렬 순서"
     }
   },
   "modals": {
@@ -654,6 +676,13 @@
     "fullscreen": "전체 화면",
     "exitFullscreen": "전체 화면 종료",
     "deleteNote": "노트 삭제",
+    "color": {
+      "foreColor": "글자 색",
+      "backColor": "강조",
+      "defaultText": "기본값",
+      "removeHighlight": "강조 없음",
+      "highlightTitle": "강조 {{num}}"
+    },
     "penDialog": {
       "lineWidth": "선 굵기: ",
       "color": "색상",
@@ -686,7 +715,8 @@
       "copy": "복사",
       "markAsTask": "할 일로 표시",
       "removeTask": "할 일 표시 해제",
-      "delete": "삭제"
+      "delete": "삭제",
+      "taskProperties": "작업 속성"
     },
     "media": {
       "select": "선택",
@@ -715,6 +745,7 @@
       "deleteConfirmTitle": "PDF 삭제",
       "deleteConfirmMsg": "PDF 문서를 제거하시겠습니까? 모든 페이지가 제거됩니다.",
       "exportError": "PDF 내보내기 실패",
+      "importError": "PDF 가져오기 실패",
       "exportProgressTitle": "PDF 내보내는 중",
       "exportProgressPage": "{{current}} / {{total}} 페이지 내보내는 중...",
       "importProgressTitle": "PDF 가져오는 중",
@@ -760,6 +791,14 @@
       "optionPunctuationDesc": "페이지에 쓰인 마침표, 쉼표, 대시를 포함합니다. 끄면 단어만 남습니다.",
       "optionBreaks": "줄바꿈 유지",
       "optionBreaksDesc": "줄과 문단이 끝나는 위치를 유지합니다. 레이아웃 인식은 텍스트 인식보다 정확도가 낮습니다."
+    },
+    "mergeHint": "충돌하는 버전, {{user}} 님이 편집",
+    "mergeHintUnknown": "충돌하는 버전",
+    "textBox": {
+      "move": "끌어서 이동",
+      "resize": "끌어서 너비 변경",
+      "toolbarHint": "텍스트를 탭하거나, 페이지를 탭해 새로 시작하세요",
+      "options": "텍스트 상자 옵션"
     }
   },
   "recycleBin": {
@@ -775,7 +814,11 @@
     "emptyTitle": "휴지통이 비어 있습니다",
     "emptyDesc": "삭제된 노트북과 노트가 여기에 표시됩니다.",
     "notebooksCount": "노트북 ({{count}}개)",
-    "notesCount": "노트 ({{count}}개)"
+    "notesCount": "노트 ({{count}}개)",
+    "purgeConfirm": "이 항목을 영구적으로 삭제하시겠습니까? 동기화된 모든 기기에서 제거되며 되돌릴 수 없습니다.",
+    "purgeConfirmNotebook": "이 노트북을 영구적으로 삭제하시겠습니까? 안에 있는 노트 {{count}}개도 영구적으로 삭제됩니다. 동기화된 모든 기기에서 제거되며 되돌릴 수 없습니다.",
+    "restoreFailed": "항목을 복원하지 못했습니다: {{message}}",
+    "purgeFailed": "영구 삭제에 실패했습니다: {{message}}"
   },
   "soundDialog": {
     "trigger": "녹음",
@@ -853,6 +896,10 @@
     "markAsTask": {
       "title": "작업",
       "body": "표시한 텍스트가 이제 체크 가능한 작업이 되었습니다. 여기 또는 작업 목록에서 체크하세요."
+    },
+    "firstTextBox": {
+      "title": "텍스트 상자",
+      "body": "페이지를 탭하면 그 위치에 텍스트 상자가 생깁니다. 위쪽 막대를 끌어 이동하고, 오른쪽 가장자리를 끌어 너비를 바꿉니다. 텍스트 바로 아래를 탭하면 이어서 씁니다."
     }
   },
   "backup": {
@@ -973,6 +1020,134 @@
       "newerVersion": "이 백업은 이 앱보다 최신인 NoteBerg {{version}}(으)로 만들어졌습니다. 복원하려면 NoteBerg를 업데이트하세요.",
       "diskFull": "백업을 쓸 수 없습니다: {{message}}. 불완전한 파일은 삭제되었습니다.",
       "cacheSpace": "백업을 만들 여유 공간이 부족합니다: 약 {{needed}} 필요, {{available}} 사용 가능."
+    }
+  },
+  "tasks": {
+    "properties": {
+      "title": "작업 속성",
+      "name": "작업 이름 / 레이블",
+      "namePlaceholder": "사용자 지정 제목 (인식이 없거나 잘못된 경우)",
+      "status": "상태",
+      "priority": "우선순위",
+      "details": "세부 정보",
+      "dueDate": "마감일"
+    },
+    "states": {
+      "open": "미완료",
+      "doing": "진행 중",
+      "done": "완료"
+    },
+    "priorities": {
+      "none": "없음",
+      "low": "낮음",
+      "medium": "보통",
+      "high": "높음",
+      "urgent": "긴급"
+    },
+    "dueDate": {
+      "today": "오늘",
+      "tomorrow": "내일",
+      "nextDay": "+1일",
+      "nextWeek": "+7일",
+      "clear": "지우기"
+    },
+    "filter": {
+      "label": "필터",
+      "all": "전체",
+      "active": "진행 중",
+      "doing": "진행 중",
+      "overdue": "기한 초과",
+      "done": "완료"
+    },
+    "sort": {
+      "label": "정렬",
+      "dueDate": "마감일",
+      "priority": "우선순위",
+      "status": "상태",
+      "note": "노트 제목"
+    },
+    "noMatchingTasks": "일치하는 작업이 없습니다.",
+    "cycleStatus": "상태 전환"
+  },
+  "sharing": {
+    "section": {
+      "title": "나와 공유됨"
+    },
+    "badge": {
+      "sharedBy": "{{owner}} 님이 공유함",
+      "readOnly": "읽기 전용",
+      "canEdit": "편집 가능",
+      "shared": "공유됨",
+      "sharedWith_one": "{{count}}명과 공유 중",
+      "sharedWith_other": "{{count}}명과 공유 중"
+    },
+    "notebookOptions": {
+      "leave": "내 목록에서 제거",
+      "share": "공유..."
+    },
+    "leave": {
+      "title": "공유 노트북 제거",
+      "message": "\"{{title}}\"이(가) 내 목록에서 사라집니다. {{owner}} 님과 공유받은 다른 사람들은 계속 사용합니다.",
+      "messageUnsynced": "\"{{title}}\"의 일부 변경 사항이 아직 공유 노트북에 저장되지 않았으며 사라집니다. 그래도 제거할까요?",
+      "confirm": "제거",
+      "failed": "노트북을 제거할 수 없습니다: {{message}}"
+    },
+    "ended": {
+      "notice_one": "이 노트북은 더 이상 나와 공유되지 않습니다. 노트 {{count}}개의 변경 사항을 저장하지 못했습니다.",
+      "notice_other": "이 노트북은 더 이상 나와 공유되지 않습니다. 노트 {{count}}개의 변경 사항을 저장하지 못했습니다.",
+      "noticeClean": "이 노트북은 더 이상 나와 공유되지 않습니다.",
+      "dismiss": "닫기"
+    },
+    "stranded": {
+      "notice_one": "노트 {{count}}개의 변경 사항을 더 이상 이 공유 노트북에 저장할 수 없습니다.",
+      "notice_other": "노트 {{count}}개의 변경 사항을 더 이상 이 공유 노트북에 저장할 수 없습니다.",
+      "discard": "내 변경 사항 버리기",
+      "discardTitle": "변경 사항 버리기",
+      "discardMessage": "\"{{title}}\"에서 저장되지 않은 변경 사항이 공유된 버전으로 바뀝니다. 되돌릴 수 없습니다."
+    },
+    "restricted": {
+      "title": "허용되지 않음",
+      "message": "나와 공유된 노트북에서는 할 수 없는 작업입니다."
+    },
+    "purge": {
+      "warning": "이 노트북은 다른 사람들과 공유되어 있습니다. 영구 삭제하면 그들은 접근 권한을 잃습니다."
+    },
+    "share": {
+      "title": "\"{{title}}\" 공유",
+      "intro": "공유받은 사람은 이 노트북을 \"나와 공유됨\"에서 보게 됩니다. 삭제, 이동, 복사는 할 수 없습니다.",
+      "searchLabel": "사람 추가",
+      "searchPlaceholder": "이름 또는 사용자 ID로 검색",
+      "searching": "검색 중...",
+      "noResults": "일치하는 사용자가 없습니다.",
+      "modeLabel": "접근 권한",
+      "modeReadonly": "보기 가능",
+      "modeCollab": "편집 가능",
+      "add": "공유",
+      "recipients": "접근 권한이 있는 사람",
+      "noRecipients": "아직 아무와도 공유하지 않았습니다.",
+      "revoke": "공유 중지",
+      "reduced": "서버가 이 공유에 대해 보기만 허용했습니다.",
+      "loadFailed": "공유 설정을 불러올 수 없습니다: {{message}}",
+      "failed": "공유 실패: {{message}}",
+      "notOnServer": "이 노트북은 아직 Nextcloud에 올라가지 않았습니다. 동기화한 후 다시 시도하세요.",
+      "unavailable": "공유하려면 Nextcloud에 연결해야 합니다.",
+      "revokeMessage": "{{name}} 님은 \"{{title}}\"에 더 이상 접근할 수 없습니다. 아직 저장되지 않은 변경 사항은 저장할 수 없게 됩니다."
+    },
+    "reduced": {
+      "notice": "이제 이 노트북은 보기만 할 수 있습니다. 변경 사항은 이 기기에 남아 있지만 공유 노트북에는 저장할 수 없습니다.",
+      "noticeOnline": "이제 이 노트북은 보기만 할 수 있습니다. 아직 저장되지 않은 변경 사항은 저장하지 못했습니다."
+    },
+    "invite": {
+      "title": "공유 노트북",
+      "message": "{{owner}} 님이 노트북을 공유하려고 합니다.",
+      "accept": "수락",
+      "decline": "거절",
+      "declineTitle": "공유 노트북 거절",
+      "declineMessage": "{{owner}} 님의 노트북이 추가되지 않습니다. 마음이 바뀌면 {{owner}} 님이 다시 공유해야 합니다.",
+      "failed": "실패했습니다: {{message}}"
+    },
+    "deletedByOwner": {
+      "notice": "소유자가 이 노트를 삭제했습니다. 작성한 내용은 소유자의 휴지통에 노트와 함께 보관됩니다."
     }
   }
 }

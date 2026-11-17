@@ -43,6 +43,9 @@ const ALLOWED_IDENTICAL = {
   "settings.recognition.endpointPlaceholder": "*",
   "settings.recognition.modelPlaceholder": "*",
   "settings.mcp.tokenNamePromptPlaceholder": "*",
+  // Theme name: "TVA" is the look's proper name and "CRT" the display technology
+  // it imitates; neither is translated.
+  "settings.appearance.tva": "*",
   // Product and protocol names.
   "settings.aiProvider.providerReplicate": "*",
   "settings.aiProvider.providerOpenAi": "*",
@@ -54,6 +57,11 @@ const ALLOWED_IDENTICAL = {
   "settings.mcp.auditLogColToken": ["de", "es", "it", "pt"],
   "settings.mcp.auditLogOutcomeOk": ["de", "es", "fr", "it", "pt"],
   "settings.mcp.statusLabel": ["de"],
+  // Task vocabulary: the same word in these languages.
+  "tasks.properties.status": ["de", "pt"],
+  "tasks.filter.label": ["de"],
+  "tasks.properties.details": ["de"],
+  "tasks.priorities.urgent": ["fr"],
   "settings.recognition.statusLabel": ["de"],
   "settings.logging.info": ["de", "fr", "it"],
   "settings.about.version": ["de"],

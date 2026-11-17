@@ -1,13 +1,13 @@
 /**
  * Router Module
- * Simple view mode routing (overview, notebook, recyclebin)
+ * Simple view mode routing (overview, notebook)
  *
  * Settings is deliberately NOT a mode: it renders as a dialog over the current
  * view so an open note stays mounted underneath (see settingsDialog.js). Use
  * openSettingsDialog() rather than navigateTo("settings").
  */
 
-const MODES = ["overview", "notebook", "recyclebin"];
+const MODES = ["overview", "notebook"];
 const DEFAULT_MODE = "overview";
 
 /**
@@ -93,7 +93,7 @@ export function initRouter() {
 
 /**
  * Navigate to a specific mode
- * @param {string} mode - Mode to navigate to ('overview', 'notebook', 'recyclebin')
+ * @param {string} mode - Mode to navigate to ('overview', 'notebook')
  * @param {object} params - Optional parameters (e.g., { noteId: '123' })
  */
 export function navigateTo(mode, params = {}) {
@@ -105,10 +105,7 @@ export function navigateTo(mode, params = {}) {
   const previousMode = currentMode;
   currentMode = mode;
 
-  if (mode === "recyclebin") {
-    currentNotebookId = null;
-    currentNoteId = null;
-  } else if (mode === "overview") {
+  if (mode === "overview") {
     currentNoteId = null;
     // Only clear notebook ID if not provided in params (root overview)
     if (params.notebookId !== undefined) {
@@ -188,9 +185,6 @@ function updateView(mode, params) {
     case "notebook":
       renderNotebook(modeContainer, params);
       break;
-    case "recyclebin":
-      renderRecycleBin(modeContainer);
-      break;
   }
 }
 
@@ -226,21 +220,6 @@ function renderNotebook(container, params) {
       detail: { noteId, notebookId, taskId, searchQuery },
     }),
   );
-}
-
-/**
- * Render recycle bin mode
- */
-function renderRecycleBin(container) {
-  // This will be populated by the recycle bin component
-  container.innerHTML = `
-    <div class="recycle-bin-wrapper">
-      <div id="recycle-bin-content"></div>
-    </div>
-  `;
-
-  // Trigger recycle bin render event
-  window.dispatchEvent(new CustomEvent("renderrecyclebin"));
 }
 
 /**

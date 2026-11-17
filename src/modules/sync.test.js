@@ -16,15 +16,44 @@ vi.mock("../components/modals.js", () => ({
 const attemptMerge = vi.fn();
 const fullSync = vi.fn();
 const isAuthenticated = vi.fn();
+const getCurrentUserId = vi.fn();
+const syncSharedNotebook = vi.fn();
 vi.mock("./nextcloudSync.js", () => ({
+  syncSharedNotebook: (...args) => syncSharedNotebook(...args),
   attemptMerge: (...args) => attemptMerge(...args),
   fullSync: (...args) => fullSync(...args),
   isAuthenticated: (...args) => isAuthenticated(...args),
+  getCurrentUserId: (...args) => getCurrentUserId(...args),
+}));
+
+let sharingEnabled = false;
+vi.mock("./sharing/enabled.js", () => ({
+  isSharingEnabled: () => sharingEnabled,
+}));
+const prepareSharing = vi.fn();
+const runDiscovery = vi.fn();
+vi.mock("./sharing/nativeSharing.js", () => ({
+  prepareSharing: (...args) => prepareSharing(...args),
+  runDiscovery: (...args) => runDiscovery(...args),
+}));
+
+const refreshOwnerShares = vi.fn();
+const refreshOwnerSharesIfStale = vi.fn();
+vi.mock("./sharing/ownerShares.js", () => ({
+  refreshOwnerShares: (...args) => refreshOwnerShares(...args),
+  refreshOwnerSharesIfStale: (...args) => refreshOwnerSharesIfStale(...args),
+}));
+
+const isCollaborativeNote = vi.fn();
+vi.mock("./sharing/collaboration.js", () => ({
+  isCollaborativeNote: (...args) => isCollaborativeNote(...args),
 }));
 
 const getAllNotebooksForSync = vi.fn();
 const getAllNoteMetadataForSync = vi.fn();
 const getNote = vi.fn();
+const getNoteBase = vi.fn();
+const setNoteBase = vi.fn();
 const getNotebook = vi.fn();
 const getNoteIndex = vi.fn();
 const permanentlyDeleteNote = vi.fn();
@@ -37,6 +66,8 @@ vi.mock("./storage.js", () => ({
   getAllNotebooksForSync: (...args) => getAllNotebooksForSync(...args),
   getAllNoteMetadataForSync: (...args) => getAllNoteMetadataForSync(...args),
   getNote: (...args) => getNote(...args),
+  getNoteBase: (...args) => getNoteBase(...args),
+  setNoteBase: (...args) => setNoteBase(...args),
   getNotebook: (...args) => getNotebook(...args),
   getNoteIndex: (...args) => getNoteIndex(...args),
   permanentlyDeleteNote: (...args) => permanentlyDeleteNote(...args),
@@ -50,6 +81,7 @@ vi.mock("./storage.js", () => ({
 let performSync;
 let getIsSyncing;
 let getLastSyncResult;
+let whenSyncIdle;
 let onSyncStatusChange;
 
 function emptyResult(overrides = {}) {
@@ -72,14 +104,47 @@ beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
   isAuthenticated.mockResolvedValue(true);
+  getCurrentUserId.mockResolvedValue("alice");
+  syncSharedNotebook.mockResolvedValue(emptyResult());
+  sharingEnabled = false;
+  prepareSharing.mockResolvedValue(undefined);
+  refreshOwnerShares.mockResolvedValue(false);
+  refreshOwnerSharesIfStale.mockResolvedValue(false);
+  runDiscovery.mockResolvedValue(null);
+  getNoteBase.mockResolvedValue(null);
+  isCollaborativeNote.mockResolvedValue(false);
   getAllNotebooksForSync.mockResolvedValue([]);
   getAllNoteMetadataForSync.mockResolvedValue([]);
   fullSync.mockResolvedValue(emptyResult());
   window.dispatchEvent = vi.fn();
 
-  ({ performSync, getIsSyncing, getLastSyncResult, onSyncStatusChange } = await import(
-    "./sync.js"
-  ));
+  ({ performSync, getIsSyncing, getLastSyncResult, onSyncStatusChange, whenSyncIdle } =
+    await import("./sync.js"));
+});
+
+describe("whenSyncIdle", () => {
+  it("resolves at once when no sync is running", async () => {
+    await expect(whenSyncIdle()).resolves.toBeUndefined();
+  });
+
+  it("resolves only once the running sync has finished", async () => {
+    let finish;
+    fullSync.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    const running = performSync({ silent: true });
+    await vi.waitFor(() => expect(fullSync).toHaveBeenCalled());
+
+    let idle = false;
+    const waiting = whenSyncIdle().then(() => {
+      idle = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(idle).toBe(false);
+
+    finish(emptyResult());
+    await running;
+    await waiting;
+    expect(idle).toBe(true);
+  });
 });
 
 afterEach(() => {
@@ -268,6 +333,60 @@ describe("preferNewer automatic conflict resolution", () => {
   });
 });
 
+describe("several passes", () => {
+  const conflict = {
+    local: { id: "n-c", modified: 100, version: 1 },
+    remote: { id: "n-c", modified: 50, version: 1, _currentFileEtag: "etag-remote" },
+  };
+
+  it("applies each pass before the next one reads local state", async () => {
+    // Pass 1 uploads one note and downloads another, and meets a conflict
+    fullSync
+      .mockResolvedValueOnce(
+        emptyResult({
+          notesToUpload: [{ id: "n-up", modified: 500 }],
+          uploaded: {
+            notes: { uploaded: 1, uploadedIds: ["n-up"], metadata: { "n-up": { etag: "e-up" } } },
+            notebooks: { uploaded: 0, uploadedIds: [] },
+          },
+          downloaded: { notes: [{ id: "n-down", modified: 7, version: 1 }], notebooks: [] },
+          conflicts: { notes: [conflict], notebooks: [] },
+        }),
+      )
+      .mockImplementationOnce(async () => {
+        // By the time pass 2 starts, pass 1's outcome is stored
+        expect(updateNoteEtag).toHaveBeenCalledWith("n-up", "e-up", 500);
+        expect(saveNote).toHaveBeenCalledWith(expect.objectContaining({ id: "n-down" }));
+        return emptyResult();
+      });
+
+    await performSync({ preferNewer: true, silent: true });
+
+    expect(fullSync).toHaveBeenCalledTimes(2);
+    // The download of pass 1 is announced, though pass 2 brought nothing
+    expect(window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "datachange" }),
+    );
+    expect(getLastSyncResult()).toMatchObject({
+      uploaded: { notes: 1, notebooks: 0 },
+      downloaded: { notes: 1, notebooks: 0 },
+    });
+  });
+
+  it("announces a conflict resolved by taking the remote version", async () => {
+    const newerRemote = { ...conflict, remote: { ...conflict.remote, modified: 200 } };
+    fullSync
+      .mockResolvedValueOnce(emptyResult({ conflicts: { notes: [newerRemote], notebooks: [] } }))
+      .mockResolvedValueOnce(emptyResult());
+
+    await performSync({ preferNewer: true, silent: true });
+
+    expect(window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "datachange" }),
+    );
+  });
+});
+
 describe("manual conflict resolution", () => {
   it("prompts the user and saves the local version on 'local' choice", async () => {
     const conflict = {
@@ -363,10 +482,12 @@ describe("race condition handling on download", () => {
 
     await performSync();
 
-    // sync.js's race-merge branch calls saveNote only when attemptMerge succeeds
-    // (sync.js:334-342); on a failed merge it just warns and does nothing, so
-    // saveNote must not be called at all here — not just "not with this shape".
+    // The race-merge branch saves only when attemptMerge succeeds (after the
+    // text merge it returns null only for structurally unmergeable notes, e.g. an
+    // unloaded stub); on a failed merge it just warns and does nothing, so
+    // saveNote must not be called at all here, not just "not with this shape".
     expect(saveNote).not.toHaveBeenCalled();
+    expect(setNoteBase).not.toHaveBeenCalled();
   });
 
   it("keeps the local version when local notebook changed during sync (no merge for notebooks)", async () => {
@@ -382,6 +503,549 @@ describe("race condition handling on download", () => {
     expect(saveNotebook).toHaveBeenCalledWith(
       expect.objectContaining({ id: "nb1", synced: false, lastSyncedEtag: "e2" }),
     );
+  });
+});
+
+describe("merge baselines", () => {
+  it("records the uploaded text as the baseline, whatever the user typed meanwhile", async () => {
+    fullSync.mockResolvedValue(
+      emptyResult({
+        uploaded: {
+          notes: {
+            uploaded: 1,
+            uploadedIds: ["n1"],
+            metadata: { n1: { etag: "e1", baseContent: "<p>as uploaded</p>" } },
+          },
+          notebooks: { uploaded: 0, uploadedIds: [] },
+        },
+        notesToUpload: [{ id: "n1", modified: 100 }],
+      }),
+    );
+
+    await performSync();
+
+    expect(setNoteBase).toHaveBeenCalledWith("n1", "<p>as uploaded</p>");
+  });
+
+  it("records the downloaded text as the baseline when a downloaded note is saved", async () => {
+    const downloaded = { id: "n1", content: "<p>from server</p>", modified: 200, version: 2 };
+    fullSync.mockResolvedValue(emptyResult({ downloaded: { notes: [downloaded], notebooks: [] } }));
+    getNoteIndex.mockResolvedValue({ modified: 50, version: 1 });
+    getAllNoteMetadataForSync.mockResolvedValue([{ id: "n1", modified: 50, version: 1 }]);
+
+    await performSync();
+
+    expect(saveNote).toHaveBeenCalledWith(expect.objectContaining({ id: "n1" }));
+    expect(setNoteBase).toHaveBeenCalledWith("n1", "<p>from server</p>");
+  });
+
+  it("does not touch the baseline when a download only refreshes the etag", async () => {
+    const downloaded = { id: "n1", content: "x", modified: 100, version: 3 };
+    fullSync.mockResolvedValue(emptyResult({ downloaded: { notes: [downloaded], notebooks: [] } }));
+    getAllNoteMetadataForSync.mockResolvedValue([{ id: "n1", modified: 100, version: 3 }]);
+    getNoteIndex.mockResolvedValue({ modified: 100, version: 3 });
+
+    await performSync();
+
+    expect(updateNoteEtag).toHaveBeenCalled();
+    expect(setNoteBase).not.toHaveBeenCalled();
+  });
+
+  it("merges against the baseline and attributes the local side when a race is detected", async () => {
+    const downloaded = { id: "n1", content: "<p>server</p>", modified: 200, version: 2 };
+    getAllNoteMetadataForSync.mockResolvedValue([{ id: "n1", modified: 50, version: 1 }]);
+    fullSync.mockResolvedValue(emptyResult({ downloaded: { notes: [downloaded], notebooks: [] } }));
+    getNoteIndex.mockResolvedValue({ modified: 999, version: 5 });
+    getNote.mockResolvedValue({ id: "n1", modified: 999, version: 5 });
+    getNoteBase.mockResolvedValue("<p>ancestor</p>");
+    attemptMerge.mockReturnValue({ id: "n1", merged: true });
+
+    await performSync();
+
+    expect(attemptMerge).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      base: "<p>ancestor</p>",
+      localAuthor: "alice",
+    });
+    // The merged note still has to upload, so the server's text stays the baseline
+    expect(setNoteBase).toHaveBeenCalledWith("n1", "<p>server</p>");
+  });
+
+  it("takes the server's text as baseline when the user keeps the remote version", async () => {
+    showConflictResolutionDialog.mockResolvedValue("remote");
+    const local = { id: "n1", modified: 100 };
+    const remote = { id: "n1", content: "<p>theirs</p>", modified: 200, _currentFileEtag: "e2" };
+    fullSync
+      .mockResolvedValueOnce(
+        emptyResult({ conflicts: { notes: [{ local, remote }], notebooks: [] } }),
+      )
+      .mockResolvedValueOnce(emptyResult());
+
+    await performSync();
+
+    expect(setNoteBase).toHaveBeenCalledWith("n1", "<p>theirs</p>");
+  });
+
+  it("leaves the baseline alone when the user keeps the local version", async () => {
+    showConflictResolutionDialog.mockResolvedValue("local");
+    const local = { id: "n1", modified: 100 };
+    const remote = { id: "n1", modified: 200, _currentFileEtag: "e2" };
+    fullSync
+      .mockResolvedValueOnce(
+        emptyResult({ conflicts: { notes: [{ local, remote }], notebooks: [] } }),
+      )
+      .mockResolvedValueOnce(emptyResult());
+
+    await performSync();
+
+    expect(setNoteBase).not.toHaveBeenCalled();
+  });
+});
+
+describe("conflicts on collaborative notes", () => {
+  it("never shows the dialog; the newer version wins deterministically", async () => {
+    isCollaborativeNote.mockResolvedValue(true);
+    const local = { id: "n1", notebookId: "nb", modified: 100 };
+    const remote = {
+      id: "n1",
+      notebookId: "nb",
+      content: "r",
+      modified: 200,
+      _currentFileEtag: "e2",
+    };
+    fullSync
+      .mockResolvedValueOnce(
+        emptyResult({ conflicts: { notes: [{ local, remote }], notebooks: [] } }),
+      )
+      .mockResolvedValueOnce(emptyResult());
+
+    await performSync();
+
+    expect(showConflictResolutionDialog).not.toHaveBeenCalled();
+    expect(saveNote).toHaveBeenCalledWith(expect.objectContaining({ id: "n1", synced: true }));
+  });
+
+  it("still asks about conflicts on ordinary notes", async () => {
+    showConflictResolutionDialog.mockResolvedValue("local");
+    const local = { id: "n1", modified: 100 };
+    const remote = { id: "n1", modified: 200, _currentFileEtag: "e2" };
+    fullSync
+      .mockResolvedValueOnce(
+        emptyResult({ conflicts: { notes: [{ local, remote }], notebooks: [] } }),
+      )
+      .mockResolvedValueOnce(emptyResult());
+
+    await performSync();
+
+    expect(showConflictResolutionDialog).toHaveBeenCalledOnce();
+  });
+});
+
+describe("notebooks shared with this user", () => {
+  beforeEach(() => {
+    sharingEnabled = true;
+  });
+
+  const sharedNb = (overrides = {}) => ({
+    id: "nb-shared",
+    title: "Recipes",
+    modified: 100,
+    origin: "shared",
+    remoteBasePath: "/Shared_NoteBerg/alice_Recipes",
+    ownerUid: "alice",
+    shareId: "42",
+    sharePermissions: 7,
+    ...overrides,
+  });
+  const ownNb = { id: "nb-own", title: "Mine", modified: 100 };
+  const ownNote = { id: "n-own", notebookId: "nb-own", modified: 10 };
+  const sharedNote = { id: "n-shared", notebookId: "nb-shared", modified: 10 };
+
+  function seedLocal(notebooks, notes) {
+    getAllNotebooksForSync.mockResolvedValue(notebooks);
+    getAllNoteMetadataForSync.mockResolvedValue(notes);
+  }
+
+  it("keeps shared notebooks and their notes out of the own pass", async () => {
+    seedLocal([ownNb, sharedNb()], [ownNote, sharedNote]);
+
+    await performSync();
+
+    const [ownNotebooks, ownNotes] = fullSync.mock.calls[0];
+    expect(ownNotebooks.map((n) => n.id)).toEqual(["nb-own"]);
+    expect(ownNotes.map((n) => n.id)).toEqual(["n-own"]);
+  });
+
+  // Sharing turned off after notebooks were shared with the user: they stay on
+  // the device as they are. They are not the own pass's to touch (that would
+  // read their notes as missing from /NoteBerg), and not synced either.
+  it("leaves notebooks shared earlier alone while sharing is switched off", async () => {
+    sharingEnabled = false;
+    seedLocal([ownNb, sharedNb()], [ownNote, sharedNote]);
+
+    await performSync();
+
+    const [ownNotebooks, ownNotes] = fullSync.mock.calls[0];
+    expect(ownNotebooks.map((n) => n.id)).toEqual(["nb-own"]);
+    expect(ownNotes.map((n) => n.id)).toEqual(["n-own"]);
+    expect(syncSharedNotebook).not.toHaveBeenCalled();
+    expect(runDiscovery).not.toHaveBeenCalled();
+  });
+
+  it("runs one isolated pass per shared notebook with that notebook's notes only", async () => {
+    const second = sharedNb({ id: "nb-second", remoteBasePath: "/Shared_NoteBerg/bob_X" });
+    seedLocal(
+      [ownNb, sharedNb(), second],
+      [ownNote, sharedNote, { id: "n-second", notebookId: "nb-second", modified: 5 }],
+    );
+
+    await performSync();
+
+    expect(syncSharedNotebook).toHaveBeenCalledTimes(2);
+    const [firstNb, firstNotes] = syncSharedNotebook.mock.calls[0];
+    expect(firstNb.id).toBe("nb-shared");
+    expect(firstNotes.map((n) => n.id)).toEqual(["n-shared"]);
+    expect(syncSharedNotebook.mock.calls[1][0].id).toBe("nb-second");
+    expect(syncSharedNotebook.mock.calls[1][1].map((n) => n.id)).toEqual(["n-second"]);
+  });
+
+  it("does not sync a shared notebook whose share ended or whose mount is unknown", async () => {
+    seedLocal(
+      [sharedNb({ shareEnded: true }), sharedNb({ id: "nb-unmounted", remoteBasePath: null })],
+      [sharedNote, { id: "n-u", notebookId: "nb-unmounted", modified: 1 }],
+    );
+
+    await performSync();
+
+    expect(syncSharedNotebook).not.toHaveBeenCalled();
+    // ...and they are not left for the own pass to find "missing" and heal
+    expect(fullSync.mock.calls[0][0]).toEqual([]);
+    expect(fullSync.mock.calls[0][1]).toEqual([]);
+  });
+
+  it("registers where each shared notebook lives, and makes the others unresolvable", async () => {
+    const { getNotebookFolder } = await import("./storagePaths.js");
+    seedLocal([sharedNb(), sharedNb({ id: "nb-ended", shareEnded: true }), ownNb], []);
+
+    await performSync();
+
+    expect(getNotebookFolder("nb-shared")).toBe("/Shared_NoteBerg/alice_Recipes");
+    expect(() => getNotebookFolder("nb-ended")).toThrow(/ended/);
+    expect(getNotebookFolder("nb-own")).toBe("/NoteBerg/notebooks/nb-own");
+  });
+
+  it("a failing shared pass affects neither the own pass nor the other shares", async () => {
+    const second = sharedNb({ id: "nb-second", remoteBasePath: "/Shared_NoteBerg/bob_X" });
+    seedLocal([ownNb, sharedNb(), second], []);
+    syncSharedNotebook.mockRejectedValueOnce(new Error("503 from the share"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await performSync();
+
+    expect(result).not.toBeNull();
+    expect(syncSharedNotebook).toHaveBeenCalledTimes(2);
+    expect(getLastSyncResult().success).toBe(true);
+    consoleError.mockRestore();
+  });
+
+  it("reports shared notebooks whose root has gone, without applying anything", async () => {
+    seedLocal([sharedNb()], [sharedNote]);
+    syncSharedNotebook.mockResolvedValue({ ...emptyResult(), rootMissing: true });
+
+    await performSync();
+
+    expect(getLastSyncResult().sharedRootsMissing).toEqual(["nb-shared"]);
+    expect(saveNote).not.toHaveBeenCalled();
+    expect(saveNotebook).not.toHaveBeenCalled();
+    expect(permanentlyDeleteNote).not.toHaveBeenCalled();
+  });
+
+  it("applies a shared pass's downloads like any other, keeping this device's sharing fields", async () => {
+    const local = sharedNb();
+    seedLocal([local], [sharedNote]);
+    getNotebook.mockResolvedValue(local);
+    syncSharedNotebook.mockResolvedValue(
+      emptyResult({
+        downloaded: {
+          notes: [],
+          notebooks: [
+            { id: "nb-shared", title: "Renamed by owner", modified: 100, lastSyncedEtag: "e2" },
+          ],
+        },
+      }),
+    );
+
+    await performSync();
+
+    expect(saveNotebook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Renamed by owner",
+        origin: "shared",
+        shareId: "42",
+        sharePermissions: 7,
+        ownerUid: "alice",
+      }),
+    );
+  });
+
+  it("ignores sharing fields a downloaded file claims, so an own notebook stays own", async () => {
+    const downloaded = {
+      id: "nb-own",
+      title: "Mine",
+      modified: 100,
+      lastSyncedEtag: "e2",
+      origin: "shared",
+      sharePermissions: 31,
+    };
+    fullSync.mockResolvedValue(emptyResult({ downloaded: { notes: [], notebooks: [downloaded] } }));
+    seedLocal([ownNb], []);
+    getNotebook.mockResolvedValue(ownNb);
+
+    await performSync();
+
+    const saved = saveNotebook.mock.calls.at(-1)[0];
+    expect(saved).not.toHaveProperty("origin");
+    expect(saved).not.toHaveProperty("sharePermissions");
+  });
+
+  it("drops the fields from a notebook first seen in a download", async () => {
+    const downloaded = {
+      id: "nb9",
+      title: "New",
+      modified: 5,
+      lastSyncedEtag: "e1",
+      origin: "shared",
+    };
+    fullSync.mockResolvedValue(emptyResult({ downloaded: { notes: [], notebooks: [downloaded] } }));
+    getNotebook.mockResolvedValue(undefined);
+
+    await performSync();
+
+    expect(saveNotebook.mock.calls.at(-1)[0]).not.toHaveProperty("origin");
+  });
+
+  it("refuses a downloaded shared note whose id is already one of this user's own notes", async () => {
+    seedLocal([sharedNb(), ownNb], [ownNote]);
+    // The sharer's file claims the id of an own note
+    const hostile = { id: "n-own", notebookId: "nb-shared", modified: 99, version: 9 };
+    syncSharedNotebook.mockResolvedValue(
+      emptyResult({ downloaded: { notes: [hostile], notebooks: [] } }),
+    );
+    getNoteIndex.mockResolvedValue({ id: "n-own", notebookId: "nb-own", modified: 10 });
+
+    await performSync();
+
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it("saves a downloaded shared note whose id is new or already in that notebook", async () => {
+    seedLocal([sharedNb()], []);
+    syncSharedNotebook.mockResolvedValue(
+      emptyResult({
+        downloaded: {
+          notes: [{ id: "n-new", notebookId: "nb-shared", content: "c", modified: 5, version: 1 }],
+          notebooks: [],
+        },
+      }),
+    );
+    getNoteIndex.mockResolvedValue(null);
+
+    await performSync();
+
+    expect(saveNote).toHaveBeenCalledWith(expect.objectContaining({ id: "n-new" }));
+  });
+
+  it("records stranded notes on the notebook without marking it for upload", async () => {
+    const local = sharedNb();
+    seedLocal([local], [sharedNote]);
+    getNotebook.mockResolvedValue(local);
+    syncSharedNotebook.mockResolvedValue(emptyResult({ strandedNoteIds: ["n-shared"] }));
+
+    await performSync();
+
+    const saved = saveNotebook.mock.calls.at(-1)[0];
+    expect(saved.strandedNoteIds).toEqual(["n-shared"]);
+    expect(saved.synced).not.toBe(false);
+  });
+
+  it("clears the stranded list once nothing is stranded any more", async () => {
+    const local = sharedNb({ strandedNoteIds: ["n-shared"] });
+    seedLocal([local], [sharedNote]);
+    getNotebook.mockResolvedValue(local);
+    syncSharedNotebook.mockResolvedValue(emptyResult({ strandedNoteIds: [] }));
+
+    await performSync();
+
+    expect(saveNotebook.mock.calls.at(-1)[0].strandedNoteIds).toEqual([]);
+  });
+
+  it("does not rewrite the notebook when the stranded list is unchanged", async () => {
+    const local = sharedNb({ strandedNoteIds: ["b", "a"] });
+    seedLocal([local], []);
+    getNotebook.mockResolvedValue(local);
+    syncSharedNotebook.mockResolvedValue(emptyResult({ strandedNoteIds: ["a", "b"] }));
+
+    await performSync();
+
+    expect(saveNotebook).not.toHaveBeenCalled();
+  });
+
+  it("resolves a structurally unmergeable shared note by timestamp, never with a dialog", async () => {
+    seedLocal([sharedNb()], [sharedNote]);
+    const local = { id: "n-shared", notebookId: "nb-shared", modified: 100 };
+    const remote = {
+      id: "n-shared",
+      notebookId: "nb-shared",
+      modified: 200,
+      _currentFileEtag: "e",
+    };
+    syncSharedNotebook.mockResolvedValue(
+      emptyResult({ conflicts: { notes: [{ local, remote }], notebooks: [] } }),
+    );
+
+    await performSync();
+
+    expect(showConflictResolutionDialog).not.toHaveBeenCalled();
+    expect(saveNote).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "n-shared", synced: true }),
+    );
+  });
+
+  it("announces a shared conflict resolved by taking the remote version", async () => {
+    seedLocal([sharedNb()], [sharedNote]);
+    const local = { id: "n-shared", notebookId: "nb-shared", modified: 100 };
+    const remote = { id: "n-shared", notebookId: "nb-shared", modified: 200 };
+    syncSharedNotebook.mockResolvedValue(
+      emptyResult({ conflicts: { notes: [{ local, remote }], notebooks: [] } }),
+    );
+
+    await performSync();
+
+    expect(window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "datachange" }),
+    );
+  });
+
+  it("uploads a shared note kept locally by a conflict resolution in the same sync", async () => {
+    seedLocal([sharedNb()], [sharedNote]);
+    const local = { id: "n-shared", notebookId: "nb-shared", modified: 300, version: 1 };
+    const remote = { id: "n-shared", notebookId: "nb-shared", modified: 200, version: 1 };
+    syncSharedNotebook
+      .mockResolvedValueOnce(
+        emptyResult({ conflicts: { notes: [{ local, remote }], notebooks: [] } }),
+      )
+      .mockResolvedValueOnce(emptyResult());
+
+    await performSync();
+
+    // A second pass for that notebook, with its notes read again
+    expect(syncSharedNotebook).toHaveBeenCalledTimes(2);
+    expect(syncSharedNotebook.mock.calls[1][0].id).toBe("nb-shared");
+    expect(syncSharedNotebook.mock.calls[1][1].map((n) => n.id)).toEqual(["n-shared"]);
+  });
+
+  it("does no root guard or discovery while sharing is switched off", async () => {
+    sharingEnabled = false;
+    seedLocal([ownNb], [ownNote]);
+    await performSync();
+    expect(prepareSharing).not.toHaveBeenCalled();
+    expect(runDiscovery).not.toHaveBeenCalled();
+    expect(refreshOwnerShares).not.toHaveBeenCalled();
+    expect(refreshOwnerSharesIfStale).not.toHaveBeenCalled();
+  });
+
+  it("looks for shares at once on a manual sync", async () => {
+    sharingEnabled = true;
+    seedLocal([ownNb], [ownNote]);
+
+    await performSync({ silent: false });
+
+    expect(prepareSharing).toHaveBeenCalledWith({ force: true });
+    expect(refreshOwnerShares).toHaveBeenCalledTimes(1);
+    expect(refreshOwnerSharesIfStale).not.toHaveBeenCalled();
+  });
+
+  it("leaves it to the minute-long interval on a background sync, which can come every few seconds", async () => {
+    sharingEnabled = true;
+    seedLocal([ownNb], [ownNote]);
+
+    await performSync({ silent: true, skipConflictResolution: true });
+
+    expect(prepareSharing).toHaveBeenCalledWith({ force: false });
+    expect(refreshOwnerSharesIfStale).toHaveBeenCalledTimes(1);
+    expect(refreshOwnerShares).not.toHaveBeenCalled();
+  });
+
+  it("looks at who the own notebooks are shared with after each sync, without waiting for it", async () => {
+    sharingEnabled = true;
+    seedLocal([ownNb], [ownNote]);
+    let resolve;
+    refreshOwnerShares.mockReturnValue(new Promise((r) => (resolve = r)));
+
+    await performSync(); // returns although the refresh is still pending
+
+    expect(refreshOwnerShares).toHaveBeenCalledTimes(1);
+    resolve(true);
+  });
+
+  it("is not troubled by a failing look at the shares", async () => {
+    sharingEnabled = true;
+    seedLocal([ownNb], [ownNote]);
+    refreshOwnerShares.mockRejectedValue(new Error("offline"));
+    await expect(performSync()).resolves.not.toBeNull();
+  });
+
+  it("guards the root and discovers shares before anything is read, once sharing is on", async () => {
+    sharingEnabled = true;
+    const order = [];
+    prepareSharing.mockImplementation(async () => void order.push("prepare"));
+    getAllNotebooksForSync.mockImplementation(async () => {
+      order.push("read-local");
+      return [];
+    });
+
+    await performSync();
+
+    expect(order[0]).toBe("prepare");
+    expect(order).toContain("read-local");
+  });
+
+  it("aborts the sync, touching nothing, when the own root cannot be verified", async () => {
+    sharingEnabled = true;
+    prepareSharing.mockRejectedValue(new Error("cannot verify /NoteBerg"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(performSync()).rejects.toThrow(/cannot verify/);
+
+    expect(fullSync).not.toHaveBeenCalled();
+    expect(getLastSyncResult().success).toBe(false);
+    consoleError.mockRestore();
+  });
+
+  it("re-runs discovery when a shared root turned out to be gone, to move or end the share", async () => {
+    sharingEnabled = true;
+    seedLocal([sharedNb()], [sharedNote]);
+    syncSharedNotebook.mockResolvedValue({ ...emptyResult(), rootMissing: true });
+
+    await performSync();
+
+    expect(runDiscovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-run discovery when every root was there", async () => {
+    sharingEnabled = true;
+    seedLocal([sharedNb()], [sharedNote]);
+    await performSync();
+    expect(runDiscovery).not.toHaveBeenCalled();
+  });
+
+  it("with no shares at all, behaves exactly as a plain sync", async () => {
+    seedLocal([ownNb], [ownNote]);
+
+    await performSync();
+
+    expect(syncSharedNotebook).not.toHaveBeenCalled();
+    expect(fullSync).toHaveBeenCalledTimes(1);
+    expect(getLastSyncResult().sharedRootsMissing).toEqual([]);
   });
 });
 

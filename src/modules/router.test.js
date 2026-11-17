@@ -42,7 +42,7 @@ afterEach(() => {
 
 describe("initRouter", () => {
   it("resets to the default overview mode", () => {
-    router.navigateTo("recyclebin");
+    router.navigateTo("notebook");
     router.initRouter();
     expect(router.getCurrentMode()).toBe("overview");
   });
@@ -50,8 +50,14 @@ describe("initRouter", () => {
 
 describe("navigateTo mode validation", () => {
   it("navigates to a valid mode", () => {
+    router.navigateTo("notebook");
+    expect(router.getCurrentMode()).toBe("notebook");
+  });
+
+  // The recycle bin is a tab of the overview (overviewMode.js), not a mode
+  it("treats the recycle bin as an unknown mode", () => {
     router.navigateTo("recyclebin");
-    expect(router.getCurrentMode()).toBe("recyclebin");
+    expect(router.getCurrentMode()).toBe("overview");
   });
 
   it("falls back to the default mode for an invalid mode", () => {
@@ -69,13 +75,6 @@ describe("navigateTo mode validation", () => {
 });
 
 describe("context clearing rules", () => {
-  it("clears noteId and notebookId when navigating to recyclebin", () => {
-    router.navigateTo("notebook", { noteId: "n1", notebookId: "nb1" });
-    router.navigateTo("recyclebin");
-    expect(router.getCurrentNoteId()).toBeNull();
-    expect(router.getCurrentNotebookId()).toBeNull();
-  });
-
   it("clears noteId (always) and notebookId (unless provided) when navigating to overview", () => {
     router.navigateTo("notebook", { noteId: "n1", notebookId: "nb1" });
     router.navigateTo("overview");
@@ -111,16 +110,16 @@ describe("events", () => {
     window.addEventListener("beforenavigate", before);
     window.addEventListener("navigate", after);
 
-    router.navigateTo("recyclebin", { foo: "bar" });
+    router.navigateTo("notebook", { foo: "bar" });
 
     expect(order.map((o) => o[0])).toEqual(["beforenavigate", "navigate"]);
     expect(order[0][1]).toEqual({
-      mode: "recyclebin",
+      mode: "notebook",
       params: { foo: "bar" },
       previousMode: "overview",
     });
     expect(order[1][1]).toEqual({
-      mode: "recyclebin",
+      mode: "notebook",
       params: { foo: "bar" },
       previousMode: "overview",
     });
@@ -155,49 +154,41 @@ describe("events", () => {
     );
     window.removeEventListener("rendernotebook", handler);
   });
-
-  it("dispatches renderrecyclebin", () => {
-    const handler = vi.fn();
-    window.addEventListener("renderrecyclebin", handler);
-    router.navigateTo("recyclebin");
-    expect(handler).toHaveBeenCalled();
-    window.removeEventListener("renderrecyclebin", handler);
-  });
 });
 
 describe("DOM view swapping", () => {
   it("creates a mode container and unhides it", () => {
-    router.navigateTo("recyclebin");
-    const container = document.querySelector('[data-mode="recyclebin"]');
+    router.navigateTo("notebook");
+    const container = document.querySelector('[data-mode="notebook"]');
     expect(container).not.toBeNull();
     expect(container.classList.contains("hidden")).toBe(false);
   });
 
   it("hides previously shown mode containers when switching modes", () => {
     router.navigateTo("notebook");
-    router.navigateTo("recyclebin");
+    router.navigateTo("overview");
     const notebookContainer = document.querySelector('[data-mode="notebook"]');
-    const recycleContainer = document.querySelector('[data-mode="recyclebin"]');
+    const overviewContainer = document.querySelector('[data-mode="overview"]');
     expect(notebookContainer.classList.contains("hidden")).toBe(true);
-    expect(recycleContainer.classList.contains("hidden")).toBe(false);
+    expect(overviewContainer.classList.contains("hidden")).toBe(false);
   });
 
   it("reuses an existing mode container instead of creating a duplicate", () => {
-    router.navigateTo("recyclebin");
+    router.navigateTo("notebook");
     router.navigateTo("overview");
-    router.navigateTo("recyclebin");
-    expect(document.querySelectorAll('[data-mode="recyclebin"]')).toHaveLength(1);
+    router.navigateTo("notebook");
+    expect(document.querySelectorAll('[data-mode="notebook"]')).toHaveLength(1);
   });
 
   it("does nothing when #main-content is missing", () => {
     document.body.innerHTML = "";
-    expect(() => router.navigateTo("recyclebin")).not.toThrow();
+    expect(() => router.navigateTo("notebook")).not.toThrow();
   });
 });
 
 describe("goBack", () => {
   it("navigates to overview", () => {
-    router.navigateTo("recyclebin");
+    router.navigateTo("notebook");
     router.goBack();
     expect(router.getCurrentMode()).toBe("overview");
   });

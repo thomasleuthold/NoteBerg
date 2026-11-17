@@ -20,6 +20,7 @@ const HELP_IDS = [
   "mode_lasso",
   "first_image",
   "mark_as_task",
+  "first_text_box",
 ];
 
 export async function bootApp(

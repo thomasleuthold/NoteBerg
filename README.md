@@ -13,11 +13,13 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 - ⬜ Lasso selection — move, resize, rotate, copy selected strokes
 - 🔲 Eraser tool for stroke removal
 - ↩️ Unlimited undo/redo across all operations
-- ☑️ Mark handwritten notes as task
+- ☑️ Mark handwritten notes as task, with a name, status, priority and due date
 - 🌐 Background patterns — ruled lines and grid
 
 ### Text Editing
 - 📝 Rich text editor (WYSIWYG) with formatting, tables, colors, and font sizes
+- 🗂️ Text boxes anywhere on the page: tap to type, drag to move, change the width; they snap to the page's lines and grid, and work on PDF pages too
+- 🖼️ Pasted or dropped images become page images at the cursor, ready to move, resize and crop
 - 🔄 Automatic mode switching between drawing and text editing
 - ☑️ Task checkboxes inline with notes
 
@@ -34,19 +36,20 @@ A cross-platform note-taking app with handwriting support, text editing, and Nex
 ### Media & Import/Export
 - 📄 PDF import — annotate PDFs with pen and text
 - 🖼️ Image insertion with cropping and perspective correction
-- 📤 PDF export with automatic A4 pagination, images, strokes, and background patterns
+- 📤 PDF export with automatic A4 pagination, images, strokes, and background patterns; typed text keeps its layout and is selectable and searchable in a PDF viewer
 
 ### Organization
 - 🗂️ Notebooks for hierarchical organization
 - 📋 Note overview with thumbnail previews
 - 🔍 Full-text search across handwriting and typed text
-- ☑️ Markers tab — browse task markers across all notes
+- ☑️ Markers tab — browse task markers across all notes, filter by state and sort by due date, priority or status
 - 🗑️ Recycle bin with soft delete and permanent deletion
 
 ### Sync & Storage
 - 🔄 Nextcloud sync via Login Flow v2 (OAuth2) + WebDAV
 - 💾 Offline-first — all data stored locally in IndexedDB
-- 🔀 Conflict resolution with automatic and manual merge
+- 🔀 Conflict resolution with automatic and manual merge — edits to the same note on two devices are combined, not replaced
+- 🤝 Notebook sharing (preview, off by default): share a notebook with another Nextcloud user to read or edit; open notes pick up the other person's changes
 - ⚡ Background sync with change detection
 
 ### Security & Encryption
@@ -147,7 +150,7 @@ NoteBerg/
 - **Drawing**: HTML5 Canvas with PointerEvent API
 - **Text editor**: Trumbowyg
 - **PDF rendering**: PDF.js
-- **PDF generation**: pdf-lib, html2canvas (text-layer rendering for export)
+- **PDF generation**: pdf-lib, html2canvas (text-layer rendering for export), @pdf-lib/fontkit (searchable text layer)
 - **HTML sanitization**: DOMPurify
 
 ## Documentation
@@ -175,6 +178,8 @@ NoteBerg stands on the shoulders of many excellent open-source projects. A since
 | [PDF.js](https://mozilla.github.io/pdf.js/) | PDF rendering in the canvas |
 | [pdf-lib](https://pdf-lib.js.org/) | PDF export generation |
 | [html2canvas](https://html2canvas.hertzen.com/) | Text-layer rendering for PDF export |
+| [@pdf-lib/fontkit](https://github.com/Hopding/fontkit) | Font embedding for the searchable text in exported PDFs |
+| [Inter](https://rsms.me/inter/) | Typeface of typed text (SIL Open Font License 1.1) |
 | [perspective-transform](https://github.com/fhguilherme/perspective-transform) | Image perspective correction |
 | [Feather Icons](https://feathericons.com/) | UI icon set |
 | [cpal](https://github.com/RustAudio/cpal) | Cross-platform audio capture (Windows WASAPI) |

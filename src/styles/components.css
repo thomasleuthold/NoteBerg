@@ -613,6 +613,20 @@ input:disabled + .toggle-slider {
   margin-top: var(--spacing-sm);
 }
 
+/* Marks a feature that works but is still being proven (e.g. notebook sharing). */
+.preview-badge {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px var(--spacing-sm);
+  margin-left: var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-hover);
+  font-weight: 600;
+  vertical-align: middle;
+}
+
 .model-badge {
   font-size: 0.6875rem;
   text-transform: uppercase;

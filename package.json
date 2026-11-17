@@ -1,7 +1,7 @@
 {
   "name": "noteberg",
-  "version": "0.5.43",
-  "build": 9,
+  "version": "0.5.44",
+  "build": 10,
   "description": "A note-taking app supporting handwritten notes, text, and drawings",
   "type": "module",
   "scripts": {
@@ -41,7 +41,7 @@
     "@tauri-apps/cli": "^2.11.4",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/user-event": "^14.6.1",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "cross-env": "^10.1.0",
     "eslint": "^10.3.0",
     "jsdom": "^29.1.1",
@@ -49,9 +49,10 @@
     "prettier": "^3.8.3",
     "vite": "^8.0.10",
     "vite-plugin-singlefile": "^2.3.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
     "@tauri-apps/plugin-http": "^2.5.9",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-shell": "^2.3.5",
@@ -60,6 +61,7 @@
     "i18next": "^26.0.8",
     "idb": "^8.0.3",
     "jquery": "^4.0.0",
+    "linkedom": "0.18.13",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.2.108",
     "perspective-transform": "^1.1.3",

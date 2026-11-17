@@ -49,3 +49,14 @@ describe("sanitizeNoteHtml", () => {
     expect(sanitizeNoteHtml("")).toBe("");
   });
 });
+
+describe("merge conflict hints", () => {
+  it("keeps the attributes that identify a conflict block", () => {
+    const html =
+      '<p>x<span class="merge-hint" contenteditable="false" data-conflict="c1" data-by="bob"></span></p>';
+    const out = sanitizeNoteHtml(html);
+    expect(out).toContain('class="merge-hint"');
+    expect(out).toContain('data-conflict="c1"');
+    expect(out).toContain('data-by="bob"');
+  });
+});

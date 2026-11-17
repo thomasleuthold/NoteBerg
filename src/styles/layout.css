@@ -143,12 +143,14 @@
   display: flex;
   background-color: var(--bg-primary);
   align-items: center;
-  gap: var(--spacing-sx);
+  gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
   overflow: hidden;
 }
 
@@ -172,11 +174,42 @@
   text-decoration: line-through;
 }
 
+/* Due Date highlighting */
+.task-item--overdue {
+  border-left: 4px solid var(--nb-due-overdue);
+}
+.task-item--today {
+  border-left: 4px solid var(--nb-due-today);
+}
+
+/* Priority styling */
+.task-item--prio-low .task-item__checkbox {
+  color: var(--nb-priority-low);
+}
+.task-item--prio-medium .task-item__checkbox {
+  color: var(--nb-priority-medium);
+}
+.task-item--prio-high .task-item__checkbox {
+  color: var(--nb-priority-high);
+}
+.task-item--prio-urgent .task-item__checkbox {
+  color: var(--nb-priority-urgent);
+}
+
 .task-item__checkbox {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  color: var(--color-primary, #3b82f6);
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-primary);
+}
+
+.task-item__checkbox[data-status="doing"] {
+  color: var(--nb-task-doing, var(--color-primary));
 }
 
 .task-item__label {
@@ -196,15 +229,93 @@
   margin-left: var(--spacing-sm);
 }
 
-.task-item__note {
+.task-item__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
   flex-shrink: 0;
+  margin-left: auto;
+}
+
+.task-item__due-badge {
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-primary);
+}
+
+.task-item__due-badge--overdue {
+  color: var(--nb-due-overdue);
+  border-color: var(--nb-due-overdue);
+  font-weight: 600;
+}
+
+.task-item__due-badge--today {
+  color: var(--nb-due-today);
+  border-color: var(--nb-due-today);
+  font-weight: 600;
+}
+
+.task-item__note {
   font-size: 0.8rem;
   color: var(--text-secondary);
-  max-width: 200px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-left: auto;
+}
+
+.task-item__options {
+  flex-shrink: 0;
+  opacity: 0.7;
+  padding: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-item__options:hover {
+  opacity: 1;
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Task controls (Sort & Filter) in overview */
+.tasks-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.tasks-control-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tasks-control-label {
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+}
+
+.tasks-select {
+  font-size: 0.8rem;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-primary);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  cursor: pointer;
 }
 
 :is(body, #app) .tasks-display-toggle {
@@ -1948,6 +2059,29 @@ textarea.setting-control {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
 }
 
+.theme-toggle-swatch.tva {
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(0, 0, 0, 0.35) 2px,
+      rgba(0, 0, 0, 0.35) 4px
+    ),
+    linear-gradient(to right, rgba(255, 140, 0, 0.18) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 140, 0, 0.18) 1px, transparent 1px),
+    linear-gradient(135deg, #1a0e00 0%, #0d0800 100%);
+  background-size:
+    100% 4px,
+    14px 14px,
+    14px 14px,
+    100% 100%;
+  border-color: #ff8c00;
+  box-shadow:
+    inset 0 0 12px rgba(255, 140, 0, 0.35),
+    0 0 6px rgba(255, 140, 0, 0.25);
+}
+
 .theme-toggle-label {
   font-size: 0.875rem;
   font-weight: 500;
@@ -2008,19 +2142,6 @@ textarea.setting-control {
   padding: var(--spacing-xl);
   max-width: 1200px;
   margin: 0 auto;
-}
-
-.recycle-bin-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-xl);
-}
-
-.recycle-bin-header h2 {
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--text-primary);
 }
 
 .recycle-bin-section {
@@ -2501,6 +2622,7 @@ textarea.setting-control {
   border: 1px solid var(--border-color);
   border-radius: 4px;
   background: var(--bg-secondary);
+  color: var(--text-primary);
   box-sizing: border-box;
 }
 
@@ -2532,6 +2654,7 @@ textarea.setting-control {
   padding: 6px 10px;
   text-align: left;
   border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
@@ -2716,4 +2839,181 @@ textarea.setting-control {
     align-items: stretch;
     gap: var(--spacing-xs);
   }
+}
+
+/* ==========================================================================
+   Task Properties Dialog
+   ========================================================================== */
+
+.task-properties-dialog {
+  max-width: 480px;
+  width: 90%;
+}
+
+.task-properties-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+}
+
+.task-prop-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.task-prop-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The controls below are scoped to :is(body, #app) for the reason given at
+   .settings-nav__item: inside the Nextcloud app they are bare <button> and
+   <input> elements, and NC's own styling (bold text, minimum heights, margins)
+   wins at equal specificity. */
+:is(body, #app) .task-prop-input {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+:is(body, #app) .task-prop-input:focus {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 0;
+  border-color: var(--border-focus);
+}
+
+.task-prop-pill-group {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+}
+
+/* getIcon() returns SVGs without width/height, so they fill their container
+   unless sized here. */
+.task-properties-dialog svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+:is(body, #app) .task-prop-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 0;
+  margin: 0;
+  padding: 6px 12px;
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1.25;
+  white-space: nowrap;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+:is(body, #app) .task-prop-pill:hover {
+  background-color: var(--bg-hover);
+}
+
+:is(body, #app) .task-prop-pill.active {
+  background-color: var(--color-primary);
+  color: var(--text-inverse);
+  border-color: var(--color-primary);
+  font-weight: 500;
+}
+
+:is(body, #app) .task-prop-pill:focus-visible,
+:is(body, #app) .task-prop-chip:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+:is(body, #app) .task-prop-prio-group .task-prop-pill.prio-low.active {
+  background-color: var(--nb-priority-low);
+  border-color: var(--nb-priority-low);
+}
+:is(body, #app) .task-prop-prio-group .task-prop-pill.prio-medium.active {
+  background-color: var(--nb-priority-medium);
+  border-color: var(--nb-priority-medium);
+}
+:is(body, #app) .task-prop-prio-group .task-prop-pill.prio-high.active {
+  background-color: var(--nb-priority-high);
+  border-color: var(--nb-priority-high);
+}
+:is(body, #app) .task-prop-prio-group .task-prop-pill.prio-urgent.active {
+  background-color: var(--nb-priority-urgent);
+  border-color: var(--nb-priority-urgent);
+}
+
+/* Read-only preview of what the note holds below the headline. */
+.task-prop-details {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.task-prop-details-text {
+  font-size: 0.9rem;
+  line-height: 1.4;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.task-prop-details-ink {
+  display: block;
+  width: 100%;
+}
+
+.task-prop-date-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.task-prop-quick-dates {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+}
+
+:is(body, #app) .task-prop-chip {
+  min-height: 0;
+  margin: 0;
+  padding: 4px 10px;
+  font-family: var(--font-family);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.25;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+:is(body, #app) .task-prop-chip:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
 }

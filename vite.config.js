@@ -263,6 +263,21 @@ export default defineConfig({
       },
     } : {},
   },
+  // NC build: workers next to the chunks in js/ (cleaned before each build and
+  // copied by every deploy recipe), not in assets/, where stale builds pile up
+  ...(platform === 'nextcloud'
+    ? {
+        worker: {
+          format: 'es',
+          rollupOptions: {
+            output: {
+              entryFileNames: 'js/[name]-[hash].js',
+              chunkFileNames: 'js/[name]-[hash].js',
+            },
+          },
+        },
+      }
+    : {}),
   server: {
     port: 3000,
     strictPort: true,

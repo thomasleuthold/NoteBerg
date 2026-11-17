@@ -1,10 +1,11 @@
 # Audio recording: inconsistent level, artifacts, length limit
 
-**Status: investigated, not yet implemented.** Three user-visible problems
+**Status: implemented in 0.5.43** (the step-by-step plan was removed;
+see git history). Three user-visible problems
 (level differs per device, clicks/drops, long recordings break) trace back to
 a small number of concrete causes in the native recording paths. This document
-records the evidence, the numbers, and a proposed design so the work can be
-implemented without re-deriving it. Nextcloud has no recording path and is
+records the evidence, the numbers, and the design that was implemented, so it
+does not have to be re-derived. Nextcloud has no recording path and is
 only affected as a *playback* target for files produced by the native apps.
 
 ## Symptoms reported

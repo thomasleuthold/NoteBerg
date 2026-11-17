@@ -5,7 +5,7 @@
  * canvas pixels alone which page or image is on screen, without OCR or
  * reference screenshots.
  */
-import { PDFDocument, rgb } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 
 /** A4 in PDF points. */
 export const A4 = { width: 595.28, height: 841.89 };
@@ -27,6 +27,19 @@ export async function colourPdf(colours, name = "pages.pdf") {
       color: rgb(r / 255, g / 255, b / 255),
     });
   }
+  return { name, mimeType: "application/pdf", buffer: Buffer.from(await doc.save()) };
+}
+
+/**
+ * A one-page A4 PDF with a line of real (selectable) text near the top.
+ * @param {string} text
+ * @returns {Promise<{name: string, mimeType: string, buffer: Buffer}>}
+ */
+export async function textPdf(text, name = "text.pdf") {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const page = doc.addPage([A4.width, A4.height]);
+  page.drawText(text, { x: 60, y: A4.height - 100, size: 24, font, color: rgb(0, 0, 0) });
   return { name, mimeType: "application/pdf", buffer: Buffer.from(await doc.save()) };
 }
 

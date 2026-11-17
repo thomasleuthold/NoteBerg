@@ -14,6 +14,7 @@
  */
 
 import markup from "../../img/app-dark-s.svg?raw";
+import { escapeHtml } from "../utils/escapeHtml.js";
 
 /** Ellipse the sun travels, tuned so a radius-13 disc crosses the horizon and
  *  clears the summit without leaving the (widened) viewBox. */
@@ -55,14 +56,6 @@ function extractPaths() {
   return paths;
 }
 
-function escapeAttr(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
 /**
  * Build the loader's SVG markup.
  *
@@ -76,7 +69,7 @@ function escapeAttr(value) {
 function buildSvg(clipId) {
   const { x, y, w, h } = VIEW_BOX;
   const art = extractPaths()
-    .map((p) => `<path class="nb-loader__${p.role}" d="${escapeAttr(p.d)}"/>`)
+    .map((p) => `<path class="nb-loader__${p.role}" d="${escapeHtml(p.d)}"/>`)
     .join("");
 
   return (

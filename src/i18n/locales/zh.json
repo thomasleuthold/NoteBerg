@@ -20,7 +20,8 @@
     "justNow": "刚刚",
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
-    "daysAgo": "{{count}} 天前"
+    "daysAgo": "{{count}} 天前",
+    "preview": "预览"
   },
   "overview": {
     "tabs": {
@@ -117,19 +118,22 @@
       "appearance": "外观",
       "security": "安全",
       "nextcloud": "Nextcloud 同步",
+      "sharing": "笔记本共享",
       "recognition": "手写识别",
       "mcp": "MCP 服务器（AI 集成）",
       "logging": "日志",
       "dangerZone": "危险操作",
       "about": "关于",
       "aiProvider": "AI 访问",
-      "backup": "备份"
+      "backup": "备份",
+      "tasks": "任务"
     },
     "appearance": {
       "theme": "主题",
       "themeDesc": "选择你喜欢的配色方案",
       "light": "浅色",
       "dark": "深色",
+      "tva": "TVA / CRT",
       "pdfInvertDark": "深色模式下反转PDF页面",
       "pdfInvertDarkDesc": "让导入PDF上的批注更易于查看，但会改变PDF的原始颜色",
       "cardSize": "卡片大小",
@@ -156,6 +160,10 @@
     "security": {
       "encryptLocal": "加密本地数据",
       "encryptLocalDesc": "加密本设备上本地存储的笔记"
+    },
+    "sharing": {
+      "descApp": "与其他 Nextcloud 用户共享笔记本并一起编辑。关闭后，与你共享的笔记本将在此浏览器中隐藏，不会删除任何内容。",
+      "rootCheckFailed": "共享未开启：无法验证笔记文件夹。{{message}}"
     },
     "nextcloud": {
       "connectLabel": "连接到 Nextcloud",
@@ -185,7 +193,10 @@
       "syncSkipped": "已跳过同步（同步已在进行中）",
       "syncComplete": "✓ 同步完成！已上传 {{uploadedNotebooks}} 个笔记本、{{uploadedNotes}} 篇笔记。已下载 {{downloadedNotebooks}} 个笔记本、{{downloadedNotes}} 篇笔记。",
       "syncConflictsDetected": " ⚠️ 检测到 {{count}} 个冲突。",
-      "syncFailed": "✗ 同步失败：{{message}}"
+      "syncFailed": "✗ 同步失败：{{message}}",
+      "sharingLabel": "笔记本共享",
+      "sharingDesc": "与其他 Nextcloud 用户共享笔记本并一起编辑。关闭后，与你共享的笔记本将停止同步，并保留在此设备上，直到你再次开启。",
+      "sharingNeedsConnection": "请先连接 Nextcloud，才能使用笔记本共享。"
     },
     "recognition": {
       "statusLabel": "状态",
@@ -383,6 +394,7 @@
       "clearLogs": "清除日志",
       "copied": "✓ 已复制！",
       "clearConfirm": "确定要清除所有调试日志吗？",
+      "copyFailed": "无法将日志复制到剪贴板",
       "noLogs": "此会话中没有可用日志。"
     },
     "dangerZone": {
@@ -418,7 +430,9 @@
       "version": "版本：{{version}}",
       "licenses": "许可信息",
       "openSource": "NoteBerg 是自由开源软件。",
-      "projectLink": "在 GitHub 上查看项目"
+      "projectLink": "在 GitHub 上查看项目",
+      "rate": "为应用评分",
+      "rateDesc": "在 Google Play 上评分能帮助更多人发现 NoteBerg。"
     },
     "encryption": {
       "enabledLocalTitle": "加密已启用",
@@ -462,6 +476,14 @@
     },
     "nav": {
       "back": "所有设置"
+    },
+    "tasks": {
+      "enableDueDates": "启用截止日期",
+      "enableDueDatesDesc": "允许在任务标记上设置截止日期",
+      "enablePriorities": "启用优先级",
+      "enablePrioritiesDesc": "允许在任务标记上设置优先级",
+      "defaultSort": "默认任务排序",
+      "defaultSortDesc": "标记概览标签页中的初始排序方式"
     }
   },
   "modals": {
@@ -654,6 +676,13 @@
     "fullscreen": "全屏",
     "exitFullscreen": "退出全屏",
     "deleteNote": "删除笔记",
+    "color": {
+      "foreColor": "文字颜色",
+      "backColor": "高亮",
+      "defaultText": "默认",
+      "removeHighlight": "无高亮",
+      "highlightTitle": "高亮 {{num}}"
+    },
     "penDialog": {
       "lineWidth": "线宽：",
       "color": "颜色",
@@ -686,7 +715,8 @@
       "copy": "复制",
       "markAsTask": "标记为任务",
       "removeTask": "取消任务标记",
-      "delete": "删除"
+      "delete": "删除",
+      "taskProperties": "任务属性"
     },
     "media": {
       "select": "选择",
@@ -715,6 +745,7 @@
       "deleteConfirmTitle": "删除 PDF",
       "deleteConfirmMsg": "确定要移除此 PDF 文档吗？这将移除所有页面。",
       "exportError": "PDF 导出失败",
+      "importError": "PDF 导入失败",
       "exportProgressTitle": "正在导出 PDF",
       "exportProgressPage": "正在导出第 {{current}} / {{total}} 页...",
       "importProgressTitle": "正在导入 PDF",
@@ -760,6 +791,14 @@
       "optionPunctuationDesc": "包含页面上书写的句号、逗号和破折号。关闭后只保留文字。",
       "optionBreaks": "保留换行",
       "optionBreaksDesc": "保留行和段落的结束位置。版面识别不如文字识别可靠。"
+    },
+    "mergeHint": "冲突版本,由 {{user}} 编辑",
+    "mergeHintUnknown": "冲突版本",
+    "textBox": {
+      "move": "拖动以移动",
+      "resize": "拖动以更改宽度",
+      "toolbarHint": "点按一段文字，或点按页面开始新的文字",
+      "options": "文本框选项"
     }
   },
   "recycleBin": {
@@ -775,7 +814,11 @@
     "emptyTitle": "回收站是空的",
     "emptyDesc": "已删除的笔记本和笔记会显示在这里。",
     "notebooksCount": "笔记本（{{count}}）",
-    "notesCount": "笔记（{{count}}）"
+    "notesCount": "笔记（{{count}}）",
+    "purgeConfirm": "确定要永久删除此项目吗？它将从所有已同步的设备中移除，且无法撤销。",
+    "purgeConfirmNotebook": "确定要永久删除此笔记本吗？其中的 {{count}} 条笔记也将被永久删除。它将从所有已同步的设备中移除，且无法撤销。",
+    "restoreFailed": "无法恢复项目：{{message}}",
+    "purgeFailed": "永久删除失败：{{message}}"
   },
   "soundDialog": {
     "trigger": "录音",
@@ -853,6 +896,10 @@
     "markAsTask": {
       "title": "任务",
       "body": "你标记的文本现在是可勾选的任务。可在此处或任务列表中勾选它。"
+    },
+    "firstTextBox": {
+      "title": "文本框",
+      "body": "点按页面即可在该处创建文本框。拖动上方的横条可移动它，拖动右边缘可更改宽度。点按文字正下方可继续书写。"
     }
   },
   "backup": {
@@ -973,6 +1020,134 @@
       "newerVersion": "此备份由比本应用更新的 NoteBerg {{version}} 创建。请更新 NoteBerg 后再恢复。",
       "diskFull": "无法写入备份：{{message}}。未完成的文件已删除。",
       "cacheSpace": "可用空间不足，无法创建备份：约需 {{needed}}，可用 {{available}}。"
+    }
+  },
+  "tasks": {
+    "properties": {
+      "title": "任务属性",
+      "name": "任务名称 / 标签",
+      "namePlaceholder": "自定义标题（识别缺失或错误时使用）",
+      "status": "状态",
+      "priority": "优先级",
+      "details": "详情",
+      "dueDate": "截止日期"
+    },
+    "states": {
+      "open": "未完成",
+      "doing": "进行中",
+      "done": "已完成"
+    },
+    "priorities": {
+      "none": "无",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "urgent": "紧急"
+    },
+    "dueDate": {
+      "today": "今天",
+      "tomorrow": "明天",
+      "nextDay": "+1天",
+      "nextWeek": "+7天",
+      "clear": "清除"
+    },
+    "filter": {
+      "label": "筛选",
+      "all": "全部",
+      "active": "未完成",
+      "doing": "进行中",
+      "overdue": "已逾期",
+      "done": "已完成"
+    },
+    "sort": {
+      "label": "排序",
+      "dueDate": "截止日期",
+      "priority": "优先级",
+      "status": "状态",
+      "note": "笔记标题"
+    },
+    "noMatchingTasks": "未找到匹配的任务。",
+    "cycleStatus": "切换状态"
+  },
+  "sharing": {
+    "section": {
+      "title": "与我共享"
+    },
+    "badge": {
+      "sharedBy": "由 {{owner}} 共享",
+      "readOnly": "只读",
+      "canEdit": "可编辑",
+      "shared": "已共享",
+      "sharedWith_one": "已与 {{count}} 人共享",
+      "sharedWith_other": "已与 {{count}} 人共享"
+    },
+    "notebookOptions": {
+      "leave": "从我的列表中移除",
+      "share": "共享..."
+    },
+    "leave": {
+      "title": "移除共享笔记本",
+      "message": "“{{title}}”将从你的列表中消失。{{owner}} 以及其他共享对象仍会保留它。",
+      "messageUnsynced": "你在“{{title}}”中的一些更改尚未保存到共享笔记本,将会丢失。仍要移除吗?",
+      "confirm": "移除",
+      "failed": "无法移除该笔记本:{{message}}"
+    },
+    "ended": {
+      "notice_one": "此笔记本已不再与你共享。有 {{count}} 条笔记的更改未能保存。",
+      "notice_other": "此笔记本已不再与你共享。有 {{count}} 条笔记的更改未能保存。",
+      "noticeClean": "此笔记本已不再与你共享。",
+      "dismiss": "关闭"
+    },
+    "stranded": {
+      "notice_one": "有 {{count}} 条笔记的更改无法再保存到此共享笔记本。",
+      "notice_other": "有 {{count}} 条笔记的更改无法再保存到此共享笔记本。",
+      "discard": "放弃我的更改",
+      "discardTitle": "放弃更改",
+      "discardMessage": "你在“{{title}}”中未保存的更改将被共享版本替换,且无法撤销。"
+    },
+    "restricted": {
+      "title": "不允许",
+      "message": "在与你共享的笔记本中无法执行此操作。"
+    },
+    "purge": {
+      "warning": "此笔记本已与其他人共享。永久删除后,他们将失去访问权限。"
+    },
+    "share": {
+      "title": "共享“{{title}}”",
+      "intro": "你共享的对象会在“与我共享”中看到此笔记本,但无法删除、移动或复制它。",
+      "searchLabel": "添加人员",
+      "searchPlaceholder": "按姓名或用户 ID 搜索",
+      "searching": "正在搜索...",
+      "noResults": "没有匹配的用户。",
+      "modeLabel": "访问权限",
+      "modeReadonly": "可查看",
+      "modeCollab": "可编辑",
+      "add": "共享",
+      "recipients": "有权访问的人员",
+      "noRecipients": "尚未与任何人共享。",
+      "revoke": "停止共享",
+      "reduced": "服务器仅允许查看此共享。",
+      "loadFailed": "无法加载共享设置:{{message}}",
+      "failed": "共享失败:{{message}}",
+      "notOnServer": "此笔记本尚未同步到 Nextcloud。请先同步,然后重试。",
+      "unavailable": "共享需要连接到 Nextcloud。",
+      "revokeMessage": "{{name}} 将失去对“{{title}}”的访问权限。其尚未保存的更改将无法再保存。"
+    },
+    "reduced": {
+      "notice": "您现在只能查看此笔记本。您的更改会保留在此设备上,但无法保存到共享笔记本。",
+      "noticeOnline": "您现在只能查看此笔记本。尚未保存的更改未能保存。"
+    },
+    "invite": {
+      "title": "共享笔记本",
+      "message": "{{owner}} 想与您共享一个笔记本。",
+      "accept": "接受",
+      "decline": "拒绝",
+      "declineTitle": "拒绝共享笔记本",
+      "declineMessage": "{{owner}} 的笔记本不会被添加。如果您改变主意,需要 {{owner}} 重新共享。",
+      "failed": "操作失败:{{message}}"
+    },
+    "deletedByOwner": {
+      "notice": "所有者删除了这条笔记。你写的内容会随笔记一起保留在所有者的回收站中。"
     }
   }
 }

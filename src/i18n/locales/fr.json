@@ -20,7 +20,8 @@
     "justNow": "à l'instant",
     "minutesAgo": "il y a {{count}} min",
     "hoursAgo": "il y a {{count}} h",
-    "daysAgo": "il y a {{count}} j"
+    "daysAgo": "il y a {{count}} j",
+    "preview": "Aperçu"
   },
   "overview": {
     "tabs": {
@@ -117,19 +118,22 @@
       "appearance": "Apparence",
       "security": "Sécurité",
       "nextcloud": "Synchronisation Nextcloud",
+      "sharing": "Partage de carnets",
       "recognition": "Reconnaissance",
       "mcp": "Serveur MCP (intégration IA)",
       "logging": "Journaux",
       "dangerZone": "Zone de danger",
       "about": "À propos",
       "aiProvider": "Accès IA",
-      "backup": "Sauvegarde"
+      "backup": "Sauvegarde",
+      "tasks": "Tâches"
     },
     "appearance": {
       "theme": "Thème",
       "themeDesc": "Choisissez votre palette de couleurs préférée",
       "light": "Clair",
       "dark": "Sombre",
+      "tva": "TVA / CRT",
       "pdfInvertDark": "Inverser les pages PDF en mode sombre",
       "pdfInvertDarkDesc": "Rend les annotations plus visibles sur les PDF importés, mais modifie les couleurs originales du PDF",
       "cardSize": "Taille des cartes",
@@ -156,6 +160,10 @@
     "security": {
       "encryptLocal": "Chiffrer les données locales",
       "encryptLocalDesc": "Chiffrer les notes stockées localement sur cet appareil"
+    },
+    "sharing": {
+      "descApp": "Partagez des carnets avec d'autres utilisateurs Nextcloud et travaillez-y ensemble. Désactivé, les carnets partagés avec vous sont masqués dans ce navigateur ; rien n'est supprimé.",
+      "rootCheckFailed": "Le partage n'a pas été activé : le dossier des notes n'a pas pu être vérifié. {{message}}"
     },
     "nextcloud": {
       "connectLabel": "Se connecter à Nextcloud",
@@ -185,7 +193,10 @@
       "syncSkipped": "Synchronisation ignorée (déjà en cours)",
       "syncComplete": "✓ Synchronisation terminée ! {{uploadedNotebooks}} carnets et {{uploadedNotes}} notes envoyés. {{downloadedNotebooks}} carnets et {{downloadedNotes}} notes téléchargés.",
       "syncConflictsDetected": " ⚠️ {{count}} conflits détectés.",
-      "syncFailed": "✗ Échec de la synchronisation : {{message}}"
+      "syncFailed": "✗ Échec de la synchronisation : {{message}}",
+      "sharingLabel": "Partage de carnets",
+      "sharingDesc": "Partagez des carnets avec d'autres utilisateurs Nextcloud et travaillez-y ensemble. Désactivé, les carnets partagés avec vous ne se synchronisent plus ; ils restent sur cet appareil jusqu'à la réactivation.",
+      "sharingNeedsConnection": "Connectez-vous d'abord à Nextcloud pour partager des carnets."
     },
     "recognition": {
       "statusLabel": "Statut",
@@ -383,6 +394,7 @@
       "clearLogs": "Effacer les journaux",
       "copied": "✓ Copié !",
       "clearConfirm": "Voulez-vous vraiment effacer tous les journaux de débogage ?",
+      "copyFailed": "Impossible de copier les journaux dans le presse-papiers",
       "noLogs": "Aucun journal disponible pour cette session."
     },
     "dangerZone": {
@@ -418,7 +430,9 @@
       "version": "Version : {{version}}",
       "licenses": "Informations de licence",
       "openSource": "NoteBerg est un logiciel libre et open source.",
-      "projectLink": "Voir le projet sur GitHub"
+      "projectLink": "Voir le projet sur GitHub",
+      "rate": "Noter l'application",
+      "rateDesc": "Une note sur Google Play aide d'autres personnes à trouver NoteBerg."
     },
     "encryption": {
       "enabledLocalTitle": "Chiffrement activé",
@@ -462,6 +476,14 @@
     },
     "nav": {
       "back": "Tous les paramètres"
+    },
+    "tasks": {
+      "enableDueDates": "Activer dates d'échéance",
+      "enableDueDatesDesc": "Permet de définir des dates d'échéance sur les tâches",
+      "enablePriorities": "Activer les priorités",
+      "enablePrioritiesDesc": "Permet de définir des niveaux de priorité sur les tâches",
+      "defaultSort": "Tri par défaut des tâches",
+      "defaultSortDesc": "Ordre de tri initial dans l'onglet Marqueurs"
     }
   },
   "modals": {
@@ -654,6 +676,13 @@
     "fullscreen": "Plein écran",
     "exitFullscreen": "Quitter le plein écran",
     "deleteNote": "Supprimer",
+    "color": {
+      "foreColor": "Couleur du texte",
+      "backColor": "Surligner",
+      "defaultText": "Par défaut",
+      "removeHighlight": "Aucun surlignage",
+      "highlightTitle": "Surlignage {{num}}"
+    },
     "penDialog": {
       "lineWidth": "Épaisseur du trait : ",
       "color": "Couleur",
@@ -686,7 +715,8 @@
       "copy": "Copier",
       "markAsTask": "Marquer comme tâche",
       "removeTask": "Retirer la tâche",
-      "delete": "Supprimer"
+      "delete": "Supprimer",
+      "taskProperties": "Propriétés tâche"
     },
     "media": {
       "select": "Sélectionner",
@@ -715,6 +745,7 @@
       "deleteConfirmTitle": "Supprimer le PDF",
       "deleteConfirmMsg": "Voulez-vous vraiment supprimer le document PDF ? Cela supprimera toutes les pages.",
       "exportError": "Échec de l'exportation du PDF",
+      "importError": "Échec de l'importation du PDF",
       "exportProgressTitle": "Exportation du PDF",
       "exportProgressPage": "Exportation de la page {{current}} sur {{total}} ...",
       "importProgressTitle": "Importation du PDF",
@@ -760,6 +791,14 @@
       "optionPunctuationDesc": "Inclut les points, virgules et tirets écrits sur la page. Désactivez cette option pour n'obtenir que les mots.",
       "optionBreaks": "Conserver les sauts de ligne",
       "optionBreaksDesc": "Préserve la fin des lignes et des paragraphes. La reconnaissance de la mise en page est moins fiable que celle du texte."
+    },
+    "mergeHint": "Version en conflit, modifiée par {{user}}",
+    "mergeHintUnknown": "Version en conflit",
+    "textBox": {
+      "move": "Faire glisser pour déplacer",
+      "resize": "Faire glisser pour changer la largeur",
+      "toolbarHint": "Touchez un texte, ou la page pour en commencer un",
+      "options": "Options de la zone de texte"
     }
   },
   "recycleBin": {
@@ -775,7 +814,11 @@
     "emptyTitle": "La corbeille est vide",
     "emptyDesc": "Les carnets et notes supprimés apparaîtront ici.",
     "notebooksCount": "Carnets ({{count}})",
-    "notesCount": "Notes ({{count}})"
+    "notesCount": "Notes ({{count}})",
+    "purgeConfirm": "Voulez-vous vraiment supprimer définitivement cet élément ? Il sera retiré de tous les appareils synchronisés et cette action est irréversible.",
+    "purgeConfirmNotebook": "Voulez-vous vraiment supprimer définitivement ce carnet ? {{count}} note(s) qu'il contient seront aussi supprimées définitivement. Il sera retiré de tous les appareils synchronisés et cette action est irréversible.",
+    "restoreFailed": "Impossible de restaurer l'élément : {{message}}",
+    "purgeFailed": "Échec de la suppression définitive : {{message}}"
   },
   "soundDialog": {
     "trigger": "Enregistrements",
@@ -853,6 +896,10 @@
     "markAsTask": {
       "title": "Tâches",
       "body": "Le texte marqué est maintenant une tâche à cocher. Cochez-la ici ou dans votre liste de tâches."
+    },
+    "firstTextBox": {
+      "title": "Zones de texte",
+      "body": "Un toucher sur la page y commence une zone de texte. Faites glisser la barre au-dessus pour la déplacer, et son bord droit pour changer la largeur. Un toucher juste sous un texte le prolonge."
     }
   },
   "backup": {
@@ -973,6 +1020,134 @@
       "newerVersion": "Cette sauvegarde a été créée avec NoteBerg {{version}}, plus récent que cette application. Mettez NoteBerg à jour pour la restaurer.",
       "diskFull": "La sauvegarde n’a pas pu être écrite : {{message}}. Le fichier partiel a été supprimé.",
       "cacheSpace": "Espace libre insuffisant pour créer la sauvegarde : environ {{needed}} nécessaires, {{available}} disponibles."
+    }
+  },
+  "tasks": {
+    "properties": {
+      "title": "Propriétés de la tâche",
+      "name": "Nom / étiquette de tâche",
+      "namePlaceholder": "Titre personnalisé (si la reconnaissance manque ou est erronée)",
+      "status": "Statut",
+      "priority": "Priorité",
+      "details": "Détails",
+      "dueDate": "Date d'échéance"
+    },
+    "states": {
+      "open": "Ouvert",
+      "doing": "En cours",
+      "done": "Terminé"
+    },
+    "priorities": {
+      "none": "Aucune",
+      "low": "Basse",
+      "medium": "Moyenne",
+      "high": "Haute",
+      "urgent": "Urgent"
+    },
+    "dueDate": {
+      "today": "Aujourd'hui",
+      "tomorrow": "Demain",
+      "nextDay": "+1 jour",
+      "nextWeek": "+7 jours",
+      "clear": "Effacer"
+    },
+    "filter": {
+      "label": "Filtrer",
+      "all": "Tous",
+      "active": "Actif",
+      "doing": "En cours",
+      "overdue": "En retard",
+      "done": "Terminé"
+    },
+    "sort": {
+      "label": "Trier",
+      "dueDate": "Date d'échéance",
+      "priority": "Priorité",
+      "status": "Statut",
+      "note": "Titre de note"
+    },
+    "noMatchingTasks": "Aucune tâche correspondante trouvée.",
+    "cycleStatus": "Changer le statut"
+  },
+  "sharing": {
+    "section": {
+      "title": "Partagés avec moi"
+    },
+    "badge": {
+      "sharedBy": "Partagé par {{owner}}",
+      "readOnly": "Lecture seule",
+      "canEdit": "Peut modifier",
+      "shared": "Partagé",
+      "sharedWith_one": "Partagé avec {{count}} personne",
+      "sharedWith_other": "Partagé avec {{count}} personnes"
+    },
+    "notebookOptions": {
+      "leave": "Retirer de ma liste",
+      "share": "Partager..."
+    },
+    "leave": {
+      "title": "Retirer le carnet partagé",
+      "message": "« {{title}} » disparaîtra de votre liste. {{owner}} et toutes les autres personnes avec qui il est partagé le conservent.",
+      "messageUnsynced": "Certaines de vos modifications dans « {{title}} » n'ont pas encore été enregistrées dans le carnet partagé et seront perdues. Le retirer quand même ?",
+      "confirm": "Retirer",
+      "failed": "Le carnet n'a pas pu être retiré : {{message}}"
+    },
+    "ended": {
+      "notice_one": "Ce carnet n'est plus partagé avec vous. {{count}} note avait des modifications qui n'ont pas pu être enregistrées.",
+      "notice_other": "Ce carnet n'est plus partagé avec vous. {{count}} notes avaient des modifications qui n'ont pas pu être enregistrées.",
+      "noticeClean": "Ce carnet n'est plus partagé avec vous.",
+      "dismiss": "Masquer"
+    },
+    "stranded": {
+      "notice_one": "{{count}} note contient des modifications qui ne peuvent plus être enregistrées dans ce carnet partagé.",
+      "notice_other": "{{count}} notes contiennent des modifications qui ne peuvent plus être enregistrées dans ce carnet partagé.",
+      "discard": "Abandonner mes modifications",
+      "discardTitle": "Abandonner les modifications",
+      "discardMessage": "Vos modifications non enregistrées dans « {{title}} » seront remplacées par la version partagée. Cette action est irréversible."
+    },
+    "restricted": {
+      "title": "Non autorisé",
+      "message": "Ce n'est pas possible dans un carnet partagé avec vous."
+    },
+    "purge": {
+      "warning": "Ce carnet est partagé avec d'autres personnes. Elles perdent l'accès lorsqu'il est supprimé définitivement."
+    },
+    "share": {
+      "title": "Partager « {{title}} »",
+      "intro": "Les personnes avec qui vous partagez voient ce carnet sous « Partagés avec moi ». Elles ne peuvent ni le supprimer, ni le déplacer, ni le copier.",
+      "searchLabel": "Ajouter une personne",
+      "searchPlaceholder": "Rechercher par nom ou identifiant",
+      "searching": "Recherche...",
+      "noResults": "Aucun utilisateur correspondant.",
+      "modeLabel": "Accès",
+      "modeReadonly": "Peut consulter",
+      "modeCollab": "Peut modifier",
+      "add": "Partager",
+      "recipients": "Personnes ayant accès",
+      "noRecipients": "Pas encore partagé.",
+      "revoke": "Arrêter le partage",
+      "reduced": "Le serveur n'a autorisé que la consultation pour ce partage.",
+      "loadFailed": "Les paramètres de partage n'ont pas pu être chargés : {{message}}",
+      "failed": "Échec du partage : {{message}}",
+      "notOnServer": "Ce carnet n'est pas encore arrivé sur Nextcloud. Synchronisez, puis réessayez.",
+      "unavailable": "Le partage nécessite une connexion à Nextcloud.",
+      "revokeMessage": "{{name}} perdra l'accès à « {{title}} ». Les modifications pas encore enregistrées ne pourront plus l'être."
+    },
+    "reduced": {
+      "notice": "Vous pouvez désormais seulement consulter ce carnet. Vos modifications sont conservées sur cet appareil, mais ne peuvent pas être enregistrées dans le carnet partagé.",
+      "noticeOnline": "Vous pouvez désormais seulement consulter ce carnet. Les modifications pas encore enregistrées n'ont pas pu l'être."
+    },
+    "invite": {
+      "title": "Carnet partagé",
+      "message": "{{owner}} souhaite partager un carnet avec vous.",
+      "accept": "Accepter",
+      "decline": "Refuser",
+      "declineTitle": "Refuser le carnet partagé",
+      "declineMessage": "Le carnet de {{owner}} ne sera pas ajouté. Si vous changez d'avis, {{owner}} devra le partager à nouveau.",
+      "failed": "Cela n'a pas fonctionné : {{message}}"
+    },
+    "deletedByOwner": {
+      "notice": "Le propriétaire a supprimé cette note. Ce que vous avez écrit est conservé avec elle dans sa corbeille."
     }
   }
 }

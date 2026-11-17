@@ -5,10 +5,12 @@
  * Supports smooth scrolling, zoom, and stylus/pen drawing.
  */
 
+import { t } from "../../i18n/index.js";
 import { syncOnNoteClose } from "../../modules/autoSync.js";
 import { HELP_IDS } from "../../modules/helpGuidance.js";
 import { startHelpTour } from "../HelpOverlay.js";
 import { getHelpContent, getHelpLabels } from "../helpContent.js";
+import { showLoadingIndicator } from "../loadingIndicator.js";
 import { NoteCanvas } from "./NoteCanvas.js";
 
 // First-note tour: a centered welcome step (auto-save/sync intro, no arrow),
@@ -118,8 +120,10 @@ export function initNoteCanvasComponent() {
       }
     }
 
-    // Clear container
-    container.innerHTML = "";
+    // Clear container and show the waiting indicator while the note loads
+    // (noticeable on the Nextcloud app, where getNote is a network round trip).
+    // load() clears the container again before mounting, which removes it.
+    showLoadingIndicator(container, { label: t("common.loading"), block: true });
 
     // Create and load new instance. Held locally as well as in the module slot:
     // if a newer render supersedes this one mid-load, the module slot already
@@ -233,13 +237,6 @@ export function initNoteCanvasComponent() {
     const noteId = noteCanvasInstance.noteId;
     const container = noteCanvasInstance.containerElement;
     if (!container) return;
-
-    if (!(await noteCanvasInstance.hasContentChanged(noteId))) return;
-
-    // Re-check after the await — the instance may have been destroyed or
-    // replaced (and a replacement may have initialized in the meantime).
-    if (!noteCanvasInstance || noteCanvasInstance.noteId !== noteId) return;
-    if (noteCanvasInstance.isInitialized) return;
 
     // This rebuild is a render in its own right, so it claims a token like any
     // other. Without one, a rendernotebook starting mid-rebuild would be

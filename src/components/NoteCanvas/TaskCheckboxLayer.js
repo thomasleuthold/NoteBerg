@@ -6,6 +6,16 @@
  * checkboxes have pointer-events: auto for click handling.
  */
 import { t } from "../../i18n/index.js";
+import {
+  normalizeTaskPriority,
+  normalizeTaskStatus,
+  TASK_STATUS,
+} from "../../modules/taskManager.js";
+import {
+  STROKE_CHECKBOX_SIZE,
+  strokeCheckboxOrigin,
+  strokeTaskBounds,
+} from "../../utils/taskCheckboxes.js";
 
 export class TaskCheckboxLayer {
   /**
@@ -21,6 +31,13 @@ export class TaskCheckboxLayer {
     this.container.className = "note-canvas__task-checkbox-layer";
     viewportElement.appendChild(this.container);
     this.taskElements = new Map(); // taskId -> { checkbox, boundingBox }
+    this.readOnly = false;
+  }
+
+  /** A viewer sees task state but cannot change it or select the task's strokes. */
+  setReadOnly(readOnly) {
+    this.readOnly = readOnly;
+    this.container.classList.toggle("note-canvas__task-checkbox-layer--readonly", readOnly);
   }
 
   /**
@@ -39,18 +56,17 @@ export class TaskCheckboxLayer {
       activeTasks.add(task.id);
 
       // Compute bounding box from referenced strokes
-      const bounds = this._getTaskBounds(task, strokes);
+      const bounds = strokeTaskBounds(task, strokes);
       if (!bounds) {
         // All strokes deleted, hide checkbox
         this._removeTaskElements(task.id);
         continue;
       }
 
-      // Position: left of the bounding box, vertically centered
-      const checkboxSize = 22;
-      const margin = 8;
-      const contentX = bounds.minX - checkboxSize - margin;
-      const contentY = (bounds.minY + bounds.maxY) / 2 - checkboxSize / 2;
+      // Position: left of the bounding box, vertically centered (shared with
+      // the thumbnail and the PDF export)
+      const checkboxSize = STROKE_CHECKBOX_SIZE;
+      const { x: contentX, y: contentY } = strokeCheckboxOrigin(bounds);
 
       // Convert to screen coordinates
       const screenX = contentX * zoom - scrollLeft + offsetX;
@@ -71,7 +87,13 @@ export class TaskCheckboxLayer {
         entry = this._createTaskElements(task.id);
       }
 
-      entry.checkbox.setAttribute("aria-checked", String(task.checked));
+      const status = normalizeTaskStatus(task);
+      const priority = normalizeTaskPriority(task.priority);
+      const isDone = status === TASK_STATUS.DONE;
+
+      entry.checkbox.setAttribute("data-status", status);
+      entry.checkbox.setAttribute("data-priority", priority);
+      entry.checkbox.setAttribute("aria-checked", String(isDone));
       entry.checkbox.style.left = `${screenX}px`;
       entry.checkbox.style.top = `${screenY}px`;
       entry.checkbox.style.setProperty("width", `${scaledSize}px`, "important");
@@ -94,33 +116,6 @@ export class TaskCheckboxLayer {
   }
 
   /**
-   * Get bounding box for a task's strokes
-   * @private
-   */
-  _getTaskBounds(task, strokes) {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let hasValid = false;
-
-    for (const strokeId of task.strokeIds) {
-      const stroke = strokes.find((s) => s.id === strokeId);
-      if (!stroke || stroke._deleted || stroke.isDeleted) continue;
-
-      for (let i = 0; i < stroke.x.length; i++) {
-        minX = Math.min(minX, stroke.x[i]);
-        maxX = Math.max(maxX, stroke.x[i]);
-        minY = Math.min(minY, stroke.y[i]);
-        maxY = Math.max(maxY, stroke.y[i]);
-      }
-      hasValid = true;
-    }
-
-    return hasValid ? { minX, minY, maxX, maxY } : null;
-  }
-
-  /**
    * Create DOM elements for a task (checkbox + bounding box)
    * @private
    */
@@ -133,9 +128,14 @@ export class TaskCheckboxLayer {
     checkbox.addEventListener("pointerdown", (e) => e.stopPropagation());
     checkbox.addEventListener("click", (e) => {
       e.stopPropagation();
-      const checked = checkbox.getAttribute("aria-checked") !== "true";
-      checkbox.setAttribute("aria-checked", String(checked));
-      this.callbacks.onToggle(taskId, checked);
+      if (this.readOnly) return;
+      if (this.callbacks.onCycleStatus) {
+        this.callbacks.onCycleStatus(taskId);
+      } else if (this.callbacks.onToggle) {
+        const checked = checkbox.getAttribute("aria-checked") !== "true";
+        checkbox.setAttribute("aria-checked", String(checked));
+        this.callbacks.onToggle(taskId, checked);
+      }
     });
 
     const boundingBox = document.createElement("div");
@@ -144,6 +144,7 @@ export class TaskCheckboxLayer {
     boundingBox.title = t("toolbar.tasks.selectStrokes");
     boundingBox.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (this.readOnly) return;
       if (this.callbacks.onTaskClick) {
         this.callbacks.onTaskClick(taskId);
       }
